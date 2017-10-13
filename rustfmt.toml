@@ -1,0 +1,9 @@
+max_width = 80
+
+format_strings = true
+reorder_imported_names = true
+imports_indent = "Block"
+where_pred_indent = "Block"
+reorder_imports = true
+reorder_imports_in_group = true
+use_try_shorthand = true

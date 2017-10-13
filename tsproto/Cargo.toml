@@ -1,0 +1,39 @@
+[package]
+name = "tsproto"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+description = """
+An implementation of the TeamSpeak3 protocol as a library for use in clients and bots.
+"""
+repository = "https://github.com/ReSpeak/tsclientlib"
+documentation = "https://docs.rs/tsproto"
+keywords = ["teamspeak3", "ts3", "voip"]
+categories = ["multimedia"]
+license = "MIT/Apache-2.0"
+build = "build/build.rs"
+workspace = ".."
+
+[badges]
+travis-ci = { repository = "ReSpeak/tsclientlib" }
+
+[features]
+server = []
+
+[dependencies]
+base64 = "0.7"
+byteorder = "1"
+chrono = "0.4"
+error-chain = "0.11"
+futures = "0.1"
+nom = "3.2"
+num = "0.1"
+num-derive = "0.1"
+rand = "0.3"
+ring = "0.12"
+slog = "2"
+slog-async = "2"
+slog-perf = "0.2"
+slog-term = "2"
+tomcrypt = "0.1"
+tokio-core = "0.1"
+quicklz = "0.1"
