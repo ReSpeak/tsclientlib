@@ -1,0 +1,220 @@
+Struct: ClientNetwork; get:false
+Default: get:true, set:true
+Prop: Ping, f32
+
+Struct: Client; doc:"lalala", id:[Connection.Id Client.Id]
+Default: get:true, set:true
+Prop: Id, ClientId; set:false, doc:"Id to iderntify a connected user"
+Prop: WelcomeMessage, str; doc:"Welcome message when conecting to a server."
+Prop: MaxClients, u32
+Prop: ClientsOnline, u32
+Prop: ChannelsOnline, u32
+Prop: ClientConnections, u32
+Prop: QueryClientConnections, u32
+Prop: QueryClientsOnline, u32
+Prop: Uptime, TimeSpan
+Prop: Password, bool
+Prop: MaxDownloadTotalBandwith, u32
+Prop: MaxUploadTotalBandwith, u32
+Prop: DownloadQuota, u32
+Prop: UploadQuota, u32
+Prop: MonthBytesDownloaded, u32
+Prop: MonthBytesUploaded, u32
+Prop: TotalBytesDownloaded, u32
+Prop: TotalBytesUploaded, u32
+Prop: ComplainAutobanCount, u32
+Prop: ComplainAutobanTime, TimeSpan
+Prop: ComplainRemoveTime, TimeSpan
+Prop: MinClientsInChannelBeforeForcedSilence, u32
+Prop: AntifloodPointsTickReduce, u32
+Prop: AntifloodPointsNeededCommandBlock, u32
+Prop: AntifloodPointsNeededIpBlock, u32
+Prop: Port, u16
+Prop: Autostart, bool
+Prop: MachineId, u32
+Prop: NeededIdentitySecurityLevel, u32
+Prop: LogClient, bool
+Prop: LogQuery, bool
+Prop: LogChannel, bool
+Prop: LogPermissions, bool
+Prop: LogServer, bool
+Prop: LogFiletransfer, bool
+Prop: MinClientVersion, str
+Prop: TotalPacketlossSpeech, u32
+Prop: TotalPacketlossKeepalive, u32
+Prop: TotalPacketlossControl, u32
+Prop: TotalPacketlossTotal, u32
+Prop: TotalPing, u32
+Prop: WeblistEnabled, bool
+
+Struct: OutdatedServerData
+Prop: hostmessage, str
+Prop: hostmessage_mode, HostMessageMode
+
+Struct: Server
+Prop: Id, ServerId
+Prop: Uid, str; doc:"UniqueIdentifier"
+Prop: OwnConnectionId, ConnectionId
+Prop: Name, str
+Prop: PhoneticName, str
+Prop: Platform, str
+Prop: Version, str
+Prop: Created, DateTime; doc:"???"
+Prop: CodecEncryptionMode, CodecEncryptionMode
+Prop: DefaultServerGroup, ServerGroupId; doc:"???"
+Prop: DefaultChannelGroup, ChannelGroupId; doc:"???"
+Prop: DefaultChannelAdminGroup, ChannelGroupId; doc:"???"
+Prop: HostbannerUrl, str
+Prop: HostbannerGfxUrl, str
+Prop: HostbannerGfxInterval, TimeSpan
+Prop: HostbannerMode, HostBannerMode
+Prop: PrioritySpeakerDimmModificator, i32
+Prop: HostbuttonTooltip, str
+Prop: HostbuttonUrl, str
+Prop: HostbuttonGfxUrl, str
+Prop: IconId, i32
+Prop: ReservedSlots, i32
+Prop: AskForPrivilegekey, bool
+Prop: ChannelTempDeleteDelayDefault, TimeSpan
+Nested: VisibleConnections, object[], doc:"???"
+Nested: Channels, object[], doc:"???"
+Nested: OptionalData, OptionalServerData
+
+Struct: OptionalChannelData
+Prop: ChannelId, ChannelId; doc:"result(false)"
+Prop: ServerId, ServerId; doc:"result(false)"
+Prop: Description, str
+
+Struct: Channel
+Prop: Id, ChannelId
+Prop: ServerId, ServerId
+Prop: ParentChannelId, ChannelId
+Prop: Name, str
+Prop: Topic, str
+Prop: Codec, Codec
+Prop: CodecQuality, i32
+Prop: MaxClients, i32
+Prop: MaxFamilyClients, i32
+Prop: Order, i32
+Prop: Permanent, bool; doc:"FlagPermanent"
+Prop: SemiPermanent, bool; doc:"FlagSemiPermanent"
+Prop: Default, bool; doc:"FlagDefault"
+Prop: Password, bool; doc:"FlagPassword"
+Prop: CodecLatencyFactor, i32
+Prop: CodecIsUnencrypted, bool
+Prop: DeleteDelay, i32
+Prop: MaxClientsUnlimited, bool; doc:"FlagMaxClientsUnlimited"
+Prop: MaxFamilyClientsUnlimited, bool; doc:"FlagMaxFamilyClientsUnlimited"
+::Clone so we can change the documentation
+Prop: Subscribed, bool; doc:"FlagAreSubscribed"
+Prop: NeededTalkPower, i32
+Prop: ForcedSilence, i32
+Prop: PhoneticName, str
+Prop: IconId, i32
+Prop: Private, bool; doc:"FlagPrivate"
+Nested: OptionalData, OptionalChannelData
+
+Struct: OwnConnectionData
+Prop: ServerIp, str
+Prop: ServerPort, u16
+Prop: InputDeactivated, bool; doc:"InputDeactivationStatus???"
+Prop: DefaultChannel, ChannelId
+Prop: DefaultToken, str
+
+Struct: ServerqueryConnectionData
+Prop: Name, str
+Prop: Password, str
+
+Struct: OptionalConnectionData
+Prop: Id, ConnectionId
+Prop: ServerId, ServerId
+Prop: Version, str
+Prop: Platform, str
+Prop: Created, DateTime; doc:"???"
+Prop: LastConnected, DateTime; doc:"???"
+Prop: TotalConnection, i32
+Prop: Ping, float
+Prop: PingDeviation, float
+Prop: ConnectedTime, TimeSpan
+Prop: IdleTime, TimeSpan
+Prop: ClientIp, str
+Prop: ClientPort, u16
+::Network
+Prop: PacketsSentSpeech, u64
+Prop: PacketsSentKeepalive, u64
+Prop: PacketsSentControl, u64
+Prop: PacketsSentTotal, u64
+Prop: BytesSentSpeech, u64
+Prop: BytesSentKeepalive, u64
+Prop: BytesSentControl, u64
+Prop: BytesSentTotal, u64
+Prop: PacketsReceivedSpeech, u64
+Prop: PacketsReceivedKeepalive, u64
+Prop: PacketsReceivedControl, u64
+Prop: PacketsReceivedTotal, u64
+Prop: BytesReceivedSpeech, u64
+Prop: BytesReceivedKeepalive, u64
+Prop: BytesReceivedControl, u64
+Prop: BytesReceivedTotal, u64
+Prop: PacketlossSpeech, u64
+Prop: PacketlossKeepalive, u64
+Prop: PacketlossControl, u64
+Prop: PacketlossTotal, u64
+::TODO much more...
+::End network
+Prop: MonthBytesUploaded, i32
+Prop: MonthBytesDownloaded, i32
+Prop: TotalBytesUploaded, i32
+Prop: TotalBytesDownloaded, i32
+Prop: DefaultChannelPassword, str
+Prop: ServerPassword, str
+Prop: IsMuted, bool
+Prop: VolumeModificator, i32
+Prop: VersionSign, bool
+Prop: Avatar, str; doc:"str??? FlagAvatar"
+Prop: Description, str
+Prop: Talker, bool; doc:"bool??? IsTalker"
+Prop: PrioritySpeaker, bool; doc:"bool??? IsPrioritySpeaker"
+Prop: UnreadMessages, bool
+Prop: NeededServerqueryViewPower, i32
+Prop: IconId, i32
+Prop: IsChannelCommander, bool
+Prop: Country, str
+Prop: Badges, str
+
+Struct:Connection; id:[Connection.Id]
+Default: get:true, set:true
+Prop: Id, ConnectionId; set:false
+Prop: ServerId, ServerId
+Prop: ChannelId, ChannelId
+::ClientProperties
+Prop: Uid, str; doc:"UniqueIdentifier"
+Prop: Name, str; doc:"Nickname"
+Prop: Talking, bool; doc:"??? FlagTalking"
+Prop: Whispering, bool
+Prop: Away, bool; doc:"AwayStatus???"
+Prop: AwayMessage, str
+Prop: InputMuted, bool; doc:"MuteInputStatus???"
+Prop: OutputMuted, bool; doc:"MuteOutputStatus???"
+Prop: OutputOnlyMuted, bool; doc:"MuteOutputStatus???"
+Prop: InputHardware, bool; doc:"HardwareInputStatus???"
+Prop: OutputHardware, bool; doc:"HardwareOutputStatus???"
+Prop: PhoneticName, str; doc:"NicknamePhonetic"
+Prop: Recording, bool; doc:"bool??? IsRecording"
+Prop: DatabaseId, u64
+Prop: ChannelGroupId, ulong; doc: "???"
+Prop: ServerGroups, u64[]; doc:"???"
+Prop: TalkPower, i32
+::When this client requested to talk
+Prop: TalkRequest, bool; doc:"???"
+Prop: TalkRequestMessage, str; doc:"??? TalkRequestMsg"
+Prop: ChannelGroupInheritedChannelId, ChannelId
+Nested: OwnData, OwnData
+Nested: ServerqueryData, ServerqueryData
+Nested: OptionalData, OptionalConnectionData
+
+Struct: ChatEntryTmp; id:[ChatEntryTmp.SenderClientId Connection.Id]
+Prop: Text, str
+Prop: Date, DateTime
+Prop: Mode, TextMessageTargetMode
+Prop: SenderClientId, ClientId

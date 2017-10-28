@@ -1,0 +1,47 @@
+<#
+for struc in &self.structs {
+    let ids: Vec<_>;
+    if !struc.values.id.is_empty() {
+        ids = struc.values.id
+            .trim_left_matches('[').trim_right_matches(']')
+            .split(' ')
+            .filter(|s| !s.is_empty())
+            .map(|s| self.get_property(s.trim()))
+            .collect();
+    } else {
+        ids = Vec::new();
+    }
+
+    let props: Vec<_> = self.properties.iter().filter(|p|
+        p.struct_name == struc.name && !ids.contains(&p)).collect();
+
+    let all_props = ids.iter().chain(props.iter());
+
+#><#= document(&struc.values.doc)
+#>pub struct <#= struc.name #> {
+<# for p in all_props {
+    if !p.values.doc.is_empty() { #><#=
+        indent(document(&p.values.doc), 1) #><#
+    } #>    <#
+    if p.values.get.expect("'get' value not set")
+        && p.values.set.expect("'set' value not set") {
+        #>pub <#
+    }
+    #><#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
+<# } #>}
+<#
+    // Write getter for getter-only properties
+    let all_props = ids.iter().chain(props.iter());
+    let get_props: Vec<_> = all_props
+        .filter(|p| p.values.get.unwrap() && !p.values.set.unwrap()).collect();
+    if !get_props.is_empty() {
+#>
+impl <#= struc.name #> {<#
+        for p in get_props {
+#>
+    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= p.type_s #> {
+        self.<#= p.get_attr_name(&struc.name) #>
+    }
+<#      } #>}
+<#  } #>
+<# } #>

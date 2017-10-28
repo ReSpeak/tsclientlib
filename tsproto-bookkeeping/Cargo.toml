@@ -1,0 +1,12 @@
+[package]
+name = "tsproto-bookkeeping"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+build = "build/build.rs"
+
+[dependencies]
+tsproto = { path = "../tsproto" }
+
+[build-dependencies]
+t4rust-derive = { path = "../../t4rust" }
+regex = "0.2"

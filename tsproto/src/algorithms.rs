@@ -5,6 +5,7 @@ use {tomcrypt, base64};
 use byteorder::{NetworkEndian, WriteBytesExt};
 use num::BigUint;
 use ring::digest;
+use quicklz::CompressionLevel;
 
 use Result;
 use packets::*;
@@ -49,13 +50,20 @@ pub(crate) fn compress_and_split(packet: &Packet) -> Vec<(Header, Vec<u8>)> {
     // Split the data if it is necessary.
     // Compress also slightly smaller packets
     let (datas, compressed) = if data.len() > (max_size - 100) {
-        // TODO Compress
-        let mut data = data;
+        // Compress with QuickLZ
+        let cdata = ::quicklz::compress(&data, CompressionLevel::Lvl1);
+        // Use only if it is efficient
+        let (mut data, compressed) = if cdata.len() > data.len() {
+            (data, false)
+        } else {
+            (cdata, true)
+        };
+
         // Ignore size limit for whisper packets
         if data.len() <= max_size
             || packet.header.get_type() == PacketType::VoiceWhisper
         {
-            (vec![data], false)
+            (vec![data], compressed)
         } else {
             // Split
             let count = (data.len() + max_size - 1) / max_size;
@@ -72,7 +80,7 @@ pub(crate) fn compress_and_split(packet: &Packet) -> Vec<(Header, Vec<u8>)> {
             } {
                 splitted.push(data.split_off(len - max_size));
             }
-            (splitted, false)
+            (splitted, compressed)
         }
     } else {
         (vec![data], false)
@@ -82,14 +90,17 @@ pub(crate) fn compress_and_split(packet: &Packet) -> Vec<(Header, Vec<u8>)> {
     let default_header = {
         let mut h = Header::default();
         h.set_type(packet.header.get_type());
-        if compressed {
-            h.set_compressed(true);
-        }
         h
     };
     let mut packets = Vec::with_capacity(datas.len());
     for (i, d) in datas.into_iter().rev().enumerate() {
         let mut h = default_header.clone();
+        // Only set flags on first fragment
+        if i == 0 && compressed {
+            h.set_compressed(true);
+        }
+
+        // Set fragmented flag on first and last part
         if fragmented && (i == 0 || i == len - 1) {
             h.set_fragmented(true);
         }

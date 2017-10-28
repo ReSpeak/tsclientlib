@@ -82,7 +82,7 @@ const MAX_FRAGMENTS_LENGTH: usize = 40960;
 const MAX_QUEUE_LEN: usize = 50;
 /// The maximum decompressed size of a packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
-const MAX_DECOMPRESSED_SIZE: usize = 40960;
+const MAX_DECOMPRESSED_SIZE: u32 = 40960;
 const FAKE_KEY: &str = "c:\\windows\\syste";
 const FAKE_NONCE: &str = "m\\firewall32.cpl";
 /// How long packets are resent until the connection is closed.
