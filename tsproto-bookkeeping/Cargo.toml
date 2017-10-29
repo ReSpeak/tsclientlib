@@ -8,5 +8,5 @@ build = "build/build.rs"
 tsproto = { path = "../tsproto" }
 
 [build-dependencies]
-t4rust-derive = { path = "../../t4rust" }
 regex = "0.2"
+t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }

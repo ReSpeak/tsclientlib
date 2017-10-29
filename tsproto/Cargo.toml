@@ -37,4 +37,4 @@ slog-term = "2"
 tomcrypt = "0.1"
 tokio-core = "0.1"
 #quicklz = "0.1"
-quicklz = { path = "../../quicklz" }
+quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
