@@ -1,0 +1,1 @@
+../../declarations/message_parser.rs

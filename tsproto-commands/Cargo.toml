@@ -1,5 +1,5 @@
 [package]
-name = "tsproto-bookkeeping"
+name = "tsproto-commands"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 build = "build/build.rs"
@@ -7,8 +7,6 @@ build = "build/build.rs"
 [dependencies]
 chrono = "0.4"
 tsproto = { path = "../tsproto" }
-tsproto-commands = { path = "../tsproto-commands" }
 
 [build-dependencies]
-regex = "0.2"
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }

@@ -1,4 +1,3 @@
-extern crate regex;
 #[macro_use]
 extern crate t4rust_derive;
 
@@ -7,40 +6,33 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-mod book_parser;
+mod message_parser;
 
-use book_parser::*;
+use message_parser::*;
+
+type Map<K, V> = std::collections::HashMap<K, V>;
 
 #[derive(Template)]
-#[TemplatePath = "build/BookDeclarations.tt"]
+#[TemplatePath = "build/MessageDeclarations.tt"]
 //#[TemplateDebug]
 #[derive(Default, Debug)]
 struct Declarations {
-    structs: Vec<Struct>,
-    properties: Vec<Property>,
-}
-
-impl Declarations {
-    fn get_property(&self, id: &str) -> &Property {
-        let parts: Vec<_> = id.split('.').collect();
-        self.properties.iter()
-            .filter(|p| p.struct_name == parts[0] && p.name == parts[1])
-            .next().expect("Unknown property")
-    }
+    fields: Map<String, Field>,
+    messages: Map<String, Message>,
+    notifies: Map<String, Notify>,
 }
 
 fn main() {
     // The template is automatically tracked as a dependency
-    for f in &["build.rs", "BookDeclarations.txt"] {
+    for f in &["build.rs", "MessageDeclarations.txt"] {
         println!("cargo:rerun-if-changed=build/{}", f);
     }
 
     // Read declarations
-    let mut f = File::open("build/BookDeclarations.txt").unwrap();
+    let mut f = File::open("build/MessageDeclarations.txt").unwrap();
     let mut v = Vec::new();
     f.read_to_end(&mut v).unwrap();
     let s = String::from_utf8(v).unwrap();
-
     let decls = parse(&s);
 
     // Write declarations

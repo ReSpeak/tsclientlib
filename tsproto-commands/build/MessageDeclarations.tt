@@ -1,0 +1,50 @@
+<# for msg in self.messages.values() {
+    let is_notify = !msg.notify_name.is_empty();
+    let is_response = msg.notify_name.is_empty() || msg.notify_name.starts_with("+");
+#>pub struct <#= msg.class_name #> {<#
+    if is_response { #>
+    pub return_code: String,<#
+    }
+
+    // Attributes
+    for p in &msg.params {
+        let field = self.fields.get(p).expect(&format!("Missing field: {}", p)); #>
+    pub <#= to_snake_case(&field.name) #>: <#= field.type_s #>,<#
+    }
+#>
+}
+<#
+    if is_notify {
+        let notify = &self.notifies[msg.notify_name.trim_left_matches('+')];
+#>
+impl Notification for <#= msg.class_name #> {
+    fn get_notification_type() -> NotificationType {
+        NotificationType::<#= notify.enum_name #>
+    }
+}
+<#
+    }
+    if is_response {
+#>
+impl Response for <#= msg.class_name #> {
+    fn get_return_code(&self) -> &str {
+        &self.return_code
+    }
+    fn set_return_code(&mut self, return_code: String) {
+        self.return_code = return_code;
+    }
+}
+<#
+    }
+#>
+
+<# }
+
+// Create notification types
+#>enum NotificationType {<#
+for notif in self.notifies.values() {
+#>
+    <#= notif.enum_name #>,<#
+}
+#>
+}
