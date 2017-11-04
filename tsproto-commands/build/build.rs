@@ -14,7 +14,6 @@ type Map<K, V> = std::collections::HashMap<K, V>;
 
 #[derive(Template)]
 #[TemplatePath = "build/MessageDeclarations.tt"]
-//#[TemplateDebug]
 #[derive(Default, Debug)]
 struct Declarations {
     fields: Map<String, Field>,

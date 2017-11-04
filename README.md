@@ -26,7 +26,7 @@ cd tsproto
 cargo run --example client
 ```
 
-### Miscellaneous
+## Miscellaneous
 
 This project is not an official TeamSpeak project. We started to write an own client for fun and because we want some features (and bugfixes) which are not available in the official client.
 

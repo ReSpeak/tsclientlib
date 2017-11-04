@@ -1,5 +1,5 @@
-<#
-for struc in &self.structs {
+<#@ template cleanws="true" #>
+<# for struc in &self.structs {
     let ids: Vec<_>;
     if !struc.values.id.is_empty() {
         ids = struc.values.id
@@ -17,18 +17,22 @@ for struc in &self.structs {
 
     let all_props = ids.iter().chain(props.iter());
 
-#><#= document(&struc.values.doc)
-#>pub struct <#= struc.name #> {
+#>
+<#= document(&struc.values.doc) #>
+pub struct <#= struc.name #> {
 <# for p in all_props {
-    if !p.values.doc.is_empty() { #><#=
-        indent(document(&p.values.doc), 1) #><#
-    } #>    <#
+    if !p.values.doc.is_empty() { #>
+<#= indent(document(&p.values.doc), 1) #>
+<# } #>
+    <#
     if p.values.get.expect("'get' value not set")
         && p.values.set.expect("'set' value not set") {
         #>pub <#
     }
     #><#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
-<# } #>}
+<# } #>
+}
+
 <#
     // Write getter for getter-only properties
     let all_props = ids.iter().chain(props.iter());
@@ -36,12 +40,13 @@ for struc in &self.structs {
         .filter(|p| p.values.get.unwrap() && !p.values.set.unwrap()).collect();
     if !get_props.is_empty() {
 #>
-impl <#= struc.name #> {<#
-        for p in get_props {
-#>
+impl <#= struc.name #> {
+<#      for p in get_props { #>
     pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= p.type_s #> {
         self.<#= p.get_attr_name(&struc.name) #>
     }
-<#      } #>}
+<#      } #>
+}
+
 <#  } #>
 <# } #>

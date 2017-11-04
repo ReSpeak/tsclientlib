@@ -13,7 +13,6 @@ use book_parser::*;
 
 #[derive(Template)]
 #[TemplatePath = "build/BookDeclarations.tt"]
-//#[TemplateDebug]
 #[derive(Default, Debug)]
 struct Declarations {
     structs: Vec<Struct>,
