@@ -10,7 +10,7 @@ use quicklz::CompressionLevel;
 use Result;
 use packets::*;
 
-pub(crate) fn must_encrypt(t: PacketType) -> bool {
+pub fn must_encrypt(t: PacketType) -> bool {
     match t {
         PacketType::Command | PacketType::CommandLow => true,
         PacketType::Voice |
@@ -23,7 +23,7 @@ pub(crate) fn must_encrypt(t: PacketType) -> bool {
     }
 }
 
-pub(crate) fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
+pub fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
     must_encrypt(t) || t == PacketType::Ack || t == PacketType::AckLow
         || (voice_encryption && t.is_voice())
 }
@@ -36,7 +36,7 @@ pub(crate) fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
 ///
 /// Returns an error if the packet is too large but cannot be splitted.
 /// Only `Command` and `CommandLow` packets can be compressed and splitted.
-pub(crate) fn compress_and_split(packet: &Packet) -> Vec<(Header, Vec<u8>)> {
+pub fn compress_and_split(packet: &Packet) -> Vec<(Header, Vec<u8>)> {
     // Everything else (except whisper packets) have to be less than 500 bytes
     let header_size = {
         let mut buf = Vec::new();
@@ -137,7 +137,7 @@ fn create_key_nonce(
     (key, nonce)
 }
 
-pub(crate) fn encrypt_key_nonce(
+pub fn encrypt_key_nonce(
     header: &mut Header,
     data: &mut [u8],
     key: &[u8; 16],
@@ -155,7 +155,7 @@ pub(crate) fn encrypt_key_nonce(
     Ok(())
 }
 
-pub(crate) fn encrypt_fake(header: &mut Header, data: &mut [u8]) -> Result<()> {
+pub fn encrypt_fake(header: &mut Header, data: &mut [u8]) -> Result<()> {
     let mut key = [0; 16];
     key.copy_from_slice(::FAKE_KEY.as_bytes());
     let mut nonce = [0; 16];
@@ -163,7 +163,7 @@ pub(crate) fn encrypt_fake(header: &mut Header, data: &mut [u8]) -> Result<()> {
     encrypt_key_nonce(header, data, &key, &nonce)
 }
 
-pub(crate) fn encrypt(
+pub fn encrypt(
     header: &mut Header,
     data: &mut [u8],
     generation_id: u32,
@@ -174,7 +174,7 @@ pub(crate) fn encrypt(
     encrypt_key_nonce(header, data, &key, &nonce)
 }
 
-pub(crate) fn decrypt_key_nonce(
+pub fn decrypt_key_nonce(
     header: &Header,
     data: &mut [u8],
     key: &[u8; 16],
@@ -194,7 +194,7 @@ pub(crate) fn decrypt_key_nonce(
     }
 }
 
-pub(crate) fn decrypt_fake(header: &Header, data: &mut [u8]) -> Result<()> {
+pub fn decrypt_fake(header: &Header, data: &mut [u8]) -> Result<()> {
     let mut key = [0; 16];
     key.copy_from_slice(::FAKE_KEY.as_bytes());
     let mut nonce = [0; 16];
@@ -202,7 +202,7 @@ pub(crate) fn decrypt_fake(header: &Header, data: &mut [u8]) -> Result<()> {
     decrypt_key_nonce(header, data, &key, &nonce)
 }
 
-pub(crate) fn decrypt(
+pub fn decrypt(
     header: &Header,
     data: &mut [u8],
     generation_id: u32,
@@ -213,7 +213,7 @@ pub(crate) fn decrypt(
 }
 
 /// Compute shared iv and shared mac.
-pub(crate) fn compute_iv_mac(
+pub fn compute_iv_mac(
     alpha: &[u8; 10],
     beta: &[u8; 10],
     our_key: &mut tomcrypt::EccKey,
@@ -237,7 +237,7 @@ pub(crate) fn compute_iv_mac(
     Ok((shared_iv, shared_mac))
 }
 
-pub(crate) fn hash_cash(key: &mut tomcrypt::EccKey, level: u8) -> Result<u64> {
+pub fn hash_cash(key: &mut tomcrypt::EccKey, level: u8) -> Result<u64> {
     let omega = base64::encode(&key.export_public()?);
     let mut offset = 0;
     while offset < u64::MAX && get_hash_cash_level(&omega, offset) < level {
@@ -246,7 +246,7 @@ pub(crate) fn hash_cash(key: &mut tomcrypt::EccKey, level: u8) -> Result<u64> {
     Ok(offset)
 }
 
-pub(crate) fn get_hash_cash_level(omega: &str, offset: u64) -> u8 {
+pub fn get_hash_cash_level(omega: &str, offset: u64) -> u8 {
     let data = digest::digest(
         &digest::SHA1,
         format!("{}{}", omega, offset).as_bytes(),
@@ -263,7 +263,7 @@ pub(crate) fn get_hash_cash_level(omega: &str, offset: u64) -> u8 {
     res
 }
 
-pub(crate) fn biguint_to_array(i: &BigUint) -> [u8; 64] {
+pub fn biguint_to_array(i: &BigUint) -> [u8; 64] {
     let mut v = i.to_bytes_le();
 
     // Extend with zeroes until 64 bytes
@@ -276,8 +276,7 @@ pub(crate) fn biguint_to_array(i: &BigUint) -> [u8; 64] {
     a
 }
 
-#[cfg(feature = "server")]
-pub(crate) fn array_to_biguint(i: &[u8; 64]) -> BigUint {
+pub fn array_to_biguint(i: &[u8; 64]) -> BigUint {
     BigUint::from_bytes_be(i)
 }
 

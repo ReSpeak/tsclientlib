@@ -1,4 +1,4 @@
-# TsProto
+# TsClientlib
 
 This repository implements the TeamSpeak3 protocol for usage in clients and bots.
 
@@ -7,6 +7,7 @@ If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint
 ## Projects
 
  - tsproto: The low level library that does the network part
+ - tsproto-commands: Parse commands into structs
  - tsproto-bookkeeping: Store information when connected to a server
 
 ## Clone

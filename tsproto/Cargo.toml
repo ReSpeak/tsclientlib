@@ -16,9 +16,6 @@ workspace = ".."
 [badges]
 travis-ci = { repository = "ReSpeak/tsclientlib" }
 
-[features]
-server = []
-
 [dependencies]
 base64 = "0.7"
 byteorder = "1"
@@ -38,3 +35,7 @@ tomcrypt = "0.1"
 tokio-core = "0.1"
 #quicklz = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
+
+[dev-dependencies]
+structopt = "0.1"
+structopt-derive = "0.1"

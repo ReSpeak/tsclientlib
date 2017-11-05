@@ -3,29 +3,39 @@ extern crate futures;
 extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
+extern crate structopt;
+#[macro_use]
+extern crate structopt_derive;
 extern crate tokio_core;
 extern crate tsproto;
 
-use std::env;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 use futures::{future, Sink, Stream, Future};
 use slog::Drain;
+use structopt::StructOpt;
+use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
 use tsproto::*;
 use tsproto::packets::*;
 
+#[derive(StructOpt, Debug)]
+#[structopt(global_settings_raw = "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]")]
+struct Args {
+	#[structopt(short = "a", long = "address", default_value = "127.0.0.1:9987",
+		help = "The address of the server to connect to")]
+	address: SocketAddr,
+	#[structopt(long = "local-address", default_value = "0.0.0.0:0",
+		help = "The listening address of the client")]
+	local_address: SocketAddr,
+}
+
 fn main() {
 	tsproto::init().unwrap();
 
-	// TODO use structopt
-	let local_addr = "0.0.0.0:0".parse().unwrap();
-	let addr = if env::args().skip(1).next().is_some() {
-		// Fake server
-		"127.0.0.1:9988"
-	} else {
-		"127.0.0.1:9987"
-	}.parse().unwrap();
+	// Parse command line options
+	let args = Args::from_args();
 	let mut core = Core::new().unwrap();
 
 	let logger = {
@@ -36,7 +46,7 @@ fn main() {
 		slog::Logger::root(drain, o!())
 	};
 
-	let c = client::ClientData::new(local_addr, core.handle(), true, logger.clone()).unwrap();
+	let c = client::ClientData::new(args.local_address, core.handle(), true, logger.clone()).unwrap();
 	client::default_setup(c.clone());
 
 	// Listen for packets
@@ -47,7 +57,7 @@ fn main() {
 	core.handle().spawn(listen);
 
 	// Connect
-	core.run(client::connect(c.clone(), addr)).unwrap();
+	core.run(client::connect(c.clone(), args.address)).unwrap();
 	info!(logger, "Connected");
 
 	// Wait some time
@@ -65,14 +75,14 @@ fn main() {
 	cmd.push("msg", "Hello");
 
 	let packet = Packet::new(header, Data::Command(cmd));
-	core.run(sink.send((addr, packet))).unwrap();
+	core.run(sink.send((args.address, packet))).unwrap();
 
 	// Wait some time
 	let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();
 	core.run(action).unwrap();
 
 	// Disconnect
-	core.run(client::disconnect(c.clone(), addr)).unwrap();
+	core.run(client::disconnect(c.clone(), args.address)).unwrap();
 	info!(logger, "Disconnected");
 
 	// Wait some time
