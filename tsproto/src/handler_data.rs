@@ -18,7 +18,7 @@ use {Error, Map, Result, TsCodec};
 use packets::*;
 
 /// A record of a packet that can be resent.
-pub(crate) struct SendRecord {
+pub struct SendRecord {
     /// When this packet was sent.
     pub sent: DateTime<Utc>,
     /// The next time when the packet will be resent.
@@ -94,7 +94,7 @@ pub struct Data<ConnectionState> {
     ///
     /// Used to resend packets when they are not acknowledged in a certain time.
     /// That is only done for `Command` and `CommandLow` packets.
-    pub(crate) send_queue: BinaryHeap<SendRecord>,
+    pub send_queue: BinaryHeap<SendRecord>,
     pub(crate) resend_task: Option<Task>,
 }
 

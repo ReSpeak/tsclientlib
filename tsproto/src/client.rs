@@ -40,7 +40,13 @@ pub enum ServerConnectionState {
         alpha: [u8; 10],
         private_key: tomcrypt::EccKey,
     },
+    /// The initial handshake is done and the next packet has to be
+    /// `clientinit`.
+    Connecting,
+    /// Fully connected, the client id is known.
     Connected,
+    /// The connection is finished, no more packets can be sent or received.
+    Disconnected,
 }
 
 fn create_init_header() -> Header {
@@ -71,15 +77,19 @@ pub fn default_setup(data: Rc<RefCell<ClientData>>) {
     DefaultPacketHandler::apply(data.clone(), true);
 }
 
-/// Wait until a client is connected.
-fn connect_wait(
+/// Wait until a client reaches a certain state.
+///
+/// `is_state` should return `true`, if the state is reached and `false` if this
+/// function should continue waiting.
+pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
     data: Rc<RefCell<ClientData>>,
-    addr: SocketAddr,
+    server_addr: SocketAddr,
+    f: F,
 ) -> BoxFuture<(), Error> {
     // Return a future that resolves when we are connected
     let data2 = data.clone();
-    if let Some(con) = data.borrow_mut().connections.get_mut(&addr) {
-        if let ServerConnectionState::Connected = con.state.state {
+    if let Some(con) = data.borrow_mut().connections.get_mut(&server_addr) {
+        if f(&con.state.state) {
             return Box::new(future::ok(()));
         }
         // Wait for the next state change
@@ -91,14 +101,34 @@ fn connect_wait(
         }));
         Box::new(
             recv.map_err(|e| e.into())
-                .and_then(move |_| connect_wait(data2, addr)),
+                .and_then(move |_| wait_for_state(data2, server_addr, f)),
         )
     } else {
         Box::new(future::ok(()))
     }
 }
 
-/// Connect to a server
+pub fn wait_until_connected(
+    data: Rc<RefCell<ClientData>>,
+    server_addr: SocketAddr,
+) -> BoxFuture<(), Error> {
+    wait_for_state(data, server_addr, |state| {
+        if let ServerConnectionState::Connected = *state {
+            true
+        } else {
+            false
+        }
+    })
+}
+
+/// Connect to a server.
+///
+/// This function returns, when the client reached the
+/// [`ServerConnectionState::Connecting`] state. Then the client should send the
+/// `clientinit` packet and call [`wait_until_connected`].
+///
+/// [`ServerConnectionState::Connecting`]:
+/// [`wait_until_connected`]:
 pub fn connect(
     data: Rc<RefCell<ClientData>>,
     server_addr: SocketAddr,
@@ -137,7 +167,15 @@ pub fn connect(
     Box::new(
         ClientData::get_packets(data.clone())
             .send((server_addr, packet))
-            .and_then(move |_| connect_wait(data, server_addr)),
+            .and_then(move |_| {
+                wait_for_state(data, server_addr, |state| {
+                    if let ServerConnectionState::Connecting = *state {
+                        true
+                    } else {
+                        false
+                    }
+                })
+            }),
     )
 }
 
@@ -167,15 +205,24 @@ pub fn disconnect(
     let mut command = Command::new("clientdisconnect");
     // Never times out
     //let mut command = Command::new("clientinitiv");
+
     // Reason: Disconnect
     command.push("reasonid", "8");
     command.push("reasonmsg", "Bye");
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
     Box::new(
-        ClientData::get_packets(data)
+        ClientData::get_packets(data.clone())
             .send((server_addr, packet))
-            .map(|_| ()),
+            .and_then(move |_| {
+                wait_for_state(data, server_addr, |state| {
+                    if let ServerConnectionState::Disconnected = *state {
+                        true
+                    } else {
+                        false
+                    }
+                })
+            }),
     )
 }
 
@@ -196,6 +243,10 @@ impl DefaultPacketHandlerStream {
         let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
         let sink2 = sink.clone();
         let inner_stream = Box::new(inner_stream.and_then(move |(addr, packet)| -> BoxFuture<_, _> {
+            // true, if the packet should not be handled further.
+            let mut ignore_packet = false;
+            // If the connection should be removed
+            let mut is_end = false;
             // Check if we have a connection for this server
             let packet_res = {
                 let mut data = data.borrow_mut();
@@ -225,8 +276,9 @@ impl DefaultPacketHandlerStream {
                                         version,
                                     };
 
-                                    Some((state, Packet::new(cheader,
-                                        packets::Data::C2SInit(data))))
+                                    ignore_packet = true;
+                                    Some((state, Some(Packet::new(cheader,
+                                        packets::Data::C2SInit(data)))))
                                 } else {
                                     error!(logger, "Init: Got wrong data in the \
                                         Init1 response packet");
@@ -244,7 +296,7 @@ impl DefaultPacketHandlerStream {
                                 // Use Montgomery Reduction
                                 let xi = BigUint::from_bytes_be(x);
                                 let ni = BigUint::from_bytes_be(n);
-                                // TODO implement Montgomery Reduction, use another thread + timeout
+                                // TODO implement Montgomery Reduction, use another thread + timeout after 5s
                                 fn pow_mod(mut x: BigUint, level: u32, n: &BigUint) -> BigUint {
                                     for _ in 0..level {
                                         x = pow::pow(x, 2).mod_floor(n);
@@ -299,8 +351,9 @@ impl DefaultPacketHandlerStream {
                                     private_key,
                                 };
 
-                                Some((state, Packet::new(cheader,
-                                    packets::Data::C2SInit(data))))
+                                ignore_packet = true;
+                                Some((state, Some(Packet::new(cheader,
+                                    packets::Data::C2SInit(data)))))
                             } else {
                                 None
                             }
@@ -346,46 +399,15 @@ impl DefaultPacketHandlerStream {
                                 error!(logger, "Handle udp init packet"; "error" => ?error);
                                 None
                             } else {
-                                // Compute hash cash
-                                let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-                                    "Compute public key hash cash level", logger.clone(),
-                                    ::slog::Level::Info);
-                                time_reporter.start("Compute public key hash cash level");
-                                let offset = algs::hash_cash(private_key, 8).unwrap();
-                                let omega = base64::encode(&private_key.export_public().unwrap());
-                                time_reporter.finish();
-                                info!(logger, "Computed hash cash level";
-                                    "level" => algs::get_hash_cash_level(&omega, offset),
-                                    "offset" => offset);
-
-                                // TODO Don't create clientinit packet in this library
-                                let header = Header::new(PacketType::Command);
-                                let mut command = Command::new("clientinit");
-                                command.push("client_nickname", "Bot");
-                                command.push("client_version", "3.1.6 [Build: 1502873983]");
-                                command.push("client_platform", "Linux");
-                                command.push("client_input_hardware", "0");
-                                command.push("client_output_hardware", "0");
-                                command.push("client_default_channel", "");
-                                command.push("client_default_channel_password", "");
-                                command.push("client_server_password", "");
-                                command.push("client_meta_data", "");
-                                command.push("client_version_sign", "o+l92HKfiUF+THx2rBsuNjj/S1QpxG1fd5o3Q7qtWxkviR3LI3JeWyc26eTmoQoMTgI3jjHV7dCwHsK1BVu6Aw==");
-                                command.push("client_key_offset", offset.to_string());
-                                command.push("client_nickname_phonetic", "");
-                                command.push("client_default_token", "");
-                                command.push("hwid", "123,456");
-                                let p_data = packets::Data::Command(command);
-                                let clientinit_packet = Packet::new(header, p_data);
-
-                                Some((ServerConnectionState::Connected, clientinit_packet))
+                                Some((ServerConnectionState::Connecting, None))
                             }
                         }
-                        ServerConnectionState::Connected => {
-                            // Handle an initserver
+                        ServerConnectionState::Connecting => {
+                            let mut res = None;
                             if let Packet { data: packets::Data::Command(ref cmd), .. } = packet {
                                 let cmd = cmd.get_commands().remove(0);
                                 if cmd.command == "initserver" && cmd.has_arg("aclid") {
+                                    // Handle an initserver
                                     if let Some(ref mut params) = con.params {
                                         if let Ok(c_id) = cmd.args["aclid"].parse() {
                                             params.c_id = c_id;
@@ -414,9 +436,30 @@ impl DefaultPacketHandlerStream {
                                             update_rtt = Some(diff);
                                         }
                                     }
+                                    res = Some((ServerConnectionState::Connected, None));
                                 }
                             }
-                            None
+                            res
+                        }
+                        ServerConnectionState::Connected => {
+                            let mut res = None;
+                            if let Packet { data: packets::Data::Command(ref cmd), .. } = packet {
+                                let cmd = cmd.get_commands().remove(0);
+                                if cmd.command == "notifyclientleftview" && cmd.has_arg("clid") {
+                                    // Handle a disconnect
+                                    if let Some(ref mut params) = con.params {
+                                        if cmd.args["clid"].parse() == Ok(params.c_id) {
+                                            is_end = true;
+                                            res = Some((ServerConnectionState::Disconnected, None));
+                                        }
+                                    }
+                                }
+                            }
+                            res
+                        }
+                        ServerConnectionState::Disconnected => {
+                            warn!(logger, "Got packet from server after disconnecting");
+                            return Box::new(future::ok(None));
                         }
                     };
                     if let Some((state, packet)) = handle_res {
@@ -424,8 +467,7 @@ impl DefaultPacketHandlerStream {
                             con.update_srtt(rtt);
                         }
                         con.state.state = state;
-                        let mut listeners = Vec::new();
-                        mem::swap(&mut listeners, &mut con.state.state_change_listener);
+                        let listeners = mem::replace(&mut con.state.state_change_listener, Vec::new());
                         Some((listeners, packet))
                     } else {
                         None
@@ -434,41 +476,63 @@ impl DefaultPacketHandlerStream {
                     None
                 }
             };
+
+            if is_end {
+                // Remove the connection
+                let mut data = data.borrow_mut();
+                data.connections.remove(&addr);
+            }
+
             if let Some((mut listeners, p)) = packet_res {
                 // Notify state changed listeners
                 let l_fut = future::join_all(listeners.drain(..).map(|mut l| l()).collect::<Vec<_>>());
 
-                if let packets::Data::Command(ref cmd) = p.data {
-                    if cmd.command == "clientinit" {
-                        if !send_clientinit {
-                            return Box::new(l_fut.and_then(|_| future::ok(None)));
+                if let Some(p) = p {
+                    if let packets::Data::Command(ref cmd) = p.data {
+                        if cmd.command == "clientinit" {
+                            if !send_clientinit {
+                                return Box::new(l_fut.and_then(move |_| future::ok(None)));
+                            }
                         }
                     }
-                }
-                // Take sink
-                let mut tmp_sink = Either::B(None);
-                mem::swap(&mut tmp_sink, &mut *sink.borrow_mut());
-                let tmp_sink = if let Either::A(sink) = tmp_sink {
-                    sink
+                    // Take sink
+                    let tmp_sink = mem::replace(&mut *sink.borrow_mut(), Either::B(None));
+                    let tmp_sink = if let Either::A(sink) = tmp_sink {
+                        sink
+                    } else {
+                        unreachable!("Sink is not available");
+                    };
+                    // Send the packet
+                    let sink = sink.clone();
+                    Box::new(l_fut.and_then(move |_| tmp_sink.send((addr, p)).map(move |tmp_sink| {
+                        let s: Either<InnerSink, Option<Task>> = mem::replace(&mut *sink.borrow_mut(), Either::A(tmp_sink));
+                        if let Either::B(Some(task)) = s {
+                            // Notify the task, that the sink is available
+                            task.notify();
+                        }
+                        // Already handled
+                        if ignore_packet {
+                            None
+                        } else {
+                            Some((addr, packet))
+                        }
+                    })))
                 } else {
-                    unreachable!("Sink is not available");
-                };
-                // Send the packet
-                let sink = sink.clone();
-                Box::new(l_fut.and_then(move |_| tmp_sink.send((addr, p)).map(move |tmp_sink| {
-                    let mut s: Either<InnerSink, Option<Task>> = Either::A(tmp_sink);
-                    mem::swap(&mut s, &mut *sink.borrow_mut());
-                    if let Either::B(Some(task)) = s {
-                        // Notify the task, that the sink is available
-                        task.notify();
-                    }
-                    // Already handled
-                    None
-                })))
+                    Box::new(l_fut.and_then(move |_| if ignore_packet {
+                        future::ok(None)
+                    } else {
+                        future::ok(Some((addr, packet)))
+                    }))
+                }
             } else {
-                Box::new(future::ok(Some((addr, packet))))
+                if ignore_packet {
+                    Box::new(future::ok(None))
+                } else {
+                    Box::new(future::ok(Some((addr, packet))))
+                }
             }
-        }).filter_map(|o| o));
+        })
+        .filter_map(|p| p));
         (Self { inner_stream }, sink2)
     }
 }

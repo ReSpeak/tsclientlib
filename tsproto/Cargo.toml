@@ -27,7 +27,6 @@ num = "0.1"
 num-derive = "0.1"
 rand = "0.3"
 ring = "0.12"
-slog = "2"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
@@ -35,6 +34,10 @@ tomcrypt = "0.1"
 tokio-core = "0.1"
 #quicklz = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
+
+[dependencies.slog]
+version = "2"
+features = ["max_level_debug", "release_max_level_debug"]
 
 [dev-dependencies]
 structopt = "0.1"

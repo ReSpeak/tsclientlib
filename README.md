@@ -35,8 +35,8 @@ That said, we do not want to harm the company behind TeamSpeak because we like t
 
 Thanks TeamSpeak for your software!
 
-License
--------
+## License
+
 Licensed under either of
 
  * [Apache License, Version 2.0](LICENSE-APACHE)

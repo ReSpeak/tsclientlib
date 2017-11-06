@@ -4,8 +4,8 @@ use std::u64;
 use {tomcrypt, base64};
 use byteorder::{NetworkEndian, WriteBytesExt};
 use num::BigUint;
-use ring::digest;
 use quicklz::CompressionLevel;
+use ring::digest;
 
 use Result;
 use packets::*;
