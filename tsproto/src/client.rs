@@ -333,6 +333,7 @@ impl DefaultPacketHandlerStream {
                                 let mut command = Command::new("clientinitiv");
                                 command.push("alpha", alpha_s);
                                 command.push("omega", omega_s);
+                                command.push("ot", "1");
                                 command.push("ip", "");
 
                                 let cheader = create_init_header();
@@ -399,6 +400,7 @@ impl DefaultPacketHandlerStream {
                                 error!(logger, "Handle udp init packet"; "error" => ?error);
                                 None
                             } else {
+                                ignore_packet = true;
                                 Some((ServerConnectionState::Connecting, None))
                             }
                         }
