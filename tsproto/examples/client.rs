@@ -61,7 +61,6 @@ fn connect(
             "level" => algs::get_hash_cash_level(&omega, offset),
             "offset" => offset);
 
-
         // Create clientinit packet
         let header = Header::new(PacketType::Command);
         let mut command = commands::Command::new("clientinit");
@@ -104,12 +103,14 @@ fn main() {
         slog::Logger::root(drain, o!())
     };
 
-    let mut c = client::ClientData::new(
+    let c = client::ClientData::new(
         args.local_address,
         core.handle(),
         true,
         logger.clone(),
     ).unwrap();
+
+    // Packet encoding
     client::default_setup(c.clone());
 
     // Listen for packets
@@ -142,7 +143,7 @@ fn main() {
     core.run(sink.send((args.address, packet.clone()))).unwrap();
 
     // Wait some time
-    let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
+    let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();
     core.run(action).unwrap();
 
     // Disconnect
@@ -150,8 +151,7 @@ fn main() {
         .unwrap();
     info!(logger, "Disconnected");
 
-    return;
-
+    /*
     // Benchmark reconnecting
     let count = 20;
     let mut time_reporter = slog_perf::TimeReporter::new_with_level(
@@ -213,4 +213,5 @@ fn main() {
         dur.as_secs(),
         dur.subsec_nanos() / 1000000
     );
+    */
 }

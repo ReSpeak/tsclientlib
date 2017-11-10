@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use futures::{self, Sink, Stream};
 use slog::Logger;
@@ -88,7 +88,7 @@ pub struct UdpPacketStreamLogger<
     CS,
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     inner: Inner,
     logger: Logger,
 }
@@ -102,7 +102,7 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
         logger: Logger,
     ) -> Self {
         Self {
-            data,
+            data: Rc::downgrade(&data),
             inner,
             logger,
         }
@@ -117,10 +117,11 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
         if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
+            let data = self.data.upgrade().unwrap();
             PacketLogger::log_udp_packet(
                 &self.logger,
                 addr,
-                self.data.borrow().is_client,
+                data.borrow().is_client,
                 true,
                 packet,
             );
@@ -133,7 +134,7 @@ pub struct UdpPacketSinkLogger<
     CS,
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     inner: Inner,
     logger: Logger,
     /// The buffer to save a packet that is already logged.
@@ -150,7 +151,7 @@ impl<
         logger: Logger,
     ) -> Self {
         Self {
-            data,
+            data: Rc::downgrade(&data),
             inner,
             logger,
             buf: None,
@@ -177,10 +178,11 @@ impl<
             }
         }
 
+        let data = self.data.upgrade().unwrap();
         PacketLogger::log_udp_packet(
             &self.logger,
             addr,
-            self.data.borrow().is_client,
+            data.borrow().is_client,
             false,
             &packet,
         );
@@ -215,7 +217,7 @@ pub struct PacketStreamLogger<
     CS,
     Inner: Stream<Item = (SocketAddr, Packet), Error = Error>,
 > {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     inner: Inner,
     logger: Logger,
 }
@@ -228,7 +230,7 @@ impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
         logger: Logger,
     ) -> Self {
         Self {
-            data,
+            data: Rc::downgrade(&data),
             inner,
             logger,
         }
@@ -243,10 +245,11 @@ impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
         if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
+            let data = self.data.upgrade().unwrap();
             PacketLogger::log_packet(
                 &self.logger,
                 addr,
-                self.data.borrow().is_client,
+                data.borrow().is_client,
                 true,
                 packet,
             );
@@ -259,7 +262,7 @@ pub struct PacketSinkLogger<
     CS,
     Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>,
 > {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     inner: Inner,
     logger: Logger,
 }
@@ -272,7 +275,7 @@ impl<CS, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
         logger: Logger,
     ) -> Self {
         Self {
-            data,
+            data: Rc::downgrade(&data),
             inner,
             logger,
         }
@@ -288,10 +291,11 @@ impl<CS, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>> Sink
         &mut self,
         (addr, packet): Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
         PacketLogger::log_packet(
             &self.logger,
             addr,
-            self.data.borrow().is_client,
+            data.borrow().is_client,
             false,
             &packet,
         );

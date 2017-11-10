@@ -242,6 +242,7 @@ impl DefaultPacketHandlerStream {
     ) -> (Self, Rc<RefCell<Either<InnerSink, Option<Task>>>>) {
         let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
         let sink2 = sink.clone();
+        let data = Rc::downgrade(&data);
         let inner_stream = Box::new(inner_stream.and_then(move |(addr, packet)| -> BoxFuture<_, _> {
             // true, if the packet should not be handled further.
             let mut ignore_packet = false;
@@ -249,6 +250,7 @@ impl DefaultPacketHandlerStream {
             let mut is_end = false;
             // Check if we have a connection for this server
             let packet_res = {
+                let data = data.upgrade().unwrap();
                 let mut data = data.borrow_mut();
                 let logger = data.logger.clone();
                 let data = &mut *data;
@@ -481,6 +483,7 @@ impl DefaultPacketHandlerStream {
 
             if is_end {
                 // Remove the connection
+                let data = data.upgrade().unwrap();
                 let mut data = data.borrow_mut();
                 data.connections.remove(&addr);
             }
@@ -647,15 +650,14 @@ impl
         Box<Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>,
     > {
     pub fn apply(data: Rc<RefCell<ClientData>>, send_clientinit: bool) {
-        let data2 = data.clone();
-        let mut data = data.borrow_mut();
-        let handler = Self::new(
-            data2.clone(),
-            data.packet_stream.take().unwrap(),
-            data.packet_sink.take().unwrap(),
-            send_clientinit,
-        );
+        let (stream, sink) = {
+            let mut data = data.borrow_mut();
+            (data.packet_stream.take().unwrap(),
+                data.packet_sink.take().unwrap())
+        };
+        let handler = Self::new(data.clone(), stream, sink, send_clientinit);
         let (sink, stream) = handler.split();
+        let mut data = data.borrow_mut();
         data.packet_stream = Some(Box::new(stream));
         data.packet_sink = Some(Box::new(sink));
     }

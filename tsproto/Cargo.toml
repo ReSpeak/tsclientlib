@@ -30,8 +30,8 @@ ring = "0.12"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
-tomcrypt = "0.1"
 tokio-core = "0.1"
+tomcrypt = "0.1"
 #quicklz = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
 

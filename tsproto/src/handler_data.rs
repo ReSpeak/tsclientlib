@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::cmp::{Ord, Ordering};
 use std::collections::BinaryHeap;
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::u16;
 
 use {slog, slog_async, slog_term};
@@ -104,7 +104,7 @@ pub struct Data<ConnectionState> {
 /// [`UdpPacket`]: ../packets/struct.UdpPacket.html
 /// [`Data`]: struct.Data.html
 pub struct DataUdpPackets<CS> {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
 }
 
 /// A `Stream` and `Sink` of [`Packet`]s, which always references the current
@@ -113,7 +113,7 @@ pub struct DataUdpPackets<CS> {
 /// [`Packet`]: ../packets/struct.Packet.html
 /// [`Data`]: struct.Data.html
 pub struct DataPackets<CS> {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
 }
 
 /// Represents a currently alive connection.
@@ -286,13 +286,13 @@ impl<CS: 'static> Data<CS> {
     /// Gives a `Stream` and `Sink` of `UdpPacket`s, which always references the
     /// current stream in the `Data` struct.
     pub fn get_udp_packets(data: Rc<RefCell<Self>>) -> DataUdpPackets<CS> {
-        DataUdpPackets { data }
+        DataUdpPackets { data: Rc::downgrade(&data) }
     }
 
     /// Gives a `Stream` and `Sink` of `Packet`s, which always references the
     /// current stream in the `Data` struct.
     pub fn get_packets(data: Rc<RefCell<Self>>) -> DataPackets<CS> {
-        DataPackets { data }
+        DataPackets { data: Rc::downgrade(&data) }
     }
 }
 
@@ -301,15 +301,16 @@ impl<CS> Stream for DataUdpPackets<CS> {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        let data = self.data.upgrade().unwrap();
         let (mut stream, raw) = {
-            let mut data = self.data.borrow_mut();
+            let mut data = data.borrow_mut();
             data.udp_packet_stream
                 .take()
                 .map(|s| (s, false))
                 .unwrap_or_else(|| (data.raw_stream.take().unwrap(), true))
         };
         let res = stream.poll();
-        let mut data = self.data.borrow_mut();
+        let mut data = data.borrow_mut();
         if raw {
             data.raw_stream = Some(stream);
         } else {
@@ -327,15 +328,16 @@ impl<CS> Sink for DataUdpPackets<CS> {
         &mut self,
         item: Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
         let (mut sink, raw) = {
-            let mut data = self.data.borrow_mut();
+            let mut data = data.borrow_mut();
             data.udp_packet_sink
                 .take()
                 .map(|s| (s, false))
                 .unwrap_or_else(|| (data.raw_sink.take().unwrap(), true))
         };
         let res = sink.start_send(item);
-        let mut data = self.data.borrow_mut();
+        let mut data = data.borrow_mut();
         if raw {
             data.raw_sink = Some(sink);
         } else {
@@ -345,15 +347,16 @@ impl<CS> Sink for DataUdpPackets<CS> {
     }
 
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
         let (mut sink, raw) = {
-            let mut data = self.data.borrow_mut();
+            let mut data = data.borrow_mut();
             data.udp_packet_sink
                 .take()
                 .map(|s| (s, false))
                 .unwrap_or_else(|| (data.raw_sink.take().unwrap(), true))
         };
         let res = sink.poll_complete();
-        let mut data = self.data.borrow_mut();
+        let mut data = data.borrow_mut();
         if raw {
             data.raw_sink = Some(sink);
         } else {
@@ -363,15 +366,16 @@ impl<CS> Sink for DataUdpPackets<CS> {
     }
 
     fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
         let (mut sink, raw) = {
-            let mut data = self.data.borrow_mut();
+            let mut data = data.borrow_mut();
             data.udp_packet_sink
                 .take()
                 .map(|s| (s, false))
                 .unwrap_or_else(|| (data.raw_sink.take().unwrap(), true))
         };
         let res = sink.close();
-        let mut data = self.data.borrow_mut();
+        let mut data = data.borrow_mut();
         if raw {
             data.raw_sink = Some(sink);
         } else {
@@ -386,13 +390,14 @@ impl<CS> Stream for DataPackets<CS> {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let mut stream = self.data
+        let data = self.data.upgrade().unwrap();
+        let mut stream = data
             .borrow_mut()
             .packet_stream
             .take()
             .expect("Packet stream not available");
         let res = stream.poll();
-        self.data.borrow_mut().packet_stream = Some(stream);
+        data.borrow_mut().packet_stream = Some(stream);
         res
     }
 }
@@ -405,35 +410,38 @@ impl<CS> Sink for DataPackets<CS> {
         &mut self,
         item: Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let mut sink = self.data
+        let data = self.data.upgrade().unwrap();
+        let mut sink = data
             .borrow_mut()
             .packet_sink
             .take()
             .expect("Packet sink not available");
         let res = sink.start_send(item);
-        self.data.borrow_mut().packet_sink = Some(sink);
+        data.borrow_mut().packet_sink = Some(sink);
         res
     }
 
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let mut sink = self.data
+        let data = self.data.upgrade().unwrap();
+        let mut sink = data
             .borrow_mut()
             .packet_sink
             .take()
             .expect("Packet sink not available");
         let res = sink.poll_complete();
-        self.data.borrow_mut().packet_sink = Some(sink);
+        data.borrow_mut().packet_sink = Some(sink);
         res
     }
 
     fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let mut sink = self.data
+        let data = self.data.upgrade().unwrap();
+        let mut sink = data
             .borrow_mut()
             .packet_sink
             .take()
             .expect("Packet sink not available");
         let res = sink.close();
-        self.data.borrow_mut().packet_sink = Some(sink);
+        data.borrow_mut().packet_sink = Some(sink);
         res
     }
 }

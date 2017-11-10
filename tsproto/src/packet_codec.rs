@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::io::Cursor;
 use std::mem;
 use std::net::{self, SocketAddr};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::time::Instant;
 use std::u16;
 
@@ -25,7 +25,7 @@ pub struct PacketCodecStream<
     CS,
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     inner: Inner,
     receive_buffer: Vec<Packet>,
     receive_addr: SocketAddr,
@@ -36,7 +36,7 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
     PacketCodecStream<CS, Inner> {
     pub fn new(data: Rc<RefCell<Data<CS>>>, inner: Inner) -> Self {
         Self {
-            data,
+            data: Rc::downgrade(&data),
             inner,
             receive_buffer: Vec::new(),
             receive_addr: SocketAddr::new(
@@ -216,7 +216,8 @@ impl<
             // Wrap in a closure so try! can be used
             futures::Async::Ready(Some((addr, UdpPacket(mut udp_packet)))) => {
                 (|| {
-                    let mut data = self.data.borrow_mut();
+                    let data = self.data.upgrade().unwrap();
+                    let mut data = data.borrow_mut();
                     let is_client = data.is_client;
                     let (header, pos) = {
                         let mut r = Cursor::new(&udp_packet);
@@ -495,7 +496,8 @@ impl<
         if let Err(error) = res {
             // Log error
             let description = error.description();
-            error!(self.data.borrow().logger,
+            let data = self.data.upgrade().unwrap();
+            error!(data.borrow().logger,
                 "Receiving packet"; "error" => description);
             // Wait for more packets
             task::current().notify();
@@ -511,7 +513,7 @@ pub struct PacketCodecSink<
     CS,
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     inner: Inner,
     send_buffer: Vec<UdpPacket>,
     send_addr: SocketAddr,
@@ -536,7 +538,7 @@ impl<
         }));
 
         Self {
-            data,
+            data: Rc::downgrade(&data),
             inner,
             send_buffer: Vec::new(),
             send_addr: SocketAddr::new(
@@ -574,7 +576,8 @@ impl<
         let p_type = packet.header.get_type();
         let mut start_p_id = 0;
         let mut packets = {
-            let mut data = self.data.borrow_mut();
+            let data = self.data.upgrade().unwrap();
+            let mut data = data.borrow_mut();
             let is_client = data.is_client;
             let use_newprotocol = (packet.header.get_type()
                 == PacketType::Command
@@ -684,7 +687,7 @@ impl<
         if p_type.is_command() {
             for p in packets {
                 Data::add_outgoing_packet(
-                    self.data.clone(),
+                    self.data.upgrade().unwrap(),
                     p_type,
                     start_p_id,
                     (addr, p),
@@ -780,7 +783,7 @@ impl Stream for AckHandler {
 }
 
 struct ResendFuture<CS> {
-    data: Rc<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CS>>>,
     sink: Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>,
     /// The future to wake us up after a certain time.
     timeout: Timeout,
@@ -795,7 +798,7 @@ impl<CS> ResendFuture<CS> {
     ) -> Self {
         let handle = data.borrow().handle.clone();
         Self {
-            data,
+            data: Rc::downgrade(&data),
             sink,
             timeout: Timeout::new(
                 Duration::seconds(1).to_std().unwrap(),
@@ -812,17 +815,18 @@ impl<CS> Future for ResendFuture<CS> {
 
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
         // Set task
-        self.data.borrow_mut().resend_task = Some(task::current());
+        let data = self.data.upgrade().unwrap();
+        data.borrow_mut().resend_task = Some(task::current());
         if self.is_sending {
             if let futures::Async::Ready(()) = self.sink.poll_complete()? {
                 self.is_sending = false;
             }
         }
 
-        let logger = self.data.borrow().logger.clone();
+        let logger = data.borrow().logger.clone();
         let now = Utc::now();
         while let Some(rec) = {
-            let mut data = self.data.borrow_mut();
+            let mut data = data.borrow_mut();
             /*let mut q = ::std::collections::BinaryHeap::new();
             mem::swap(&mut q, &mut data.send_queue);
             let v = q.into_sorted_vec();
@@ -851,7 +855,7 @@ impl<CS> Future for ResendFuture<CS> {
             if let futures::AsyncSink::NotReady(_) =
                 self.sink.start_send(rec.packet.clone())?
             {
-                self.data.borrow_mut().send_queue.push(rec);
+                data.borrow_mut().send_queue.push(rec);
                 break;
             } else {
                 if let futures::Async::Ready(()) = self.sink.poll_complete()? {
@@ -862,7 +866,7 @@ impl<CS> Future for ResendFuture<CS> {
                 // Retransmission timeout
                 let rto = {
                     // Get connection
-                    let mut data = self.data.borrow_mut();
+                    let mut data = data.borrow_mut();
                     if let Some(con) = data.connections.get_mut(&rec.packet.0) {
                         // Double srtt on packet loss
                         if rec.tries != 0 {
@@ -887,14 +891,14 @@ impl<CS> Future for ResendFuture<CS> {
                     ..rec
                 };
                 if rec.tries != 1 {
-                    let to_s = if self.data.borrow().is_client {
+                    let to_s = if data.borrow().is_client {
                         "S"
                     } else {
                         "C"
                     };
                     warn!(logger, "Resend"; "p_id" => rec.p_id, "tries" => rec.tries, "next" => %rec.next, "to" => to_s);
                 }
-                self.data.borrow_mut().send_queue.push(rec);
+                data.borrow_mut().send_queue.push(rec);
             }
         }
         Ok(futures::Async::NotReady)
