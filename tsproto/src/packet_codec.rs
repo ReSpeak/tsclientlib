@@ -216,7 +216,11 @@ impl<
             // Wrap in a closure so try! can be used
             futures::Async::Ready(Some((addr, UdpPacket(mut udp_packet)))) => {
                 (|| {
-                    let data = self.data.upgrade().unwrap();
+                    let data = if let Some(data) = self.data.upgrade() {
+                        data
+                    } else {
+                        return Ok(futures::Async::Ready(None));
+                    };
                     let mut data = data.borrow_mut();
                     let is_client = data.is_client;
                     let (header, pos) = {
@@ -496,7 +500,11 @@ impl<
         if let Err(error) = res {
             // Log error
             let description = error.description();
-            let data = self.data.upgrade().unwrap();
+            let data = if let Some(data) = self.data.upgrade() {
+                data
+            } else {
+                return Ok(futures::Async::Ready(None));
+            };
             error!(data.borrow().logger,
                 "Receiving packet"; "error" => description);
             // Wait for more packets
@@ -815,7 +823,11 @@ impl<CS> Future for ResendFuture<CS> {
 
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
         // Set task
-        let data = self.data.upgrade().unwrap();
+        let data = if let Some(data) = self.data.upgrade() {
+            data
+        } else {
+            return Ok(futures::Async::NotReady);
+        };
         data.borrow_mut().resend_task = Some(task::current());
         if self.is_sending {
             if let futures::Async::Ready(()) = self.sink.poll_complete()? {

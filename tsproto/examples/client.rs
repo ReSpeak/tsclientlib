@@ -103,7 +103,7 @@ fn main() {
         slog::Logger::root(drain, o!())
     };
 
-    let c = client::ClientData::new(
+    let mut c = client::ClientData::new(
         args.local_address,
         core.handle(),
         true,
@@ -151,7 +151,8 @@ fn main() {
         .unwrap();
     info!(logger, "Disconnected");
 
-    /*
+    return;
+
     // Benchmark reconnecting
     let count = 20;
     let mut time_reporter = slog_perf::TimeReporter::new_with_level(
@@ -162,11 +163,10 @@ fn main() {
     time_reporter.start("Connections");
     let start = Instant::now();
     for _ in 0..count {
-        if false {
+        if true {
             // The TS server does not accept the 3rd reconnect from the same port
-            let action =
-                Timeout::new(Duration::from_secs(4), &core.handle()).unwrap();
-            core.run(action).unwrap();
+            //let action = Timeout::new(Duration::from_millis(20), &core.handle()).unwrap();
+            //core.run(action).unwrap();
         } else {
             c = client::ClientData::new(
                 args.local_address,
@@ -213,5 +213,4 @@ fn main() {
         dur.as_secs(),
         dur.subsec_nanos() / 1000000
     );
-    */
 }

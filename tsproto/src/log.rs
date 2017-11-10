@@ -117,7 +117,11 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
         if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
-            let data = self.data.upgrade().unwrap();
+            let data = if let Some(data) = self.data.upgrade() {
+                data
+            } else {
+                return Ok(futures::Async::Ready(None));
+            };
             PacketLogger::log_udp_packet(
                 &self.logger,
                 addr,
@@ -245,7 +249,11 @@ impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
         if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
-            let data = self.data.upgrade().unwrap();
+            let data = if let Some(data) = self.data.upgrade() {
+                data
+            } else {
+                return Ok(futures::Async::Ready(None));
+            };
             PacketLogger::log_packet(
                 &self.logger,
                 addr,

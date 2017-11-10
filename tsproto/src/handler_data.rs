@@ -237,7 +237,7 @@ impl<CS: 'static> Data<CS> {
             slog::Logger::root(drain, o!())
         });
 
-        // TODO Don't create socket in this library
+        // Create the socket
         let socket = UdpSocket::bind(&local_addr, &handle)?;
         let local_addr = socket.local_addr().unwrap_or(local_addr);
         let (sink, stream) = socket.framed(TsCodec::default()).split();
@@ -301,7 +301,11 @@ impl<CS> Stream for DataUdpPackets<CS> {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = self.data.upgrade().unwrap();
+        let data = if let Some(data) = self.data.upgrade() {
+            data
+        } else {
+            return Ok(futures::Async::Ready(None));
+        };
         let (mut stream, raw) = {
             let mut data = data.borrow_mut();
             data.udp_packet_stream
@@ -390,7 +394,11 @@ impl<CS> Stream for DataPackets<CS> {
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = self.data.upgrade().unwrap();
+        let data = if let Some(data) = self.data.upgrade() {
+            data
+        } else {
+            return Ok(futures::Async::Ready(None));
+        };
         let mut stream = data
             .borrow_mut()
             .packet_stream
