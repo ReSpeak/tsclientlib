@@ -18,6 +18,7 @@ use commands::Command;
 use handler_data::*;
 use handler_data::Data;
 use packets::*;
+use resend::ResendFuture;
 
 /// The data of our client.
 pub type ClientData = Data<ServerConnectionData>;
@@ -36,10 +37,7 @@ pub enum ServerConnectionState {
     /// After `Init2` was sent.
     Init2 { version: u32 },
     /// After `Init4` was sent.
-    ClientInitIv {
-        alpha: [u8; 10],
-        private_key: tomcrypt::EccKey,
-    },
+    ClientInitIv { alpha: [u8; 10] },
     /// The initial handshake is done and the next packet has to be
     /// `clientinit`.
     Connecting,
@@ -75,6 +73,19 @@ pub fn default_setup(data: Rc<RefCell<ClientData>>) {
 
     // Default handlers
     DefaultPacketHandler::apply(data.clone(), true);
+
+    // Resend packets
+    let resend_future = ResendFuture::new(
+        data.clone(),
+        Box::new(Data::get_udp_packets(data.clone())),
+    );
+    let (handle, logger) = {
+        let data = data.borrow();
+        (data.handle.clone(), data.logger.clone())
+    };
+    handle.spawn(resend_future.map_err(move |e| {
+        error!(logger, "Resend"; "error" => ?e);
+    }));
 }
 
 /// Wait until a client reaches a certain state.
@@ -179,53 +190,6 @@ pub fn connect(
     )
 }
 
-/// Disconnect from a server
-pub fn disconnect(
-    data: Rc<RefCell<ClientData>>,
-    server_addr: SocketAddr,
-) -> BoxFuture<(), Error> {
-    {
-        // Check if we are connected to this server
-        let data = data.borrow();
-        if let Some(con) = data.connections.get(&server_addr) {
-            if let ServerConnectionState::Connected = con.state.state {
-            } else {
-                return Box::new(future::err(
-                    "Cannot disconnect from connection when not connected"
-                        .into(),
-                ));
-            }
-        } else {
-            return Box::new(future::err(
-                "Cannot disconnect from unknown connection".into(),
-            ));
-        }
-    }
-    let header = Header::new(PacketType::Command);
-    let mut command = Command::new("clientdisconnect");
-    // Never times out
-    //let mut command = Command::new("clientinitiv");
-
-    // Reason: Disconnect
-    command.push("reasonid", "8");
-    command.push("reasonmsg", "Bye");
-    let p_data = packets::Data::Command(command);
-    let packet = Packet::new(header, p_data);
-    Box::new(
-        ClientData::get_packets(data.clone())
-            .send((server_addr, packet))
-            .and_then(move |_| {
-                wait_for_state(data, server_addr, |state| {
-                    if let ServerConnectionState::Disconnected = *state {
-                        true
-                    } else {
-                        false
-                    }
-                })
-            }),
-    )
-}
-
 pub struct DefaultPacketHandlerStream {
     inner_stream: Box<Stream<Item = (SocketAddr, Packet), Error = Error>>,
 }
@@ -265,8 +229,6 @@ impl DefaultPacketHandlerStream {
                                 if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
                                     // The packet is correct.
                                     // Send next init packet
-                                    let mut mac = [0; 8];
-                                    mac.copy_from_slice(b"TS3INIT1");
                                     let cheader = create_init_header();
                                     let data = C2SInit::Init2 {
                                         version: version,
@@ -316,14 +278,7 @@ impl DefaultPacketHandlerStream {
                                       "y" => %yi);
                                 let y = algs::biguint_to_array(&yi);
 
-                                // Create ECDH key
-                                //let prng = tomcrypt::sprng();
-                                //let mut private_key = tryf!(tomcrypt::EccKey::new(prng, 32));
-                                let mut private_key = tryf!(tomcrypt::EccKey::import(
-                                    &base64::decode("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-                                        k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-                                        DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap()));
-                                let omega = tryf!(private_key.export_public());
+                                let omega = tryf!(data.private_key.export_public());
 
                                 // Create the command string
                                 let mut rng = rand::thread_rng();
@@ -351,7 +306,6 @@ impl DefaultPacketHandlerStream {
 
                                 let state = ServerConnectionState::ClientInitIv {
                                     alpha,
-                                    private_key,
                                 };
 
                                 ignore_packet = true;
@@ -361,7 +315,8 @@ impl DefaultPacketHandlerStream {
                                 None
                             }
                         }
-                        ServerConnectionState::ClientInitIv { ref alpha, ref mut private_key } => {
+                        ServerConnectionState::ClientInitIv { ref alpha } => {
+                            let private_key = &mut data.private_key;
                             let res = (|con_params: &mut Option<ConnectedParams>| -> Result<()> {
                                 if let Packet { data: packets::Data::Command(ref command), .. } = packet {
                                     let cmd = command.get_commands().remove(0);
@@ -374,6 +329,9 @@ impl DefaultPacketHandlerStream {
                                         bail!("initivexpand command has wrong arguments");
                                     } else {
                                         let beta_vec = base64::decode(cmd.args["beta"])?;
+                                        if beta_vec.len() != 10 {
+                                            bail!("Incorrect beta length");
+                                        }
                                         let omega = base64::decode(cmd.args["omega"])?;
                                         let mut beta = [0; 10];
                                         beta.copy_from_slice(&beta_vec);
@@ -382,7 +340,7 @@ impl DefaultPacketHandlerStream {
                                         let (iv, mac) = algs::compute_iv_mac(
                                             alpha, &beta, private_key, &mut server_key)?;
                                         let mut params = ConnectedParams::new(
-                                            iv, mac);
+                                            server_key, iv, mac);
                                         // We already sent a command packet.
                                         params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
                                             .1 = 1;
@@ -652,8 +610,10 @@ impl
     pub fn apply(data: Rc<RefCell<ClientData>>, send_clientinit: bool) {
         let (stream, sink) = {
             let mut data = data.borrow_mut();
-            (data.packet_stream.take().unwrap(),
-                data.packet_sink.take().unwrap())
+            (
+                data.packet_stream.take().unwrap(),
+                data.packet_sink.take().unwrap(),
+            )
         };
         let handler = Self::new(data.clone(), stream, sink, send_clientinit);
         let (sink, stream) = handler.split();

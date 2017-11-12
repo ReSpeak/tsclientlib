@@ -69,6 +69,7 @@ pub mod handler_data;
 pub mod log;
 pub mod packets;
 pub mod packet_codec;
+pub mod resend;
 
 type BoxFuture<T, E> = Box<Future<Item = T, Error = E>>;
 type Map<K, V> = std::collections::HashMap<K, V>;

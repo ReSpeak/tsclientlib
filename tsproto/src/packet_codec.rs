@@ -3,22 +3,20 @@ use std::io::Cursor;
 use std::mem;
 use std::net::{self, SocketAddr};
 use std::rc::{Rc, Weak};
-use std::time::Instant;
 use std::u16;
 
-use chrono::{Duration, Utc};
+use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
 use futures::task;
 use num::ToPrimitive;
 use slog;
-use tokio_core::reactor::Timeout;
 
 use {
     packets, BoxFuture, Error, Result, ResultExt, MAX_FRAGMENTS_LENGTH,
     MAX_QUEUE_LEN,
 };
 use algorithms as algs;
-use handler_data::{ConnectedParams, Data, SendRecord};
+use handler_data::{ConnectedParams, Data};
 use packets::*;
 
 pub struct PacketCodecStream<
@@ -532,19 +530,6 @@ impl<
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > PacketCodecSink<CS, Inner> {
     pub fn new(data: Rc<RefCell<Data<CS>>>, inner: Inner) -> Self {
-        let resend_future = ResendFuture::new(
-            data.clone(),
-            Box::new(Data::get_udp_packets(data.clone())),
-        );
-        let (handle, logger) = {
-            let data = data.borrow();
-            (data.handle.clone(), data.logger.clone())
-        };
-        handle.spawn(resend_future.map_err(move |e| {
-            error!(logger, "Resend"; "error" => ?e);
-            ()
-        }));
-
         Self {
             data: Rc::downgrade(&data),
             inner,
@@ -787,132 +772,5 @@ impl Stream for AckHandler {
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         self.inner_stream.poll()
-    }
-}
-
-struct ResendFuture<CS> {
-    data: Weak<RefCell<Data<CS>>>,
-    sink: Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>,
-    /// The future to wake us up after a certain time.
-    timeout: Timeout,
-    /// If we are sending and should poll the sink.
-    is_sending: bool,
-}
-
-impl<CS> ResendFuture<CS> {
-    fn new(
-        data: Rc<RefCell<Data<CS>>>,
-        sink: Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>,
-    ) -> Self {
-        let handle = data.borrow().handle.clone();
-        Self {
-            data: Rc::downgrade(&data),
-            sink,
-            timeout: Timeout::new(
-                Duration::seconds(1).to_std().unwrap(),
-                &handle,
-            ).unwrap(),
-            is_sending: false,
-        }
-    }
-}
-
-impl<CS> Future for ResendFuture<CS> {
-    type Item = ();
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        // Set task
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::NotReady);
-        };
-        data.borrow_mut().resend_task = Some(task::current());
-        if self.is_sending {
-            if let futures::Async::Ready(()) = self.sink.poll_complete()? {
-                self.is_sending = false;
-            }
-        }
-
-        let logger = data.borrow().logger.clone();
-        let now = Utc::now();
-        while let Some(rec) = {
-            let mut data = data.borrow_mut();
-            /*let mut q = ::std::collections::BinaryHeap::new();
-            mem::swap(&mut q, &mut data.send_queue);
-            let v = q.into_sorted_vec();
-            info!(data.logger, "Send queue: {:?}", v.iter().map(|rec| {
-                (rec.p_id, rec.next)
-            }).collect::<Vec<_>>());
-            data.send_queue.extend(v.into_iter());*/
-            if let Some(rec) = data.send_queue.peek() {
-                // Check if we should resend this packet
-                if rec.next > now {
-                    // Schedule next send
-                    let dur = rec.next
-                        .naive_utc()
-                        .signed_duration_since(now.naive_utc());
-                    let next = Instant::now() + dur.to_std().unwrap();
-                    self.timeout.reset(next);
-                    if let futures::Async::Ready(()) = self.timeout.poll()? {
-                        task::current().notify();
-                    }
-                    return Ok(futures::Async::NotReady);
-                }
-            }
-            data.send_queue.pop()
-        } {
-            // Try to resend this packet
-            if let futures::AsyncSink::NotReady(_) =
-                self.sink.start_send(rec.packet.clone())?
-            {
-                data.borrow_mut().send_queue.push(rec);
-                break;
-            } else {
-                if let futures::Async::Ready(()) = self.sink.poll_complete()? {
-                    self.is_sending = false;
-                } else {
-                    self.is_sending = true;
-                }
-                // Retransmission timeout
-                let rto = {
-                    // Get connection
-                    let mut data = data.borrow_mut();
-                    if let Some(con) = data.connections.get_mut(&rec.packet.0) {
-                        // Double srtt on packet loss
-                        if rec.tries != 0 {
-                            con.srtt = con.srtt * 2;
-                        }
-                        con.srtt + con.srtt_dev * 4
-                    } else {
-                        // The connection is gone
-                        continue;
-                    }
-                };
-                let next = now + rto;
-                let dur =
-                    next.naive_utc().signed_duration_since(now.naive_utc());
-                if dur > Duration::seconds(::TIMEOUT_SECONDS) {
-                    warn!(logger, "Max resend timeout exceeded"; "p_id" => rec.p_id);
-                    continue;
-                }
-                let rec = SendRecord {
-                    next,
-                    tries: rec.tries + 1,
-                    ..rec
-                };
-                if rec.tries != 1 {
-                    let to_s = if data.borrow().is_client {
-                        "S"
-                    } else {
-                        "C"
-                    };
-                    warn!(logger, "Resend"; "p_id" => rec.p_id, "tries" => rec.tries, "next" => %rec.next, "to" => to_s);
-                }
-                data.borrow_mut().send_queue.push(rec);
-            }
-        }
-        Ok(futures::Async::NotReady)
     }
 }

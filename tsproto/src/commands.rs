@@ -93,6 +93,15 @@ impl Command {
         }
     }
 
+    /// Remove an argument if it exists.
+    pub fn remove<K: Into<String>>(
+        &mut self,
+        key: K,
+    ) {
+        let key = key.into();
+        self.static_args.retain(|&(ref k, _)| *k != key);
+    }
+
     /// Check, if each list argument is contained in each list.
     pub fn is_valid(&self) -> bool {
         if !self.list_args.is_empty() {
@@ -129,7 +138,7 @@ impl Command {
                         {
                             la.push(cmd.static_args.remove(i));
                         } else {
-                            bail!("Not a valid command list");
+                            // Not a valid command list, but ignore it
                         }
                     }
                     cmd.list_args.insert(0, la);
@@ -196,6 +205,15 @@ impl Command {
         } else {
             false
         }
+    }
+
+    pub fn get_static_arg<K: AsRef<str>>(&self, key: K) -> Option<&str> {
+        let key = key.as_ref();
+        self.static_args.iter().filter_map(|&(ref k, ref v)| if k == key {
+            Some(v.as_str())
+        } else {
+            None
+        }).next()
     }
 
     pub fn get_commands(&self) -> Vec<CanonicalCommand> {
@@ -356,6 +374,12 @@ mod tests {
     #[test]
     fn channellist() {
         let s = b"channellist cid=2 cpid=0 channel_name=Trusted\\sChannel channel_topic channel_codec=0 channel_codec_quality=0 channel_maxclients=0 channel_maxfamilyclients=-1 channel_order=1 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=0 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic channel_icon_id=0 channel_flag_private=0|cid=4 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s1\\s\\p\\sSplamy\xc2\xb4s\\sBett channel_topic channel_codec=4 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=0 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Neo\\sSeebi\\sEvangelion channel_icon_id=0 channel_flag_private=0"; //|cid=6 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s2\\s\\p\\sThe\\sBook\\sof\\sHeavy\\sMetal channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=4 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Not\\senought\\sChannels channel_icon_id=0 channel_flag_private=0|cid=30 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s3\\s\\p\\sSenpai\\sGef\xc3\xa4hrlich channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=6 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=The\\strashcan\\shas\\sthe\\strash channel_icon_id=0 channel_flag_private=0";
+        Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+    }
+
+    #[test]
+    fn subscribe() {
+        let s = b"notifychannelsubscribed cid=2|cid=4 es=3867|cid=5 es=18694|cid=6 es=18694|cid=7 es=18694|cid=11 es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
         Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
     }
 }

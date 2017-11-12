@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::u16;
 
-use {slog, slog_async, slog_term};
+use {slog, slog_async, slog_term, tomcrypt};
 use chrono::{DateTime, Duration, Utc};
 use futures::{self, Sink, Stream};
 use futures::task::Task;
@@ -59,7 +59,9 @@ pub struct Data<ConnectionState> {
     pub is_client: bool,
     /// The address of the socket.
     pub local_addr: SocketAddr,
-    pub(crate) handle: Handle,
+    /// The private key of this instance.
+    pub private_key: tomcrypt::EccKey,
+    pub handle: Handle,
     pub logger: slog::Logger,
 
     /// The raw udp stream.
@@ -123,9 +125,9 @@ pub struct Connection<ConnectionState> {
     /// The parameters of this connection, if it is already established.
     pub params: Option<ConnectedParams>,
     /// Smoothed round trip time.
-    pub(crate) srtt: Duration,
+    pub srtt: Duration,
     /// Deviation of the srtt.
-    pub(crate) srtt_dev: Duration,
+    pub srtt_dev: Duration,
 }
 
 /// Data that has to be stored for a connection when it is connected.
@@ -157,6 +159,7 @@ pub struct ConnectedParams {
     /// If voice packets should be encrypted
     pub voice_encryption: bool,
 
+    pub public_key: tomcrypt::EccKey,
     /// The iv used to encrypt and decrypt packets.
     pub shared_iv: [u8; 20],
     /// The mac used for unencrypted packets.
@@ -188,7 +191,7 @@ impl<State> Connection<State> {
 
 impl ConnectedParams {
     /// Fills the parameters for a connection with their default state.
-    pub fn new(shared_iv: [u8; 20], shared_mac: [u8; 8]) -> Self {
+    pub fn new(public_key: tomcrypt::EccKey, shared_iv: [u8; 20], shared_mac: [u8; 8]) -> Self {
         Self {
             outgoing_p_ids: Default::default(),
             receive_queue: Default::default(),
@@ -196,6 +199,7 @@ impl ConnectedParams {
             incoming_p_ids: Default::default(),
             c_id: 0,
             voice_encryption: true,
+            public_key,
             shared_iv,
             shared_mac,
         }
@@ -224,6 +228,7 @@ impl ConnectedParams {
 impl<CS: 'static> Data<CS> {
     pub fn new<L: Into<Option<slog::Logger>>>(
         local_addr: SocketAddr,
+        private_key: tomcrypt::EccKey,
         handle: Handle,
         is_client: bool,
         logger: L,
@@ -247,6 +252,7 @@ impl<CS: 'static> Data<CS> {
         Ok(Rc::new(RefCell::new(Self {
             is_client,
             local_addr,
+            private_key,
             handle,
             logger,
             udp_packet_stream: Some(raw_stream),
@@ -286,13 +292,17 @@ impl<CS: 'static> Data<CS> {
     /// Gives a `Stream` and `Sink` of `UdpPacket`s, which always references the
     /// current stream in the `Data` struct.
     pub fn get_udp_packets(data: Rc<RefCell<Self>>) -> DataUdpPackets<CS> {
-        DataUdpPackets { data: Rc::downgrade(&data) }
+        DataUdpPackets {
+            data: Rc::downgrade(&data),
+        }
     }
 
     /// Gives a `Stream` and `Sink` of `Packet`s, which always references the
     /// current stream in the `Data` struct.
     pub fn get_packets(data: Rc<RefCell<Self>>) -> DataPackets<CS> {
-        DataPackets { data: Rc::downgrade(&data) }
+        DataPackets {
+            data: Rc::downgrade(&data),
+        }
     }
 }
 
@@ -399,8 +409,7 @@ impl<CS> Stream for DataPackets<CS> {
         } else {
             return Ok(futures::Async::Ready(None));
         };
-        let mut stream = data
-            .borrow_mut()
+        let mut stream = data.borrow_mut()
             .packet_stream
             .take()
             .expect("Packet stream not available");
@@ -419,8 +428,7 @@ impl<CS> Sink for DataPackets<CS> {
         item: Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         let data = self.data.upgrade().unwrap();
-        let mut sink = data
-            .borrow_mut()
+        let mut sink = data.borrow_mut()
             .packet_sink
             .take()
             .expect("Packet sink not available");
@@ -431,8 +439,7 @@ impl<CS> Sink for DataPackets<CS> {
 
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
         let data = self.data.upgrade().unwrap();
-        let mut sink = data
-            .borrow_mut()
+        let mut sink = data.borrow_mut()
             .packet_sink
             .take()
             .expect("Packet sink not available");
@@ -443,8 +450,7 @@ impl<CS> Sink for DataPackets<CS> {
 
     fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
         let data = self.data.upgrade().unwrap();
-        let mut sink = data
-            .borrow_mut()
+        let mut sink = data.borrow_mut()
             .packet_sink
             .take()
             .expect("Packet sink not available");

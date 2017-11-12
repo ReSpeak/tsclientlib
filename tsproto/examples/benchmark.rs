@@ -1,3 +1,5 @@
+//! Benchmark the number of reconnects we can make per second.
+
 extern crate base64;
 extern crate futures;
 #[macro_use]
@@ -15,13 +17,13 @@ extern crate tsproto;
 use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::Instant;
 
 use futures::{future, Future, Sink, Stream};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Timeout};
+use tokio_core::reactor::Core;
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::packets::*;
@@ -147,8 +149,6 @@ fn main() {
         true,
         logger.clone(),
     ).unwrap();
-
-    // Packet encoding
     client::default_setup(c.clone());
 
     // Listen for packets
@@ -158,32 +158,50 @@ fn main() {
         .map_err(|error| println!("Listening error: {:?}", error));
     core.handle().spawn(listen);
 
-    // Connect
-    core.run(connect(logger.clone(), c.clone(), args.address)).unwrap();
-    info!(logger, "Connected");
-
-    // Wait some time
-    let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
-    core.run(action).unwrap();
-    info!(logger, "Waited");
-
-    // Send packet
-    let sink = client::ClientData::get_packets(c.clone());
     let mut header = Header::default();
     header.set_type(PacketType::Command);
     let mut cmd = commands::Command::new("sendtextmessage");
-
     cmd.push("targetmode", "3");
     cmd.push("msg", "Hello");
 
     let packet = Packet::new(header, Data::Command(cmd));
-    core.run(sink.send((args.address, packet.clone()))).unwrap();
 
-    // Wait some time
-    let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();
-    core.run(action).unwrap();
+    // Benchmark reconnecting
+    let count = 20;
+    let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+        "Connection benchmark",
+        logger.clone(),
+        slog::Level::Info,
+    );
+    time_reporter.start("Connections");
+    let start = Instant::now();
+    for _ in 0..count {
+        // The TS server does not accept the 3rd reconnect from the same port
+        //let action = Timeout::new(Duration::from_millis(20), &core.handle()).unwrap();
+        //core.run(action).unwrap();
 
-    // Disconnect
-    core.run(disconnect(logger.clone(), c.clone(), args.address)).unwrap();
-    info!(logger, "Disconnected");
+        info!(logger, "Connecting");
+        core.run(connect(logger.clone(), c.clone(), args.address))
+            .unwrap();
+        info!(logger, "Writing message");
+        let sink = client::ClientData::get_packets(c.clone());
+        core.run(sink.send((args.address, packet.clone()))).unwrap();
+        info!(logger, "Disconnecting");
+        core.run(disconnect(logger.clone(), c.clone(), args.address)).unwrap();
+    }
+    time_reporter.finish();
+    let dur = start.elapsed();
+
+    info!(logger,
+        "{} connects in {}.{:03}s",
+        count,
+        dur.as_secs(),
+        dur.subsec_nanos() / 1000000
+    );
+    let dur = dur / count;
+    info!(logger,
+        "{}.{:03}s per connect",
+        dur.as_secs(),
+        dur.subsec_nanos() / 1000000
+    );
 }
