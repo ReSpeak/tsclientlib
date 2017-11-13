@@ -67,8 +67,8 @@ fn connect(
         command.push("client_nickname", "Bot");
         command.push("client_version", "3.1.6 [Build: 1502873983]");
         command.push("client_platform", "Linux");
-        command.push("client_input_hardware", "0");
-        command.push("client_output_hardware", "0");
+        command.push("client_input_hardware", "1");
+        command.push("client_output_hardware", "1");
         command.push("client_default_channel", "");
         command.push("client_default_channel_password", "");
         command.push("client_server_password", "");
@@ -149,7 +149,7 @@ fn main() {
     ).unwrap();
 
     // Packet encoding
-    client::default_setup(c.clone());
+    client::default_setup(c.clone(), true);
 
     // Listen for packets
     let listen = client::ClientData::get_packets(c.clone())

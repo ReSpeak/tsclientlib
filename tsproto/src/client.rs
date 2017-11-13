@@ -63,13 +63,16 @@ fn create_init_header() -> Header {
 
 /// Configures the default setup chain, including logging and decoding
 /// of packets.
-pub fn default_setup(data: Rc<RefCell<ClientData>>) {
+pub fn default_setup(data: Rc<RefCell<ClientData>>, log: bool) {
     // Packet encoding
     ::packet_codec::PacketCodecSink::apply(data.clone());
     ::packet_codec::PacketCodecStream::apply(data.clone(), true);
-    // Logging
-    ::log::apply_udp_packet_logger(data.clone());
-    ::log::apply_packet_logger(data.clone());
+
+    if log {
+        // Logging
+        ::log::apply_udp_packet_logger(data.clone());
+        ::log::apply_packet_logger(data.clone());
+    }
 
     // Default handlers
     DefaultPacketHandler::apply(data.clone(), true);

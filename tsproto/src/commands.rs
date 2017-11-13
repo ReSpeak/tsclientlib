@@ -8,8 +8,8 @@ use {Map, Result};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub command: String,
-    static_args: Vec<(String, String)>,
-    list_args: Vec<Vec<(String, String)>>,
+    pub static_args: Vec<(String, String)>,
+    pub list_args: Vec<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

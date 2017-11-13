@@ -77,8 +77,10 @@ type Map<K, V> = std::collections::HashMap<K, V>;
 /// The maximum number of bytes for a fragmented packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 const MAX_FRAGMENTS_LENGTH: usize = 40960;
-/// The maximum number of packets that are stored, if they receive out-of-order.
+/// The maximum number of packets which are stored, if they receive out-of-order.
 const MAX_QUEUE_LEN: usize = 50;
+/// The maximum number of not acknowledged packets which are stored.
+const MAX_SEND_QUEUE_LEN: usize = 50;
 /// The maximum decompressed size of a packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;

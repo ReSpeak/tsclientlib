@@ -173,7 +173,8 @@ impl<CS> Future for ResendFuture<CS> {
                     let mut data = data.borrow_mut();
                     if let Some(con) = data.connections.get_mut(&rec.packet.0) {
                         // Double srtt on packet loss
-                        if rec.tries != 0 {
+                        if rec.tries != 0
+                            && con.srtt < Duration::seconds(::TIMEOUT_SECONDS) {
                             con.srtt = con.srtt * 2;
                         }
                         con.srtt + con.srtt_dev * 4

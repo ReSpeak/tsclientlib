@@ -69,12 +69,13 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
             // In order
             let mut packets = Vec::new();
             loop {
-                // Compute packet generation
-                if id < in_ids.1 {
+                // Update next packet id
+                let (next_id, next_gen) = id.overflowing_add(1);
+                if next_gen {
+                    // Next packet generation
                     in_ids.0 = in_ids.0.wrapping_add(1);
                 }
-                // Update next packet id
-                in_ids.1 = id + 1;
+                in_ids.1 = next_id;
 
                 let res_packet = if header.get_fragmented() {
                     if let Some((header, mut frag_queue)) = frag_queue.take() {
@@ -253,12 +254,7 @@ impl<
                                 || p_type == PacketType::AckLow
                                 || in_recv_win
                             {
-                                let mut gen_id =
-                                    params.incoming_p_ids[type_i].0;
-                                // Compute packet generation
-                                if id < cur_next && in_recv_win {
-                                    gen_id = gen_id.wrapping_add(1);
-                                }
+                                let gen_id = params.incoming_p_ids[type_i].0;
 
                                 if !header.get_unencrypted() {
                                     // If it is the first ack packet of a
@@ -288,9 +284,7 @@ impl<
                                             &mut udp_packet,
                                             gen_id,
                                             &params.shared_iv,
-                                        ).chain_err(
-                                            || "Packet decryption failed",
-                                        )?
+                                        ).chain_err(|| "Packet decryption failed")?
                                     }
                                 } else if algs::must_encrypt(header.get_type())
                                 {
@@ -342,8 +336,12 @@ impl<
                                             ));
                                         }
                                         // Update packet ids
-                                        params.incoming_p_ids[type_i] =
-                                            (gen_id, id.wrapping_add(1));
+                                        let id = id.wrapping_add(1);
+                                        if id < params.incoming_p_ids[type_i].1 {
+                                            params.incoming_p_ids[type_i].0 =
+                                                gen_id.wrapping_add(1);
+                                        }
+                                        params.incoming_p_ids[type_i].1 = id;
 
                                         match packets::Data::read(
                                             &header,
@@ -563,6 +561,16 @@ impl<
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         // Check if there are unsent packets in the queue
         if self.poll_complete()? == futures::Async::NotReady {
+            return Ok(futures::AsyncSink::NotReady((addr, packet)));
+        }
+
+        // Check if the send queue is overloaded
+        let send_queue_overloaded = {
+            let data = self.data.upgrade().unwrap();
+            let data = data.borrow();
+            data.send_queue.len() >= ::MAX_SEND_QUEUE_LEN
+        };
+        if send_queue_overloaded {
             return Ok(futures::AsyncSink::NotReady((addr, packet)));
         }
 

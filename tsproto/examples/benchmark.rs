@@ -149,7 +149,7 @@ fn main() {
         true,
         logger.clone(),
     ).unwrap();
-    client::default_setup(c.clone());
+    client::default_setup(c.clone(), true);
 
     // Listen for packets
     let listen = client::ClientData::get_packets(c.clone())
