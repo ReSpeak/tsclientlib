@@ -6,21 +6,20 @@ If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint
 
 ## Projects
 
- - tsproto: The low level library that does the network part
+ - tsproto: The low level library that does the network part. You probably don't want to use that, but a higher level library like tsclientlib.
  - tsproto-commands: Parse commands into structs
  - tsproto-bookkeeping: Store information when connected to a server
+ - tsclientlib: Yet to come
 
 ## Clone
 
 ```
-git clone https://github.com/ReSpeak/tsclientlib.git
-cd tsclientlib
-git submodule update --init --recursive
+git clone --recurse-submodules https://github.com/ReSpeak/tsclientlib.git
 ```
 
 ## Build and run the example client
 
-You need to install rust (preferred installation method is [rustup](https://rustup.rs/)) for building these projects.
+You need to install rust (preferred installation method is [rustup](https://rustup.rs/)) to build these projects.
 
 ```
 cd tsproto
@@ -43,7 +42,3 @@ Licensed under either of
  * [MIT license](LICENSE-MIT)
 
 at your option.
-
-### Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.

@@ -6,6 +6,7 @@ use futures::{self, Sink, Stream};
 use slog::Logger;
 
 use Error;
+use connectionmanager::ConnectionManager;
 use handler_data::Data;
 use packets::{Packet, UdpPacket};
 
@@ -50,7 +51,8 @@ impl PacketLogger {
     }
 }
 
-pub fn apply_udp_packet_logger<CS: 'static>(data: Rc<RefCell<Data<CS>>>) {
+pub fn apply_udp_packet_logger<CM: ConnectionManager + 'static>(
+    data: Rc<RefCell<Data<CM>>>) {
     let data2 = data.clone();
     let mut data = data.borrow_mut();
     let stream = UdpPacketStreamLogger::new(
@@ -67,7 +69,9 @@ pub fn apply_udp_packet_logger<CS: 'static>(data: Rc<RefCell<Data<CS>>>) {
     data.udp_packet_sink = Some(Box::new(sink));
 }
 
-pub fn apply_packet_logger<CS: 'static>(data: Rc<RefCell<Data<CS>>>) {
+/* TODO
+pub fn apply_packet_logger<CM: ConnectionManager + 'static>(
+    data: Rc<RefCell<Data<CM>>>) {
     let data2 = data.clone();
     let mut data = data.borrow_mut();
     let stream = PacketStreamLogger::new(
@@ -82,22 +86,22 @@ pub fn apply_packet_logger<CS: 'static>(data: Rc<RefCell<Data<CS>>>) {
         data.logger.clone(),
     );
     data.packet_sink = Some(Box::new(sink));
-}
+}*/
 
 pub struct UdpPacketStreamLogger<
-    CS,
+    CM: ConnectionManager,
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > {
-    data: Weak<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
 }
 
 // TODO Add into_inner, get_ref, get_mut to all Streams and Sinks
-impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
-    UdpPacketStreamLogger<CS, Inner> {
+impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
+    UdpPacketStreamLogger<CM, Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CS>>>,
+        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
     ) -> Self {
@@ -109,8 +113,8 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
     }
 }
 
-impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
-    for UdpPacketStreamLogger<CS, Inner> {
+impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
+    for UdpPacketStreamLogger<CM, Inner> {
     type Item = (SocketAddr, UdpPacket);
     type Error = Error;
 
@@ -135,10 +139,10 @@ impl<CS, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
 }
 
 pub struct UdpPacketSinkLogger<
-    CS,
+    CM: ConnectionManager,
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > {
-    data: Weak<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
     /// The buffer to save a packet that is already logged.
@@ -146,11 +150,11 @@ pub struct UdpPacketSinkLogger<
 }
 
 impl<
-    CS,
+    CM: ConnectionManager,
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
-> UdpPacketSinkLogger<CS, Inner> {
+> UdpPacketSinkLogger<CM, Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CS>>>,
+        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
     ) -> Self {
@@ -164,9 +168,9 @@ impl<
 }
 
 impl<
-    CS,
+    CM: ConnectionManager,
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
-> Sink for UdpPacketSinkLogger<CS, Inner> {
+> Sink for UdpPacketSinkLogger<CM, Inner> {
     type SinkItem = (SocketAddr, UdpPacket);
     type SinkError = Error;
 
@@ -218,18 +222,18 @@ impl<
 }
 
 pub struct PacketStreamLogger<
-    CS,
+    CM: ConnectionManager,
     Inner: Stream<Item = (SocketAddr, Packet), Error = Error>,
 > {
-    data: Weak<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
 }
 
-impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
-    PacketStreamLogger<CS, Inner> {
+impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
+    PacketStreamLogger<CM, Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CS>>>,
+        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
     ) -> Self {
@@ -241,8 +245,8 @@ impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
     }
 }
 
-impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
-    for PacketStreamLogger<CS, Inner> {
+impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
+    for PacketStreamLogger<CM, Inner> {
     type Item = (SocketAddr, Packet);
     type Error = Error;
 
@@ -267,18 +271,18 @@ impl<CS, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
 }
 
 pub struct PacketSinkLogger<
-    CS,
+    CM: ConnectionManager,
     Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>,
 > {
-    data: Weak<RefCell<Data<CS>>>,
+    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
 }
 
-impl<CS, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
-    PacketSinkLogger<CS, Inner> {
+impl<CM: ConnectionManager, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
+    PacketSinkLogger<CM, Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CS>>>,
+        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
     ) -> Self {
@@ -290,8 +294,8 @@ impl<CS, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
     }
 }
 
-impl<CS, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>> Sink
-    for PacketSinkLogger<CS, Inner> {
+impl<CM: ConnectionManager, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>> Sink
+    for PacketSinkLogger<CM, Inner> {
     type SinkItem = (SocketAddr, Packet);
     type SinkError = Error;
 

@@ -15,16 +15,18 @@ use rand::{self, Rng};
 use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
 use commands::Command;
-use handler_data::*;
+use connection::*;
+use connectionmanager::{ConnectionManager, Resender, SocketConnectionManager};
 use handler_data::Data;
 use packets::*;
 use resend::ResendFuture;
 
 /// The data of our client.
-pub type ClientData = Data<ServerConnectionData>;
-/// Connection to a server from our client.
-pub(crate) type ServerConnection = Connection<ServerConnectionData>;
+pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
+/// Connections from a client to a server.
+pub type ClientConnection = Connection<SocketConnectionManager<ServerConnectionData>>;
 
+#[derive(Default)]
 pub struct ServerConnectionData {
     pub state_change_listener: Vec<Box<FnMut() -> BoxFuture<(), Error>>>,
     pub state: ServerConnectionState,
@@ -32,6 +34,8 @@ pub struct ServerConnectionData {
 
 #[derive(Debug)]
 pub enum ServerConnectionState {
+    /// Default state.
+    Uninitialized,
     /// After `Init0` was sent.
     Init0 { version: u32, random0: [u8; 4] },
     /// After `Init2` was sent.
@@ -45,6 +49,12 @@ pub enum ServerConnectionState {
     Connected,
     /// The connection is finished, no more packets can be sent or received.
     Disconnected,
+}
+
+impl Default for ServerConnectionState {
+    fn default() -> Self {
+        ServerConnectionState::Uninitialized
+    }
 }
 
 fn create_init_header() -> Header {
@@ -64,8 +74,9 @@ fn create_init_header() -> Header {
 /// Configures the default setup chain, including logging and decoding
 /// of packets.
 pub fn default_setup(data: Rc<RefCell<ClientData>>, log: bool) {
+    // TODO setup
     // Packet encoding
-    ::packet_codec::PacketCodecSink::apply(data.clone());
+    /*::packet_codec::PacketCodecSink::apply(data.clone());
     ::packet_codec::PacketCodecStream::apply(data.clone(), true);
 
     if log {
@@ -88,7 +99,7 @@ pub fn default_setup(data: Rc<RefCell<ClientData>>, log: bool) {
     };
     handle.spawn(resend_future.map_err(move |e| {
         error!(logger, "Resend"; "error" => ?e);
-    }));
+    }));*/
 }
 
 /// Wait until a client reaches a certain state.
@@ -102,14 +113,14 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
 ) -> BoxFuture<(), Error> {
     // Return a future that resolves when we are connected
     let data2 = data.clone();
-    if let Some(con) = data.borrow_mut().connections.get_mut(&server_addr) {
-        if f(&con.state.state) {
+    if let Some(state) = data.borrow_mut().connection_manager.get_mut_data(server_addr) {
+        if f(&state.state) {
             return Box::new(future::ok(()));
         }
         // Wait for the next state change
         let (send, recv) = oneshot::channel();
         let mut send = Some(send);
-        con.state.state_change_listener.push(Box::new(move || {
+        state.state_change_listener.push(Box::new(move || {
             send.take().unwrap().send(()).unwrap();
             Box::new(future::ok(()))
         }));
@@ -163,26 +174,27 @@ pub fn connect(
 
     let cheader = create_init_header();
     // Add the connection to the connection list
+    Data::add_connection(data.clone(), Data::create_connection(data.clone(), server_addr));
+
+    // Change the state
+    let data2 = data.clone();
+    let mut data = data.borrow_mut();
     {
-        let mut data = data.borrow_mut();
-        data.connections.insert(
-            server_addr,
-            ServerConnection::new(ServerConnectionData {
-                state_change_listener: Vec::new(),
-                state: ServerConnectionState::Init0 {
-                    version: timestamp,
-                    random0,
-                },
-            }),
-        );
+        let con_data = data.connection_manager.get_mut_data(server_addr).unwrap();
+        con_data.state = ServerConnectionState::Init0 {
+            version: timestamp,
+            random0,
+        };
     }
+
+    let con = data.connection_manager.get_connection(server_addr).unwrap();
+    let packets = Connection::get_packets(con);
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
     Box::new(
-        ClientData::get_packets(data.clone())
-            .send((server_addr, packet))
+        packets.send(packet)
             .and_then(move |_| {
-                wait_for_state(data, server_addr, |state| {
+                wait_for_state(data2, server_addr, |state| {
                     if let ServerConnectionState::Connecting = *state {
                         true
                     } else {
@@ -194,23 +206,25 @@ pub fn connect(
 }
 
 pub struct DefaultPacketHandlerStream {
-    inner_stream: Box<Stream<Item = (SocketAddr, Packet), Error = Error>>,
+    inner_stream: Box<Stream<Item = Packet, Error = Error>>,
 }
 
 impl DefaultPacketHandlerStream {
     pub fn new<
-        InnerStream: Stream<Item = (SocketAddr, Packet), Error = Error> + 'static,
-        InnerSink: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error> + 'static,
+        InnerStream: Stream<Item = Packet, Error = Error> + 'static,
+        InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
     >(
         data: Rc<RefCell<ClientData>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
+        addr: SocketAddr,
         send_clientinit: bool,
     ) -> (Self, Rc<RefCell<Either<InnerSink, Option<Task>>>>) {
         let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
         let sink2 = sink.clone();
+        let logger = data.borrow().logger.clone();
         let data = Rc::downgrade(&data);
-        let inner_stream = Box::new(inner_stream.and_then(move |(addr, packet)| -> BoxFuture<_, _> {
+        let inner_stream = Box::new(inner_stream.and_then(move |packet| -> BoxFuture<_, _> {
             // true, if the packet should not be handled further.
             let mut ignore_packet = false;
             // If the connection should be removed
@@ -219,11 +233,13 @@ impl DefaultPacketHandlerStream {
             let packet_res = {
                 let data = data.upgrade().unwrap();
                 let mut data = data.borrow_mut();
-                let logger = data.logger.clone();
                 let data = &mut *data;
-                if let Some(con) = data.connections.get_mut(&addr) {
-                    let mut update_rtt = None;
-                    let handle_res = match con.state.state {
+                if let Some(con) = data.connection_manager.get_connection(addr) {
+                    let mut con = con.borrow_mut();
+                    let state = data.connection_manager.get_mut_data(addr).unwrap();
+                    let handle_res = match state.state {
+                        ServerConnectionState::Uninitialized =>
+                            unreachable!("ServerConnectionState is uninitialized"),
                         ServerConnectionState::Init0 { version, ref random0 } => {
                             // Handle an Init1
                             if let Packet { data: packets::Data::S2CInit(
@@ -380,27 +396,7 @@ impl DefaultPacketHandlerStream {
                                     }
                                     // initserver is the ack for clientinit
                                     // Remove from send queue
-                                    let p_type = PacketType::Command;
-                                    let p_id = 1;
-                                    let mut rec = None;
-                                    let mut items = data.send_queue.drain()
-                                        .filter_map(|r| if r.p_type == p_type && r.p_id == p_id {
-                                            rec = Some(r);
-                                            None
-                                        } else {
-                                            Some(r)
-                                        })
-                                        .collect();
-                                    mem::swap(&mut items, &mut data.send_queue);
-                                    // Update smoothed round trip time
-                                    if let Some(rec) = rec {
-                                        // Only if it was not resent
-                                        if rec.tries == 1 {
-                                            let now = Utc::now();
-                                            let diff = now.naive_utc().signed_duration_since(rec.sent.naive_utc());
-                                            update_rtt = Some(diff);
-                                        }
-                                    }
+                                    con.resender.ack_packet(PacketType::Command, 1);
                                     res = Some((ServerConnectionState::Connected, None));
                                 }
                             }
@@ -427,12 +423,9 @@ impl DefaultPacketHandlerStream {
                             return Box::new(future::ok(None));
                         }
                     };
-                    if let Some((state, packet)) = handle_res {
-                        if let Some(rtt) = update_rtt {
-                            con.update_srtt(rtt);
-                        }
-                        con.state.state = state;
-                        let listeners = mem::replace(&mut con.state.state_change_listener, Vec::new());
+                    if let Some((s, packet)) = handle_res {
+                        state.state = s;
+                        let listeners = mem::replace(&mut state.state_change_listener, Vec::new());
                         Some((listeners, packet))
                     } else {
                         None
@@ -443,10 +436,7 @@ impl DefaultPacketHandlerStream {
             };
 
             if is_end {
-                // Remove the connection
-                let data = data.upgrade().unwrap();
-                let mut data = data.borrow_mut();
-                data.connections.remove(&addr);
+                Data::remove_connection(data.upgrade().unwrap(), addr);
             }
 
             if let Some((mut listeners, p)) = packet_res {
@@ -470,7 +460,7 @@ impl DefaultPacketHandlerStream {
                     };
                     // Send the packet
                     let sink = sink.clone();
-                    Box::new(l_fut.and_then(move |_| tmp_sink.send((addr, p)).map(move |tmp_sink| {
+                    Box::new(l_fut.and_then(move |_| tmp_sink.send(p).map(move |tmp_sink| {
                         let s: Either<InnerSink, Option<Task>> = mem::replace(&mut *sink.borrow_mut(), Either::A(tmp_sink));
                         if let Either::B(Some(task)) = s {
                             // Notify the task, that the sink is available
@@ -480,21 +470,21 @@ impl DefaultPacketHandlerStream {
                         if ignore_packet {
                             None
                         } else {
-                            Some((addr, packet))
+                            Some(packet)
                         }
                     })))
                 } else {
                     Box::new(l_fut.and_then(move |_| if ignore_packet {
                         future::ok(None)
                     } else {
-                        future::ok(Some((addr, packet)))
+                        future::ok(Some(packet))
                     }))
                 }
             } else {
                 if ignore_packet {
                     Box::new(future::ok(None))
                 } else {
-                    Box::new(future::ok(Some((addr, packet))))
+                    Box::new(future::ok(Some(packet)))
                 }
             }
         })
@@ -504,7 +494,7 @@ impl DefaultPacketHandlerStream {
 }
 
 impl Stream for DefaultPacketHandlerStream {
-    type Item = (SocketAddr, Packet);
+    type Item = Packet;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
@@ -513,13 +503,13 @@ impl Stream for DefaultPacketHandlerStream {
 }
 
 pub struct DefaultPacketHandlerSink<
-    InnerSink: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
 > {
     inner_sink: Rc<RefCell<Either<InnerSink, Option<Task>>>>,
 }
 
 impl<
-    InnerSink: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
 > DefaultPacketHandlerSink<InnerSink> {
     pub fn new(
         inner_sink: Rc<RefCell<Either<InnerSink, Option<Task>>>>,
@@ -529,7 +519,7 @@ impl<
 }
 
 impl<
-    InnerSink: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
 > Sink for DefaultPacketHandlerSink<InnerSink> {
     type SinkItem = InnerSink::SinkItem;
     type SinkError = InnerSink::SinkError;
@@ -566,27 +556,29 @@ impl<
 }
 
 pub struct DefaultPacketHandler<
-    InnerSink: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
 > {
     inner_stream: DefaultPacketHandlerStream,
     inner_sink: DefaultPacketHandlerSink<InnerSink>,
 }
 
 impl<
-    InnerSink: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
 > DefaultPacketHandler<InnerSink> {
     pub fn new<
-        InnerStream: Stream<Item = (SocketAddr, Packet), Error = Error> + 'static,
+        InnerStream: Stream<Item = Packet, Error = Error> + 'static,
     >(
         data: Rc<RefCell<ClientData>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
+        addr: SocketAddr,
         send_clientinit: bool,
     ) -> Self {
         let (inner_stream, inner_sink) = DefaultPacketHandlerStream::new(
             data,
             inner_stream,
             inner_sink,
+            addr,
             send_clientinit,
         );
         let inner_sink = DefaultPacketHandlerSink::new(inner_sink);
@@ -603,25 +595,5 @@ impl<
         DefaultPacketHandlerStream,
     ) {
         (self.inner_sink, self.inner_stream)
-    }
-}
-
-impl
-    DefaultPacketHandler<
-        Box<Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>,
-    > {
-    pub fn apply(data: Rc<RefCell<ClientData>>, send_clientinit: bool) {
-        let (stream, sink) = {
-            let mut data = data.borrow_mut();
-            (
-                data.packet_stream.take().unwrap(),
-                data.packet_sink.take().unwrap(),
-            )
-        };
-        let handler = Self::new(data.clone(), stream, sink, send_clientinit);
-        let (sink, stream) = handler.split();
-        let mut data = data.borrow_mut();
-        data.packet_stream = Some(Box::new(stream));
-        data.packet_sink = Some(Box::new(sink));
     }
 }

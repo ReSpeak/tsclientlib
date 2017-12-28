@@ -3,6 +3,8 @@
 #![cfg_attr(feature = "cargo-clippy",
            allow(redundant_closure_call, clone_on_ref_ptr))]
 
+#![allow(unused_imports)] // TODO Remove
+
 extern crate base64;
 extern crate byteorder;
 extern crate chrono;
@@ -25,10 +27,10 @@ extern crate slog_term;
 extern crate tokio_core;
 extern crate tomcrypt;
 
-use std::{fmt, io, str};
+use std::{fmt, io};
 use std::net::SocketAddr;
 
-use futures::Future;
+use futures::{Future, Sink, Stream};
 use tokio_core::net::UdpCodec;
 
 use packets::UdpPacket;
@@ -65,6 +67,8 @@ macro_rules! tryf {
 pub mod algorithms;
 pub mod client;
 pub mod commands;
+pub mod connection;
+pub mod connectionmanager;
 pub mod handler_data;
 pub mod log;
 pub mod packets;
@@ -77,17 +81,14 @@ type Map<K, V> = std::collections::HashMap<K, V>;
 /// The maximum number of bytes for a fragmented packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 const MAX_FRAGMENTS_LENGTH: usize = 40960;
-/// The maximum number of packets which are stored, if they receive out-of-order.
+/// The maximum number of packets which are stored, if they are received
+/// out-of-order.
 const MAX_QUEUE_LEN: usize = 50;
-/// The maximum number of not acknowledged packets which are stored.
-const MAX_SEND_QUEUE_LEN: usize = 50;
 /// The maximum decompressed size of a packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;
-const FAKE_KEY: &str = "c:\\windows\\syste";
-const FAKE_NONCE: &str = "m\\firewall32.cpl";
-/// How long packets are resent until the connection is closed.
-const TIMEOUT_SECONDS: i64 = 30;
+const FAKE_KEY: [u8; 16] = *b"c:\\windows\\syste";
+const FAKE_NONCE: [u8; 16] = *b"m\\firewall32.cpl";
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ClientId(pub SocketAddr);
@@ -150,6 +151,32 @@ impl UdpCodec for TsCodec {
         buf.append(&mut packet);
         addr
     }
+}
+
+/// A trait for a `Stream` wrapper.
+///
+/// Implementors of this trait supply just one method `wrap`, that takes a
+/// stream as an argument and returns a wrapped stream of the same type.
+pub trait StreamWrapper<I, E, T: Stream<Item = I, Error = E>>:
+    Stream<Item = I, Error = E> {
+    /// The type of additional arguments for the `wrap` function.
+    type A;
+
+    /// `A` holds additional arguments.
+    fn wrap(inner: T, a: Self::A) -> Self;
+}
+
+/// A trait for a `Sink` wrapper.
+///
+/// Implementors of this trait supply just one method `wrap`, that takes a
+/// sink as an argument and returns a wrapped sink of the same type.
+pub trait SinkWrapper<I, E, T: Sink<SinkItem = I, SinkError = E>>:
+    Sink<SinkItem = I, SinkError = E> {
+    /// The type of additional arguments for the `wrap` function.
+    type A;
+
+    /// `A` holds additional arguments.
+    fn wrap(inner: T, a: Self::A) -> Self where Self: Sink<SinkItem = I, SinkError = E>;
 }
 
 pub fn init() -> Result<()> {

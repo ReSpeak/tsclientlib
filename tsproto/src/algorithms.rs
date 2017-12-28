@@ -156,11 +156,7 @@ pub fn encrypt_key_nonce(
 }
 
 pub fn encrypt_fake(header: &mut Header, data: &mut [u8]) -> Result<()> {
-    let mut key = [0; 16];
-    key.copy_from_slice(::FAKE_KEY.as_bytes());
-    let mut nonce = [0; 16];
-    nonce.copy_from_slice(::FAKE_NONCE.as_bytes());
-    encrypt_key_nonce(header, data, &key, &nonce)
+    encrypt_key_nonce(header, data, &::FAKE_KEY, &::FAKE_NONCE)
 }
 
 pub fn encrypt(
@@ -195,11 +191,7 @@ pub fn decrypt_key_nonce(
 }
 
 pub fn decrypt_fake(header: &Header, data: &mut [u8]) -> Result<()> {
-    let mut key = [0; 16];
-    key.copy_from_slice(::FAKE_KEY.as_bytes());
-    let mut nonce = [0; 16];
-    nonce.copy_from_slice(::FAKE_NONCE.as_bytes());
-    decrypt_key_nonce(header, data, &key, &nonce)
+    decrypt_key_nonce(header, data, &::FAKE_KEY, &::FAKE_NONCE)
 }
 
 pub fn decrypt(
