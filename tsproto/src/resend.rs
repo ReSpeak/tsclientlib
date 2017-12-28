@@ -3,7 +3,6 @@ use std::cmp::{Ord, Ordering};
 use std::collections::{binary_heap, BinaryHeap};
 use std::convert::From;
 use std::mem;
-use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
 use std::time::Instant;
@@ -11,12 +10,12 @@ use std::time::Instant;
 use chrono::{DateTime, Duration, Utc};
 use futures::{self, Future, Sink};
 use futures::task::{self, Task};
-use tokio_core::reactor::{Handle, Timeout};
+use tokio_core::reactor::Timeout;
 
 use Error;
 use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender, ResenderEvent};
-use handler_data::{ConnectionListener, Data};
+use handler_data::Data;
 use packets::*;
 
 /// A record of a packet that can be resent.

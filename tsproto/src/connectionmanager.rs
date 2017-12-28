@@ -4,7 +4,6 @@ use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use futures::{Future, Sink};
-use tokio_core::reactor::Handle;
 
 use {Error, Map};
 use connection::Connection;

@@ -1,13 +1,9 @@
-use std::cell::RefCell;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
 
 use futures::{self, Sink, Stream};
 use slog::Logger;
 
-use Error;
-use connectionmanager::ConnectionManager;
-use handler_data::Data;
+use {Error, SinkWrapper, StreamWrapper};
 use packets::{Packet, UdpPacket};
 
 pub struct PacketLogger;
@@ -51,85 +47,52 @@ impl PacketLogger {
     }
 }
 
-pub fn apply_udp_packet_logger<CM: ConnectionManager + 'static>(
-    data: Rc<RefCell<Data<CM>>>) {
-    let data2 = data.clone();
-    let mut data = data.borrow_mut();
-    let stream = UdpPacketStreamLogger::new(
-        data2.clone(),
-        data.udp_packet_stream.take().unwrap(),
-        data.logger.clone(),
-    );
-    data.udp_packet_stream = Some(Box::new(stream));
-    let sink = UdpPacketSinkLogger::new(
-        data2,
-        data.udp_packet_sink.take().unwrap(),
-        data.logger.clone(),
-    );
-    data.udp_packet_sink = Some(Box::new(sink));
-}
-
-/* TODO
-pub fn apply_packet_logger<CM: ConnectionManager + 'static>(
-    data: Rc<RefCell<Data<CM>>>) {
-    let data2 = data.clone();
-    let mut data = data.borrow_mut();
-    let stream = PacketStreamLogger::new(
-        data2.clone(),
-        data.packet_stream.take().unwrap(),
-        data.logger.clone(),
-    );
-    data.packet_stream = Some(Box::new(stream));
-    let sink = PacketSinkLogger::new(
-        data2,
-        data.packet_sink.take().unwrap(),
-        data.logger.clone(),
-    );
-    data.packet_sink = Some(Box::new(sink));
-}*/
-
 pub struct UdpPacketStreamLogger<
-    CM: ConnectionManager,
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > {
-    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
+    is_client: bool,
 }
 
-// TODO Add into_inner, get_ref, get_mut to all Streams and Sinks
-impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
-    UdpPacketStreamLogger<CM, Inner> {
+impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
+    UdpPacketStreamLogger<Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
+        is_client: bool,
     ) -> Self {
         Self {
-            data: Rc::downgrade(&data),
             inner,
             logger,
+            is_client,
         }
     }
 }
 
-impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
-    for UdpPacketStreamLogger<CM, Inner> {
+impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
+    StreamWrapper<(SocketAddr, UdpPacket), Error, Inner> for
+    UdpPacketStreamLogger<Inner> {
+    /// (logger, is_client)
+    type A = (Logger, bool);
+
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
+        UdpPacketStreamLogger::new(inner, logger, is_client)
+    }
+}
+
+impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
+    for UdpPacketStreamLogger<Inner> {
     type Item = (SocketAddr, UdpPacket);
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
         if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
-            let data = if let Some(data) = self.data.upgrade() {
-                data
-            } else {
-                return Ok(futures::Async::Ready(None));
-            };
             PacketLogger::log_udp_packet(
                 &self.logger,
                 addr,
-                data.borrow().is_client,
+                self.is_client,
                 true,
                 packet,
             );
@@ -139,38 +102,44 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket), Error 
 }
 
 pub struct UdpPacketSinkLogger<
-    CM: ConnectionManager,
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > {
-    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
+    is_client: bool,
     /// The buffer to save a packet that is already logged.
     buf: Option<(SocketAddr, UdpPacket)>,
 }
 
-impl<
-    CM: ConnectionManager,
-    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
-> UdpPacketSinkLogger<CM, Inner> {
+impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
+    UdpPacketSinkLogger<Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
+        is_client: bool,
     ) -> Self {
         Self {
-            data: Rc::downgrade(&data),
             inner,
             logger,
+            is_client,
             buf: None,
         }
     }
 }
 
-impl<
-    CM: ConnectionManager,
-    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
-> Sink for UdpPacketSinkLogger<CM, Inner> {
+impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
+    SinkWrapper<(SocketAddr, UdpPacket), Error, Inner> for
+    UdpPacketSinkLogger<Inner> {
+    /// (logger, is_client)
+    type A = (Logger, bool);
+
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
+        UdpPacketSinkLogger::new(inner, logger, is_client)
+    }
+}
+
+impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
+    Sink for UdpPacketSinkLogger<Inner> {
     type SinkItem = (SocketAddr, UdpPacket);
     type SinkError = Error;
 
@@ -186,11 +155,10 @@ impl<
             }
         }
 
-        let data = self.data.upgrade().unwrap();
         PacketLogger::log_udp_packet(
             &self.logger,
             addr,
-            data.borrow().is_client,
+            self.is_client,
             false,
             &packet,
         );
@@ -222,46 +190,51 @@ impl<
 }
 
 pub struct PacketStreamLogger<
-    CM: ConnectionManager,
     Inner: Stream<Item = (SocketAddr, Packet), Error = Error>,
 > {
-    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
+    is_client: bool,
 }
 
-impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
-    PacketStreamLogger<CM, Inner> {
+impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
+    PacketStreamLogger<Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
+        is_client: bool,
     ) -> Self {
         Self {
-            data: Rc::downgrade(&data),
             inner,
             logger,
+            is_client,
         }
     }
 }
 
-impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
-    for PacketStreamLogger<CM, Inner> {
+impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
+    StreamWrapper<(SocketAddr, Packet), Error, Inner> for
+    PacketStreamLogger<Inner> {
+    /// (logger, is_client)
+    type A = (Logger, bool);
+
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
+        PacketStreamLogger::new(inner, logger, is_client)
+    }
+}
+
+impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
+    for PacketStreamLogger<Inner> {
     type Item = (SocketAddr, Packet);
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
         if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
-            let data = if let Some(data) = self.data.upgrade() {
-                data
-            } else {
-                return Ok(futures::Async::Ready(None));
-            };
             PacketLogger::log_packet(
                 &self.logger,
                 addr,
-                data.borrow().is_client,
+                self.is_client,
                 true,
                 packet,
             );
@@ -271,31 +244,40 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, Packet), Error = E
 }
 
 pub struct PacketSinkLogger<
-    CM: ConnectionManager,
     Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>,
 > {
-    data: Weak<RefCell<Data<CM>>>,
     inner: Inner,
     logger: Logger,
+    is_client: bool,
 }
 
-impl<CM: ConnectionManager, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
-    PacketSinkLogger<CM, Inner> {
+impl<Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
+    PacketSinkLogger<Inner> {
     pub fn new(
-        data: Rc<RefCell<Data<CM>>>,
         inner: Inner,
         logger: Logger,
+        is_client: bool,
     ) -> Self {
         Self {
-            data: Rc::downgrade(&data),
             inner,
             logger,
+            is_client,
         }
     }
 }
 
-impl<CM: ConnectionManager, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>> Sink
-    for PacketSinkLogger<CM, Inner> {
+impl<Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
+    SinkWrapper<(SocketAddr, Packet), Error, Inner> for PacketSinkLogger<Inner> {
+    /// (logger, is_client)
+    type A = (Logger, bool);
+
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
+        PacketSinkLogger::new(inner, logger, is_client)
+    }
+}
+
+impl<Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>> Sink
+    for PacketSinkLogger<Inner> {
     type SinkItem = (SocketAddr, Packet);
     type SinkError = Error;
 
@@ -303,11 +285,10 @@ impl<CM: ConnectionManager, Inner: Sink<SinkItem = (SocketAddr, Packet), SinkErr
         &mut self,
         (addr, packet): Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
         PacketLogger::log_packet(
             &self.logger,
             addr,
-            data.borrow().is_client,
+            self.is_client,
             false,
             &packet,
         );

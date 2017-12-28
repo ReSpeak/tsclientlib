@@ -1,11 +1,9 @@
 use std::cell::RefCell;
 use std::io::Cursor;
 use std::marker::PhantomData;
-use std::mem;
 use std::rc::{Rc, Weak};
 use std::u16;
 
-use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
 use futures::task;
 use num::ToPrimitive;

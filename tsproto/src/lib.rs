@@ -3,8 +3,6 @@
 #![cfg_attr(feature = "cargo-clippy",
            allow(redundant_closure_call, clone_on_ref_ptr))]
 
-#![allow(unused_imports)] // TODO Remove
-
 extern crate base64;
 extern crate byteorder;
 extern crate chrono;

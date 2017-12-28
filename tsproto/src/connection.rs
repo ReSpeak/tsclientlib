@@ -4,7 +4,6 @@ use std::rc::{Rc, Weak};
 use std::u16;
 
 use {slog, tomcrypt};
-use chrono::Duration;
 use futures::{self, Sink, Stream};
 use num::ToPrimitive;
 
@@ -137,42 +136,45 @@ impl<CM: ConnectionManager> Connection<CM> {
         }
     }
 
-    /* TODO
     pub fn apply_udp_packet_stream_wrapper<
-        T: Stream<Item = UdpPacket, Error = Error>,
-        W: StreamWrapper<UdpPacket, Error, T>,
-    >(connection: Rc<RefCell<Self>>) {
+        W: StreamWrapper<UdpPacket, Error,
+            Box<Stream<Item = UdpPacket, Error = Error>>>
+            + 'static,
+    >(connection: Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.udp_packet_stream.take().unwrap();
-        connection.udp_packet_stream = Some(W::wrap(inner));
+        connection.udp_packet_stream = Some(Box::new(W::wrap(inner, a)));
     }
 
     pub fn apply_udp_packet_sink_wrapper<
-        T: Sink<SinkItem = UdpPacket, SinkError = Error>,
-        W: SinkWrapper<UdpPacket, Error, T>,
-    >(connection: Rc<RefCell<Self>>) {
+        W: SinkWrapper<UdpPacket, Error,
+            Box<Sink<SinkItem = UdpPacket, SinkError = Error>>>
+            + 'static,
+    >(connection: Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.udp_packet_sink.take().unwrap();
-        connection.udp_packet_sink = Some(W::wrap(inner));
+        connection.udp_packet_sink = Some(Box::new(W::wrap(inner, a)));
     }
 
     pub fn apply_packet_stream_wrapper<
-        T: Stream<Item = Packet, Error = Error>,
-        W: StreamWrapper<Packet, Error, T>,
-    >(connection: Rc<RefCell<Self>>) {
+        W: StreamWrapper<Packet, Error,
+            Box<Stream<Item = Packet, Error = Error>>>
+            + 'static,
+    >(connection: Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.packet_stream.take().unwrap();
-        connection.packet_stream = Some(W::wrap(inner));
+        connection.packet_stream = Some(Box::new(W::wrap(inner, a)));
     }
 
     pub fn apply_packet_sink_wrapper<
-        T: Sink<SinkItem = Packet, SinkError = Error>,
-        W: SinkWrapper<Packet, Error, T>,
-    >(connection: Rc<RefCell<Self>>) {
+        W: SinkWrapper<Packet, Error,
+            Box<Sink<SinkItem = Packet, SinkError = Error>>>
+            + 'static,
+    >(connection: Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.packet_sink.take().unwrap();
-        connection.packet_sink = Some(W::wrap(inner));
-    }*/
+        connection.packet_sink = Some(Box::new(W::wrap(inner, a)));
+    }
 
     /// Gives a `Stream` and `Sink` of [`UdpPacket`]s, which always references the
     /// current stream in the `Connection` struct.

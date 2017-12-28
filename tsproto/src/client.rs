@@ -19,7 +19,6 @@ use connection::*;
 use connectionmanager::{ConnectionManager, Resender, SocketConnectionManager};
 use handler_data::Data;
 use packets::*;
-use resend::ResendFuture;
 
 /// The data of our client.
 pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
@@ -74,7 +73,18 @@ fn create_init_header() -> Header {
 /// Configures the default setup chain, including logging and decoding
 /// of packets.
 pub fn default_setup(data: Rc<RefCell<ClientData>>, log: bool) {
-    // TODO setup
+    if log {
+        // Logging
+        let a = {
+            let data = data.borrow();
+            (data.logger.clone(), data.is_client)
+        };
+        ClientData::apply_udp_packet_stream_wrapper::<
+            ::log::UdpPacketStreamLogger<_>>(data.clone(), a.clone());
+        ClientData::apply_udp_packet_sink_wrapper::<
+            ::log::UdpPacketSinkLogger<_>>(data, a);
+    }
+
     // Packet encoding
     /*::packet_codec::PacketCodecSink::apply(data.clone());
     ::packet_codec::PacketCodecStream::apply(data.clone(), true);
@@ -86,20 +96,7 @@ pub fn default_setup(data: Rc<RefCell<ClientData>>, log: bool) {
     }
 
     // Default handlers
-    DefaultPacketHandler::apply(data.clone(), true);
-
-    // Resend packets
-    let resend_future = ResendFuture::new(
-        data.clone(),
-        Box::new(Data::get_udp_packets(data.clone())),
-    );
-    let (handle, logger) = {
-        let data = data.borrow();
-        (data.handle.clone(), data.logger.clone())
-    };
-    handle.spawn(resend_future.map_err(move |e| {
-        error!(logger, "Resend"; "error" => ?e);
-    }));*/
+    DefaultPacketHandler::apply(data.clone(), true);*/
 }
 
 /// Wait until a client reaches a certain state.
