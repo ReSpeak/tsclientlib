@@ -82,6 +82,9 @@ const MAX_FRAGMENTS_LENGTH: usize = 40960;
 /// The maximum number of packets which are stored, if they are received
 /// out-of-order.
 const MAX_QUEUE_LEN: usize = 50;
+/// The maximum number of packets which are put into the stream buffer of a
+/// connection.
+const STREAM_BUFFER_MAX_SIZE: usize = 10;
 /// The maximum decompressed size of a packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;

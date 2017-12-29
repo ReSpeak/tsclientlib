@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::io::Cursor;
-use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 use std::u16;
 
@@ -10,8 +9,8 @@ use num::ToPrimitive;
 use slog;
 
 use {
-    packets, BoxFuture, Error, Result, ResultExt, SinkWrapper, StreamWrapper,
-    MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN,
+    packets, BoxFuture, Error, Result, ResultExt, MAX_FRAGMENTS_LENGTH,
+    MAX_QUEUE_LEN,
 };
 use algorithms as algs;
 use connection::{Connection, ConnectedParams};
@@ -390,24 +389,26 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
 
 impl<CM: ConnectionManager + 'static> PacketCodecStream<CM,
     ::connection::UdpPackets<CM>> {
-    /// Add a packet codec stream to the data.
+    /// Add a packet codec stream to the connection.
     ///
     /// `Ack`, `AckLow` and `Pong` packets can be suppressed by setting
     /// `send_acks` to `false`.
-    fn apply(connection: Rc<RefCell<Connection<CM>>>, send_acks: bool)
-        -> Box<Stream<Item = Packet, Error = Error>> {
+    pub fn apply(connection: Rc<RefCell<Connection<CM>>>, send_acks: bool) {
         let stream = Self::new(connection.clone(),
             Connection::get_udp_packets(connection.clone()));
         let connection2 = connection.clone();
         let mut connection = connection.borrow_mut();
-        if send_acks {
-            let sink = connection.packet_sink.take().unwrap();
+        let stream: Box<Stream<Item=_, Error=_>> = if send_acks {
+            let sink = connection.packet_sink.take().expect(
+                "The PacketCodecSink has to be added before the stream");
             connection.packet_sink = Some(Box::new(sink));
             Box::new(AckHandler::new(stream,
                 Connection::get_packets(connection2)))
         } else {
             Box::new(stream.filter_map(|(p, _)| p))
-        }
+        };
+
+        connection.packet_stream = Some(stream);
     }
 }
 
@@ -454,41 +455,6 @@ impl<
     }
 }
 
-struct PacketCodecStreamBox<CM> {
-    inner: Box<Stream<Item = Packet, Error = Error>>,
-    phantom: PhantomData<CM>,
-}
-
-impl<
-    CM: ConnectionManager + 'static,
-    Inner: Stream<Item = Packet, Error = Error>,
-> StreamWrapper<Packet, Error, Inner> for PacketCodecStreamBox<CM> {
-    /// (connection, send_acks)
-    type A = (Rc<RefCell<Connection<CM>>>, bool);
-
-    /// Add a packet codec stream to the data.
-    ///
-    /// `Ack`, `AckLow` and `Pong` packets can be suppressed by setting
-    /// `send_acks` to `false`.
-    fn wrap(_: Inner, (connection, send_acks): Self::A) -> Self {
-        // The inner stream is ignored, as it will be the udp packets
-        let stream = PacketCodecStream::apply(connection, send_acks);
-        PacketCodecStreamBox {
-            inner: stream,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<CM: ConnectionManager> Stream for PacketCodecStreamBox<CM> {
-    type Item = Packet;
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        self.inner.poll()
-    }
-}
-
 
 pub struct PacketCodecSink<
     CM: ConnectionManager,
@@ -503,15 +469,9 @@ pub struct PacketCodecSink<
     send_buffer: Vec<(u16, UdpPacket)>,
 }
 
-impl<
-    CM: ConnectionManager,
-    Inner: Sink<SinkItem = Packet, SinkError = Error>,
-> SinkWrapper<Packet, Error, Inner> for PacketCodecSink<CM,
+impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
     ::connection::UdpPackets<CM>> {
-    type A = Rc<RefCell<Connection<CM>>>;
-
-    fn wrap(_: Inner, connection: Self::A) -> Self {
-        // The inner sink is ignored, as it will be the udp packets
+    fn new(connection: Rc<RefCell<Connection<CM>>>) -> Self {
         let is_client = connection.borrow().is_client;
         Self {
             connection: Rc::downgrade(&connection),
@@ -520,6 +480,12 @@ impl<
             p_type: PacketType::Command,
             send_buffer: Vec::new(),
         }
+    }
+
+    /// Add a packet codec sink to the connection.
+    pub fn apply(connection: Rc<RefCell<Connection<CM>>>) {
+        let sink = Self::new(connection.clone());
+        connection.borrow_mut().packet_sink = Some(Box::new(sink));
     }
 }
 

@@ -244,6 +244,24 @@ impl Resender for DefaultResender {
         };
         self.state = next_state;
     }
+
+    fn udp_packet_received(&mut self, _: &UdpPacket) {
+        // Restart sending packets if we got a new packet
+        let next_state = match self.state {
+            ResendStates::Stalling { ref mut to_send, .. } |
+            ResendStates::Dead     { ref mut to_send, .. } => {
+                let to_send = mem::replace(to_send, Vec::new()).into();
+                // TODO Don't send all packets at once
+                Some(ResendStates::Normal {
+                    to_send,
+                })
+            }
+            _ => None,
+        };
+        if let Some(next_state) = next_state {
+            self.state = next_state;
+        }
+    }
 }
 
 impl Sink for DefaultResender {
@@ -483,7 +501,8 @@ impl<CM: ConnectionManager> ResendFuture<CM> {
         let (handle, connection) = {
             let data = data.borrow();
             (data.handle.clone(),
-                data.connection_manager.get_connection(connection_key.clone()).unwrap())
+                data.connection_manager.get_connection(connection_key.clone())
+                .unwrap())
         };
         Self {
             data: Rc::downgrade(&data),
@@ -498,8 +517,8 @@ impl<CM: ConnectionManager> ResendFuture<CM> {
     }
 }
 
-// TODO Switch connection from dead/stalling/connecting to normal
-impl<CM: ConnectionManager<Resend = DefaultResender>> Future for ResendFuture<CM> {
+impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
+    ResendFuture<CM> {
     type Item = ();
     type Error = Error;
 

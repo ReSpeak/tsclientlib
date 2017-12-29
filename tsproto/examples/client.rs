@@ -24,6 +24,7 @@ use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
+use tsproto::connectionmanager::ConnectionManager;
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
@@ -81,8 +82,10 @@ fn connect(
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 
-        let sink = client::ClientData::get_packets(client.clone());
-        sink.send((server_addr, clientinit_packet)).and_then(move |_| {
+        let con = client.borrow().connection_manager
+            .get_connection(server_addr).unwrap();
+        let sink = client::ClientConnection::get_packets(con);
+        sink.send(clientinit_packet).and_then(move |_| {
             client::wait_until_connected(client, server_addr)
         })
     }))
@@ -103,8 +106,12 @@ fn disconnect(
     command.push("reasonmsg", "Bye");
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
-    Box::new(client::ClientData::get_packets(client.clone())
-        .send((server_addr, packet))
+
+    let con = client.borrow().connection_manager
+        .get_connection(server_addr).unwrap();
+    let sink = client::ClientConnection::get_packets(con);
+    Box::new(sink
+        .send(packet)
         .and_then(move |_| {
             client::wait_for_state(client, server_addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
@@ -145,22 +152,33 @@ fn main() {
         private_key,
         core.handle(),
         true,
+        connectionmanager::SocketConnectionManager::new(),
         logger.clone(),
     ).unwrap();
+
+    // Set the data reference
+    {
+        let c2 = c.clone();
+        let mut c = c.borrow_mut();
+        c.connection_manager.set_data_ref(c2);
+    }
 
     // Packet encoding
     client::default_setup(c.clone(), true);
 
+    // Connect
+    core.run(connect(logger.clone(), c.clone(), args.address)).unwrap();
+    info!(logger, "Connected");
+
     // Listen for packets
-    let listen = client::ClientData::get_packets(c.clone())
+    let con = c.borrow().connection_manager
+        .get_connection(args.address).unwrap();
+    let packets = client::ClientConnection::get_packets(con.clone());
+    let listen = packets
         .for_each(|_| future::ok(()))
         .map(|()| println!("Listening finished"))
         .map_err(|error| println!("Listening error: {:?}", error));
     core.handle().spawn(listen);
-
-    // Connect
-    core.run(connect(logger.clone(), c.clone(), args.address)).unwrap();
-    info!(logger, "Connected");
 
     // Wait some time
     let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
@@ -168,7 +186,6 @@ fn main() {
     info!(logger, "Waited");
 
     // Send packet
-    let sink = client::ClientData::get_packets(c.clone());
     let mut header = Header::default();
     header.set_type(PacketType::Command);
     let mut cmd = commands::Command::new("sendtextmessage");
@@ -176,8 +193,9 @@ fn main() {
     cmd.push("targetmode", "3");
     cmd.push("msg", "Hello");
 
+    let packets = client::ClientConnection::get_packets(con);
     let packet = Packet::new(header, Data::Command(cmd));
-    core.run(sink.send((args.address, packet.clone()))).unwrap();
+    core.run(packets.send(packet.clone())).unwrap();
 
     // Wait some time
     let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();

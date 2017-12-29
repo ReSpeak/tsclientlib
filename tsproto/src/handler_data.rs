@@ -4,7 +4,8 @@ use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use {slog, slog_async, slog_term, tomcrypt};
-use futures::{self, Sink, Stream};
+use futures::{self, Future, Sink, Stream, task};
+use futures::task::Task;
 use slog::Drain;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
@@ -18,8 +19,8 @@ use packets::*;
 pub trait ConnectionListener<CM: ConnectionManager> {
     /// Called when a new connection is created.
     ///
-    /// Return `true` to remain in the list of listeners.
-    /// If `false` is returned, this listener will be removed.
+    /// Return `false` to remain in the list of listeners.
+    /// If `true` is returned, this listener will be removed.
     fn on_connection_created(&mut self, _data: Rc<RefCell<Data<CM>>>,
         _key: CM::ConnectionsKey) -> bool {
         false
@@ -27,8 +28,8 @@ pub trait ConnectionListener<CM: ConnectionManager> {
 
     /// Called when a connection is removed.
     ///
-    /// Return `true` to remain in the list of listeners.
-    /// If `false` is returned, this listener will be removed.
+    /// Return `false` to remain in the list of listeners.
+    /// If `true` is returned, this listener will be removed.
     fn on_connection_removed(&mut self, _data: Rc<RefCell<Data<CM>>>,
         _key: CM::ConnectionsKey) -> bool {
         false
@@ -64,6 +65,9 @@ pub struct Data<CM: ConnectionManager> {
     pub udp_packet_sink:
         Option<Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>,
 
+    /// The task of the packet distributor.
+    distributor_task: Option<Task>,
+
     /// A list of all connected clients or servers
     ///
     /// You should not add or remove connections directly using the manager,
@@ -78,7 +82,7 @@ pub struct Data<CM: ConnectionManager> {
     pub connection_listeners: Vec<Box<ConnectionListener<CM>>>,
 }
 
-impl<CM: ConnectionManager> Data<CM> {
+impl<CM: ConnectionManager + 'static> Data<CM> {
     /// An optional logger can be provided. If none is provided, a new one will
     /// be created.
     pub fn new<L: Into<Option<slog::Logger>>>(
@@ -112,6 +116,7 @@ impl<CM: ConnectionManager> Data<CM> {
             logger,
             udp_packet_stream: Some(stream),
             udp_packet_sink: Some(sink),
+            distributor_task: None,
             connection_manager,
             connection_listeners: Vec::new(),
         })))
@@ -119,9 +124,12 @@ impl<CM: ConnectionManager> Data<CM> {
 
     pub fn create_connection(data: Rc<RefCell<Self>>, addr: SocketAddr)
         -> Rc<RefCell<Connection<CM>>> {
-        let data = data.borrow();
-        Rc::new(RefCell::new(Connection::new(data.logger.clone(),
-            data.is_client, addr, data.connection_manager.create_resender())))
+        let resender = {
+            let data = data.borrow();
+            data.connection_manager.create_resender()
+        };
+
+        Connection::new(data.clone(), addr, resender)
     }
 
     /// Add a new connection to this socket.
@@ -135,8 +143,9 @@ impl<CM: ConnectionManager> Data<CM> {
         let mut tmp;
         // Add connection and take listeners
         let key = {
-            let mut data = data.borrow_mut();
-            let key = data.connection_manager.add_connection(connection);
+            let data = &mut *data.borrow_mut();
+            let key = data.connection_manager.add_connection(connection,
+                &data.handle);
             tmp = mem::replace(&mut data.connection_listeners, Vec::new());
             key
         };
@@ -208,6 +217,26 @@ impl<CM: ConnectionManager> Data<CM> {
     pub fn get_udp_packets(data: Rc<RefCell<Self>>) -> DataUdpPackets<CM> {
         DataUdpPackets {
             data: Rc::downgrade(&data),
+        }
+    }
+
+    /// Enables distributing incoming packets to the connections.
+    pub fn start_packet_distributor(data: Rc<RefCell<Self>>) {
+        let distributor = PacketDistributor::new(
+            Self::get_udp_packets(data.clone()), data.clone());
+        let data = data.borrow_mut();
+        let logger = data.logger.clone();
+        data.handle.spawn(distributor.map_err(move |e| {
+            error!(logger, "Distributor exited with error"; "error" => ?e);
+        }));
+    }
+}
+
+impl<CM: ConnectionManager> Drop for Data<CM> {
+    fn drop(&mut self) {
+        // Drop the distributor if we are dropped
+        if let Some(ref task) = self.distributor_task {
+            task.notify();
         }
     }
 }
@@ -291,5 +320,81 @@ impl<CM: ConnectionManager> Sink for DataUdpPackets<CM> {
         let mut data = data.borrow_mut();
         data.udp_packet_sink = Some(sink);
         res
+    }
+}
+
+pub struct PacketDistributor<
+    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
+    CM: ConnectionManager,
+> {
+    inner: Inner,
+    data: Weak<RefCell<Data<CM>>>,
+}
+
+impl<
+    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
+    CM: ConnectionManager,
+> PacketDistributor<Inner, CM> {
+    fn new(inner: Inner, data: Rc<RefCell<Data<CM>>>) -> Self {
+        Self {
+            inner,
+            data: Rc::downgrade(&data),
+        }
+    }
+}
+
+impl<
+    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
+    CM: ConnectionManager,
+> Future for PacketDistributor<Inner, CM> {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        let data = if let Some(data) = self.data.upgrade() {
+            data
+        } else {
+            return Ok(futures::Async::Ready(()));
+        };
+        // Set the task
+        {
+            let mut data = data.borrow_mut();
+            data.distributor_task = Some(task::current());
+        }
+
+        // Check if a packet is available
+        if let futures::Async::Ready(res) = self.inner.poll()? {
+            if let Some((addr, packet)) = res {
+                // Find the connection
+                let mut data = data.borrow_mut();
+                let con = data.connection_manager.get_connection_for_udp_packet(
+                    addr, &packet);
+                if let Some(con) = con {
+                    let mut con = con.borrow_mut();
+                    if con.stream_buffer.len() >= ::STREAM_BUFFER_MAX_SIZE {
+                        warn!(data.logger,
+                            "Dropping packet because of buffer overflow");
+                    } else {
+                        // Add packet to queue and notify stream
+                        con.stream_buffer.push_back(packet);
+
+                        if let Some(ref task) = con.stream_task {
+                            task.notify();
+                        } else {
+                            warn!(data.logger,
+                                "Distributor found no stream task");
+                        }
+                    }
+                } else {
+                    warn!(data.logger,
+                        "Dropping packet for unknown connection");
+                }
+            } else {
+                // Stream ended
+                return Ok(futures::Async::Ready(()));
+            }
+        }
+
+        Ok(futures::Async::NotReady)
     }
 }

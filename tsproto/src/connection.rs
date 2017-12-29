@@ -1,15 +1,18 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::u16;
 
 use {slog, tomcrypt};
-use futures::{self, Sink, Stream};
+use futures::{self, Sink, Stream, task};
+use futures::task::Task;
 use num::ToPrimitive;
 
 use {Error, StreamWrapper, SinkWrapper};
 use connectionmanager::ConnectionManager;
 use packets::*;
+use handler_data::Data;
 
 /// Data that has to be stored for a connection when it is connected.
 #[derive(Debug)]
@@ -95,7 +98,18 @@ pub struct Connection<CM: ConnectionManager> {
     /// to.
     pub address: SocketAddr,
 
-    /// The stream for `UdpPacket`s.
+    /// The queue which buffers packets for this connection.
+    ///
+    /// The packets will be provided by the underlying `udp_packet_stream`.
+    ///
+    /// Packets should be pushed to the back and taken from the front.
+    pub(crate) stream_buffer: VecDeque<UdpPacket>,
+    /// The task which should be notified if new packets are available.
+    pub(crate) stream_task: Option<Task>,
+
+    /// The stream for [`UdpPacket`]s.
+    ///
+    /// [`UdpPacket`]: ../packets/struct.UdpPacket.html
     pub udp_packet_stream:
         Option<Box<Stream<Item = UdpPacket, Error = Error>>>,
     /// The sink for [`UdpPacket`]s.
@@ -117,15 +131,23 @@ pub struct Connection<CM: ConnectionManager> {
     pub resender: CM::Resend,
 }
 
-impl<CM: ConnectionManager> Connection<CM> {
+impl<CM: ConnectionManager + 'static> Connection<CM> {
     /// Creates a new connection struct.
-    pub fn new(logger: slog::Logger, is_client: bool, address: SocketAddr,
-        resender: CM::Resend) -> Self {
-        Self {
+    pub fn new(data: Rc<RefCell<Data<CM>>>, address: SocketAddr,
+        resender: CM::Resend) -> Rc<RefCell<Self>> {
+        let (logger, is_client) = {
+            let data = data.borrow();
+            (data.logger.clone(), data.is_client)
+        };
+
+        let con = Rc::new(RefCell::new(Self {
             logger,
             is_client,
             params: None,
             address,
+
+            stream_buffer: Default::default(),
+            stream_task: None,
 
             udp_packet_stream: None,
             udp_packet_sink: None,
@@ -133,7 +155,17 @@ impl<CM: ConnectionManager> Connection<CM> {
             packet_sink: None,
 
             resender,
-        }
+        }));
+
+        // Set the udp stream and sink
+        let stream = ConnectionUdpPacketStream::new(con.clone());
+        con.borrow_mut().udp_packet_stream = Some(Box::new(stream));
+
+        let data_packets = Data::get_udp_packets(data.clone());
+        let sink = ConnectionUdpPacketSink::new(data_packets, con.clone());
+        con.borrow_mut().udp_packet_sink = Some(Box::new(sink));
+
+        con
     }
 
     pub fn apply_udp_packet_stream_wrapper<
@@ -247,9 +279,7 @@ impl<CM: ConnectionManager> Sink for UdpPackets<CM> {
         let connection = self.connection.upgrade().unwrap();
         let mut sink = {
             let mut connection = connection.borrow_mut();
-            connection.udp_packet_sink
-                .take()
-                .unwrap()
+            connection.udp_packet_sink.take().unwrap()
         };
         let res = sink.start_send(item);
         let mut connection = connection.borrow_mut();
@@ -310,10 +340,8 @@ impl<CM: ConnectionManager> Sink for Packets<CM> {
     type SinkItem = Packet;
     type SinkError = Error;
 
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(&mut self, item: Self::SinkItem)
+        -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         let connection = self.connection.upgrade().unwrap();
         let mut sink = connection.borrow_mut()
             .packet_sink
@@ -344,5 +372,95 @@ impl<CM: ConnectionManager> Sink for Packets<CM> {
         let res = sink.close();
         connection.borrow_mut().packet_sink = Some(sink);
         res
+    }
+}
+
+/// The stream which fetches packets from the `Data` object.
+struct ConnectionUdpPacketStream<CM: ConnectionManager> {
+    connection: Weak<RefCell<Connection<CM>>>,
+}
+
+impl<CM: ConnectionManager> ConnectionUdpPacketStream<CM> {
+    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
+        Self {
+            connection: Rc::downgrade(&con),
+        }
+    }
+}
+
+impl<CM: ConnectionManager> Stream for ConnectionUdpPacketStream<CM> {
+    type Item = UdpPacket;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        let con = if let Some(con) = self.connection.upgrade() {
+            con
+        } else {
+            // The connection does not exist anymore, just quit
+            return Ok(futures::Async::Ready(None));
+        };
+        // Set task
+        let mut con = con.borrow_mut();
+        con.stream_task = Some(task::current());
+
+        // Check if there is a packet available
+        if let Some(packet) = con.stream_buffer.pop_front() {
+            Ok(futures::Async::Ready(Some(packet)))
+        } else {
+            Ok(futures::Async::NotReady)
+        }
+    }
+}
+
+/// The sink which adds the address to packets of a connection and sends them
+/// to the `Data` object.
+struct ConnectionUdpPacketSink<
+    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
+    CM: ConnectionManager,
+> {
+    inner: Inner,
+    connection: Weak<RefCell<Connection<CM>>>,
+}
+
+impl<
+    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
+    CM: ConnectionManager,
+> ConnectionUdpPacketSink<Inner, CM> {
+    fn new(inner: Inner, con: Rc<RefCell<Connection<CM>>>) -> Self {
+        Self {
+            inner,
+            connection: Rc::downgrade(&con),
+        }
+    }
+}
+
+impl<
+    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
+    CM: ConnectionManager,
+> Sink for ConnectionUdpPacketSink<Inner, CM> {
+    type SinkItem = UdpPacket;
+    type SinkError = Error;
+
+    fn start_send(&mut self, item: Self::SinkItem)
+        -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        let addr = {
+            let con = self.connection.upgrade().unwrap();
+            let con = con.borrow();
+            con.address
+        };
+        if let futures::AsyncSink::NotReady((_, item)) =
+            self.inner.start_send((addr, item))? {
+            Ok(futures::AsyncSink::NotReady(item))
+        } else {
+            Ok(futures::AsyncSink::Ready)
+        }
+    }
+
+    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        self.inner.poll_complete()
+    }
+
+    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
+        self.inner.close()
     }
 }

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::fmt::Display;
 use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -16,8 +17,9 @@ use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
 use commands::Command;
 use connection::*;
-use connectionmanager::{ConnectionManager, Resender, SocketConnectionManager};
-use handler_data::Data;
+use connectionmanager::{AttachedDataConnectionManager, ConnectionManager,
+    Resender, SocketConnectionManager};
+use handler_data::{ConnectionListener, Data};
 use packets::*;
 
 /// The data of our client.
@@ -70,33 +72,76 @@ fn create_init_header() -> Header {
     header
 }
 
+struct DefaultConnectionSetup {
+    /// `None` if logging is disabled.
+    logger: Option<::slog::Logger>,
+}
+
+impl DefaultConnectionSetup {
+    fn new(logger: Option<::slog::Logger>) -> Self {
+        Self {
+            logger,
+        }
+    }
+}
+
+impl<CM: AttachedDataConnectionManager<ServerConnectionData> + 'static>
+    ConnectionListener<CM> for DefaultConnectionSetup
+    where CM::ConnectionsKey: Display {
+    fn on_connection_created(&mut self, data: Rc<RefCell<Data<CM>>>,
+        key: CM::ConnectionsKey) -> bool {
+        {
+            let data = data.borrow();
+            let con = data.connection_manager.get_connection(key.clone())
+                .unwrap();
+
+            // Packet encoding
+            ::packet_codec::PacketCodecSink::apply(con.clone());
+            ::packet_codec::PacketCodecStream::apply(con.clone(), true);
+
+            if let Some(ref logger) = self.logger {
+                // Logging
+                Connection::apply_packet_stream_wrapper::<
+                    ::log::PacketStreamLogger<_, _>>(con.clone(),
+                        (logger.clone(), data.is_client, key.clone()));
+                Connection::apply_packet_sink_wrapper::<
+                    ::log::PacketSinkLogger<_, _>>(con.clone(),
+                        (logger.clone(), data.is_client, key.clone()));
+            }
+        }
+
+        // Default handlers are not usable with the wrapper system
+        // TODO DefaultPacketHandler with wrapper system?
+        DefaultPacketHandler::apply(data.clone(), key);
+        false
+    }
+}
+
 /// Configures the default setup chain, including logging and decoding
 /// of packets.
-pub fn default_setup(data: Rc<RefCell<ClientData>>, log: bool) {
+pub fn default_setup<
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static
+>(data: Rc<RefCell<Data<CM>>>, log: bool) where CM::ConnectionsKey: Display {
+    let mut logger = None;
     if log {
         // Logging
         let a = {
             let data = data.borrow();
+            logger = Some(data.logger.clone());
             (data.logger.clone(), data.is_client)
         };
-        ClientData::apply_udp_packet_stream_wrapper::<
+        Data::apply_udp_packet_stream_wrapper::<
             ::log::UdpPacketStreamLogger<_>>(data.clone(), a.clone());
-        ClientData::apply_udp_packet_sink_wrapper::<
-            ::log::UdpPacketSinkLogger<_>>(data, a);
+        Data::apply_udp_packet_sink_wrapper::<
+            ::log::UdpPacketSinkLogger<_>>(data.clone(), a);
     }
 
-    // Packet encoding
-    /*::packet_codec::PacketCodecSink::apply(data.clone());
-    ::packet_codec::PacketCodecStream::apply(data.clone(), true);
+    // Add distributor stream
+    Data::start_packet_distributor(data.clone());
 
-    if log {
-        // Logging
-        ::log::apply_udp_packet_logger(data.clone());
-        ::log::apply_packet_logger(data.clone());
-    }
-
-    // Default handlers
-    DefaultPacketHandler::apply(data.clone(), true);*/
+    // Register a connection listener which configures each connection
+    data.borrow_mut().connection_listeners.push(Box::new(
+        DefaultConnectionSetup::new(logger)));
 }
 
 /// Wait until a client reaches a certain state.
@@ -171,13 +216,15 @@ pub fn connect(
 
     let cheader = create_init_header();
     // Add the connection to the connection list
-    Data::add_connection(data.clone(), Data::create_connection(data.clone(), server_addr));
+    Data::add_connection(data.clone(), Data::create_connection(data.clone(),
+        server_addr));
 
     // Change the state
     let data2 = data.clone();
     let mut data = data.borrow_mut();
     {
-        let con_data = data.connection_manager.get_mut_data(server_addr).unwrap();
+        let con_data = data.connection_manager.get_mut_data(server_addr)
+            .unwrap();
         con_data.state = ServerConnectionState::Init0 {
             version: timestamp,
             random0,
@@ -210,12 +257,12 @@ impl DefaultPacketHandlerStream {
     pub fn new<
         InnerStream: Stream<Item = Packet, Error = Error> + 'static,
         InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     >(
-        data: Rc<RefCell<ClientData>>,
+        data: Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
-        addr: SocketAddr,
-        send_clientinit: bool,
+        key: CM::ConnectionsKey,
     ) -> (Self, Rc<RefCell<Either<InnerSink, Option<Task>>>>) {
         let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
         let sink2 = sink.clone();
@@ -231,9 +278,11 @@ impl DefaultPacketHandlerStream {
                 let data = data.upgrade().unwrap();
                 let mut data = data.borrow_mut();
                 let data = &mut *data;
-                if let Some(con) = data.connection_manager.get_connection(addr) {
+                if let Some(con) = data.connection_manager
+                    .get_connection(key.clone()) {
                     let mut con = con.borrow_mut();
-                    let state = data.connection_manager.get_mut_data(addr).unwrap();
+                    let state = data.connection_manager
+                        .get_mut_data(key.clone()).unwrap();
                     let handle_res = match state.state {
                         ServerConnectionState::Uninitialized =>
                             unreachable!("ServerConnectionState is uninitialized"),
@@ -433,7 +482,7 @@ impl DefaultPacketHandlerStream {
             };
 
             if is_end {
-                Data::remove_connection(data.upgrade().unwrap(), addr);
+                Data::remove_connection(data.upgrade().unwrap(), key.clone());
             }
 
             if let Some((mut listeners, p)) = packet_res {
@@ -441,13 +490,6 @@ impl DefaultPacketHandlerStream {
                 let l_fut = future::join_all(listeners.drain(..).map(|mut l| l()).collect::<Vec<_>>());
 
                 if let Some(p) = p {
-                    if let packets::Data::Command(ref cmd) = p.data {
-                        if cmd.command == "clientinit" {
-                            if !send_clientinit {
-                                return Box::new(l_fut.and_then(move |_| future::ok(None)));
-                            }
-                        }
-                    }
                     // Take sink
                     let tmp_sink = mem::replace(&mut *sink.borrow_mut(), Either::B(None));
                     let tmp_sink = if let Either::A(sink) = tmp_sink {
@@ -564,19 +606,18 @@ impl<
 > DefaultPacketHandler<InnerSink> {
     pub fn new<
         InnerStream: Stream<Item = Packet, Error = Error> + 'static,
+        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     >(
-        data: Rc<RefCell<ClientData>>,
+        data: Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
-        addr: SocketAddr,
-        send_clientinit: bool,
+        key: CM::ConnectionsKey,
     ) -> Self {
         let (inner_stream, inner_sink) = DefaultPacketHandlerStream::new(
             data,
             inner_stream,
             inner_sink,
-            addr,
-            send_clientinit,
+            key,
         );
         let inner_sink = DefaultPacketHandlerSink::new(inner_sink);
         Self {
@@ -592,5 +633,32 @@ impl<
         DefaultPacketHandlerStream,
     ) {
         (self.inner_sink, self.inner_stream)
+    }
+}
+
+impl DefaultPacketHandler<
+    Box<Sink<SinkItem = Packet, SinkError = Error>>,
+> {
+    pub fn apply<
+        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    >(data: Rc<RefCell<Data<CM>>>, key: CM::ConnectionsKey) {
+        let ((stream, sink), con) = {
+            let mut data = data.borrow_mut();
+            let con = data.connection_manager.get_connection(key.clone())
+                .unwrap();
+            let i = {
+                let mut con = con.borrow_mut();
+                (
+                    con.packet_stream.take().unwrap(),
+                    con.packet_sink.take().unwrap(),
+                )
+            };
+            (i, con)
+        };
+        let handler = Self::new(data, stream, sink, key);
+        let (sink, stream) = handler.split();
+        let mut con = con.borrow_mut();
+        con.packet_stream = Some(Box::new(stream));
+        con.packet_sink = Some(Box::new(sink));
     }
 }

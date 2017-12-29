@@ -1,3 +1,4 @@
+use std::fmt::Display;
 use std::net::SocketAddr;
 
 use futures::{self, Sink, Stream};
@@ -8,9 +9,9 @@ use packets::{Packet, UdpPacket};
 
 pub struct PacketLogger;
 impl PacketLogger {
-    fn prepare_logger(
+    fn prepare_logger<Id: Display>(
         logger: &Logger,
-        addr: SocketAddr,
+        id: &Id,
         is_client: bool,
         incoming: bool,
     ) -> Logger {
@@ -20,8 +21,8 @@ impl PacketLogger {
             "\x1b[1;31mOUT\x1b[0m"
         };
         let to_s = if is_client { "S" } else { "C" };
-        let addr_s = format!("{}", addr);
-        logger.new(o!("dir" => in_s, "to" => to_s, "addr" => addr_s))
+        let id_s = format!("{}", id);
+        logger.new(o!("dir" => in_s, "to" => to_s, "id" => id_s))
     }
 
     pub fn log_udp_packet(
@@ -31,18 +32,18 @@ impl PacketLogger {
         incoming: bool,
         packet: &UdpPacket,
     ) {
-        let logger = Self::prepare_logger(logger, addr, is_client, incoming);
+        let logger = Self::prepare_logger(logger, &addr, is_client, incoming);
         debug!(logger, "UdpPacket"; "content" => ?::HexSlice(&packet.0));
     }
 
-    pub fn log_packet(
+    pub fn log_packet<Id: Display>(
         logger: &Logger,
-        addr: SocketAddr,
+        id: &Id,
         is_client: bool,
         incoming: bool,
         packet: &Packet,
     ) {
-        let logger = Self::prepare_logger(logger, addr, is_client, incoming);
+        let logger = Self::prepare_logger(logger, id, is_client, incoming);
         debug!(logger, "Packet"; "content" => ?packet);
     }
 }
@@ -56,28 +57,13 @@ pub struct UdpPacketStreamLogger<
 }
 
 impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
-    UdpPacketStreamLogger<Inner> {
-    pub fn new(
-        inner: Inner,
-        logger: Logger,
-        is_client: bool,
-    ) -> Self {
-        Self {
-            inner,
-            logger,
-            is_client,
-        }
-    }
-}
-
-impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
     StreamWrapper<(SocketAddr, UdpPacket), Error, Inner> for
     UdpPacketStreamLogger<Inner> {
     /// (logger, is_client)
     type A = (Logger, bool);
 
     fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
-        UdpPacketStreamLogger::new(inner, logger, is_client)
+        Self { inner, logger, is_client }
     }
 }
 
@@ -112,29 +98,13 @@ pub struct UdpPacketSinkLogger<
 }
 
 impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
-    UdpPacketSinkLogger<Inner> {
-    pub fn new(
-        inner: Inner,
-        logger: Logger,
-        is_client: bool,
-    ) -> Self {
-        Self {
-            inner,
-            logger,
-            is_client,
-            buf: None,
-        }
-    }
-}
-
-impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
     SinkWrapper<(SocketAddr, UdpPacket), Error, Inner> for
     UdpPacketSinkLogger<Inner> {
     /// (logger, is_client)
     type A = (Logger, bool);
 
     fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
-        UdpPacketSinkLogger::new(inner, logger, is_client)
+        Self { inner, logger, is_client, buf: None }
     }
 }
 
@@ -190,50 +160,38 @@ impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
 }
 
 pub struct PacketStreamLogger<
-    Inner: Stream<Item = (SocketAddr, Packet), Error = Error>,
+    Inner: Stream<Item = Packet, Error = Error>,
+    Id: Display
 > {
     inner: Inner,
     logger: Logger,
     is_client: bool,
+    /// The identification of the connection
+    id: Id,
 }
 
-impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
-    PacketStreamLogger<Inner> {
-    pub fn new(
-        inner: Inner,
-        logger: Logger,
-        is_client: bool,
-    ) -> Self {
-        Self {
-            inner,
-            logger,
-            is_client,
-        }
+impl<Inner: Stream<Item = Packet, Error = Error>, Id: Display>
+    StreamWrapper<Packet, Error, Inner> for
+    PacketStreamLogger<Inner, Id> {
+    /// (logger, is_client, id)
+    type A = (Logger, bool, Id);
+
+    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self {
+        Self { inner, logger, is_client, id }
     }
 }
 
-impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>>
-    StreamWrapper<(SocketAddr, Packet), Error, Inner> for
-    PacketStreamLogger<Inner> {
-    /// (logger, is_client)
-    type A = (Logger, bool);
-
-    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
-        PacketStreamLogger::new(inner, logger, is_client)
-    }
-}
-
-impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
-    for PacketStreamLogger<Inner> {
-    type Item = (SocketAddr, Packet);
+impl<Inner: Stream<Item = Packet, Error = Error>, Id: Display> Stream
+    for PacketStreamLogger<Inner, Id> {
+    type Item = Packet;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner.poll();
-        if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
+        if let Ok(futures::Async::Ready(Some(ref packet))) = res {
             PacketLogger::log_packet(
                 &self.logger,
-                addr,
+                &self.id,
                 self.is_client,
                 true,
                 packet,
@@ -244,55 +202,41 @@ impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error>> Stream
 }
 
 pub struct PacketSinkLogger<
-    Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>,
+    Inner: Sink<SinkItem = Packet, SinkError = Error>,
+    Id: Display,
 > {
     inner: Inner,
     logger: Logger,
     is_client: bool,
+    /// The identification of the connection
+    id: Id,
 }
 
-impl<Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
-    PacketSinkLogger<Inner> {
-    pub fn new(
-        inner: Inner,
-        logger: Logger,
-        is_client: bool,
-    ) -> Self {
-        Self {
-            inner,
-            logger,
-            is_client,
-        }
+impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display>
+    SinkWrapper<Packet, Error, Inner> for PacketSinkLogger<Inner, Id> {
+    /// (logger, is_client, id)
+    type A = (Logger, bool, Id);
+
+    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self {
+        Self { inner, logger, is_client, id }
     }
 }
 
-impl<Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>>
-    SinkWrapper<(SocketAddr, Packet), Error, Inner> for PacketSinkLogger<Inner> {
-    /// (logger, is_client)
-    type A = (Logger, bool);
-
-    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
-        PacketSinkLogger::new(inner, logger, is_client)
-    }
-}
-
-impl<Inner: Sink<SinkItem = (SocketAddr, Packet), SinkError = Error>> Sink
-    for PacketSinkLogger<Inner> {
-    type SinkItem = (SocketAddr, Packet);
+impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display> Sink
+    for PacketSinkLogger<Inner, Id> {
+    type SinkItem = Packet;
     type SinkError = Error;
 
-    fn start_send(
-        &mut self,
-        (addr, packet): Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+    fn start_send(&mut self, packet: Self::SinkItem)
+        -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         PacketLogger::log_packet(
             &self.logger,
-            addr,
+            &self.id,
             self.is_client,
             false,
             &packet,
         );
-        self.inner.start_send((addr, packet))
+        self.inner.start_send(packet)
     }
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
         self.inner.poll_complete()
