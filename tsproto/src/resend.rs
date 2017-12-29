@@ -242,7 +242,12 @@ impl Resender for DefaultResender {
                     }
                 }
         };
+
         self.state = next_state;
+        // Notify the resender future that the mode changed
+        if let Some(ref task) = self.resender_future_task {
+            task.notify();
+        }
     }
 
     fn udp_packet_received(&mut self, _: &UdpPacket) {
@@ -260,6 +265,10 @@ impl Resender for DefaultResender {
         };
         if let Some(next_state) = next_state {
             self.state = next_state;
+            // Notify the resender future that the mode changed
+            if let Some(ref task) = self.resender_future_task {
+                task.notify();
+            }
         }
     }
 }
@@ -492,8 +501,10 @@ pub struct ResendFuture<CM: ConnectionManager> {
     connection_key: CM::ConnectionsKey,
     connection: Weak<RefCell<Connection<CM>>>,
     sink: ::connection::UdpPackets<CM>,
-    /// The future to wake us up after a certain time.
+    /// The future to wake us up when the next packet should be resent.
     timeout: Timeout,
+    /// The future to wake us up when the current state times out.
+    state_timeout: Timeout,
     /// If we are sending and should poll the sink.
     is_sending: bool,
 }
@@ -515,6 +526,10 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
             connection: Rc::downgrade(&connection),
             sink: Connection::get_udp_packets(connection),
             timeout: Timeout::new(
+                Duration::seconds(1).to_std().unwrap(),
+                &handle,
+            ).unwrap(),
+            state_timeout: Timeout::new(
                 Duration::seconds(1).to_std().unwrap(),
                 &handle,
             ).unwrap(),
@@ -564,35 +579,68 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
             let mut con = con.borrow_mut();
             let resender = &mut con.resender;
             match resender.state {
-                ResendStates::Connecting { ref to_send, ref start_time } =>
-                    if !to_send.is_empty() && now_naive.signed_duration_since(
-                        start_time.naive_utc()) > resender.config
+                ResendStates::Connecting { ref start_time, .. } =>
+                    if now_naive.signed_duration_since(start_time.naive_utc())
+                        >= resender.config
                             .connecting_timeout {
                         StateChange::EndConnection
                     } else {
+                        // Schedule timeout
+                        let dur = (*start_time + resender.config
+                                .connecting_timeout)
+                            .naive_utc()
+                            .signed_duration_since(now_naive);
+                        let next = Instant::now() + dur.to_std().unwrap();
+                        self.state_timeout.reset(next);
+                        if let futures::Async::Ready(()) =
+                            self.state_timeout.poll()? {
+                            task::current().notify();
+                        }
                         StateChange::Nothing
                     }
                 ResendStates::Normal { .. } => StateChange::Nothing,
                 ResendStates::Stalling { ref mut to_send, ref start_time } =>
                     if now_naive.signed_duration_since(start_time.naive_utc())
-                        > resender.config.stalling_timeout {
+                        >= resender.config.stalling_timeout {
                         StateChange::NewState(ResendStates::Dead {
                             to_send: mem::replace(to_send, Vec::new()),
                             start_time: Utc::now(),
                         })
                     } else {
+                        // Schedule timeout
+                        let dur = (*start_time + resender.config
+                                .stalling_timeout)
+                            .naive_utc()
+                            .signed_duration_since(now_naive);
+                        let next = Instant::now() + dur.to_std().unwrap();
+                        self.state_timeout.reset(next);
+                        if let futures::Async::Ready(()) =
+                            self.state_timeout.poll()? {
+                            task::current().notify();
+                        }
                         StateChange::Nothing
                     }
                 ResendStates::Dead { ref start_time, .. } =>
                     if now_naive.signed_duration_since(start_time.naive_utc())
-                        > resender.config.dead_timeout {
+                        >= resender.config.dead_timeout {
                         StateChange::EndConnection
                     } else {
+                        // Schedule timeout
+                        let dur = (*start_time + resender.config
+                                .dead_timeout)
+                            .naive_utc()
+                            .signed_duration_since(now_naive);
+                        let next = Instant::now() + dur.to_std().unwrap();
+                        self.state_timeout.reset(next);
+                        if let futures::Async::Ready(()) =
+                            self.state_timeout.poll()? {
+                            task::current().notify();
+                        }
                         StateChange::Nothing
                     }
                 ResendStates::Disconnecting { ref start_time, .. } =>
                     if now_naive.signed_duration_since(start_time.naive_utc())
-                        > resender.config.connecting_timeout {
+                        >= resender.config.connecting_timeout {
                         StateChange::EndConnection
                     } else {
                         StateChange::Nothing

@@ -83,7 +83,7 @@ fn connect(
         let header = Header::new(PacketType::Command);
         let mut command = commands::Command::new("clientinit");
         command.push("client_nickname", "Bot");
-        command.push("client_version", "3.1.6 [Build: 1502873983]");
+        command.push("client_version", "3.2.6 [Build: 1502873983]"); // TODO was 3.1.6
         command.push("client_platform", "Linux");
         command.push("client_input_hardware", "1");
         command.push("client_output_hardware", "1");
@@ -185,7 +185,11 @@ fn main() {
 
     // Connect
     let handle = core.handle();
-    core.run(connect(logger.clone(), &handle, c.clone(), args.address)).unwrap();
+    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
+        args.address)) {
+        error!(logger, "Failed to connect"; "error" => ?error);
+        return;
+    }
     info!(logger, "Connected");
 
     // Wait some time
