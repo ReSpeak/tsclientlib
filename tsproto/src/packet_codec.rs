@@ -399,9 +399,6 @@ impl<CM: ConnectionManager + 'static> PacketCodecStream<CM,
         let connection2 = connection.clone();
         let mut connection = connection.borrow_mut();
         let stream: Box<Stream<Item=_, Error=_>> = if send_acks {
-            let sink = connection.packet_sink.take().expect(
-                "The PacketCodecSink has to be added before the stream");
-            connection.packet_sink = Some(Box::new(sink));
             Box::new(AckHandler::new(stream,
                 Connection::get_packets(connection2)))
         } else {

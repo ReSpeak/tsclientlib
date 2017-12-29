@@ -389,8 +389,13 @@ impl<
                     warn!(data.logger,
                         "Dropping packet for unknown connection");
                 }
+
+                // Request next packet
+                task::current().notify();
             } else {
                 // Stream ended
+                let data = data.borrow();
+                warn!(data.logger, "Stream for distributor ended");
                 return Ok(futures::Async::Ready(()));
             }
         }

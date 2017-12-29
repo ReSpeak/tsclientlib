@@ -317,6 +317,10 @@ impl Sink for DefaultResender {
             Ok(futures::AsyncSink::NotReady((rec.p_type, rec.p_id, rec.packet)))
         } else {
             self.resender_task = None;
+            // Notify the resender future that a new packet is available
+            if let Some(ref task) = self.resender_future_task {
+                task.notify();
+            }
             Ok(futures::AsyncSink::Ready)
         }
     }
@@ -487,13 +491,14 @@ pub struct ResendFuture<CM: ConnectionManager> {
     data: Weak<RefCell<Data<CM>>>,
     connection_key: CM::ConnectionsKey,
     connection: Weak<RefCell<Connection<CM>>>,
+    sink: ::connection::UdpPackets<CM>,
     /// The future to wake us up after a certain time.
     timeout: Timeout,
     /// If we are sending and should poll the sink.
     is_sending: bool,
 }
 
-impl<CM: ConnectionManager> ResendFuture<CM> {
+impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
     pub fn new(
         data: Rc<RefCell<Data<CM>>>,
         connection_key: CM::ConnectionsKey,
@@ -506,8 +511,9 @@ impl<CM: ConnectionManager> ResendFuture<CM> {
         };
         Self {
             data: Rc::downgrade(&data),
-            connection: Rc::downgrade(&connection),
             connection_key,
+            connection: Rc::downgrade(&connection),
+            sink: Connection::get_udp_packets(connection),
             timeout: Timeout::new(
                 Duration::seconds(1).to_std().unwrap(),
                 &handle,
@@ -530,13 +536,14 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
             // Quit if the connection does not exist anymore
             return Ok(futures::Async::Ready(()));
         };
-        let con = &mut *con.borrow_mut();
-        // Set task
-        con.resender.resender_future_task = Some(task::current());
+        {
+            // Set task
+            let mut con = con.borrow_mut();
+            con.resender.resender_future_task = Some(task::current());
+        }
 
         if self.is_sending {
-            if let futures::Async::Ready(()) = con.udp_packet_sink.as_mut()
-                .unwrap().poll_complete()? {
+            if let futures::Async::Ready(()) = self.sink.poll_complete()? {
                 self.is_sending = false;
             } else {
                 return Ok(futures::Async::NotReady);
@@ -554,6 +561,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
         }
 
         let next_state = {
+            let mut con = con.borrow_mut();
             let resender = &mut con.resender;
             match resender.state {
                 ResendStates::Connecting { ref to_send, ref start_time } =>
@@ -593,13 +601,13 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
         };
 
         if let StateChange::NewState(next_state) = next_state {
+            let mut con = con.borrow_mut();
             con.resender.state = next_state;
             // Queue the next immideate update
             task::current().notify();
             return Ok(futures::Async::NotReady);
         } else if let StateChange::EndConnection = next_state {
             // End connection
-            mem::drop(con);
             let data = self.data.upgrade().unwrap();
             Data::remove_connection(data, self.connection_key.clone());
             return Ok(futures::Async::NotReady);
@@ -608,24 +616,34 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
         // Check if there are packets to send.
         // If there is no record, we will be notified by the sink.
         let mut switch_to_stalling = false;
-        let sink = con.udp_packet_sink.as_mut().unwrap();
-        let packet_interval = con.resender.state
-            .get_packet_interval(&con.resender.config);
-        while let Some(mut rec) = con.resender.state.peek_mut_next_record() {
-            // Check if we should resend this packet
-            if rec.next > now {
-                // Schedule next send
-                let dur = rec.next
-                    .naive_utc()
-                    .signed_duration_since(now_naive);
-                let next = Instant::now() + dur.to_std().unwrap();
-                self.timeout.reset(next);
-                if let futures::Async::Ready(()) = self.timeout.poll()? {
-                    task::current().notify();
-                }
-                return Ok(futures::Async::NotReady);
-            }
+        let packet_interval = {
+            let con = &*con.borrow();
+            con.resender.state
+                .get_packet_interval(&con.resender.config)
+        };
 
+        while let Some(packet) = {
+            let mut con = con.borrow_mut();
+            let packet = if let Some(mut rec) = con.resender.state.peek_mut_next_record() {
+                // Check if we should resend this packet
+                if rec.next > now {
+                    // Schedule next send
+                    let dur = rec.next
+                        .naive_utc()
+                        .signed_duration_since(now_naive);
+                    let next = Instant::now() + dur.to_std().unwrap();
+                    self.timeout.reset(next);
+                    if let futures::Async::Ready(()) = self.timeout.poll()? {
+                        task::current().notify();
+                    }
+                    return Ok(futures::Async::NotReady);
+                }
+                Some(rec.packet.clone())
+            } else {
+                None
+            };
+            packet
+        } {
             // Print packet for debugging
             /*let mut q = ::std::collections::BinaryHeap::new();
             mem::swap(&mut q, &mut data.send_queue);
@@ -637,18 +655,21 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
 
             // Try to send this packet
             if let futures::AsyncSink::NotReady(_) =
-                sink.start_send(rec.packet.clone())?
+                self.sink.start_send(packet)?
             {
                 // The sink should notify us if it is ready
                 break;
             } else {
                 // Successfully started sending the packet, now schedule the
                 // next send time for this packet and enqueue it.
-                if let futures::Async::Ready(()) = sink.poll_complete()? {
+                if let futures::Async::Ready(()) = self.sink.poll_complete()? {
                     self.is_sending = false;
                 } else {
                     self.is_sending = true;
                 }
+
+                let con = &mut *con.borrow_mut();
+                let mut rec = con.resender.state.peek_mut_next_record().unwrap();
 
                 // Retransmission timeout
                 let rto = {
@@ -693,6 +714,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
         }
 
         if switch_to_stalling {
+            let mut con = con.borrow_mut();
             let mut to_send = if let ResendStates::Normal { ref mut to_send } =
                 con.resender.state {
                 mem::replace(to_send, BinaryHeap::new()).into_vec()
@@ -705,6 +727,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                 to_send,
                 start_time: now,
             };
+            task::current().notify();
         }
 
         Ok(futures::Async::NotReady)

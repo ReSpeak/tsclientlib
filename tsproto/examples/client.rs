@@ -21,7 +21,7 @@ use futures::{future, Future, Sink, Stream};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Timeout};
+use tokio_core::reactor::{Core, Handle, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::connectionmanager::ConnectionManager;
@@ -41,10 +41,27 @@ struct Args {
 
 fn connect(
     logger: slog::Logger,
+    handle: &Handle,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = errors::Error>> {
-    Box::new(client::connect(client.clone(), server_addr).and_then(move |()| {
+    let connect_fut = client::connect(client.clone(), server_addr);
+
+    // Listen for packets so we can answer them
+    let con = client.borrow().connection_manager.get_connection(server_addr)
+        .unwrap();
+    let packets = client::ClientConnection::get_packets(con.clone());
+
+    let logger2 = logger.clone();
+    let logger3 = logger.clone();
+    let listen = packets
+        .for_each(|_| future::ok(()))
+        .map(move |()| info!(logger2, "Listening finished"))
+        .map_err(move |error| error!(logger3, "Listening error";
+            "error" => ?error));
+    handle.spawn(listen);
+
+    Box::new(connect_fut.and_then(move |()| {
         let mut private_key = tomcrypt::EccKey::import(
             &base64::decode("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
                 k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
@@ -167,18 +184,9 @@ fn main() {
     client::default_setup(c.clone(), true);
 
     // Connect
-    core.run(connect(logger.clone(), c.clone(), args.address)).unwrap();
+    let handle = core.handle();
+    core.run(connect(logger.clone(), &handle, c.clone(), args.address)).unwrap();
     info!(logger, "Connected");
-
-    // Listen for packets
-    let con = c.borrow().connection_manager
-        .get_connection(args.address).unwrap();
-    let packets = client::ClientConnection::get_packets(con.clone());
-    let listen = packets
-        .for_each(|_| future::ok(()))
-        .map(|()| println!("Listening finished"))
-        .map_err(|error| println!("Listening error: {:?}", error));
-    core.handle().spawn(listen);
 
     // Wait some time
     let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
@@ -193,6 +201,8 @@ fn main() {
     cmd.push("targetmode", "3");
     cmd.push("msg", "Hello");
 
+    let con = c.borrow().connection_manager.get_connection(args.address)
+        .unwrap();
     let packets = client::ClientConnection::get_packets(con);
     let packet = Packet::new(header, Data::Command(cmd));
     core.run(packets.send(packet.clone())).unwrap();

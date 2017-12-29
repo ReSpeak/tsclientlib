@@ -153,9 +153,10 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
     server_addr: SocketAddr,
     f: F,
 ) -> BoxFuture<(), Error> {
-    // Return a future that resolves when we are connected
+    // Return a future that resolves when the function succeeds
     let data2 = data.clone();
-    if let Some(state) = data.borrow_mut().connection_manager.get_mut_data(server_addr) {
+    if let Some(state) = data.borrow_mut().connection_manager
+        .get_mut_data(server_addr) {
         if f(&state.state) {
             return Box::new(future::ok(()));
         }
