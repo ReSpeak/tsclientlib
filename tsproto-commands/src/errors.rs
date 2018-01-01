@@ -12,10 +12,10 @@ pub enum Error {
 	LibTimeLimitReached                         = 0x0005,
 
 	/// Dunno
-	CommandNotFount                             = 0x0100,
+	CommandNotFound                             = 0x0100,
 	UnableToBindNetworkPort                     = 0x0101,
 	NoNetworkPortAvailable                      = 0x0102,
-	PortAlreadyInUse                            = 0x103,
+	PortAlreadyInUse                            = 0x0103,
 
 	/// Client
 	ClientInvalidId                             = 0x0200,

@@ -1,4 +1,6 @@
 <#@ template cleanws="true" #>
+use tsproto::commands::CanonicalCommand;
+
 <# for msg in self.messages.values() {
     let is_notify = !msg.notify_name.is_empty();
     let is_response = msg.notify_name.is_empty() || msg.notify_name.starts_with("+");
@@ -40,6 +42,11 @@ impl Response for <#= msg.class_name #> {
 }
 <# } #>
 
+impl<'a> From<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
+    fn from(cmd: &'a CanonicalCommand<'a>) -> Self {
+        panic!();
+    }
+}
 
 <# }
 // Create notification types

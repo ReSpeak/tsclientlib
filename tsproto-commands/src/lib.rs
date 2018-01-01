@@ -1,4 +1,5 @@
 extern crate chrono;
+extern crate tsproto;
 
 use chrono::{DateTime, Duration, Utc};
 

@@ -22,13 +22,15 @@ struct Declarations {
 }
 
 fn main() {
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+
     // The template is automatically tracked as a dependency
-    for f in &["build.rs", "MessageDeclarations.txt"] {
-        println!("cargo:rerun-if-changed=build/{}", f);
+    for f in &["build/build.rs", "../declarations/MessageDeclarations.txt"] {
+        println!("cargo:rerun-if-changed={}/{}", manifest_dir, f);
     }
 
     // Read declarations
-    let mut f = File::open("build/MessageDeclarations.txt").unwrap();
+    let mut f = File::open(&format!("{}/../declarations/MessageDeclarations.txt", manifest_dir)).unwrap();
     let mut v = Vec::new();
     f.read_to_end(&mut v).unwrap();
     let s = String::from_utf8(v).unwrap();

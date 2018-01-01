@@ -1,0 +1,24 @@
+{
+	"folders": [
+		{
+			"path": "tsproto",
+			"name": "Protocol"
+		},
+		{
+			"path": "tsproto-bookkeeping",
+			"name": "Bookkeeping"
+		},
+		{
+			"path": "tsproto-commands",
+			"name": "Commands"
+		},
+		{
+			"path": "declarations",
+			"name": "Declarations"
+		},
+		{
+			"path": "target"
+		}
+	],
+	"settings": {}
+}
