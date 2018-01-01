@@ -10,7 +10,7 @@ use futures::{self, future, Future, Sink, Stream};
 use futures::future::Either;
 use futures::task::{self, Task};
 use futures::unsync::oneshot;
-use num::{pow, BigUint, Integer, ToPrimitive};
+use num::{BigUint, One, ToPrimitive};
 use rand::{self, Rng};
 
 use {packets, BoxFuture, Error, Result};
@@ -18,7 +18,7 @@ use algorithms as algs;
 use commands::Command;
 use connection::*;
 use connectionmanager::{AttachedDataConnectionManager, ConnectionManager,
-    Resender, SocketConnectionManager};
+    Resender, ResenderEvent, SocketConnectionManager};
 use handler_data::{ConnectionListener, Data};
 use packets::*;
 
@@ -134,6 +134,21 @@ pub fn default_setup<
             ::log::UdpPacketStreamLogger<_>>(data.clone(), a.clone());
         Data::apply_udp_packet_sink_wrapper::<
             ::log::UdpPacketSinkLogger<_>>(data.clone(), a);
+    }
+
+    // Discard packets which don't match a connection
+    let unknown_stream = Data::get_unknown_udp_packets(data.clone());
+    {
+        let data = data.borrow();
+        let logger = data.logger.clone();
+        let logger2 = data.logger.clone();
+        data.handle.spawn(unknown_stream.for_each(move |(addr, _)| {
+            warn!(logger, "Got packet without connection"; "from" => %addr);
+            Ok(())
+        }).map_err(move |e| {
+            error!(logger2, "Unknown packet stream errored"; "error" => ?e);
+            ()
+        }));
     }
 
     // Add distributor stream
@@ -326,18 +341,16 @@ impl DefaultPacketHandlerStream {
                                 // Use Montgomery Reduction
                                 let xi = BigUint::from_bytes_be(x);
                                 let ni = BigUint::from_bytes_be(n);
-                                // TODO implement Montgomery Reduction, use another thread + timeout after 5s
-                                fn pow_mod(mut x: BigUint, level: u32, n: &BigUint) -> BigUint {
-                                    for _ in 0..level {
-                                        x = pow::pow(x, 2).mod_floor(n);
-                                    }
-                                    x
-                                }
+                                // TODO use another thread + timeout after 5s
                                 let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
                                     "Solve RSA puzzle", logger.clone(),
                                     ::slog::Level::Info);
                                 time_reporter.start("");
-                                let yi = pow_mod(xi.clone(), level, &ni);
+                                // TODO implement Montgomery Reduction without
+                                // allocating the exponent
+                                let mut e = BigUint::one();
+                                e <<= level as usize;
+                                let yi = xi.modpow(&e, &ni);
                                 time_reporter.finish();
                                 info!(logger, "Solve RSA puzzle";
                                       "level" => level, "x" => %xi, "n" => %ni,
@@ -444,6 +457,8 @@ impl DefaultPacketHandlerStream {
                                     // initserver is the ack for clientinit
                                     // Remove from send queue
                                     con.resender.ack_packet(PacketType::Command, 1);
+                                    // Notify the resender that we are connected
+                                    con.resender.handle_event(ResenderEvent::Connected);
                                     res = Some((ServerConnectionState::Connected, None));
                                 }
                             }
@@ -569,6 +584,7 @@ impl<
         item: Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         let mut sink = self.inner_sink.borrow_mut();
+        // TODO Send ResenderEvent::Disconnecting here
         if let Either::A(ref mut sink) = *sink {
             return sink.start_send(item);
         }
@@ -637,9 +653,7 @@ impl<
     }
 }
 
-impl DefaultPacketHandler<
-    Box<Sink<SinkItem = Packet, SinkError = Error>>,
-> {
+impl DefaultPacketHandler<Box<Sink<SinkItem = Packet, SinkError = Error>>> {
     pub fn apply<
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     >(data: Rc<RefCell<Data<CM>>>, key: CM::ConnectionsKey) {

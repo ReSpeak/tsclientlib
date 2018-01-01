@@ -23,9 +23,10 @@ use futures::{future, Future, Sink, Stream};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::Core;
+use tokio_core::reactor::{Core, Handle};
 use tsproto::*;
 use tsproto::algorithms as algs;
+use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
@@ -42,10 +43,27 @@ struct Args {
 
 fn connect(
     logger: slog::Logger,
+    handle: &Handle,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = errors::Error>> {
-    Box::new(client::connect(client.clone(), server_addr).and_then(move |()| {
+    let connect_fut = client::connect(client.clone(), server_addr);
+
+    // Listen for packets so we can answer them
+    let con = client.borrow().connection_manager.get_connection(server_addr)
+        .unwrap();
+    let packets = client::ClientConnection::get_packets(con.clone());
+
+    let logger2 = logger.clone();
+    let logger3 = logger.clone();
+    let listen = packets
+        .for_each(|_| future::ok(()))
+        .map(move |()| info!(logger2, "Listening finished"))
+        .map_err(move |error| error!(logger3, "Listening error";
+            "error" => ?error));
+    handle.spawn(listen);
+
+    Box::new(connect_fut.and_then(move |()| {
         let mut private_key = tomcrypt::EccKey::import(
             &base64::decode("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
                 k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
@@ -69,8 +87,8 @@ fn connect(
         command.push("client_nickname", "Bot");
         command.push("client_version", "3.1.6 [Build: 1502873983]");
         command.push("client_platform", "Linux");
-        command.push("client_input_hardware", "0");
-        command.push("client_output_hardware", "0");
+        command.push("client_input_hardware", "1");
+        command.push("client_output_hardware", "1");
         command.push("client_default_channel", "");
         command.push("client_default_channel_password", "");
         command.push("client_server_password", "");
@@ -83,8 +101,10 @@ fn connect(
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 
-        let sink = client::ClientData::get_packets(client.clone());
-        sink.send((server_addr, clientinit_packet)).and_then(move |_| {
+        let con = client.borrow().connection_manager
+            .get_connection(server_addr).unwrap();
+        let sink = client::ClientConnection::get_packets(con);
+        sink.send(clientinit_packet).and_then(move |_| {
             client::wait_until_connected(client, server_addr)
         })
     }))
@@ -105,8 +125,13 @@ fn disconnect(
     command.push("reasonmsg", "Bye");
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
-    Box::new(client::ClientData::get_packets(client.clone())
-        .send((server_addr, packet))
+
+    let con = client.borrow().connection_manager
+        .get_connection(server_addr).unwrap();
+    con.borrow_mut().resender.handle_event(ResenderEvent::Disconnecting);
+    let sink = client::ClientConnection::get_packets(con);
+    Box::new(sink
+        .send(packet)
         .and_then(move |_| {
             client::wait_for_state(client, server_addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
@@ -147,16 +172,19 @@ fn main() {
         private_key,
         core.handle(),
         true,
+        connectionmanager::SocketConnectionManager::new(),
         logger.clone(),
     ).unwrap();
-    client::default_setup(c.clone(), true);
 
-    // Listen for packets
-    let listen = client::ClientData::get_packets(c.clone())
-        .for_each(|_| future::ok(()))
-        .map(|()| println!("Listening finished"))
-        .map_err(|error| println!("Listening error: {:?}", error));
-    core.handle().spawn(listen);
+    // Set the data reference
+    {
+        let c2 = c.clone();
+        let mut c = c.borrow_mut();
+        c.connection_manager.set_data_ref(c2);
+    }
+
+    // Packet encoding
+    client::default_setup(c.clone(), true);
 
     let mut header = Header::default();
     header.set_type(PacketType::Command);
@@ -175,30 +203,39 @@ fn main() {
     );
     time_reporter.start("Connections");
     let start = Instant::now();
+    let handle = core.handle();
+    let mut success_count = 0;
     for _ in 0..count {
         // The TS server does not accept the 3rd reconnect from the same port
-        //let action = Timeout::new(Duration::from_millis(20), &core.handle()).unwrap();
+        //let action = Timeout::new(Duration::from_millis(2000), &core.handle()).unwrap();
         //core.run(action).unwrap();
 
         info!(logger, "Connecting");
-        core.run(connect(logger.clone(), c.clone(), args.address))
-            .unwrap();
+        if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
+            args.address)) {
+            error!(logger, "Failed to connect"; "error" => ?error);
+            break;
+        }
+
         info!(logger, "Writing message");
-        let sink = client::ClientData::get_packets(c.clone());
-        core.run(sink.send((args.address, packet.clone()))).unwrap();
+        let con = c.borrow().connection_manager.get_connection(args.address)
+            .unwrap();
+        let packets = client::ClientConnection::get_packets(con);
+        core.run(packets.send(packet.clone())).unwrap();
         info!(logger, "Disconnecting");
         core.run(disconnect(logger.clone(), c.clone(), args.address)).unwrap();
+        success_count += 1;
     }
     time_reporter.finish();
     let dur = start.elapsed();
 
     info!(logger,
         "{} connects in {}.{:03}s",
-        count,
+        success_count,
         dur.as_secs(),
         dur.subsec_nanos() / 1000000
     );
-    let dur = dur / count;
+    let dur = dur / success_count;
     info!(logger,
         "{}.{:03}s per connect",
         dur.as_secs(),

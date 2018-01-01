@@ -21,9 +21,10 @@ use futures::{future, Future, Sink, Stream};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Timeout};
+use tokio_core::reactor::{Core, Handle, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
+use tsproto::connectionmanager::ConnectionManager;
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
@@ -40,10 +41,27 @@ struct Args {
 
 fn connect(
     logger: slog::Logger,
+    handle: &Handle,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = errors::Error>> {
-    Box::new(client::connect(client.clone(), server_addr).and_then(move |()| {
+    let connect_fut = client::connect(client.clone(), server_addr);
+
+    // Listen for packets so we can answer them
+    let con = client.borrow().connection_manager.get_connection(server_addr)
+        .unwrap();
+    let packets = client::ClientConnection::get_packets(con.clone());
+
+    let logger2 = logger.clone();
+    let logger3 = logger.clone();
+    let listen = packets
+        .for_each(|_| future::ok(()))
+        .map(move |()| info!(logger2, "Listening finished"))
+        .map_err(move |error| error!(logger3, "Listening error";
+            "error" => ?error));
+    handle.spawn(listen);
+
+    Box::new(connect_fut.and_then(move |()| {
         let mut private_key = tomcrypt::EccKey::import(
             &base64::decode("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
                 k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
@@ -81,8 +99,10 @@ fn connect(
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 
-        let sink = client::ClientData::get_packets(client.clone());
-        sink.send((server_addr, clientinit_packet)).and_then(move |_| {
+        let con = client.borrow().connection_manager
+            .get_connection(server_addr).unwrap();
+        let sink = client::ClientConnection::get_packets(con);
+        sink.send(clientinit_packet).and_then(move |_| {
             client::wait_until_connected(client, server_addr)
         })
     }))
@@ -103,8 +123,12 @@ fn disconnect(
     command.push("reasonmsg", "Bye");
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
-    Box::new(client::ClientData::get_packets(client.clone())
-        .send((server_addr, packet))
+
+    let con = client.borrow().connection_manager
+        .get_connection(server_addr).unwrap();
+    let sink = client::ClientConnection::get_packets(con);
+    Box::new(sink
+        .send(packet)
         .and_then(move |_| {
             client::wait_for_state(client, server_addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
@@ -145,21 +169,27 @@ fn main() {
         private_key,
         core.handle(),
         true,
+        connectionmanager::SocketConnectionManager::new(),
         logger.clone(),
     ).unwrap();
+
+    // Set the data reference
+    {
+        let c2 = c.clone();
+        let mut c = c.borrow_mut();
+        c.connection_manager.set_data_ref(c2);
+    }
 
     // Packet encoding
     client::default_setup(c.clone(), false);
 
-    // Listen for packets
-    let listen = client::ClientData::get_packets(c.clone())
-        .for_each(|_| future::ok(()))
-        .map(|()| println!("Listening finished"))
-        .map_err(|error| println!("Listening error: {:?}", error));
-    core.handle().spawn(listen);
-
     // Connect
-    core.run(connect(logger.clone(), c.clone(), args.address)).unwrap();
+    let handle = core.handle();
+    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
+        args.address)) {
+        error!(logger, "Failed to connect"; "error" => ?error);
+        return;
+    }
     info!(logger, "Connected");
 
     // Build packet
@@ -187,7 +217,6 @@ fn main() {
 
     // Build voice packet
     {
-    let mut sink = client::ClientData::get_packets(c.clone());
     let mut header = Header::default();
     header.set_type(PacketType::Voice);
     let voice = Data::Voice {
@@ -196,12 +225,15 @@ fn main() {
         voice_data: vec![0x3, 0x4, 0x78, 0x82, 0xbe, 0xe0, 0x88, 0x13, 0x79, 0xd3, 0xbc, 0xf6, 0xd2, 0x6c, 0xfd, 0x80, 0x36, 0x5e, 0x8a, 0xaa, 0xf, 0x2a, 0xe0, 0xa7, 0xbd, 0x68, 0x3f, 0xd7, 0x44, 0xe2, 0xcb, 0x8e, 0x48, 0x68, 0x75, 0x7c, 0x6b, 0x47, 0x42, 0x68, 0x61, 0xc9, 0xf9, 0x44, 0xa9, 0xfc, 0xc4, 0xf3, 0x8c, 0xfe, 0x26, 0x68, 0x2e, 0x66, 0x12, 0xac, 0x1c, 0x61, 0xa8, 0x1b, 0x6a, 0xfc, 0x55, 0xd8, 0xa1, 0x7, 0x25, 0x87, 0xc4, 0x89, 0x8c, 0x5c],
     };
 
+    let con = c.borrow().connection_manager.get_connection(args.address)
+        .unwrap();
+    let mut packets = client::ClientConnection::get_packets(con);
     let mut packet = Packet::new(header, voice);
     for i in 0..(3 * 65540) {
         if let Data::Voice { ref mut id, .. } = packet.data {
             *id = i as u16;
         }
-        sink = core.run(sink.send((args.address, packet.clone()))).unwrap();
+        packets = core.run(packets.send(packet.clone())).unwrap();
         if i & 0x3fff == 0 {
             info!(logger, "Sending packet {:#x}", i);
         }

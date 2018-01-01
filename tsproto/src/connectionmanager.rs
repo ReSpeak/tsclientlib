@@ -109,6 +109,9 @@ pub trait Resender: Sink<SinkItem = (PacketType, u16, UdpPacket),
     /// Return `true` to allow sending and `false` to block packets.
     fn send_voice_packets(&self, p_type: PacketType) -> bool;
 
+    /// If there are packets in the queue which were not acknowledged.
+    fn is_empty(&self) -> bool;
+
     /// This method informs the resender of state changes of the connection.
     fn handle_event(&mut self, event: ResenderEvent);
 
@@ -200,7 +203,9 @@ impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
     type ConnectionsKey = SocketAddr;
 
     fn create_resender(&self) -> Self::Resend {
-        DefaultResender::new(self.resend_config.clone())
+        let data = self.data.as_ref().unwrap().upgrade().unwrap();
+        let data = data.borrow();
+        DefaultResender::new(self.resend_config.clone(), data.logger.clone())
     }
 
     fn add_connection(&mut self, con: Rc<RefCell<Connection<Self>>>,

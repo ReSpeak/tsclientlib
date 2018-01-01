@@ -10,6 +10,7 @@ use std::time::Instant;
 use chrono::{DateTime, Duration, Utc};
 use futures::{self, Future, Sink};
 use futures::task::{self, Task};
+use slog::Logger;
 use tokio_core::reactor::Timeout;
 
 use Error;
@@ -48,7 +49,11 @@ impl PartialOrd for SendRecord {
 impl Ord for SendRecord {
     fn cmp(&self, other: &Self) -> Ordering {
         // The smallest time is the most important time
-        self.next.cmp(&other.next).reverse()
+        match self.next.cmp(&other.next).reverse() {
+            // Else, the lower packet id is more important
+            Ordering::Equal => self.p_id.cmp(&other.p_id).reverse(),
+            c => c,
+        }
     }
 }
 
@@ -56,6 +61,8 @@ impl Ord for SendRecord {
 ///
 /// [`Resender`]:
 pub struct DefaultResender {
+    logger: Logger,
+
     state: ResendStates,
     config: ResendConfig,
 
@@ -78,10 +85,11 @@ pub struct DefaultResender {
 }
 
 impl DefaultResender {
-    pub fn new(config: ResendConfig) -> Self {
+    pub fn new(config: ResendConfig, logger: Logger) -> Self {
         let srtt = config.srtt;
         let srtt_dev = config.srtt_dev;
         Self {
+            logger,
             state: ResendStates::Connecting {
                 start_time: Utc::now(),
                 to_send: Default::default(),
@@ -105,6 +113,19 @@ impl DefaultResender {
         self.srtt_dev = self.srtt_dev * 3 / 4 + diff / 4;
         self.srtt = self.srtt * 7 / 8 + rtt / 8;
     }
+
+    /// Replaces the current state by a new state and return the old state.
+    fn set_state(&mut self, state: ResendStates) -> ResendStates {
+        info!(self.logger, "Changed state"; "old" => self.state.get_name(),
+            "new" => state.get_name());
+        let old = mem::replace(&mut self.state, state);
+
+        // Notify the future
+        if let Some(ref task) = self.resender_future_task {
+            task.notify();
+        }
+        old
+    }
 }
 
 impl Drop for DefaultResender {
@@ -119,10 +140,8 @@ impl Drop for DefaultResender {
 impl Resender for DefaultResender {
     fn ack_packet(&mut self, p_type: PacketType, p_id: u16) {
         let rec = match self.state {
-            ResendStates::Connecting    { to_send: ref mut v, .. } |
-            ResendStates::Stalling      { to_send: ref mut v, .. } |
-            ResendStates::Dead          { to_send: ref mut v, .. } |
-            ResendStates::Disconnecting { to_send: ref mut v, .. } => {
+            ResendStates::Stalling { to_send: ref mut v, .. } |
+            ResendStates::Dead     { to_send: ref mut v, .. } => {
                 if let Some(i) = v.iter().position(|rec|
                     rec.p_type == p_type && rec.p_id == p_id) {
                     Some(v.remove(i))
@@ -130,7 +149,9 @@ impl Resender for DefaultResender {
                     None
                 }
             }
-            ResendStates::Normal { ref mut to_send } => {
+            ResendStates::Connecting    { ref mut to_send, .. } |
+            ResendStates::Normal        { ref mut to_send     } |
+            ResendStates::Disconnecting { ref mut to_send, .. } => {
                 if let Some(is_first) = to_send.peek().map(|rec|
                     rec.p_type == p_type && rec.p_id == p_id) {
                     if is_first {
@@ -165,6 +186,34 @@ impl Resender for DefaultResender {
             }
         }
 
+        // Switch to Normal mode if we are currently in stalling mode and
+        // received an ack packet.
+        let next_state = match self.state {
+            ResendStates::Stalling { ref mut to_send, .. } => {
+                let now = Utc::now();
+                for rec in to_send.iter_mut() {
+                    rec.next = now;
+                }
+                let to_send = mem::replace(to_send, Vec::new()).into();
+
+                // Reset srtt, this will reset to stalling mode after 3 packets
+                // are lost again.
+                self.srtt = self.config.normal_timeout / 4;
+
+                Some(ResendStates::Normal {
+                    to_send,
+                })
+            }
+            _ => None,
+        };
+        if let Some(next_state) = next_state {
+            self.set_state(next_state);
+            // Notify the resender future that the mode changed
+            if let Some(ref task) = self.resender_future_task {
+                task.notify();
+            }
+        }
+
         // Notify, that a packet was removed from the queue
         if let Some(ref task) = self.resender_task {
             task.notify();
@@ -181,69 +230,79 @@ impl Resender for DefaultResender {
         }
     }
 
+    fn is_empty(&self) -> bool {
+        match self.state {
+            ResendStates::Connecting    { ref to_send, .. } |
+            ResendStates::Disconnecting { ref to_send, .. } |
+            ResendStates::Normal        { ref to_send, .. } =>
+                to_send.is_empty(),
+            ResendStates::Stalling      { ref to_send, .. } |
+            ResendStates::Dead          { ref to_send, .. } =>
+                to_send.is_empty(),
+        }
+    }
+
     fn handle_event(&mut self, event: ResenderEvent) {
         let next_state = match event {
-            ResenderEvent::Connecting =>
-                // Switch to connecting state
-                match self.state {
+            ResenderEvent::Connecting |
+            ResenderEvent::Disconnecting => {
+                // Switch to connecting or disconnecting state
+                let now = Utc::now();
+                let to_send = match self.state {
+                    ResendStates::Stalling { ref mut to_send, .. } |
+                    ResendStates::Dead     { ref mut to_send, .. } => {
+                        // Sort by packet id
+                        let mut v = mem::replace(to_send, Vec::new());
+                        let res = v.drain(..)
+                            .map(|mut rec| {
+                                rec.next = now;
+                                rec
+                            }).collect();
+                        res
+                    }
                     ResendStates::Connecting    { ref mut to_send, .. } |
-                    ResendStates::Stalling      { ref mut to_send, .. } |
-                    ResendStates::Dead          { ref mut to_send, .. } |
-                    ResendStates::Disconnecting { ref mut to_send, .. } =>
-                        ResendStates::Connecting {
-                            to_send: mem::replace(to_send, Vec::new()),
-                            start_time: Utc::now(),
-                        },
-                    ResendStates::Normal { ref mut to_send } => {
-                        let to_send = mem::replace(to_send, BinaryHeap::new());
-                        ResendStates::Connecting {
-                            to_send: to_send.into(),
-                            start_time: Utc::now(),
+                    ResendStates::Normal        { ref mut to_send     } |
+                    ResendStates::Disconnecting { ref mut to_send, .. } => {
+                        let mut to_send = mem::replace(to_send,
+                            BinaryHeap::new()).into_vec();
+                        for rec in to_send.iter_mut() {
+                            rec.next = now;
                         }
+
+                        to_send.into()
+                    }
+                };
+
+                if event == ResenderEvent::Connecting {
+                    ResendStates::Connecting {
+                        to_send,
+                        start_time: now,
+                    }
+                } else {
+                    ResendStates::Disconnecting {
+                        to_send,
+                        start_time: now,
                     }
                 }
+            }
             ResenderEvent::Connected =>
                 // Switch to normal state
                 match self.state {
-                    ResendStates::Connecting    { ref mut to_send, .. } |
-                    ResendStates::Stalling      { ref mut to_send, .. } |
-                    ResendStates::Dead          { ref mut to_send, .. } |
-                    ResendStates::Disconnecting { ref mut to_send, .. } => {
+                    ResendStates::Stalling { ref mut to_send, .. } |
+                    ResendStates::Dead     { ref mut to_send, .. } => {
                         let to_send = mem::replace(to_send, Vec::new());
                         ResendStates::Normal { to_send: to_send.into() }
                     }
-                    ResendStates::Normal { ref mut to_send } => {
+                    ResendStates::Connecting    { ref mut to_send, .. } |
+                    ResendStates::Normal        { ref mut to_send     } |
+                    ResendStates::Disconnecting { ref mut to_send, .. } => {
                         let to_send = mem::replace(to_send, BinaryHeap::new());
                         ResendStates::Normal { to_send }
                     }
                 }
-            ResenderEvent::Disconnecting =>
-                // Switch to disconnecting state
-                match self.state {
-                    ResendStates::Connecting    { ref mut to_send, .. } |
-                    ResendStates::Stalling      { ref mut to_send, .. } |
-                    ResendStates::Dead          { ref mut to_send, .. } |
-                    ResendStates::Disconnecting { ref mut to_send, .. } => {
-                        let mut to_send = mem::replace(to_send, Vec::new());
-                        to_send.sort_by(|a, b| a.p_id.cmp(&b.p_id));
-                        ResendStates::Disconnecting {
-                            to_send,
-                            start_time: Utc::now(),
-                        }
-                    }
-                    ResendStates::Normal { ref mut to_send } => {
-                        let mut to_send = mem::replace(to_send, BinaryHeap::new())
-                            .into_vec();
-                        to_send.sort_by(|a, b| a.p_id.cmp(&b.p_id));
-                        ResendStates::Disconnecting {
-                            to_send,
-                            start_time: Utc::now(),
-                        }
-                    }
-                }
         };
 
-        self.state = next_state;
+        self.set_state(next_state);
         // Notify the resender future that the mode changed
         if let Some(ref task) = self.resender_future_task {
             task.notify();
@@ -253,18 +312,20 @@ impl Resender for DefaultResender {
     fn udp_packet_received(&mut self, _: &UdpPacket) {
         // Restart sending packets if we got a new packet
         let next_state = match self.state {
-            ResendStates::Stalling { ref mut to_send, .. } |
             ResendStates::Dead     { ref mut to_send, .. } => {
                 let to_send = mem::replace(to_send, Vec::new()).into();
-                // TODO Don't send all packets at once
-                Some(ResendStates::Normal {
+                // Switch to Stalling if the connection was dead
+                Some(ResendStates::Stalling {
                     to_send,
+                    start_time: Utc::now(),
                 })
             }
+            // We will switch to Normal from stalling after we received an ack
+            // again
             _ => None,
         };
         if let Some(next_state) = next_state {
-            self.state = next_state;
+            self.set_state(next_state);
             // Notify the resender future that the mode changed
             if let Some(ref task) = self.resender_future_task {
                 task.notify();
@@ -349,7 +410,7 @@ enum ResendStates {
     ///
     /// The `Vec` is unsorted in this case as there exists no real sorting.
     Connecting {
-        to_send: Vec<SendRecord>,
+        to_send: BinaryHeap<SendRecord>,
         start_time: DateTime<Utc>,
     },
     /// Everything is clear, normal operation.
@@ -374,7 +435,7 @@ enum ResendStates {
     /// Sent the packet to close the connection, but the acknowledgement was not
     /// yet received.
     Disconnecting {
-        to_send: Vec<SendRecord>,
+        to_send: BinaryHeap<SendRecord>,
         start_time: DateTime<Utc>,
     },
 }
@@ -383,11 +444,11 @@ impl ResendStates {
     /// Returns the next record which should be sent, if there is one.
     fn peek_mut_next_record(&mut self) -> Option<PeekMut<SendRecord>> {
         match *self {
-            ResendStates::Connecting    { ref mut to_send, .. } |
-            ResendStates::Stalling      { ref mut to_send, .. } |
-            ResendStates::Disconnecting { ref mut to_send, .. } =>
+            ResendStates::Stalling { ref mut to_send, .. } =>
                 to_send.first_mut().map(|r| r.into()),
-            ResendStates::Normal { ref mut to_send, .. } =>
+            ResendStates::Connecting    { ref mut to_send, .. } |
+            ResendStates::Normal        { ref mut to_send     } |
+            ResendStates::Disconnecting { ref mut to_send, .. } =>
                 to_send.peek_mut().map(|r| r.into()),
             ResendStates::Dead { .. } => None,
         }
@@ -400,6 +461,16 @@ impl ResendStates {
             ResendStates::Stalling   { .. } => Some(config.stalling_interval),
             ResendStates::Dead       { .. } => None,
             ResendStates::Disconnecting { .. } => Some(config.disconnect_interval),
+        }
+    }
+
+    fn get_name(&self) -> &'static str {
+        match *self {
+            ResendStates::Connecting    { .. } => "Connecting",
+            ResendStates::Normal        { .. } => "Normal",
+            ResendStates::Stalling      { .. } => "Stalling",
+            ResendStates::Dead          { .. } => "Dead",
+            ResendStates::Disconnecting { .. } => "Disconnecting",
         }
     }
 }
@@ -650,13 +721,16 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
 
         if let StateChange::NewState(next_state) = next_state {
             let mut con = con.borrow_mut();
-            con.resender.state = next_state;
+            con.resender.set_state(next_state);
             // Queue the next immideate update
             task::current().notify();
             return Ok(futures::Async::NotReady);
         } else if let StateChange::EndConnection = next_state {
             // End connection
             let data = self.data.upgrade().unwrap();
+            let con = con.borrow();
+            info!(con.logger, "Exiting connection because it is not responding";
+                "current state" => con.resender.state.get_name());
             Data::remove_connection(data, self.connection_key.clone());
             return Ok(futures::Async::NotReady);
         }
@@ -671,7 +745,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
         };
 
         while let Some(packet) = {
-            let mut con = con.borrow_mut();
+            let con = &mut *con.borrow_mut();
             let packet = if let Some(mut rec) = con.resender.state.peek_mut_next_record() {
                 // Check if we should resend this packet
                 if rec.next > now {
@@ -686,21 +760,17 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                     }
                     return Ok(futures::Async::NotReady);
                 }
+
+                // Print packet for debugging
+                //info!(con.logger, "Packet in send queue"; "id" => ?rec.p_id,
+                //    "next" => ?rec.next);
                 Some(rec.packet.clone())
             } else {
+                //info!(con.logger, "No packet in send queue");
                 None
             };
             packet
         } {
-            // Print packet for debugging
-            /*let mut q = ::std::collections::BinaryHeap::new();
-            mem::swap(&mut q, &mut data.send_queue);
-            let v = q.into_sorted_vec();
-            info!(con.logger, "Send queue: {:?}", v.iter().map(|rec| {
-                (rec.p_id, rec.next)
-            }).collect::<Vec<_>>());
-            data.send_queue.extend(v.into_iter());*/
-
             // Try to send this packet
             if let futures::AsyncSink::NotReady(_) =
                 self.sink.start_send(packet)?
@@ -771,10 +841,10 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
             };
             to_send.sort_by(|a, b| a.p_id.cmp(&b.p_id));
 
-            con.resender.state = ResendStates::Stalling {
+            con.resender.set_state(ResendStates::Stalling {
                 to_send,
                 start_time: now,
-            };
+            });
             task::current().notify();
         }
 

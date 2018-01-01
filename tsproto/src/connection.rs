@@ -342,7 +342,8 @@ impl<CM: ConnectionManager> Sink for Packets<CM> {
 
     fn start_send(&mut self, item: Self::SinkItem)
         -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let connection = self.connection.upgrade().unwrap();
+        let connection = self.connection.upgrade()
+            .expect("Underlying connection was removed");
         let mut sink = connection.borrow_mut()
             .packet_sink
             .take()

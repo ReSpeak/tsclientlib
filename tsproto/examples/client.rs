@@ -24,11 +24,12 @@ use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Handle, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
-use tsproto::connectionmanager::ConnectionManager;
+use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(global_settings_raw = "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]")]
+#[structopt(global_settings_raw =
+    "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]")]
 struct Args {
     #[structopt(short = "a", long = "address",
                 default_value = "127.0.0.1:9987",
@@ -83,7 +84,7 @@ fn connect(
         let header = Header::new(PacketType::Command);
         let mut command = commands::Command::new("clientinit");
         command.push("client_nickname", "Bot");
-        command.push("client_version", "3.2.6 [Build: 1502873983]"); // TODO was 3.1.6
+        command.push("client_version", "3.1.6 [Build: 1502873983]");
         command.push("client_platform", "Linux");
         command.push("client_input_hardware", "1");
         command.push("client_output_hardware", "1");
@@ -126,6 +127,7 @@ fn disconnect(
 
     let con = client.borrow().connection_manager
         .get_connection(server_addr).unwrap();
+    con.borrow_mut().resender.handle_event(ResenderEvent::Disconnecting);
     let sink = client::ClientConnection::get_packets(con);
     Box::new(sink
         .send(packet)
