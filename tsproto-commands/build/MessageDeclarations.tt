@@ -1,9 +1,73 @@
 <#@ template cleanws="true" #>
-use tsproto::commands::CanonicalCommand;
+use chrono::naive::NaiveDateTime;
+use chrono::{DateTime, Duration, Utc};
+use num::FromPrimitive;
+use tsproto::commands::{Command, CanonicalCommand};
+
+<#
+fn generate_converter(field: &Field) -> String {
+    if field.name == "iconid" {
+        String::from("") // TODO
+    } else {
+        if field.type_s.starts_with("Vec<") {
+            vector_value_converter(field)
+        } else {
+            single_value_converter(field, &field.type_s)
+        }
+    }
+    //cmd.args.get(field.ts_name)?
+}
+
+fn single_value_converter(field: &Field, type_s: &str) -> String {
+    let tmp;
+    match type_s {
+         "i8" |  "u8" |
+        "i16" | "u16" |
+        "i32" | "u32" |
+        "i64" | "u64" |
+        "f32" | "f64" => "val.parse()?",
+        "bool" => "match *val { \"0\" => false, \"1\" => true, _ => Err(Error::ParameterConvert)? }",
+        "Uid" => "Uid(val.to_string())",
+        "String" => "val.to_string()",
+        "ClientId" |
+        "ClientDbId" |
+        "ChannelId" |
+        "ServerGroupId" |
+        "ChannelGroupId" => { tmp = format!("{}(val.parse()?)", type_s); &tmp}
+
+        "TextMessageTargetMode" |
+        "HostMessageMode" |
+        "HostBannerMode" |
+        "Codec" |
+        "CodecEncryptionMode" |
+        "MoveReason" |
+        "ClientType" |
+        "GroupNamingMode" |
+        "PermissionGroupDatabaseType" |
+        "PermissionId" |
+        "Error" => { tmp = format!("{}::from_u32(val.parse()?).ok_or(Box::new(Error::ParameterConvert))?", type_s); &tmp}
+        "Duration" =>
+            if field.type_orig == "TimeSpanSecondsT" {
+                "if let Some(mul) = val.parse::<i64>()?.checked_mul(1000) { Duration::seconds(mul) } else { Err(Error::ParameterConvert)? }"
+            } else if field.type_orig == "TimeSpanMillisecT" {
+                "Duration::milliseconds(val.parse::<i64>()?)"
+            } else {
+                panic!("Unknown original time type found.");
+            },
+        "DateTime<Utc>" => "DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse()?, 0).ok_or(Box::new(Error::ParameterConvert))?, Utc)",
+        _ => "", //panic!["Unknown Type"],
+    }.to_string()
+}
+
+fn vector_value_converter(field: &Field) -> String {
+    let inner_type = &field.type_s[4..field.type_s.len()-1];
+    String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>,Box<std::error::Error>>>()?", single_value_converter(field, inner_type), inner_type))
+}
+#>
 
 <# for msg in self.messages.values() {
     let is_notify = !msg.notify_name.is_empty();
-    let is_response = msg.notify_name.is_empty() || msg.notify_name.starts_with("+");
+    let is_response = (msg.notify_name.is_empty() || msg.notify_name.starts_with("+")) && false;
 #>
 pub struct <#= msg.class_name #> {
 <# if is_response { #>
@@ -42,16 +106,31 @@ impl Response for <#= msg.class_name #> {
 }
 <# } #>
 
-impl<'a> From<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
-    fn from(cmd: &'a CanonicalCommand<'a>) -> Self {
+impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
+    type Err = Box<std::error::Error>;
+    fn try_from(cmd: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
+        Ok(<#= msg.class_name #> {
+<#
+    for p in &msg.params {
+        let field = self.fields.get(p).unwrap();
+#>
+            <#= to_snake_case(&field.name) #>: { let val = cmd.args.get("<#= field.ts_name #>").ok_or(Error::ParameterNotFound)?; <#= generate_converter(field) #>},
+<# } #>
+        })
+    }
+}
+
+impl<'a> Into<Command> for &'a <#= msg.class_name #> {
+    fn into(self) -> Command {
         panic!();
     }
 }
 
+<#/* TODO add To<T> */#>
 <# }
 // Create notification types
 #>
-enum NotificationType {
+pub enum NotificationType {
 <# for notif in self.notifies.values() { #>
     <#= notif.enum_name #>,
 <# } #>

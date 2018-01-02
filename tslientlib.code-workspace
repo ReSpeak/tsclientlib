@@ -17,7 +17,8 @@
 			"name": "Declarations"
 		},
 		{
-			"path": "target"
+			"path": "target",
+			"name": "Build Target Dir"
 		}
 	],
 	"settings": {}

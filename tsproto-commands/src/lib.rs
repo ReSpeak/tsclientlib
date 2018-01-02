@@ -1,7 +1,8 @@
 extern crate chrono;
 extern crate tsproto;
-
-use chrono::{DateTime, Duration, Utc};
+extern crate num;
+#[macro_use]
+extern crate num_derive;
 
 pub mod errors;
 pub mod permissions;
@@ -17,6 +18,10 @@ pub struct ConnectionId(u16);
 /// connection.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ClientId(u16);
+/// Describes a client or server uid which is a base64
+/// encoded hash or a special reserved name.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Uid(String);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ClientDbId(u64);
@@ -36,7 +41,7 @@ pub struct DatabaseId(u64);
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ServerId(u16);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum TextMessageTargetMode {
 	Client,
 	Channel,
@@ -44,7 +49,7 @@ pub enum TextMessageTargetMode {
 	Max,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum HostMessageMode {
 	/// Dont display anything
 	None,
@@ -56,7 +61,7 @@ pub enum HostMessageMode {
 	Modalquit,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum HostBannerMode {
 	/// Do not adjust
 	NoAdjust,
@@ -66,7 +71,7 @@ pub enum HostBannerMode {
 	AdjustKeepAspect,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum Codec {
 	/// Mono,   16bit,  8kHz, bitrate dependent on the quality setting
 	SpeexNarrowband,
@@ -82,14 +87,14 @@ pub enum Codec {
 	OpusMusic,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum CodecEncryptionMode {
 	PerChannel,
 	ForcedOff,
 	ForcedOn,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum MoveReason {
 	/// No reason data
 	None,
@@ -113,13 +118,13 @@ pub enum MoveReason {
 	ClientdisconnectServerShutdown,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum ClientType {
 	Normal,
 	Query,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum GroupNamingMode {
 	/// No group name is displayed.
 	None,
@@ -129,7 +134,7 @@ pub enum GroupNamingMode {
 	After,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum PermissionGroupDatabaseType {
 	/// Template group (used for new virtual servers).
 	Template,

@@ -5,6 +5,7 @@ pub struct Field {
     pub ts_name: String,
     pub name: String,
     pub type_s: String,
+    pub type_orig: String,
 }
 
 #[derive(Default, Debug)]
@@ -53,6 +54,7 @@ pub(crate) fn parse(s: &str) -> Declarations {
                     ts_name: params[1].to_string(),
                     name: params[2].to_string(),
                     type_s: convert_type(params[3]),
+                    type_orig: params[3].to_string(),
                 });
             }
             "NOTIFY" => {
@@ -105,8 +107,8 @@ pub fn convert_type(t: &str) -> String {
         String::from("DateTime<Utc>")
     } else if t.starts_with("TimeSpan") {
         String::from("Duration")
-    } else if t == "ClientUid" {
-        String::from("Vec<u8>")
+    } else if t == "ClientUid" || t == "ClientUidT" {
+        String::from("Uid")
     } else if t == "Ts3ErrorCode" {
         String::from("Error")
     } else {

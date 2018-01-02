@@ -1,8 +1,7 @@
-#[repr(i32)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 #[allow(non_camel_case_types)]
 pub enum PermissionId {
-    Undefined = -1,
+    /// May occour on error returns with no associated permission
     Unknown = 0,
     b_serverinstance_help_view = 1,
     b_serverinstance_version_view = 2,

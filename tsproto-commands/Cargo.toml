@@ -7,6 +7,8 @@ build = "build/build.rs"
 [dependencies]
 chrono = "0.4"
 tsproto = { path = "../tsproto" }
+num = "0.1"
+num-derive = "0.1"
 
 [build-dependencies]
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }

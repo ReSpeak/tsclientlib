@@ -1,7 +1,6 @@
 use ::std::fmt;
 
-#[repr(u32)]
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum Error {
 	/// General
 	Ok                                          = 0x0000,
@@ -82,7 +81,7 @@ pub enum Error {
 	ParameterQuote                              = 0x0600,
 	ParameterInvalidCount                       = 0x0601,
 	ParameterInvalid                            = 0x0602,
-	ParameterNotFount                           = 0x0603,
+	ParameterNotFound                           = 0x0603,
 	ParameterConvert                            = 0x0604,
 	ParameterInvalidSize                        = 0x0605,
 	ParameterMissing                            = 0x0606,
