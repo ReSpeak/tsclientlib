@@ -23,23 +23,24 @@ pub struct ClientId(u16);
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Uid(String);
 
+/// The database id of a client.
+///
+/// This is the id which is saved for a client in the database of one specific
+/// server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ClientDbId(u64);
 
-/// A `ChannelId` identifies a channel.
+/// Identifies a channel on a server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ChannelId(u64);
+
+/// Identifies a server group on a server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ServerGroupId(u64);
+
+/// Identifies a channel group on a server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ChannelGroupId(u64);
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct DatabaseId(u64);
-
-// FIXME This should be ConnectionId
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct ServerId(u16);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum TextMessageTargetMode {

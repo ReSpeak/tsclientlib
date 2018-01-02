@@ -50,3 +50,27 @@ fn main() {
     let mut structs = File::create(&path.join("structs.rs")).unwrap();
     write!(&mut structs, "{}", decls).unwrap();
 }
+
+fn is_ref_type(s: &str) -> bool {
+    if s.starts_with("Option") {
+        is_ref_type(&s[7..s.len() - 1])
+    } else {
+        !(s == "bool" || s.starts_with("i") || s.starts_with("u")
+            || s.starts_with("f") || s.ends_with("Id") || s.ends_with("Type")
+            || s.ends_with("Mode"))
+    }
+}
+
+fn get_return_type(s: &str) -> String {
+    if s.starts_with("Option") {
+        format!("Option<{}>", get_return_type(&s[7..s.len() - 1]))
+    } else if s.starts_with("Vec") {
+        format!("&[{}]", &s[4..s.len() - 1])
+    } else if s == "String" {
+        String::from("&str")
+    } else if is_ref_type(s) {
+        format!("&{}", s)
+    } else {
+        String::from(s)
+    }
+}

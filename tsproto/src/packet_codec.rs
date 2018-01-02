@@ -88,7 +88,10 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                             frag_queue
                         };
                         /*if header.get_compressed() {
-                            debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
+                            debug!(logger, "Decompressed";
+                                "data" => ?::HexSlice(&decompressed),
+                                "string" => %String::from_utf8_lossy(&decompressed),
+                            );
                         }*/
                         let p_data = packets::Data::read(
                             &header,

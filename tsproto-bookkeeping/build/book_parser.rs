@@ -67,7 +67,7 @@ impl Eq for Property {}
 pub(crate) fn parse(s: &str) -> Declarations {
     let param_re = Regex::new(r#"\s*(?P<pname>(get|set|doc|id|optional))\s*:\s*(?P<pval>(?:\w+|"([^"]|["\\n])*"|\[[^]]*\]))\s*,?"#).unwrap();
     let struct_re = Regex::new(r"\s*(?P<name>\w+)\s*;?").unwrap();
-    let prop_re = Regex::new(r"\s*(?P<name>\w+)\s*,\s*(?P<type>\w+)\s*;?").unwrap();
+    let prop_re = Regex::new(r"\s*(?P<name>\w+)\s*,\s*(?P<type>\w+)(?P<mod>(\?|\[\])?)\s*;?").unwrap();
 
     let mut decls = Declarations::default();
     let mut cur_struct_name = None;
@@ -107,9 +107,20 @@ pub(crate) fn parse(s: &str) -> Declarations {
                 let mut vals = default_vals.clone();
                 vals.fill(captures);
 
+                let is_array = &capture["mod"] == "[]";
+                let is_optional = &capture["mod"] == "?";
+                let mut type_s = convert_type(&capture["type"]);
+
+                if is_array {
+                    type_s = format!("Vec<{}>", type_s);
+                }
+                if is_optional {
+                    type_s = format!("Option<{}>", type_s);
+                }
+
                 let prop = Property {
                     name: capture["name"].to_string(),
-                    type_s: convert_type(&capture["type"]),
+                    type_s,
                     values: vals,
                     struct_name: cur_struct_name.as_ref()
                         .expect("No struct known").clone(),
@@ -147,6 +158,7 @@ pub fn convert_type(t: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub fn to_pascal_case<S: AsRef<str>>(text: S) -> String {
     let sref = text.as_ref();
     let mut s = String::with_capacity(sref.len());
