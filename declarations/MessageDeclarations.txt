@@ -34,6 +34,7 @@ Conv: ChannelGroupIdT  , CommandDeserializer.DeserializeUInt64(value);
 Conv: ServerGroupIdT[] , CommandDeserializer.DeserializeArray(value, CommandDeserializer.DeserializeUInt64);
 Conv: TimeSpanSecondsT , CommandDeserializer.DeserializeTimeSpanSeconds(value);
 Conv: TimeSpanMillisecT, CommandDeserializer.DeserializeTimeSpanMillisec(value);
+Conv: IconHash,          (int)CommandDeserializer.DeserializeInt64(value);
 
 
 : <Mapping name>, <Teamspeak param name>, <Field name>, <Field type>
@@ -60,7 +61,7 @@ Field: channel_flag_permanent, channel_flag_permanent, IsPermanent, bool
 Field: channel_flag_private, channel_flag_private, IsPrivate, bool
 Field: channel_flag_semi_permanent, channel_flag_semi_permanent, IsSemiPermanent, bool
 Field: channel_forced_silence, channel_forced_silence, ForcedSilence, bool
-Field: channel_icon_id, channel_icon_id, IconId, long
+Field: channel_icon_id, channel_icon_id, IconId, IconHash
 Field: channel_maxclients, channel_maxclients, MaxClients, int
 Field: channel_maxfamilyclients, channel_maxfamilyclients, MaxFamilyClients, int
 Field: channel_name, channel_name, Name, string
@@ -86,7 +87,7 @@ Field: client_default_channel, client_default_channel, DefaultChannel, string
 Field: client_default_token, client_default_token, DefaultToken, string
 Field: client_description, client_description, Description, string
 Field: client_flag_avatar, client_flag_avatar, AvatarFlag, string, ?? string ??
-Field: client_icon_id, client_icon_id, IconId, long
+Field: client_icon_id, client_icon_id, IconId, IconHash
 Field: client_id, client_id, ClientId, ClientIdT
 Field: client_idle_time, client_idle_time, ClientIdleTime, TimeSpanMillisecT
 Field: client_input_hardware, client_input_hardware, IsInputHardware, bool
@@ -243,7 +244,7 @@ Field: virtualserver_hostbutton_tooltip, virtualserver_hostbutton_tooltip, Hostb
 Field: virtualserver_hostbutton_url, virtualserver_hostbutton_url, HostbuttonUrl, string
 Field: virtualserver_hostmessage, virtualserver_hostmessage, Hostmessage, string
 Field: virtualserver_hostmessage_mode, virtualserver_hostmessage_mode, HostmessageMode, HostMessageMode
-Field: virtualserver_icon_id, virtualserver_icon_id, IconId, ulong
+Field: virtualserver_icon_id, virtualserver_icon_id, IconId, IconHash
 Field: virtualserver_id, virtualserver_id, VirtualServerId, ulong
 Field: virtualserver_ip, virtualserver_ip, ServerIp, string
 Field: virtualserver_machine_id, virtualserver_machine_id, MachineId, string

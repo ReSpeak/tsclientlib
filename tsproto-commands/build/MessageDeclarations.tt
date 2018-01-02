@@ -6,16 +6,11 @@ use tsproto::commands::{Command, CanonicalCommand};
 
 <#
 fn generate_converter(field: &Field) -> String {
-    if field.name == "iconid" {
-        String::from("") // TODO
+    if field.type_s.starts_with("Vec<") {
+        vector_value_converter(field)
     } else {
-        if field.type_s.starts_with("Vec<") {
-            vector_value_converter(field)
-        } else {
-            single_value_converter(field, &field.type_s)
-        }
+        single_value_converter(field, &field.type_s)
     }
-    //cmd.args.get(field.ts_name)?
 }
 
 fn single_value_converter(field: &Field, type_s: &str) -> String {
@@ -29,12 +24,12 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
         "bool" => "match *val { \"0\" => false, \"1\" => true, _ => Err(Error::ParameterConvert)? }",
         "Uid" => "Uid(val.to_string())",
         "String" => "val.to_string()",
+        "IconHash" => "IconHash(val.parse::<i64>()? as i32)",
         "ClientId" |
         "ClientDbId" |
         "ChannelId" |
         "ServerGroupId" |
         "ChannelGroupId" => { tmp = format!("{}(val.parse()?)", type_s); &tmp}
-
         "TextMessageTargetMode" |
         "HostMessageMode" |
         "HostBannerMode" |
@@ -55,7 +50,7 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
                 panic!("Unknown original time type found.");
             },
         "DateTime<Utc>" => "DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse()?, 0).ok_or(Box::new(Error::ParameterConvert))?, Utc)",
-        _ => "", //panic!["Unknown Type"],
+        _ => panic!("Unknown Type"),
     }.to_string()
 }
 
@@ -69,6 +64,7 @@ fn vector_value_converter(field: &Field) -> String {
     let is_notify = !msg.notify_name.is_empty();
     let is_response = (msg.notify_name.is_empty() || msg.notify_name.starts_with("+")) && false;
 #>
+#[derive(Debug)]
 pub struct <#= msg.class_name #> {
 <# if is_response { #>
     pub return_code: String,

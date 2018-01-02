@@ -42,6 +42,9 @@ pub struct ServerGroupId(u64);
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct ChannelGroupId(u64);
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct IconHash(i32);
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum TextMessageTargetMode {
 	Client,

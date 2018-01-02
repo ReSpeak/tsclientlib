@@ -11,7 +11,7 @@ pub trait Response {
     fn set_return_code(&mut self, return_code: String);
 }
 
-trait TryParse<T>: Sized {
+pub trait TryParse<T>: Sized {
     type Err;
     fn try_from(T) -> Result<Self, Self::Err>;
 }
