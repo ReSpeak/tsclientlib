@@ -79,15 +79,9 @@ pub struct <#= msg.class_name #> {
 }
 <#
     if is_notify {
-        let notify = &self.notifies[msg.notify_name.trim_left_matches('+')];
-#>
+        let _notify = &self.notifies[msg.notify_name.trim_left_matches('+')];
 
-impl Notification for <#= msg.class_name #> {
-    fn get_notification_type() -> NotificationType {
-        NotificationType::<#= notify.enum_name #>
-    }
-}
-<#
+        // Do stuff here if needed...
     }
     if is_response {
 #>
@@ -104,7 +98,7 @@ impl Response for <#= msg.class_name #> {
 
 impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
     type Err = Box<std::error::Error>;
-    fn try_from(cmd: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
+    fn try_from(<#= if msg.params.len() == 0 { "_cmd" } else { "cmd" } #>: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
         Ok(<#= msg.class_name #> {
 <#
     for p in &msg.params {
@@ -126,8 +120,23 @@ impl<'a> Into<Command> for &'a <#= msg.class_name #> {
 <# }
 // Create notification types
 #>
-pub enum NotificationType {
-<# for notif in self.notifies.values() { #>
-    <#= notif.enum_name #>,
+pub enum Notification {
+<# for notif in self.notifies.iter() {
+    let notify_n = notif.0.as_str();
+    let cn = self.messages.iter().find(|x| { x.1.notify_name.trim_left_matches('+') == notify_n }).unwrap().1; #>
+    <#= notif.1.enum_name #>(<#= cn.class_name #>),
 <# } #>
+}
+
+impl Notification {
+    pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Notification, Box<std::error::Error>> {
+        match cmd.command {
+            <# for notif in self.notifies.iter() {
+                let notify_n = notif.0.as_str();
+                let cn = self.messages.iter().find(|x| { x.1.notify_name.trim_left_matches('+') == notify_n }).unwrap().1; #>
+            "<#= notif.0.as_str() #>" => Ok(Notification::<#= notif.1.enum_name #>(<#= cn.class_name #>::try_from(&cmd)?)),
+            <# } #>
+            _ => Err(Box::new(Error::CommandNotFound))
+        }
+    }
 }
