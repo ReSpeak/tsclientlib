@@ -23,8 +23,8 @@ use packets::*;
 struct SendRecord {
     /// When this packet was sent.
     pub sent: DateTime<Utc>,
-    /// The next time when the packet will be resent.
-    pub next: DateTime<Utc>,
+    /// The last time when the packet was sent.
+    pub last: DateTime<Utc>,
     /// How often the packet was already resent.
     pub tries: usize,
     pub p_type: PacketType,
@@ -35,7 +35,7 @@ struct SendRecord {
 
 impl PartialEq for SendRecord {
     fn eq(&self, other: &Self) -> bool {
-        self.next == other.next
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl Eq for SendRecord {}
@@ -48,11 +48,22 @@ impl PartialOrd for SendRecord {
 
 impl Ord for SendRecord {
     fn cmp(&self, other: &Self) -> Ordering {
-        // The smallest time is the most important time
-        match self.next.cmp(&other.next).reverse() {
-            // Else, the lower packet id is more important
-            Ordering::Equal => self.p_id.cmp(&other.p_id).reverse(),
-            c => c,
+        // If the packet was not already sent, it is more important
+        if self.tries == 0 {
+            if other.tries == 0 {
+                self.p_id.cmp(&other.p_id).reverse()
+            } else {
+                Ordering::Greater
+            }
+        } else if other.tries == 0 {
+            Ordering::Less
+        } else {
+            // The smallest time is the most important time
+            match self.last.cmp(&other.last).reverse() {
+                // Else, the lower packet id is more important
+                Ordering::Equal => self.p_id.cmp(&other.p_id).reverse(),
+                c => c,
+            }
         }
     }
 }
@@ -190,9 +201,9 @@ impl Resender for DefaultResender {
         // received an ack packet.
         let next_state = match self.state {
             ResendStates::Stalling { ref mut to_send, .. } => {
-                let now = Utc::now();
                 for rec in to_send.iter_mut() {
-                    rec.next = now;
+                    // Reset tries
+                    rec.tries = 0;
                 }
                 let to_send = mem::replace(to_send, Vec::new()).into();
 
@@ -255,7 +266,7 @@ impl Resender for DefaultResender {
                         let mut v = mem::replace(to_send, Vec::new());
                         let res = v.drain(..)
                             .map(|mut rec| {
-                                rec.next = now;
+                                rec.tries = 0;
                                 rec
                             }).collect();
                         res
@@ -266,7 +277,7 @@ impl Resender for DefaultResender {
                         let mut to_send = mem::replace(to_send,
                             BinaryHeap::new()).into_vec();
                         for rec in to_send.iter_mut() {
-                            rec.next = now;
+                            rec.tries = 0;
                         }
 
                         to_send.into()
@@ -342,7 +353,7 @@ impl Sink for DefaultResender {
         -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         let rec = SendRecord {
             sent: Utc::now(),
-            next: Utc::now(),
+            last: Utc::now(),
             tries: 0,
             p_type,
             p_id,
@@ -550,7 +561,7 @@ impl Default for ResendConfig {
         ResendConfig {
             connecting_interval: Duration::seconds(1),
             connecting_timeout: Duration::seconds(5),
-            normal_timeout: Duration::seconds(5),
+            normal_timeout: Duration::seconds(10),
             stalling_interval: Duration::seconds(5),
             stalling_timeout: Duration::seconds(30),
             dead_timeout: Duration::seconds(0),
@@ -711,9 +722,20 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                     }
                 ResendStates::Disconnecting { ref start_time, .. } =>
                     if now_naive.signed_duration_since(start_time.naive_utc())
-                        >= resender.config.connecting_timeout {
+                        >= resender.config.disconnect_timeout {
                         StateChange::EndConnection
                     } else {
+                        // Schedule timeout
+                        let dur = (*start_time + resender.config
+                                .disconnect_timeout)
+                            .naive_utc()
+                            .signed_duration_since(now_naive);
+                        let next = Instant::now() + dur.to_std().unwrap();
+                        self.state_timeout.reset(next);
+                        if let futures::Async::Ready(()) =
+                            self.state_timeout.poll()? {
+                            task::current().notify();
+                        }
                         StateChange::Nothing
                     }
             }
@@ -744,15 +766,26 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                 .get_packet_interval(&con.resender.config)
         };
 
+        // Retransmission timeout
+        let rto = {
+            let con = con.borrow();
+            if let Some(interval) = packet_interval {
+                interval
+            } else {
+                con.resender.srtt + con.resender.srtt_dev * 4
+            }
+        };
+        let last_threshold = now - rto;
+
         while let Some(packet) = {
             let con = &mut *con.borrow_mut();
             let packet = if let Some(mut rec) = con.resender.state.peek_mut_next_record() {
-                // Check if we should resend this packet
-                if rec.next > now {
+                // Check if we should resend this packet or not
+                if rec.tries != 0 && rec.last > last_threshold {
                     // Schedule next send
-                    let dur = rec.next
+                    let dur = rec.last
                         .naive_utc()
-                        .signed_duration_since(now_naive);
+                        .signed_duration_since(last_threshold.naive_utc());
                     let next = Instant::now() + dur.to_std().unwrap();
                     self.timeout.reset(next);
                     if let futures::Async::Ready(()) = self.timeout.poll()? {
@@ -763,7 +796,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
 
                 // Print packet for debugging
                 //info!(con.logger, "Packet in send queue"; "id" => ?rec.p_id,
-                //    "next" => ?rec.next);
+                //    "last" => ?rec.last);
                 Some(rec.packet.clone())
             } else {
                 //info!(con.logger, "No packet in send queue");
@@ -789,19 +822,12 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                 let con = &mut *con.borrow_mut();
                 let mut rec = con.resender.state.peek_mut_next_record().unwrap();
 
-                // Retransmission timeout
-                let rto = {
-                    // Double srtt on packet loss
-                    if rec.tries != 0 && con.resender.srtt
-                        < con.resender.config.normal_timeout {
-                        con.resender.srtt = con.resender.srtt * 2;
-                    }
-                    if let Some(interval) = packet_interval {
-                        interval
-                    } else {
-                        con.resender.srtt + con.resender.srtt_dev * 4
-                    }
-                };
+                // Double srtt on packet loss
+                if rec.tries != 0 && con.resender.srtt
+                    < con.resender.config.normal_timeout {
+                    con.resender.srtt = con.resender.srtt * 2;
+                }
+
                 let is_normal_state = if let ResendStates::Normal { .. } =
                     con.resender.state {
                     true
@@ -814,19 +840,25 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                     now.naive_utc());
 
                 if is_normal_state && dur > con.resender.config.normal_timeout {
-                    warn!(con.logger, "Max resend timeout exceeded"; "p_id" => rec.p_id);
+                    warn!(con.logger, "Max resend timeout exceeded";
+                          "p_id" => rec.p_id);
                     // Switch connection to stalling state
                     switch_to_stalling = true;
                     break;
                 }
 
                 // Update record
-                rec.next = next;
+                rec.last = now;
                 rec.tries += 1;
 
                 if rec.tries != 1 {
                     let to_s = if con.is_client { "S" } else { "C" };
-                    warn!(con.logger, "Resend"; "p_id" => rec.p_id, "tries" => rec.tries, "next" => %rec.next, "to" => to_s);
+                    warn!(con.logger, "Resend";
+                        "p_id" => rec.p_id,
+                        "tries" => rec.tries,
+                        "last" => %rec.last,
+                        "to" => to_s,
+                    );
                 }
             }
         }

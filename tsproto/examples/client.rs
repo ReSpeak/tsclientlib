@@ -218,6 +218,10 @@ fn main() {
     core.run(action).unwrap();
 
     // Disconnect
-    core.run(disconnect(logger.clone(), c.clone(), args.address)).unwrap();
+    if let Err(error) = core.run(disconnect(logger.clone(), c.clone(),
+        args.address)) {
+        error!(logger, "Failed to disconnect"; "error" => ?error);
+        return;
+    }
     info!(logger, "Disconnected");
 }

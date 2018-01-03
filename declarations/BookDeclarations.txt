@@ -44,8 +44,7 @@ Struct: ConnectionClientData; doc:"Get in notifyconnectioninfo by getconnectioni
 Prop: Ping, Duration
 Prop: PingDeviation, Duration
 Prop: ConnectedTime, Duration
-Prop: ClientIp, str
-Prop: ClientPort, u16
+Prop: ClientAddress, SocketAddr?
 Prop: PacketsSentSpeech, u64
 Prop: PacketsSentKeepalive, u64
 Prop: PacketsSentControl, u64
