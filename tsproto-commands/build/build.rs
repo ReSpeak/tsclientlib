@@ -6,10 +6,10 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-mod error_parser;
+mod enum_parser;
 mod message_parser;
 
-use error_parser::*;
+use enum_parser::*;
 use message_parser::*;
 
 type Map<K, V> = std::collections::HashMap<K, V>;
@@ -26,7 +26,12 @@ struct Declarations {
 #[derive(Template)]
 #[TemplatePath = "build/ErrorDeclarations.tt"]
 #[derive(Default, Debug)]
-struct Errors(Vec<Error>);
+struct Errors(Vec<EnumValue>);
+
+#[derive(Template)]
+#[TemplatePath = "build/PermissionDeclarations.tt"]
+#[derive(Default, Debug)]
+struct Permissions(Vec<EnumValue>);
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -42,12 +47,25 @@ fn main() {
     let mut v = Vec::new();
     f.read_to_end(&mut v).unwrap();
     let s = String::from_utf8(v).unwrap();
-    let decls = error_parser::parse(&s);
+    let decls = Errors(enum_parser::parse(&s));
 
     // Write errors
     let out_dir = env::var("OUT_DIR").unwrap();
     let path = Path::new(&out_dir);
     let mut structs = File::create(&path.join("errors.rs")).unwrap();
+    write!(&mut structs, "{}", decls).unwrap();
+
+    // Read permissions
+    let mut f = File::open(&format!("{}/../declarations/PermissionDeclarations.txt", manifest_dir)).unwrap();
+    let mut v = Vec::new();
+    f.read_to_end(&mut v).unwrap();
+    let s = String::from_utf8(v).unwrap();
+    let decls = Permissions(enum_parser::parse(&s));
+
+    // Write permissions
+    let out_dir = env::var("OUT_DIR").unwrap();
+    let path = Path::new(&out_dir);
+    let mut structs = File::create(&path.join("permissions.rs")).unwrap();
     write!(&mut structs, "{}", decls).unwrap();
 
     // Read messages
