@@ -115,19 +115,3 @@ pub fn convert_type(t: &str) -> String {
         t.into()
     }
 }
-
-pub fn to_snake_case<S: AsRef<str>>(text: S) -> String {
-    let sref = text.as_ref();
-    let mut s = String::with_capacity(sref.len());
-    for c in sref.chars() {
-        if c.is_uppercase() {
-            if !s.is_empty() {
-                s.push('_');
-            }
-            s.push_str(&c.to_lowercase().to_string());
-        } else {
-            s.push(c);
-        }
-    }
-    s
-}

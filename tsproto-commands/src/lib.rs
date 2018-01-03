@@ -6,7 +6,7 @@ extern crate num_derive;
 
 pub mod errors;
 pub mod permissions;
-pub mod structs;
+pub mod messages;
 
 /// A `ConnectionId` identifies a connection from us to a server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

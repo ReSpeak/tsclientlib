@@ -12,4 +12,4 @@ pub trait TryParse<T>: Sized {
     fn try_from(T) -> Result<Self, Self::Err>;
 }
 
-include!(concat!(env!("OUT_DIR"), "/structs.rs"));
+include!(concat!(env!("OUT_DIR"), "/messages.rs"));

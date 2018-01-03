@@ -1,0 +1,10 @@
+<#@ template cleanws="true" #>
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+pub enum Error {
+<# for e in &self.0 { #>
+	<# if !e.doc.is_empty() { #>
+<#= indent(&doc_comment(&e.doc), 1) #>
+	<# } #>
+	<#= to_pascal_case(&e.name) #> = <#= e.num #>,
+<# } #>
+}
