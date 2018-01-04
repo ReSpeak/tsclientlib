@@ -47,10 +47,14 @@ pub struct IconHash(i32);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum TextMessageTargetMode {
+	/// Maybe to all servers?
+	Unknown,
+	/// Send to specific client
 	Client,
+	/// Send to current channel
 	Channel,
+	/// Send to server chat
 	Server,
-	Max,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
@@ -69,9 +73,9 @@ pub enum HostMessageMode {
 pub enum HostBannerMode {
 	/// Do not adjust
 	NoAdjust,
-	/// Do not adjust
+	/// Adjust and ignore aspect ratio
 	AdjustIgnoreAspect,
-	/// Do not adjust
+	/// Adjust and keep aspect ratio
 	AdjustKeepAspect,
 }
 
@@ -93,8 +97,11 @@ pub enum Codec {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum CodecEncryptionMode {
+	/// Voice encryption is configured per channel
 	PerChannel,
+	/// Voice encryption is globally off
 	ForcedOff,
+	/// Voice encryption is globally on
 	ForcedOn,
 }
 
@@ -125,6 +132,7 @@ pub enum MoveReason {
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
 pub enum ClientType {
 	Normal,
+	/// Server query client
 	Query,
 }
 

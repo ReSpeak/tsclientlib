@@ -111,6 +111,8 @@ pub fn convert_type(t: &str) -> String {
         String::from("Uid")
     } else if t == "Ts3ErrorCode" {
         String::from("Error")
+    } else if t == "PermissionId" {
+        String::from("Permission")
     } else {
         t.into()
     }

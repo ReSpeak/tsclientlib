@@ -1,3 +1,7 @@
+extern crate csv;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
 #[macro_use]
 extern crate t4rust_derive;
 
@@ -6,10 +10,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-mod enum_parser;
 mod message_parser;
 
-use enum_parser::*;
 use message_parser::*;
 
 type Map<K, V> = std::collections::HashMap<K, V>;
@@ -33,50 +35,52 @@ struct Errors(Vec<EnumValue>);
 #[derive(Default, Debug)]
 struct Permissions(Vec<EnumValue>);
 
+#[derive(Debug, Deserialize)]
+pub struct EnumValue {
+    pub name: String,
+    pub doc: String,
+    pub num: String,
+}
+
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+    let out_dir = env::var("OUT_DIR").unwrap();
 
     // The template is automatically tracked as a dependency
-    for f in &["build/build.rs", "../declarations/MessageDeclarations.txt",
-        "../declarations/MessageDeclarations.txt"] {
-        println!("cargo:rerun-if-changed={}/{}", manifest_dir, f);
+    for f in &["Errors.csv", "Messages.txt", "Permissions.csv"] {
+        println!("cargo:rerun-if-changed={}/../declarations/{}", manifest_dir, f);
     }
 
     // Read errors
-    let mut f = File::open(&format!("{}/../declarations/ErrorDeclarations.txt", manifest_dir)).unwrap();
-    let mut v = Vec::new();
-    f.read_to_end(&mut v).unwrap();
-    let s = String::from_utf8(v).unwrap();
-    let decls = Errors(enum_parser::parse(&s));
+    let mut table = csv::Reader::from_reader(File::open(
+        &format!("{}/../declarations/Errors.csv", manifest_dir))
+        .unwrap());
+    let decls = Errors(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap());
 
     // Write errors
-    let out_dir = env::var("OUT_DIR").unwrap();
     let path = Path::new(&out_dir);
     let mut structs = File::create(&path.join("errors.rs")).unwrap();
     write!(&mut structs, "{}", decls).unwrap();
 
     // Read permissions
-    let mut f = File::open(&format!("{}/../declarations/PermissionDeclarations.txt", manifest_dir)).unwrap();
-    let mut v = Vec::new();
-    f.read_to_end(&mut v).unwrap();
-    let s = String::from_utf8(v).unwrap();
-    let decls = Permissions(enum_parser::parse(&s));
+    let mut table = csv::Reader::from_reader(File::open(
+        &format!("{}/../declarations/Permissions.csv", manifest_dir))
+        .unwrap());
+    let decls = Permissions(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap());
 
     // Write permissions
-    let out_dir = env::var("OUT_DIR").unwrap();
     let path = Path::new(&out_dir);
     let mut structs = File::create(&path.join("permissions.rs")).unwrap();
     write!(&mut structs, "{}", decls).unwrap();
 
     // Read messages
-    let mut f = File::open(&format!("{}/../declarations/MessageDeclarations.txt", manifest_dir)).unwrap();
+    let mut f = File::open(&format!("{}/../declarations/Messages.txt", manifest_dir)).unwrap();
     let mut v = Vec::new();
     f.read_to_end(&mut v).unwrap();
     let s = String::from_utf8(v).unwrap();
     let decls = message_parser::parse(&s);
 
     // Write messages
-    let out_dir = env::var("OUT_DIR").unwrap();
     let path = Path::new(&out_dir);
     let mut structs = File::create(&path.join("messages.rs")).unwrap();
     write!(&mut structs, "{}", decls).unwrap();

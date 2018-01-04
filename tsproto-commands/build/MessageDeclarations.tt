@@ -39,7 +39,7 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
         "ClientType" |
         "GroupNamingMode" |
         "PermissionGroupDatabaseType" |
-        "PermissionId" |
+        "Permission" |
         "Error" => { tmp = format!("{}::from_u32(val.parse()?).ok_or(Box::new(Error::ParameterConvert))?", type_s); &tmp}
         "Duration" =>
             if field.type_orig == "TimeSpanSecondsT" {

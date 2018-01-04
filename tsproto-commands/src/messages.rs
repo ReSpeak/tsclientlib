@@ -1,6 +1,6 @@
 use ::*;
 use errors::Error;
-use permissions::PermissionId;
+use permissions::Permission;
 
 pub trait Response {
     fn get_return_code(&self) -> &str;
