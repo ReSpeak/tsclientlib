@@ -32,8 +32,8 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
 
     // The template is automatically tracked as a dependency
-    for f in &["build/build.rs", "../declarations/BookDeclarations.txt"] {
-        println!("cargo:rerun-if-changed={}/{}", manifest_dir, f);
+    for f in &["BookDeclarations.txt"] {
+        println!("cargo:rerun-if-changed={}/../declarations/{}", manifest_dir, f);
     }
 
     // Read declarations

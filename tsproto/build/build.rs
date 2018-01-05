@@ -50,6 +50,7 @@ impl Struct {
                     Some(line) => line,
                     None => break,
                 };
+                doc.push('\n');
             }
             line.push('\n');
             read_until_unindent(r, &mut line)?;

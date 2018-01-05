@@ -65,9 +65,9 @@ pub(crate) fn parse(s: &str) -> Declarations {
                     enum_name: params[1].to_string(),
                 });
             }
-            "CONV" => {
-                if params.len() < 2 {
-                    panic!("Invalid CONV: {}", l);
+            "TYPE" => {
+                if params.len() != 1 {
+                    panic!("Invalid TYPE: {}", l);
                 }
             }
             "BREAK" => {
