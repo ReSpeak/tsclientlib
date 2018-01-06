@@ -49,7 +49,7 @@ pub struct ChannelGroupId(u64);
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct IconHash(i32);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum TextMessageTargetMode {
 	/// Maybe to all servers?
 	Unknown,
@@ -61,7 +61,7 @@ pub enum TextMessageTargetMode {
 	Server,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum HostMessageMode {
 	/// Dont display anything
 	None,
@@ -73,7 +73,7 @@ pub enum HostMessageMode {
 	Modalquit,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum HostBannerMode {
 	/// Do not adjust
 	NoAdjust,
@@ -83,7 +83,7 @@ pub enum HostBannerMode {
 	AdjustKeepAspect,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum Codec {
 	/// Mono,   16bit,  8kHz, bitrate dependent on the quality setting
 	SpeexNarrowband,
@@ -99,7 +99,7 @@ pub enum Codec {
 	OpusMusic,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum CodecEncryptionMode {
 	/// Voice encryption is configured per channel
 	PerChannel,
@@ -109,7 +109,7 @@ pub enum CodecEncryptionMode {
 	ForcedOn,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum MoveReason {
 	/// No reason data
 	None,
@@ -133,14 +133,14 @@ pub enum MoveReason {
 	ClientdisconnectServerShutdown,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum ClientType {
 	Normal,
 	/// Server query client
 	Query,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum GroupNamingMode {
 	/// No group name is displayed.
 	None,
@@ -150,7 +150,7 @@ pub enum GroupNamingMode {
 	After,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum PermissionGroupDatabaseType {
 	/// Template group (used for new virtual servers).
 	Template,
@@ -160,7 +160,7 @@ pub enum PermissionGroupDatabaseType {
 	Query,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum LicenseType
 {
 	/// No licence

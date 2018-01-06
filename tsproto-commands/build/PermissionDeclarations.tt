@@ -1,5 +1,5 @@
 <#@ template cleanws="true" #>
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 #[allow(non_camel_case_types)]
 pub enum Permission {
 <# for e in &self.0 { #>

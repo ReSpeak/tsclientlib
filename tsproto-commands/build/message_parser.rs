@@ -4,14 +4,17 @@ use ::Declarations;
 pub struct Field {
     pub ts_name: String,
     pub name: String,
-    pub type_s: String,
+    pub rust_name: String,
     pub type_orig: String,
+    pub rust_type: String,
 }
 
 #[derive(Default, Debug)]
 pub struct Message {
     pub class_name: String,
     pub notify_name: String,
+    pub is_notify: bool,
+    pub is_response: bool,
     pub params: Vec<String>,
 }
 
@@ -42,7 +45,9 @@ pub(crate) fn parse(s: &str) -> Declarations {
                 }
                 decls.messages.insert(params[0].to_string(), Message {
                     class_name: params[0].to_string(),
-                    notify_name: params[1].to_string(),
+                    notify_name: params[1].trim_left_matches('+').to_string(),
+                    is_notify: !params[1].is_empty(),
+                    is_response: (params[1].is_empty() || params[1].starts_with("+")) && false,
                     params: params.drain(2..).map(|p| p.to_string()).collect(),
                 });
             }
@@ -53,7 +58,8 @@ pub(crate) fn parse(s: &str) -> Declarations {
                 decls.fields.insert(params[0].to_string(), Field {
                     ts_name: params[1].to_string(),
                     name: params[2].to_string(),
-                    type_s: convert_type(params[3]),
+                    rust_name: ::to_snake_case(params[2]),
+                    rust_type: convert_type(params[3]),
                     type_orig: params[3].to_string(),
                 });
             }

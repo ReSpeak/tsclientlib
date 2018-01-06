@@ -1,21 +1,21 @@
 <#@ template cleanws="true" #>
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
-use num::FromPrimitive;
+use num::{FromPrimitive, ToPrimitive};
 use tsproto::commands::{Command, CanonicalCommand};
 
 <#
-fn generate_converter(field: &Field) -> String {
-    if field.type_s.starts_with("Vec<") {
-        vector_value_converter(field)
+fn generate_deserializer(field: &Field) -> String {
+    if field.rust_type.starts_with("Vec<") {
+        vector_value_deserializer(field)
     } else {
-        single_value_converter(field, &field.type_s)
+        single_value_deserializer(field, &field.rust_type)
     }
 }
 
-fn single_value_converter(field: &Field, type_s: &str) -> String {
+fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
     let tmp;
-    match type_s {
+    match rust_type {
          "i8" |  "u8" |
         "i16" | "u16" |
         "i32" | "u32" |
@@ -24,12 +24,12 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
         "bool" => "match *val { \"0\" => false, \"1\" => true, _ => Err(Error::ParameterConvert)? }",
         "Uid" => "Uid(val.to_string())",
         "String" => "val.to_string()",
-        "IconHash" => "IconHash(val.parse::<i64>()? as i32)",
+        "IconHash" => "IconHash(val.parse::<u64>()? as i32)",
         "ClientId" |
         "ClientDbId" |
         "ChannelId" |
         "ServerGroupId" |
-        "ChannelGroupId" => { tmp = format!("{}(val.parse()?)", type_s); &tmp}
+        "ChannelGroupId" => { tmp = format!("{}(val.parse()?)", rust_type); &tmp}
         "TextMessageTargetMode" |
         "HostMessageMode" |
         "HostBannerMode" |
@@ -41,33 +41,91 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
         "GroupNamingMode" |
         "PermissionGroupDatabaseType" |
         "Permission" |
-        "Error" => { tmp = format!("{}::from_u32(val.parse()?).ok_or(Box::new(Error::ParameterConvert))?", type_s); &tmp}
+        "Error" => { tmp = format!("{}::from_u32(val.parse()?).ok_or(Box::new(Error::ParameterConvert))?", rust_type); &tmp}
         "Duration" =>
             if field.type_orig == "TimeSpanSecondsT" {
-                "if let Some(mul) = val.parse::<i64>()?.checked_mul(1000) { Duration::seconds(mul) } else { Err(Error::ParameterConvert)? }"
+                "let val = val.parse::<i64>()?; if let Some(_) = val.checked_mul(1000) { Duration::seconds(val) } else { Err(Error::ParameterConvert)? }"
             } else if field.type_orig == "TimeSpanMillisecT" {
                 "Duration::milliseconds(val.parse::<i64>()?)"
             } else {
                 panic!("Unknown original time type found.");
             },
         "DateTime<Utc>" => "DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse()?, 0).ok_or(Box::new(Error::ParameterConvert))?, Utc)",
-        _ => panic!("Unknown Type '{}'", type_s),
+        _ => panic!("Unknown Type '{}'", rust_type),
     }.to_string()
 }
 
-fn vector_value_converter(field: &Field) -> String {
-    let inner_type = &field.type_s[4..field.type_s.len()-1];
-    String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>,Box<std::error::Error>>>()?", single_value_converter(field, inner_type), inner_type))
+fn vector_value_deserializer(field: &Field) -> String {
+    let inner_type = &field.rust_type[4..field.rust_type.len()-1];
+    String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>,Box<std::error::Error>>>()?",
+        single_value_deserializer(field, inner_type), inner_type))
 }
+
+fn generate_serializer(field: &Field, can_move: bool) -> String {
+    if field.rust_type.starts_with("Vec<") {
+        vector_value_serializer(field, can_move)
+    } else {
+        single_value_serializer(field, &field.rust_type, can_move)
+    }
+}
+
+fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> String {
+    match rust_type {
+         "i8" |  "u8" |
+        "i16" | "u16" |
+        "i32" | "u32" |
+        "i64" | "u64" |
+        "f32" | "f64" => "val.to_string()",
+        "bool" => if can_move { "String::from(if  val { \"0\" } else { \"1\" })" }
+                         else { "String::from(if *val { \"0\" } else { \"1\" })" },
+        "String" => if can_move { "val" } else { "val.to_string()" },
+        "Uid" => if can_move { "val.0" } else { "val.0.to_string()" },
+        "ClientId" |
+        "ClientDbId" |
+        "ChannelId" |
+        "ServerGroupId" |
+        "ChannelGroupId" |
+        "IconHash" => "val.0.to_string()",
+        "TextMessageTargetMode" |
+        "HostMessageMode" |
+        "HostBannerMode" |
+        "LicenseType" |
+        "Codec" |
+        "CodecEncryptionMode" |
+        "MoveReason" |
+        "ClientType" |
+        "GroupNamingMode" |
+        "PermissionGroupDatabaseType" |
+        "Permission" |
+        "Error" => "val.to_u32().unwrap().to_string()",
+        "Duration" =>
+            if field.type_orig == "TimeSpanSecondsT" {
+                "val.num_seconds().to_string()"
+            } else if field.type_orig == "TimeSpanMillisecT" {
+                "val.num_milliseconds().to_string()"
+            } else {
+                panic!("Unknown original time type found.");
+            },
+        "DateTime<Utc>" => "val.timestamp().to_string()",
+        _ => panic!("Unknown Type '{}'", rust_type),
+    }.to_string()
+}
+
+fn vector_value_serializer(field: &Field, can_move: bool) -> String {
+    let inner_type = &field.rust_type[4..field.rust_type.len()-1];
+    // optimizations for special types
+    match inner_type {
+        "String" => String::from("let mut strb = String::new(); for val in val { if !strb.is_empty() { strb += \",\" } strb += &val.0; } strb"),
+        _ => String::from(format!("let mut strb = String::new(); for val in val {{ if !strb.is_empty() {{ strb += \",\" }} let add = {}; strb += &add; }} strb", single_value_serializer(field, inner_type, can_move))),
+    }
+}
+
 #>
 
-<# for msg in self.messages.values() {
-    let is_notify = !msg.notify_name.is_empty();
-    let is_response = (msg.notify_name.is_empty() || msg.notify_name.starts_with("+")) && false;
-#>
+<# for msg in self.messages.values() {#>
 #[derive(Debug)]
 pub struct <#= msg.class_name #> {
-<# if is_response { #>
+<# if msg.is_response { #>
     pub return_code: String,
 <# }
 
@@ -75,16 +133,16 @@ pub struct <#= msg.class_name #> {
     for p in &msg.params {
         let field = self.fields.get(p).expect(&format!("Missing field: {}", p));
 #>
-    pub <#= to_snake_case(&field.name) #>: <#= field.type_s #>,
+    pub <#= &field.rust_name #>: <#= field.rust_type #>,
 <# } #>
 }
 <#
-    if is_notify {
-        let _notify = &self.notifies[msg.notify_name.trim_left_matches('+')];
+    if msg.is_notify {
+        let _notify = &self.notifies[&msg.notify_name];
 
         // Do stuff here if needed...
     }
-    if is_response {
+    if msg.is_response {
 #>
 
 impl Response for <#= msg.class_name #> {
@@ -105,7 +163,7 @@ impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
     for p in &msg.params {
         let field = self.fields.get(p).unwrap();
 #>
-            <#= to_snake_case(&field.name) #>: { let val = cmd.args.get("<#= field.ts_name #>").ok_or(Error::ParameterNotFound)?; <#= generate_converter(field) #>},
+            <#= &field.rust_name #>: { let val = cmd.args.get("<#= field.ts_name #>").ok_or(Error::ParameterNotFound)?; <#= generate_deserializer(field) #>},
 <# } #>
         })
     }
@@ -113,7 +171,35 @@ impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
 
 impl<'a> Into<Command> for &'a <#= msg.class_name #> {
     fn into(self) -> Command {
-        panic!();
+        Command {
+            command: String::from("<#= msg.notify_name #>"),
+            static_args: vec![
+<#
+                for p in &msg.params {
+                    let field = self.fields.get(p).unwrap();
+#>
+                (String::from("<#= field.ts_name #>"), { let val = &self.<#= field.rust_name #>; <#= generate_serializer(field, false) #> } ),
+<# } #>
+            ],
+            list_args: vec![],
+        }
+    }
+}
+
+impl Into<Command> for <#= msg.class_name #> {
+    fn into(self) -> Command {
+        Command {
+            command: String::from("<#= msg.notify_name #>"),
+            static_args: vec![
+<#
+                for p in &msg.params {
+                    let field = self.fields.get(p).unwrap();
+#>
+                (String::from("<#= field.ts_name #>"), { let val = self.<#= field.rust_name #>; <#= generate_serializer(field, true) #> } ),
+<# } #>
+            ],
+            list_args: vec![],
+        }
     }
 }
 
@@ -124,7 +210,7 @@ impl<'a> Into<Command> for &'a <#= msg.class_name #> {
 pub enum Notification {
 <# for notif in self.notifies.iter() {
     let notify_n = notif.0.as_str();
-    let cn = self.messages.iter().find(|x| { x.1.notify_name.trim_left_matches('+') == notify_n }).unwrap().1; #>
+    let cn = self.messages.iter().find(|x| { &x.1.notify_name == notify_n }).unwrap().1; #>
     <#= notif.1.enum_name #>(<#= cn.class_name #>),
 <# } #>
 }
@@ -134,7 +220,7 @@ impl Notification {
         match cmd.command {
             <# for notif in self.notifies.iter() {
                 let notify_n = notif.0.as_str();
-                let cn = self.messages.iter().find(|x| { x.1.notify_name.trim_left_matches('+') == notify_n }).unwrap().1; #>
+                let cn = self.messages.iter().find(|x| { x.1.notify_name == notify_n }).unwrap().1; #>
             "<#= notif.0.as_str() #>" => Ok(Notification::<#= notif.1.enum_name #>(<#= cn.class_name #>::try_from(&cmd)?)),
             <# } #>
             _ => Err(Box::new(Error::CommandNotFound))

@@ -1,5 +1,5 @@
 <#@ template cleanws="true" #>
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum Error {
 <# for e in &self.0 { #>
 	<# if !e.doc.is_empty() { #>
