@@ -33,6 +33,7 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
         "TextMessageTargetMode" |
         "HostMessageMode" |
         "HostBannerMode" |
+        "LicenseType" |
         "Codec" |
         "CodecEncryptionMode" |
         "MoveReason" |
@@ -50,7 +51,7 @@ fn single_value_converter(field: &Field, type_s: &str) -> String {
                 panic!("Unknown original time type found.");
             },
         "DateTime<Utc>" => "DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse()?, 0).ok_or(Box::new(Error::ParameterConvert))?, Utc)",
-        _ => panic!("Unknown Type"),
+        _ => panic!("Unknown Type '{}'", type_s),
     }.to_string()
 }
 

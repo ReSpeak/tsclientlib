@@ -20,6 +20,7 @@ use handler_data::Data;
 use packets::*;
 
 /// A record of a packet that can be resent.
+#[derive(Clone, Debug)]
 struct SendRecord {
     /// When this packet was sent.
     pub sent: DateTime<Utc>,
@@ -86,7 +87,7 @@ pub struct DefaultResender {
     ///
     /// This gets set, if the queue is full and the task should be notified,
     /// when an element is removed from the queue.
-    resender_task: Option<Task>,
+    resender_task: Vec<Task>,
 
     /// The task of the [`DefaultResenderFuture`]
     ///
@@ -109,7 +110,7 @@ impl DefaultResender {
             srtt,
             srtt_dev,
 
-            resender_task: None,
+            resender_task: Vec::new(),
             resender_future_task: None,
         }
     }
@@ -226,8 +227,8 @@ impl Resender for DefaultResender {
         }
 
         // Notify, that a packet was removed from the queue
-        if let Some(ref task) = self.resender_task {
-            task.notify();
+        for t in self.resender_task.drain(..) {
+            t.notify()
         }
     }
 
@@ -394,10 +395,9 @@ impl Sink for DefaultResender {
         if let Some(rec) = rec_res {
             // Set the task, so we get woken up if a place in the queue gets
             // free.
-            self.resender_task = Some(task::current());
+            self.resender_task.push(task::current());
             Ok(futures::AsyncSink::NotReady((rec.p_type, rec.p_id, rec.packet)))
         } else {
-            self.resender_task = None;
             // Notify the resender future that a new packet is available
             if let Some(ref task) = self.resender_future_task {
                 task.notify();

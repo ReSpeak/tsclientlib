@@ -17,10 +17,12 @@ use book_parser::*;
 struct Declarations {
     structs: Vec<Struct>,
     properties: Vec<Property>,
+    nesteds: Vec<Nested>,
 }
 
 impl Declarations {
     fn get_property(&self, id: &str) -> &Property {
+        println!("Get {} in {:?}", id, self.properties);
         let parts: Vec<_> = id.split('.').collect();
         self.properties.iter()
             .filter(|p| p.struct_name == parts[0] && p.name == parts[1])
@@ -52,7 +54,7 @@ fn main() {
 }
 
 fn is_ref_type(s: &str) -> bool {
-    if s.starts_with("Option") {
+    if s.starts_with("Option<") {
         is_ref_type(&s[7..s.len() - 1])
     } else {
         !(s == "bool" || s.starts_with("i") || s.starts_with("u")
@@ -62,9 +64,9 @@ fn is_ref_type(s: &str) -> bool {
 }
 
 fn get_return_type(s: &str) -> String {
-    if s.starts_with("Option") {
+    if s.starts_with("Option<") {
         format!("Option<{}>", get_return_type(&s[7..s.len() - 1]))
-    } else if s.starts_with("Vec") {
+    } else if s.starts_with("Vec<") {
         format!("&[{}]", &s[4..s.len() - 1])
     } else if s == "String" {
         String::from("&str")

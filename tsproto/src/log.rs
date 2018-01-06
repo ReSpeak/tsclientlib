@@ -208,6 +208,8 @@ pub struct PacketSinkLogger<
     inner: Inner,
     logger: Logger,
     is_client: bool,
+    /// The buffer to save a packet that is already logged.
+    buf: Option<Packet>,
     /// The identification of the connection
     id: Id,
 }
@@ -218,7 +220,7 @@ impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display>
     type A = (Logger, bool, Id);
 
     fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self {
-        Self { inner, logger, is_client, id }
+        Self { inner, logger, is_client, buf: None, id }
     }
 }
 
@@ -229,6 +231,14 @@ impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display> Sink
 
     fn start_send(&mut self, packet: Self::SinkItem)
         -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        // Check if the buffer is full
+        if let Some(p) = self.buf.take() {
+            if let futures::AsyncSink::NotReady(p) = self.inner.start_send(p)? {
+                self.buf = Some(p);
+                return Ok(futures::AsyncSink::NotReady(packet));
+            }
+        }
+
         PacketLogger::log_packet(
             &self.logger,
             &self.id,
@@ -236,9 +246,24 @@ impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display> Sink
             false,
             &packet,
         );
-        self.inner.start_send(packet)
+        let res = self.inner.start_send(packet)?;
+        // Buffer the packet if it was not sent
+        if let futures::AsyncSink::NotReady(p) = res {
+            self.buf = Some(p);
+            Ok(futures::AsyncSink::Ready)
+        } else {
+            Ok(res)
+        }
     }
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        // Check if the buffer is full
+        if let Some(p) = self.buf.take() {
+            if let futures::AsyncSink::NotReady(p) = self.inner.start_send(p)? {
+                self.buf = Some(p);
+                return Ok(futures::Async::NotReady);
+            }
+        }
+
         self.inner.poll_complete()
     }
     fn close(&mut self) -> futures::Poll<(), Self::SinkError> {

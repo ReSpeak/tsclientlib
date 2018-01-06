@@ -1,7 +1,12 @@
 //! This module contains a stream and a sink which convert Packets to Commands.
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use futures::{future, Sink, stream, Stream};
 use slog::Logger;
 use tsproto::commands::Command;
+use tsproto::connection::Connection;
+use tsproto::connectionmanager::ConnectionManager;
 use tsproto::errors::Error;
 use tsproto::packets::{Data, Header, Packet, PacketType};
 
@@ -36,6 +41,13 @@ impl CommandCodec {
 		}).flatten())
 	}
 
+	pub fn new_stream_from_connection<CM: ConnectionManager + 'static>(
+		con: Rc<RefCell<Connection<CM>>>)
+		-> Box<Stream<Item = Notification, Error = Error>> {
+		let logger = con.borrow().logger.clone();
+		Self::new_stream(Connection::get_commands(con), logger)
+	}
+
 	pub fn new_sink<
 		Inner: Sink<SinkItem = Packet, SinkError = Error> + 'static>(
 		inner: Inner) -> Box<Sink<SinkItem = Notification, SinkError = Error>> {
@@ -45,5 +57,11 @@ impl CommandCodec {
 			let header = Header::new(PacketType::Command);
 			future::ok(Packet::new(header, Data::Command(cmd)))
 		}))
+	}
+
+	pub fn new_sink_from_connection<CM: ConnectionManager + 'static>(
+		con: Rc<RefCell<Connection<CM>>>)
+		-> Box<Sink<SinkItem = Notification, SinkError = Error>> {
+		Self::new_sink(Connection::get_packets(con))
 	}
 }

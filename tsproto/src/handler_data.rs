@@ -485,14 +485,17 @@ impl<
                     addr, &packet);
                 if let Some(con) = con {
                     let mut con = con.borrow_mut();
-                    if con.stream_buffer.len() >= ::STREAM_BUFFER_MAX_SIZE {
+                    if con.udp_packet_buffer_stream.buffer.len() >=
+                        ::STREAM_BUFFER_MAX_SIZE {
                         warn!(data.logger,
-                            "Dropping packet, stream buffer too full");
+                            "Dropping packet, stream buffer too full";
+                            "length" => con.udp_packet_buffer_stream.buffer
+                                .len());
                     } else {
                         // Add packet to queue and notify stream
-                        con.stream_buffer.push_back(packet);
+                        con.udp_packet_buffer_stream.buffer.push_back(packet);
 
-                        if let Some(ref task) = con.stream_task {
+                        if let Some(ref task) = con.udp_packet_buffer_stream.task {
                             task.notify();
                         } else {
                             warn!(data.logger,

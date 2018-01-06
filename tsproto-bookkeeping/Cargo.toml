@@ -6,6 +6,8 @@ build = "build/build.rs"
 
 [dependencies]
 chrono = "0.4"
+futures = "0.1"
+slog = "2"
 tsproto = { path = "../tsproto" }
 tsproto-commands = { path = "../tsproto-commands" }
 

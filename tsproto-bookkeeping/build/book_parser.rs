@@ -10,7 +10,6 @@ pub struct Values {
     pub get: Option<bool>,
     pub set: Option<bool>,
     pub id: String,
-    pub optional: Option<bool>,
 }
 
 impl Values {
@@ -23,7 +22,6 @@ impl Values {
                 "get" => self.get = Some(val.parse().unwrap()),
                 "set" => self.set = Some(val.parse().unwrap()),
                 "id" => self.id = val.to_string(),
-                "optional" => self.optional = Some(val.parse().unwrap()),
                 _ => {
                     panic!("Invalid value '{}'", key);
                 }
@@ -64,8 +62,26 @@ impl PartialEq for Property {
 
 impl Eq for Property {}
 
+#[derive(Default, Clone, Debug)]
+pub struct Nested {
+    pub name: String,
+    pub type_s: String,
+    pub values: Values,
+    pub struct_name: String,
+}
+
+impl Nested {
+    pub fn get_attr_name(&self, struct_name: &str) -> String {
+        if self.struct_name == struct_name {
+            to_snake_case(&self.name)
+        } else {
+            format!("{}_{}", to_snake_case(&self.struct_name), to_snake_case(&self.name))
+        }
+    }
+}
+
 pub(crate) fn parse(s: &str) -> Declarations {
-    let param_re = Regex::new(r#"\s*(?P<pname>(get|set|doc|id|optional))\s*:\s*(?P<pval>(?:\w+|"([^"]|["\\n])*"|\[[^]]*\]))\s*,?"#).unwrap();
+    let param_re = Regex::new(r#"\s*(?P<pname>(get|set|doc|id))\s*:\s*(?P<pval>(?:\w+|"([^"]|["\\n])*"|\[[^]]*\]))\s*,?"#).unwrap();
     let struct_re = Regex::new(r"\s*(?P<name>\w+)\s*;?").unwrap();
     let prop_re = Regex::new(r"\s*(?P<name>\w+)\s*,\s*(?P<type>\w+)(?P<mod>(\?|\[\])?)\s*;?").unwrap();
 
@@ -99,7 +115,10 @@ pub(crate) fn parse(s: &str) -> Declarations {
                 cur_struct_name = Some(new_struct.name.clone());
                 decls.structs.push(new_struct);
             }
+            "NESTED" |
             "PROP" => {
+                let is_prop = type_s == "PROP";
+
                 let capture = prop_re.captures(parts[1]).expect("No match found");
                 let end = capture[0].len();
 
@@ -118,21 +137,31 @@ pub(crate) fn parse(s: &str) -> Declarations {
                     type_s = format!("Option<{}>", type_s);
                 }
 
-                let prop = Property {
-                    name: capture["name"].to_string(),
-                    type_s,
-                    values: vals,
-                    struct_name: cur_struct_name.as_ref()
-                        .expect("No struct known").clone(),
-                };
-                decls.properties.push(prop);
+                if is_prop {
+                    let prop = Property {
+                        name: capture["name"].to_string(),
+                        type_s,
+                        values: vals,
+                        struct_name: cur_struct_name.as_ref()
+                            .expect("No struct known").clone(),
+                    };
+                    decls.properties.push(prop);
+                } else {
+                    // NESTED
+                    let prop = Nested {
+                        name: capture["name"].to_string(),
+                        type_s,
+                        values: vals,
+                        struct_name: cur_struct_name.as_ref()
+                            .expect("No struct known").clone(),
+                    };
+                    decls.nesteds.push(prop);
+                }
             }
             "DEFAULT" => {
                 let captures = param_re.captures_iter(parts[1]);
                 default_vals = Values::default();
                 default_vals.fill(captures);
-            }
-            "NESTED" => {
             }
             "" => {
                 continue;

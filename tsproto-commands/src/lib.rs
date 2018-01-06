@@ -159,3 +159,18 @@ pub enum PermissionGroupDatabaseType {
 	/// Global query group (used for server query clients).
 	Query,
 }
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive)]
+pub enum LicenseType
+{
+	/// No licence
+	NoLicense = 0,
+	/// Authorised TeamSpeak Host Provider License (ATHP)
+	Athp = 1,
+	/// Offline/LAN License
+	Lan = 2,
+	/// Non-Profit License (NPL)
+	Npl = 3,
+	/// Unknown License
+	Unknown = 4,
+}

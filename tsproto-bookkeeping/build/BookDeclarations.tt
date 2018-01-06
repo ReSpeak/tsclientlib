@@ -15,6 +15,9 @@
     let props: Vec<_> = self.properties.iter().filter(|p|
         p.struct_name == struc.name && !ids.contains(&p)).collect();
 
+    let nesteds: Vec<_> = self.nesteds.iter().filter(|p|
+        p.struct_name == struc.name).collect();
+
     let all_props = ids.iter().chain(props.iter());
 
 #>
@@ -24,20 +27,23 @@ pub struct <#= struc.name #> {
     if !p.values.doc.is_empty() { #>
 <#= indent(document(&p.values.doc), 1) #>
 <# } #>
-    <#
-    if p.values.get.expect("'get' value not set")
-        && p.values.set.expect("'set' value not set") {
-        #>pub <#
-    }
-    #><#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
+    <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
+<# }
+
+// Nested structs
+for p in &nesteds {
+    if !p.values.doc.is_empty() { #>
+<#= indent(document(&p.values.doc), 1) #>
+<# } #>
+    <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
 <# } #>
 }
 
 <#
-    // Write getter for getter-only properties
+    // Write getter for properties
     let all_props = ids.iter().chain(props.iter());
     let get_props: Vec<_> = all_props
-        .filter(|p| p.values.get.unwrap() && !p.values.set.unwrap()).collect();
+        .filter(|p| p.values.get.unwrap()).collect();
     if !get_props.is_empty() {
 #>
 impl <#= struc.name #> {
@@ -45,15 +51,38 @@ impl <#= struc.name #> {
     pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= get_return_type(&p.type_s) #> {
     <# if p.type_s == "Option<String>" { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
-    <# } else if p.type_s.starts_with("Option") { #>
+    <# } else if p.type_s.starts_with("Option<") {
+		   if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref()
-    <# } else if is_ref_type(&p.type_s) { #>
+		<# } else { #>
+        self.<#= p.get_attr_name(&struc.name) #>
+		<# }
+       } else if is_ref_type(&p.type_s) { #>
         &self.<#= p.get_attr_name(&struc.name) #>
     <# } else { #>
         self.<#= p.get_attr_name(&struc.name) #>
     <# } #>
     }
-<#      } #>
+<#      }
+
+		// Nested structs
+		for p in nesteds {#>
+    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= get_return_type(&p.type_s) #> {
+    <# if p.type_s == "Option<String>" { #>
+        self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
+    <# } else if p.type_s.starts_with("Option<") {
+		   if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
+        self.<#= p.get_attr_name(&struc.name) #>.as_ref()
+		<# } else { #>
+        self.<#= p.get_attr_name(&struc.name) #>
+		<# }
+       } else if is_ref_type(&p.type_s) { #>
+        &self.<#= p.get_attr_name(&struc.name) #>
+    <# } else { #>
+        self.<#= p.get_attr_name(&struc.name) #>
+    <# } #>
+    }
+<#		} #>
 }
 
 <#  } #>

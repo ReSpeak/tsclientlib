@@ -65,11 +65,7 @@ pub(crate) fn parse(s: &str) -> Declarations {
                     enum_name: params[1].to_string(),
                 });
             }
-            "TYPE" => {
-                if params.len() != 1 {
-                    panic!("Invalid TYPE: {}", l);
-                }
-            }
+            "TYPE" => {}
             "BREAK" => {
                 break;
             }

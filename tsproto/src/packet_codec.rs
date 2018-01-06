@@ -3,13 +3,13 @@ use std::io::Cursor;
 use std::rc::{Rc, Weak};
 use std::u16;
 
-use futures::{self, future, Future, Sink, Stream};
+use futures::{self, Sink, Stream};
 use futures::task;
 use num::ToPrimitive;
 use slog;
 
 use {
-    packets, BoxFuture, Error, Result, ResultExt, MAX_FRAGMENTS_LENGTH,
+    packets, Error, Result, ResultExt, MAX_FRAGMENTS_LENGTH,
     MAX_QUEUE_LEN,
 };
 use algorithms as algs;
@@ -210,10 +210,8 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                     if !header.get_unencrypted() {
                         // If it is the first ack packet of a
                         // client, try to fake decrypt it.
-                        let decrypted = if header.get_type()
-                            == PacketType::Ack
-                            && header.p_id == 0
-                            && !is_client
+                        let decrypted = if header.get_type() == PacketType::Ack
+                            && header.p_id == 0 && !is_client
                         {
                             let udp_packet_bak = udp_packet.clone();
                             if algs::decrypt_fake(
@@ -430,7 +428,6 @@ impl<
         }
         // Don't return an error, that will terminate the stream (log them only)
         let res: Result<_> = match self.inner.poll()? {
-            // Wrap in a closure so try! can be used
             futures::Async::Ready(Some(UdpPacket(mut udp_packet))) =>
                 self.on_packet_received(udp_packet),
             futures::Async::Ready(None) => Ok(futures::Async::Ready(None)),
@@ -464,9 +461,11 @@ pub struct PacketCodecSink<
     is_client: bool,
     inner: Inner,
     /// The type of the packets in the current send buffer.
-    p_type: PacketType,
+    command_p_type: PacketType,
     /// Currently buffered id and packet.
-    send_buffer: Vec<(u16, UdpPacket)>,
+    command_send_buffer: Vec<(u16, UdpPacket)>,
+    /// Send buffer for other packets
+    other_send_buffer: Vec<(u16, UdpPacket)>,
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
@@ -477,8 +476,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
             connection: Rc::downgrade(&connection),
             is_client,
             inner: Connection::get_udp_packets(connection),
-            p_type: PacketType::Command,
-            send_buffer: Vec::new(),
+            command_p_type: PacketType::Command,
+            command_send_buffer: Vec::new(),
+            other_send_buffer: Vec::new(),
         }
     }
 
@@ -500,17 +500,29 @@ impl<
         &mut self,
         packet: Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        // Check if there are unsent packets in the queue
-        if self.poll_complete()? == futures::Async::NotReady {
-            return Ok(futures::AsyncSink::NotReady(packet));
+        // Check if there are unsent packets in the queue for this packet type
+        let p_type = packet.header.get_type();
+        if p_type == PacketType::Command || p_type == PacketType::CommandLow {
+            if !self.command_send_buffer.is_empty() {
+                self.poll_complete()?;
+                if !self.command_send_buffer.is_empty() {
+                    return Ok(futures::AsyncSink::NotReady(packet));
+                }
+            }
+        } else {
+            if !self.other_send_buffer.is_empty() {
+                self.poll_complete()?;
+                if !self.other_send_buffer.is_empty() {
+                    return Ok(futures::AsyncSink::NotReady(packet));
+                }
+            }
         }
 
-        let p_type = packet.header.get_type();
         // The resulting list of udp packets
         let mut packets = {
             let is_client = self.is_client;
-            let use_newprotocol = (packet.header.get_type()
-                == PacketType::Command
+            let use_newprotocol =
+                (packet.header.get_type() == PacketType::Command
                 || packet.header.get_type() == PacketType::CommandLow)
                 && is_client;
 
@@ -611,41 +623,56 @@ impl<
         };
         // Add the packets to the queue
         packets.reverse();
-        self.send_buffer = packets;
-        self.p_type = p_type;
+        // TODO Send init packets using the resender
+        // TODO The following init packet has to be handled as an ack packet.
+        if p_type == PacketType::Command || p_type == PacketType::CommandLow {
+            self.command_send_buffer = packets;
+            self.command_p_type = p_type;
+        } else {
+            self.other_send_buffer = packets;
+        }
         Ok(futures::AsyncSink::Ready)
     }
 
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        // Check if there are unsent packets in the queue
-        if self.p_type == PacketType::Command || self.p_type == PacketType::CommandLow {
+        // Check if there are unsent command packets in the queue
+        let command_res = {
             let con = self.connection.upgrade().unwrap();
             let mut con = con.borrow_mut();
-            if let Some((p_id, packet)) = self.send_buffer.pop() {
+            if let Some((p_id, packet)) = self.command_send_buffer.pop() {
                 if let futures::AsyncSink::NotReady((_, p_id, packet)) =
-                    con.resender.start_send((self.p_type, p_id, packet))?
+                    con.resender.start_send((self.command_p_type, p_id, packet))?
                 {
-                    self.send_buffer.push((p_id, packet));
+                    self.command_send_buffer.push((p_id, packet));
                 } else {
                     futures::task::current().notify();
                 }
-                Ok(futures::Async::NotReady)
+                futures::Async::NotReady
             } else {
-                con.resender.poll_complete()
+                con.resender.poll_complete()?
             }
-        } else {
-            if let Some((p_id, packet)) = self.send_buffer.pop() {
+        };
+
+        // Check if there are other unsent packets in the queue
+        let other_res = {
+            if let Some((p_id, packet)) = self.other_send_buffer.pop() {
                 if let futures::AsyncSink::NotReady(packet) =
                     self.inner.start_send(packet)?
                 {
-                    self.send_buffer.push((p_id, packet));
+                    self.other_send_buffer.push((p_id, packet));
                 } else {
                     futures::task::current().notify();
                 }
-                Ok(futures::Async::NotReady)
+                futures::Async::NotReady
             } else {
-                self.inner.poll_complete()
+                self.inner.poll_complete()?
             }
+        };
+
+        if command_res.is_not_ready() || other_res.is_not_ready() {
+            Ok(futures::Async::NotReady)
+        } else {
+            Ok(futures::Async::Ready(()))
         }
     }
 
@@ -654,61 +681,84 @@ impl<
     }
 }
 
-pub struct AckHandler {
-    inner_stream: Box<Stream<Item = Packet, Error = Error>>,
+pub struct AckHandler<
+    UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+    InnerStream: Stream<Item = (Option<Packet>, Option<Packet>), Error = Error>
+        + 'static,
+> {
+    used_sink: UsedSink,
+    inner_stream: InnerStream,
+    /// A buffer for an ack packet.
+    ack_buffer: Option<Packet>,
+    /// If we have put a packet into the sink and should poll for completion.
+    should_poll_complete: bool,
 }
 
-impl AckHandler {
-    pub fn new<
-        UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-        InnerStream: Stream<
-            Item = (Option<Packet>, Option<Packet>),
-            Error = Error,
-        >
-            + 'static,
-    >(
-        inner_stream: InnerStream,
-        sink: UsedSink,
-    ) -> Self {
-        let sink = Rc::new(RefCell::new(Some(sink)));
-        let inner_stream =
-            Box::new(
-                inner_stream
-                    .and_then(
-                        move |(packet, ack)| -> BoxFuture<
-                            Option<Packet>,
-                            Error,
-                        > {
-                            // Check if we should send an ack packet
-                            if let Some(ack) = ack {
-                                // Take sink
-                                let tmp_sink =
-                                    sink.borrow_mut().take().unwrap();
-                                // Send the ack
-                                let sink = sink.clone();
-                                Box::new(
-                                    tmp_sink.send(ack).map(move |tmp_sink| {
-                                        *sink.borrow_mut() = Some(tmp_sink);
-                                        // Return the packet
-                                        packet
-                                    }),
-                                )
-                            } else {
-                                Box::new(future::ok(packet))
-                            }
-                        },
-                    )
-                    .filter_map(|o| o),
-            );
-        Self { inner_stream }
+impl<
+    UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+    InnerStream: Stream<Item = (Option<Packet>, Option<Packet>), Error = Error>
+        + 'static,
+> AckHandler<UsedSink, InnerStream> {
+    pub fn new(inner_stream: InnerStream, used_sink: UsedSink) -> Self {
+        Self {
+            used_sink,
+            inner_stream,
+            ack_buffer: None,
+            should_poll_complete: false,
+        }
     }
 }
 
-impl Stream for AckHandler {
+impl<
+    UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+    InnerStream: Stream<Item = (Option<Packet>, Option<Packet>), Error = Error>
+        + 'static,
+> Stream for AckHandler<UsedSink, InnerStream> {
     type Item = Packet;
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        self.inner_stream.poll()
+        // Try to send the ack buffer
+        if let Some(p) = self.ack_buffer.take() {
+            if let futures::AsyncSink::NotReady(p) =
+                self.used_sink.start_send(p)? {
+                self.ack_buffer = Some(p);
+                return Ok(futures::Async::NotReady);
+            } else {
+                self.should_poll_complete = true;
+            }
+        }
+
+        if self.should_poll_complete {
+            if let futures::Async::Ready(()) = self.used_sink.poll_complete()? {
+                self.should_poll_complete = false;
+            }
+        }
+
+        match self.inner_stream.poll()? {
+            futures::Async::Ready(Some((packet, ack))) => {
+                if let Some(p) = ack {
+                    // Try to send the ack
+                    if let futures::AsyncSink::NotReady(p) =
+                        self.used_sink.start_send(p)? {
+                        self.ack_buffer = Some(p);
+                    } else {
+                        if let futures::Async::NotReady =
+                            self.used_sink.poll_complete()? {
+                            self.should_poll_complete = true;
+                        }
+                    }
+                }
+
+                if let Some(packet) = packet {
+                    Ok(futures::Async::Ready(Some(packet)))
+                } else {
+                    task::current().notify();
+                    Ok(futures::Async::NotReady)
+                }
+            }
+            futures::Async::Ready(None) => Ok(futures::Async::Ready(None)),
+            futures::Async::NotReady => Ok(futures::Async::NotReady),
+        }
     }
 }

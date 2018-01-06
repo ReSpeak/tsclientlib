@@ -1,12 +1,10 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::u16;
 
 use {slog, tomcrypt};
-use futures::{self, Sink, Stream, task};
-use futures::task::Task;
+use futures::{self, Sink, Stream};
 use num::ToPrimitive;
 
 use {Error, StreamWrapper, SinkWrapper};
@@ -98,14 +96,7 @@ pub struct Connection<CM: ConnectionManager> {
     /// to.
     pub address: SocketAddr,
 
-    /// The queue which buffers packets for this connection.
-    ///
-    /// The packets will be provided by the underlying `udp_packet_stream`.
-    ///
-    /// Packets should be pushed to the back and taken from the front.
-    pub(crate) stream_buffer: VecDeque<UdpPacket>,
-    /// The task which should be notified if new packets are available.
-    pub(crate) stream_task: Option<Task>,
+    pub(crate) udp_packet_buffer_stream: ::BufferStream<UdpPacket, Error>,
 
     /// The stream for [`UdpPacket`]s.
     ///
@@ -128,6 +119,13 @@ pub struct Connection<CM: ConnectionManager> {
     pub packet_sink:
         Option<Box<Sink<SinkItem = Packet, SinkError = Error>>>,
 
+    /// For `Command` and `CommandLow` packets.
+    pub(crate) command_buffer_stream: ::BufferStream<Packet, Error>,
+    /// For `Voice` packets.
+    pub(crate) voice_buffer_stream: ::BufferStream<Packet, Error>,
+    /// For `VoiceWhisper` packets.
+    pub(crate) voice_whisper_buffer_stream: ::BufferStream<Packet, Error>,
+
     pub resender: CM::Resend,
 }
 
@@ -146,13 +144,15 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
             params: None,
             address,
 
-            stream_buffer: Default::default(),
-            stream_task: None,
-
+            udp_packet_buffer_stream: Default::default(),
             udp_packet_stream: None,
             udp_packet_sink: None,
             packet_stream: None,
             packet_sink: None,
+
+            command_buffer_stream: Default::default(),
+            voice_buffer_stream: Default::default(),
+            voice_whisper_buffer_stream: Default::default(),
 
             resender,
         }));
@@ -224,6 +224,26 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
         Packets {
             connection: Rc::downgrade(&connection),
         }
+    }
+
+    /// Returns a stream of all `Command` and `CommandLow` packets that arrive
+    /// for this connection.
+    pub fn get_commands(connection: Rc<RefCell<Self>>)
+        -> ConnectionCommandPacketStream<CM> {
+        ConnectionCommandPacketStream::new(connection)
+    }
+
+    /// Returns a stream of all `Voice` packets that arrive for this connection.
+    pub fn get_voice(connection: Rc<RefCell<Self>>)
+        -> ConnectionVoicePacketStream<CM> {
+        ConnectionVoicePacketStream::new(connection)
+    }
+
+    /// Returns a stream of all `VoiceWhisper` packets that arrive for this
+    /// connection.
+    pub fn get_voice_whisper(connection: Rc<RefCell<Self>>)
+        -> ConnectionVoiceWhisperPacketStream<CM> {
+        ConnectionVoiceWhisperPacketStream::new(connection)
     }
 }
 
@@ -376,19 +396,14 @@ impl<CM: ConnectionManager> Sink for Packets<CM> {
     }
 }
 
-/// The stream which fetches packets from the `Data` object.
 struct ConnectionUdpPacketStream<CM: ConnectionManager> {
     connection: Weak<RefCell<Connection<CM>>>,
 }
-
 impl<CM: ConnectionManager> ConnectionUdpPacketStream<CM> {
     fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
-        Self {
-            connection: Rc::downgrade(&con),
-        }
+        Self { connection: Rc::downgrade(&con) }
     }
 }
-
 impl<CM: ConnectionManager> Stream for ConnectionUdpPacketStream<CM> {
     type Item = UdpPacket;
     type Error = Error;
@@ -400,16 +415,80 @@ impl<CM: ConnectionManager> Stream for ConnectionUdpPacketStream<CM> {
             // The connection does not exist anymore, just quit
             return Ok(futures::Async::Ready(None));
         };
-        // Set task
         let mut con = con.borrow_mut();
-        con.stream_task = Some(task::current());
+        con.udp_packet_buffer_stream.poll()
+    }
+}
 
-        // Check if there is a packet available
-        if let Some(packet) = con.stream_buffer.pop_front() {
-            Ok(futures::Async::Ready(Some(packet)))
+pub struct ConnectionCommandPacketStream<CM: ConnectionManager> {
+    connection: Weak<RefCell<Connection<CM>>>,
+}
+impl<CM: ConnectionManager> ConnectionCommandPacketStream<CM> {
+    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
+        Self { connection: Rc::downgrade(&con) }
+    }
+}
+impl<CM: ConnectionManager> Stream for ConnectionCommandPacketStream<CM> {
+    type Item = Packet;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        let con = if let Some(con) = self.connection.upgrade() {
+            con
         } else {
-            Ok(futures::Async::NotReady)
-        }
+            // The connection does not exist anymore, just quit
+            return Ok(futures::Async::Ready(None));
+        };
+        let mut con = con.borrow_mut();
+        con.command_buffer_stream.poll()
+    }
+}
+
+pub struct ConnectionVoicePacketStream<CM: ConnectionManager> {
+    connection: Weak<RefCell<Connection<CM>>>,
+}
+impl<CM: ConnectionManager> ConnectionVoicePacketStream<CM> {
+    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
+        Self { connection: Rc::downgrade(&con) }
+    }
+}
+impl<CM: ConnectionManager> Stream for ConnectionVoicePacketStream<CM> {
+    type Item = Packet;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        let con = if let Some(con) = self.connection.upgrade() {
+            con
+        } else {
+            // The connection does not exist anymore, just quit
+            return Ok(futures::Async::Ready(None));
+        };
+        let mut con = con.borrow_mut();
+        con.voice_buffer_stream.poll()
+    }
+}
+
+pub struct ConnectionVoiceWhisperPacketStream<CM: ConnectionManager> {
+    connection: Weak<RefCell<Connection<CM>>>,
+}
+impl<CM: ConnectionManager> ConnectionVoiceWhisperPacketStream<CM> {
+    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
+        Self { connection: Rc::downgrade(&con) }
+    }
+}
+impl<CM: ConnectionManager> Stream for ConnectionVoiceWhisperPacketStream<CM> {
+    type Item = Packet;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
+        let con = if let Some(con) = self.connection.upgrade() {
+            con
+        } else {
+            // The connection does not exist anymore, just quit
+            return Ok(futures::Async::Ready(None));
+        };
+        let mut con = con.borrow_mut();
+        con.voice_whisper_buffer_stream.poll()
     }
 }
 
