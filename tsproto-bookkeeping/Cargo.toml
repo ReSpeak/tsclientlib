@@ -5,11 +5,24 @@ authors = ["Flakebi <flakebi@t-online.de>"]
 build = "build/build.rs"
 
 [dependencies]
+base64 = "0.9"
 chrono = "0.4"
+failure = "0.1"
 futures = "0.1"
+lazy_static = "1"
+slog = "2"
+slog-async = "2"
+slog-perf = "0.2"
+slog-term = "2"
+tokio-core = "0.1"
+tomcrypt = "0.1"
 tsproto = { path = "../tsproto" }
 tsproto-commands = { path = "../tsproto-commands" }
 
 [build-dependencies]
 regex = "0.2"
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
+
+[dev-dependencies]
+structopt = "0.1"
+structopt-derive = "0.1"

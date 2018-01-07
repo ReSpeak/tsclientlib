@@ -131,7 +131,11 @@ pub(crate) fn parse(s: &str) -> Declarations {
                 let mut type_s = convert_type(&capture["type"]);
 
                 if is_array {
-                    type_s = format!("Vec<{}>", type_s);
+                    match type_s.as_str() {
+                        "Client" | "Channel" =>
+                            type_s = format!("Map<{0}Id, {0}>", type_s),
+                        _ => type_s = format!("Vec<{}>", type_s),
+                    }
                 }
                 if is_optional {
                     type_s = format!("Option<{}>", type_s);

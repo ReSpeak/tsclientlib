@@ -12,6 +12,7 @@ use futures::task::{self, Task};
 use futures::unsync::oneshot;
 use num::{BigUint, One, ToPrimitive};
 use rand::{self, Rng};
+use tokio_core::reactor::Handle;
 
 use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
@@ -73,13 +74,15 @@ fn create_init_header() -> Header {
 }
 
 struct DefaultConnectionSetup {
+    handle: Handle,
     /// `None` if logging is disabled.
     logger: Option<::slog::Logger>,
 }
 
 impl DefaultConnectionSetup {
-    fn new(logger: Option<::slog::Logger>) -> Self {
+    fn new(handle: Handle, logger: Option<::slog::Logger>) -> Self {
         Self {
+            handle,
             logger,
         }
     }
@@ -108,6 +111,9 @@ impl<CM: AttachedDataConnectionManager<ServerConnectionData> + 'static>
                     ::log::PacketSinkLogger<_, _>>(con.clone(),
                         (logger.clone(), data.is_client, key.clone()));
             }
+
+            // Distribute packets
+            Connection::start_packet_distributor(con.clone(), &self.handle);
         }
 
         // Default handlers are not usable with the wrapper system
@@ -138,8 +144,10 @@ pub fn default_setup<
 
     // Discard packets which don't match a connection
     let unknown_stream = Data::get_unknown_udp_packets(data.clone());
+    let handle;
     {
         let data = data.borrow();
+        handle = data.handle.clone();
         let logger = data.logger.clone();
         let logger2 = data.logger.clone();
         data.handle.spawn(unknown_stream.for_each(move |(addr, _)| {
@@ -156,7 +164,7 @@ pub fn default_setup<
 
     // Register a connection listener which configures each connection
     data.borrow_mut().connection_listeners.push(Box::new(
-        DefaultConnectionSetup::new(logger)));
+        DefaultConnectionSetup::new(handle, logger)));
 }
 
 /// Wait until a client reaches a certain state.

@@ -18,7 +18,7 @@ use connectionmanager::{ConnectionManager, Resender};
 use packets::*;
 
 pub struct PacketCodecStream<
-    CM: ConnectionManager,
+    CM: ConnectionManager + 'static,
     Inner: Stream<Item = UdpPacket, Error = Error>,
 > {
     connection: Weak<RefCell<Connection<CM>>>,
@@ -454,7 +454,7 @@ impl<
 
 
 pub struct PacketCodecSink<
-    CM: ConnectionManager,
+    CM: ConnectionManager + 'static,
     Inner: Sink<SinkItem = UdpPacket, SinkError = Error>,
 > {
     connection: Weak<RefCell<Connection<CM>>>,

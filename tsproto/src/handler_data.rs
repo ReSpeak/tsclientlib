@@ -459,7 +459,7 @@ impl<
 
 impl<
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-    CM: ConnectionManager,
+    CM: ConnectionManager + 'static,
 > Future for PacketDistributor<Inner, CM> {
     type Item = ();
     type Error = Error;

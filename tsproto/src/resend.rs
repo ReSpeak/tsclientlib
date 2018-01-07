@@ -578,7 +578,7 @@ impl Default for ResendConfig {
 
 /// This future is running in parallel to the rest and is responsible for
 /// sending all command packets.
-pub struct ResendFuture<CM: ConnectionManager> {
+pub struct ResendFuture<CM: ConnectionManager + 'static> {
     data: Weak<RefCell<Data<CM>>>,
     connection_key: CM::ConnectionsKey,
     connection: Weak<RefCell<Connection<CM>>>,
