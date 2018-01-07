@@ -52,11 +52,11 @@ impl <#= struc.name #> {
     <# if p.type_s == "Option<String>" { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
     <# } else if p.type_s.starts_with("Option<") {
-		   if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
+           if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref()
-		<# } else { #>
+        <# } else { #>
         self.<#= p.get_attr_name(&struc.name) #>
-		<# }
+        <# }
        } else if is_ref_type(&p.type_s) { #>
         &self.<#= p.get_attr_name(&struc.name) #>
     <# } else { #>
@@ -65,24 +65,24 @@ impl <#= struc.name #> {
     }
 <#      }
 
-		// Nested structs
-		for p in nesteds {#>
+        // Nested structs
+        for p in nesteds {#>
     pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= get_return_type(&p.type_s) #> {
     <# if p.type_s == "Option<String>" { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
     <# } else if p.type_s.starts_with("Option<") {
-		   if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
+           if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref()
-		<# } else { #>
+        <# } else { #>
         self.<#= p.get_attr_name(&struc.name) #>
-		<# }
+        <# }
        } else if is_ref_type(&p.type_s) { #>
         &self.<#= p.get_attr_name(&struc.name) #>
     <# } else { #>
         self.<#= p.get_attr_name(&struc.name) #>
     <# } #>
     }
-<#		} #>
+<#        } #>
 }
 
 <#  } #>

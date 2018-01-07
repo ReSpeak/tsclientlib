@@ -93,6 +93,10 @@ pub fn convert_type(t: &str) -> String {
 
     if t == "str" || t == "string" {
         String::from("String")
+    } else if t == "byte" {
+        String::from("u8")
+    } else if t == "ushort" {
+        String::from("u16")
     } else if t == "int" {
         String::from("i32")
     } else if t == "uint" {

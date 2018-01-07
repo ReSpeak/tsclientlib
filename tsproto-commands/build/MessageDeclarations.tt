@@ -115,7 +115,7 @@ fn vector_value_serializer(field: &Field, can_move: bool) -> String {
     let inner_type = &field.rust_type[4..field.rust_type.len()-1];
     // optimizations for special types
     match inner_type {
-        "String" => String::from("let mut strb = String::new(); for val in val { if !strb.is_empty() { strb += \",\" } strb += &val.0; } strb"),
+        "String" => String::from("let mut strb = String::new(); for val in val { if !strb.is_empty() { strb += \",\" } strb += &val; } strb"),
         _ => String::from(format!("let mut strb = String::new(); for val in val {{ if !strb.is_empty() {{ strb += \",\" }} let add = {}; strb += &add; }} strb", single_value_serializer(field, inner_type, can_move))),
     }
 }
