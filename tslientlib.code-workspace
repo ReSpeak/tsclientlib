@@ -5,8 +5,8 @@
 			"name": "Protocol"
 		},
 		{
-			"path": "tsproto-bookkeeping",
-			"name": "Bookkeeping"
+			"path": "tsclientlib",
+			"name": "Clientlib"
 		},
 		{
 			"path": "tsproto-commands",

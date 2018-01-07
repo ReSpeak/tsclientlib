@@ -3,7 +3,7 @@ extern crate structopt;
 #[macro_use]
 extern crate structopt_derive;
 extern crate tokio_core;
-extern crate tsproto_bookkeeping;
+extern crate tsclientlib;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -12,7 +12,7 @@ use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
 
-use tsproto_bookkeeping::{ConnectOptions, ConnectionManager, DisconnectOptions,
+use tsclientlib::{ConnectOptions, ConnectionManager, DisconnectOptions,
     MoveReason};
 
 #[derive(StructOpt, Debug)]

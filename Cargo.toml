@@ -1,2 +1,2 @@
 [workspace]
-members = ["tsproto", "tsproto-bookkeeping"]
+members = ["tsproto", "tsproto-commands", "tsclientlib"]

@@ -1,4 +1,4 @@
-//! The base class of bookkeeping is the [`ConnectionManager`].
+//! The base class of this library is the [`ConnectionManager`].
 //!
 //! [`ConnectionManager`]: struct.ConnectionManager.html
 

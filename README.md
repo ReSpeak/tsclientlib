@@ -8,8 +8,7 @@ If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint
 
  - tsproto: The low level library that does the network part. You probably don't want to use that, but a higher level library like tsclientlib.
  - tsproto-commands: Parse commands into structs
- - tsproto-bookkeeping: Store information when connected to a server
- - tsclientlib: Yet to come
+ - tsclientlib: This is the main product of this repository, a simple to use TeamSpeak library
 
 ## Clone
 
@@ -22,8 +21,8 @@ git clone --recurse-submodules https://github.com/ReSpeak/tsclientlib.git
 You need to install rust (preferred installation method is [rustup](https://rustup.rs/)) to build these projects.
 
 ```
-cd tsproto
-cargo run --example client
+cd tsclientlib
+cargo run --example simple
 ```
 
 ## Miscellaneous

@@ -3,6 +3,7 @@ name = "tsproto-commands"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 build = "build/build.rs"
+workspace = ".."
 
 [dependencies]
 chrono = "0.4"
