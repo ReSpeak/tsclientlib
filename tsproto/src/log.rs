@@ -48,6 +48,7 @@ impl PacketLogger {
     }
 }
 
+// TODO Don't use custom streams here, but just return a stream.inspect(...)
 pub struct UdpPacketStreamLogger<
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > {

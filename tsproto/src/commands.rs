@@ -145,7 +145,7 @@ impl Command {
                 }
                 Ok(cmd)
             }
-            error => Err(format!("Cannot parse a command: {:?}", error).into()),
+            error => Err(::Error::ParseCommand(format!("{:?}", error))),
         }
     }
 

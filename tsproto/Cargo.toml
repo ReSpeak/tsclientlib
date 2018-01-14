@@ -11,16 +11,19 @@ keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
 license = "MIT/Apache-2.0"
 build = "build/build.rs"
-workspace = ".."
 
 [badges]
 travis-ci = { repository = "ReSpeak/tsclientlib" }
+
+# Use openssl by default, users can opt-in tomcrypt
+[features]
+default = ["openssl"]
 
 [dependencies]
 base64 = "0.9"
 byteorder = "1"
 chrono = "0.4"
-error-chain = "0.11"
+failure = "0.1"
 futures = "0.1"
 nom = "3.2"
 num = "0.1"
@@ -31,9 +34,13 @@ slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 tokio-core = "0.1"
-tomcrypt = "0.1"
 #quicklz = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
+yasna = "0.1"
+
+openssl = { version = "0.10", git = "https://github.com/Flakebi/rust-openssl.git", optional = true }
+#TODO tomcrypt = { version = "0.1", optional = true }
+tomcrypt = { git = "https://github.com/ReSpeak/tomcrypt-rs.git", optional = true }
 
 [dependencies.slog]
 version = "2"

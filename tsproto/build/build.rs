@@ -411,14 +411,14 @@ impl Enum {
             writeln!(
                 w,
                 "\tErr(error) => {{\n\t\terr_buf.push(format!(\"{} did not \
-                 match: {{}}\", error.description()));\n\t}}\n}}\n",
+                 match: {{}}\", error));\n\t}}\n}}\n",
                 p.name
             )?;
         }
         writeln!(
             w,
-            "Err(format!(\"No matching possibility for enum {} ({{:?}})\", \
-             err_buf).into())",
+            "Err(Error::ParsePacket(format!(\"No matching possibility for \
+            enum {} ({{:?}})\", err_buf)))",
             f.name
         )?;
         Ok(())
@@ -848,11 +848,8 @@ impl Field {
             } else {
                 writeln!(w, "if !({}{}) {{", cond, cond2)?;
             }
-            writeln!(
-                w,
-                "\tErr(\"Pre condition failed for {}\".into())",
-                self.name
-            )?;
+            writeln!(w, "\tErr(Error::ParsePacket(String::from(\
+                \"Pre condition failed for {}\")))", self.name)?;
             write!(w, "}} else {{\n\t")?;
         }
 
@@ -913,7 +910,8 @@ impl Field {
         if let Some(ref val) = self.value {
             write!(w, ".and_then(|res| ")?;
             writeln!(w, "if res != {} {{", val)?;
-            writeln!(w, "\tErr(\"Wrong value, expected {}\".into())", val)?;
+            writeln!(w, "\tErr(Error::ParsePacket(String::from(\
+                \"Wrong value, expected {}\")))", val)?;
             write!(w, "}} else {{\n\tOk(res)\n}})")?;
         }
 
@@ -927,11 +925,8 @@ impl Field {
             } else {
                 writeln!(w, "if !({}{}) {{", cond, cond2)?;
             }
-            writeln!(
-                w,
-                "\tErr(\"Post condition failed for {}\".into())",
-                self.name
-            )?;
+            writeln!(w, "\tErr(Error::ParsePacket(String::from(\
+                \"Post condition failed for {}\")))", self.name)?;
             write!(w, "}} else {{\n\tOk(res)\n}})")?;
         }
 

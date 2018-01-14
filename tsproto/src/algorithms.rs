@@ -1,13 +1,13 @@
 //! Handle packet splitting and cryptography
 use std::u64;
 
-use {tomcrypt, base64};
 use byteorder::{NetworkEndian, WriteBytesExt};
 use num::BigUint;
 use quicklz::CompressionLevel;
 use ring::digest;
 
-use Result;
+use {crypto, Result};
+use crypto::EccKey;
 use packets::*;
 
 pub fn must_encrypt(t: PacketType) -> bool {
@@ -36,13 +36,9 @@ pub fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
 ///
 /// Returns an error if the packet is too large but cannot be splitted.
 /// Only `Command` and `CommandLow` packets can be compressed and splitted.
-pub fn compress_and_split(packet: &Packet) -> Vec<(Header, Vec<u8>)> {
+pub fn compress_and_split(is_client: bool, packet: &Packet) -> Vec<(Header, Vec<u8>)> {
     // Everything else (except whisper packets) have to be less than 500 bytes
-    let header_size = {
-        let mut buf = Vec::new();
-        packet.header.write(&mut buf).unwrap();
-        buf.len()
-    };
+    let header_size = if is_client { 13 } else { 11 };
     let mut data = Vec::new();
     packet.data.write(&mut data).unwrap();
     // The maximum packet size (including header) is 500 bytes.
@@ -146,11 +142,9 @@ pub fn encrypt_key_nonce(
     let mut meta = Vec::with_capacity(5);
     header.write_meta(&mut meta)?;
 
-    let mut eax =
-        tomcrypt::EaxState::new(tomcrypt::rijndael(), key, nonce, Some(&meta))?;
-
-    eax.encrypt_in_place(data)?;
-    header.mac.copy_from_slice(&eax.finish(8)?);
+    let (mac, enc) = crypto::Eax::encrypt(key, nonce, &meta, data)?;
+    header.mac.copy_from_slice(&mac[..8]);
+    data.copy_from_slice(&enc);
 
     Ok(())
 }
@@ -179,15 +173,9 @@ pub fn decrypt_key_nonce(
     let mut meta = Vec::with_capacity(5);
     header.write_meta(&mut meta)?;
 
-    let mut eax =
-        tomcrypt::EaxState::new(tomcrypt::rijndael(), key, nonce, Some(&meta))?;
-
-    eax.decrypt_in_place(data)?;
-    if !header.mac.iter().eq(&eax.finish(8)?) {
-        Err("Packet has wrong mac".into())
-    } else {
-        Ok(())
-    }
+    let dec = crypto::Eax::decrypt(key, nonce, &meta, data, &header.mac)?;
+    data.copy_from_slice(&dec);
+    Ok(())
 }
 
 pub fn decrypt_fake(header: &Header, data: &mut [u8]) -> Result<()> {
@@ -208,11 +196,10 @@ pub fn decrypt(
 pub fn compute_iv_mac(
     alpha: &[u8; 10],
     beta: &[u8; 10],
-    our_key: &mut tomcrypt::EccKey,
-    other_key: &mut tomcrypt::EccKey,
+    our_key: &EccKey,
+    other_key: &EccKey,
 ) -> Result<([u8; 20], [u8; 8])> {
-    let shared_secret =
-        tomcrypt::EccKey::create_shared_secret(our_key, other_key, 32)?;
+    let shared_secret = our_key.create_shared_secret(other_key)?;
     let mut shared_iv = [0; 20];
     shared_iv.copy_from_slice(digest::digest(&digest::SHA1, &shared_secret)
                               .as_ref());
@@ -229,8 +216,8 @@ pub fn compute_iv_mac(
     Ok((shared_iv, shared_mac))
 }
 
-pub fn hash_cash(key: &mut tomcrypt::EccKey, level: u8) -> Result<u64> {
-    let omega = base64::encode(&key.export_public()?);
+pub fn hash_cash(key: &EccKey, level: u8) -> Result<u64> {
+    let omega = key.to_ts_public()?;
     let mut offset = 0;
     while offset < u64::MAX && get_hash_cash_level(&omega, offset) < level {
         offset += 1;

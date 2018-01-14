@@ -4,7 +4,7 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
-use {slog, slog_async, slog_term, tomcrypt};
+use {slog, slog_async, slog_term};
 use futures::{self, Future, Sink, Stream, task};
 use futures::task::Task;
 use slog::Drain;
@@ -51,7 +51,7 @@ pub struct Data<CM: ConnectionManager> {
     /// The address of the socket.
     pub local_addr: SocketAddr,
     /// The private key of this instance.
-    pub private_key: tomcrypt::EccKey,
+    pub private_key: ::crypto::EccKey,
     pub handle: Handle,
     pub logger: slog::Logger,
 
@@ -97,7 +97,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     /// be created.
     pub fn new<L: Into<Option<slog::Logger>>>(
         local_addr: SocketAddr,
-        private_key: tomcrypt::EccKey,
+        private_key: ::crypto::EccKey,
         handle: Handle,
         is_client: bool,
         connection_manager: CM,

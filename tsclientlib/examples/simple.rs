@@ -43,7 +43,7 @@ fn real_main() -> Result<(), failure::Error> {
     {
         let con = cm.get_connection(con_id).unwrap();
         let server = con.get_server();
-        println!("Server welcome message: {}", server.get_welcome_message());
+        println!("Server welcome message: {}", sanitize(&*server.get_welcome_message()));
     }
 
     // Wait some time
@@ -56,4 +56,9 @@ fn real_main() -> Result<(), failure::Error> {
         .message("Is this the real world?")))?;
 
     Ok(())
+}
+
+/// Only retain a certain set of characters.
+fn sanitize(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric() || [' ', '\t', '-', '_', '"', '\''].contains(&c)).collect()
 }

@@ -68,14 +68,14 @@ type Map<K, V> = std::collections::HashMap<K, V>;
 
 #[derive(Fail, Debug)]
 pub enum Error {
-    #[fail(display = "Connection faild ({})", _0)]
+    #[fail(display = "Connection failed ({})", _0)]
     ConnectionFailed(String),
     #[fail(display = "{}", _0)]
     Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
     Tomcrypt(#[cause] SyncFailure<tomcrypt::errors::Error>),
     #[fail(display = "{}", _0)]
-    Tsproto(#[cause] SyncFailure<tsproto::errors::Error>),
+    Tsproto(tsproto::errors::Error),
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 }

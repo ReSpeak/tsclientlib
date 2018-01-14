@@ -8,10 +8,7 @@ use futures::task;
 use num::ToPrimitive;
 use slog;
 
-use {
-    packets, Error, Result, ResultExt, MAX_FRAGMENTS_LENGTH,
-    MAX_QUEUE_LEN,
-};
+use {packets, Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN };
 use algorithms as algs;
 use connection::{Connection, ConnectedParams};
 use connectionmanager::{ConnectionManager, Resender};
@@ -109,7 +106,8 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                         frag_queue.append(&mut packet.0);
                         None
                     } else {
-                        bail!("Too many fragments");
+                        return Err(Error::MaxLengthExceeded(String::from(
+                            "fragment queue")));
                     }
                 } else {
                     // Decompress
@@ -163,7 +161,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                 r_queue.push((header, packet.0));
                 Ok(vec![])
             } else {
-                Err("Max queue length for commands exceeded".into())
+                Err(Error::MaxLengthExceeded(String::from("command queue")))
             }
         }
     }
@@ -191,7 +189,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
             let logger = con.logger.clone();
             let res = if let Some(ref mut params) = con.params {
                 if header.get_type() == PacketType::Init {
-                    bail!("Unexpected init packet")
+                    return Err(Error::UnexpectedInitPacket);
                 }
                 let p_type = header.get_type();
                 let type_i = p_type.to_usize().unwrap();
@@ -233,11 +231,11 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                                 &mut udp_packet,
                                 gen_id,
                                 &params.shared_iv,
-                            ).chain_err(|| "Packet decryption failed")?
+                            )?
                         }
                     } else if algs::must_encrypt(header.get_type()) {
                         // Check if it is ok for the packet to be unencrypted
-                        bail!("Got unallowed unencrypted packet");
+                        return Err(Error::UnallowedUnencryptedPacket);
                     }
                     match header.get_type() {
                         PacketType::Command |
@@ -327,16 +325,12 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                             packets::Data::AckLow(header.p_id),
                         ));
                     }
-                    Err(
-                        format!(
-                            "Packet {} not in receive window \
-                             [{};{}) for type {:?}",
-                            id,
-                            cur_next,
-                            limit,
-                            header.get_type(),
-                        ).into(),
-                    )
+                    Err(Error::NotInReceiveWindow {
+                        id,
+                        next: cur_next,
+                        limit,
+                        p_type: header.get_type(),
+                    })
                 };
                 if let Some((ack_type, ack_packet)) = ack {
                     let mut ack_header = Header::default();
@@ -436,13 +430,12 @@ impl<
 
         if let Err(error) = res {
             // Log error
-            let description = error.description();
             let logger = if let Some(con) = self.connection.upgrade() {
                 con.borrow().logger.clone()
             } else {
                 return Ok(futures::Async::Ready(None));
             };
-            error!(logger, "Receiving packet"; "error" => description);
+            error!(logger, "Receiving packet"; "error" => %error);
             // Wait for more packets
             task::current().notify();
             Ok(futures::Async::NotReady)
@@ -536,7 +529,7 @@ impl<
                 let mut packets = if p_type == PacketType::Command
                     || p_type == PacketType::CommandLow
                 {
-                    algs::compress_and_split(&packet)
+                    algs::compress_and_split(is_client, &packet)
                 } else {
                     let mut data = Vec::new();
                     packet.data.write(&mut data).unwrap();

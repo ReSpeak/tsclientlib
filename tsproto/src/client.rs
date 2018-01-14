@@ -4,7 +4,7 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::Rc;
 
-use {tomcrypt, base64};
+use base64;
 use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
 use futures::future::Either;
@@ -365,15 +365,13 @@ impl DefaultPacketHandlerStream {
                                       "y" => %yi);
                                 let y = algs::biguint_to_array(&yi);
 
-                                let omega = tryf!(data.private_key.export_public());
-
                                 // Create the command string
                                 let mut rng = rand::thread_rng();
                                 let alpha = rng.gen::<[u8; 10]>();
-                                // omega is an ASN.1-DER encoded public key from the
-                                // ECDH parameters.
+                                // omega is an ASN.1-DER encoded public key from
+                                // the ECDH parameters.
                                 let alpha_s = base64::encode(&alpha);
-                                let omega_s = base64::encode(&omega);
+                                let omega_s = tryf!(data.private_key.to_ts_public());
                                 let mut command = Command::new("clientinitiv");
                                 command.push("alpha", alpha_s);
                                 command.push("omega", omega_s);
@@ -403,7 +401,7 @@ impl DefaultPacketHandlerStream {
                             }
                         }
                         ServerConnectionState::ClientInitIv { ref alpha } => {
-                            let private_key = &mut data.private_key;
+                            let private_key = &data.private_key;
                             let res = (|con_params: &mut Option<ConnectedParams>| -> Result<()> {
                                 if let Packet { data: packets::Data::Command(ref command), .. } = packet {
                                     let cmd = command.get_commands().remove(0);
@@ -413,16 +411,16 @@ impl DefaultPacketHandlerStream {
                                         || !cmd.has_arg("omega")
                                         || base64::decode(cmd.args["alpha"])
                                         .map(|a| a != alpha).unwrap_or(true) {
-                                        bail!("initivexpand command has wrong arguments");
+                                        Err(format_err!("initivexpand command has wrong arguments"))?;
                                     } else {
                                         let beta_vec = base64::decode(cmd.args["beta"])?;
                                         if beta_vec.len() != 10 {
-                                            bail!("Incorrect beta length");
+                                            Err(format_err!("Incorrect beta length"))?;
                                         }
-                                        let omega = base64::decode(cmd.args["omega"])?;
                                         let mut beta = [0; 10];
                                         beta.copy_from_slice(&beta_vec);
-                                        let mut server_key = tomcrypt::EccKey::import(&omega)?;
+                                        let mut server_key = ::crypto::EccKey::
+                                            from_ts(cmd.args["omega"])?;
 
                                         let (iv, mac) = algs::compute_iv_mac(
                                             alpha, &beta, private_key, &mut server_key)?;
@@ -444,7 +442,7 @@ impl DefaultPacketHandlerStream {
                                     Ok(())
                                 }})(&mut con.params);
                             if let Err(error) = res {
-                                error!(logger, "Handle udp init packet"; "error" => ?error);
+                                error!(logger, "Handle udp init packet"; "error" => %error);
                                 None
                             } else {
                                 ignore_packet = true;

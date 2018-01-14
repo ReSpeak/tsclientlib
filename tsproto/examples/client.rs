@@ -1,5 +1,6 @@
 extern crate base64;
 extern crate futures;
+extern crate ring;
 #[macro_use]
 extern crate slog;
 extern crate slog_async;
@@ -9,7 +10,6 @@ extern crate structopt;
 #[macro_use]
 extern crate structopt_derive;
 extern crate tokio_core;
-extern crate tomcrypt;
 extern crate tsproto;
 
 use std::cell::RefCell;
@@ -25,6 +25,7 @@ use tokio_core::reactor::{Core, Handle, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
+use tsproto::crypto::EccKey;
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
@@ -45,7 +46,7 @@ fn connect(
     handle: &Handle,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
-) -> Box<Future<Item = (), Error = errors::Error>> {
+) -> Box<Future<Item = (), Error = Error>> {
     let connect_fut = client::connect(client.clone(), server_addr);
 
     // Listen for packets so we can answer them
@@ -63,18 +64,18 @@ fn connect(
     handle.spawn(listen);
 
     Box::new(connect_fut.and_then(move |()| {
-        let mut private_key = tomcrypt::EccKey::import(
-            &base64::decode("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-                k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-                DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap()).unwrap();
+        let private_key = EccKey::from_ts(
+            "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+            k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
+            DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
         // Compute hash cash
         let mut time_reporter = slog_perf::TimeReporter::new_with_level(
             "Compute public key hash cash level", logger.clone(),
             slog::Level::Info);
         time_reporter.start("Compute public key hash cash level");
-        let offset = algs::hash_cash(&mut private_key, 8).unwrap();
-        let omega = base64::encode(&private_key.export_public().unwrap());
+        let offset = algs::hash_cash(&private_key, 8).unwrap();
+        let omega = private_key.to_ts_public().unwrap();
         time_reporter.finish();
         info!(logger, "Computed hash cash level";
             "level" => algs::get_hash_cash_level(&omega, offset),
@@ -113,11 +114,11 @@ fn disconnect(
     _logger: slog::Logger,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
-) -> Box<Future<Item = (), Error = errors::Error>> {
+) -> Box<Future<Item = (), Error = Error>> {
     let header = Header::new(PacketType::Command);
     let mut command = commands::Command::new("clientdisconnect");
     // Never times out
-    //let mut command = Command::new("clientinitiv");
+    //let mut command = commands::Command::new("clientinitiv");
 
     // Reason: Disconnect
     command.push("reasonid", "8");
@@ -158,13 +159,11 @@ fn main() {
         slog::Logger::root(drain, o!())
     };
 
-    // Create ECDH key
-    //let prng = tomcrypt::sprng();
-    //let mut private_key = tryf!(tomcrypt::EccKey::new(prng, 32));
-    let private_key = tomcrypt::EccKey::import(
-        &base64::decode("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-            k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-            DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap()).unwrap();
+    // Create P-256 ECDH key
+    let private_key = EccKey::from_ts(
+        "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+        k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
+        DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
     let c = client::ClientData::new(
         args.local_address,

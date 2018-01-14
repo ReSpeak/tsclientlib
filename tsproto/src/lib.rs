@@ -1,5 +1,3 @@
-// Limit for error_chain
-#![recursion_limit = "1024"]
 #![cfg_attr(feature = "cargo-clippy",
            allow(redundant_closure_call, clone_on_ref_ptr))]
 
@@ -7,13 +5,15 @@ extern crate base64;
 extern crate byteorder;
 extern crate chrono;
 #[macro_use]
-extern crate error_chain;
+extern crate failure;
 extern crate futures;
 #[macro_use]
 extern crate nom;
 extern crate num;
 #[macro_use]
 extern crate num_derive;
+#[cfg(feature = "openssl")]
+extern crate openssl;
 extern crate quicklz;
 extern crate rand;
 extern crate ring;
@@ -23,37 +23,20 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio_core;
+#[cfg(feature = "tomcrypt")]
 extern crate tomcrypt;
+extern crate yasna;
 
 use std::{fmt, io};
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 
+use failure::{ResultExt, SyncFailure};
 use futures::{Future, Sink, Stream, task};
 use futures::task::Task;
 use tokio_core::net::UdpCodec;
 
 use packets::UdpPacket;
-
-#[allow(unused_doc_comment)]
-pub mod errors {
-    // Create the Error, ErrorKind, ResultExt, and Result types
-    error_chain! {
-        foreign_links {
-            Io(::std::io::Error);
-            Ring(::ring::error::Unspecified);
-            Base64(::base64::DecodeError);
-            Utf8(::std::str::Utf8Error);
-            ParseInt(::std::num::ParseIntError);
-            FutureCanceled(::futures::Canceled);
-        }
-        links {
-            Tomcrypt(::tomcrypt::errors::Error, ::tomcrypt::errors::ErrorKind);
-            Quicklz(::quicklz::errors::Error, ::quicklz::errors::ErrorKind);
-        }
-    }
-}
-use errors::*;
 
 macro_rules! tryf {
     ($e:expr) => {
@@ -69,6 +52,7 @@ pub mod client;
 pub mod commands;
 pub mod connection;
 pub mod connectionmanager;
+pub mod crypto;
 pub mod handler_data;
 pub mod log;
 pub mod packets;
@@ -77,6 +61,7 @@ pub mod resend;
 
 type BoxFuture<T, E> = Box<Future<Item = T, Error = E>>;
 type Map<K, V> = std::collections::HashMap<K, V>;
+type Result<T> = std::result::Result<T, Error>;
 
 /// The maximum number of bytes for a fragmented packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
@@ -92,6 +77,120 @@ const STREAM_BUFFER_MAX_SIZE: usize = 50;
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;
 const FAKE_KEY: [u8; 16] = *b"c:\\windows\\syste";
 const FAKE_NONCE: [u8; 16] = *b"m\\firewall32.cpl";
+
+#[derive(Fail, Debug)]
+pub enum Error {
+    #[fail(display = "{}", _0)]
+    Io(std::io::Error),
+    #[fail(display = "{}", _0)]
+    Ring(ring::error::Unspecified),
+    #[fail(display = "{}", _0)]
+    Base64(base64::DecodeError),
+    #[fail(display = "{}", _0)]
+    Utf8(std::str::Utf8Error),
+    #[fail(display = "{}", _0)]
+    ParseInt(std::num::ParseIntError),
+    #[fail(display = "{}", _0)]
+    FutureCanceled(futures::Canceled),
+    #[cfg(feature = "openssl")]
+    #[fail(display = "{}", _0)]
+    Openssl(openssl::error::ErrorStack),
+    #[fail(display = "{}", _0)]
+    Yasna(yasna::ASN1Error),
+    #[cfg(feature = "tomcrypt")]
+    #[fail(display = "{}", _0)]
+    Tomcrypt(tomcrypt::Error),
+    #[fail(display = "{}", _0)]
+    Quicklz(#[cause] SyncFailure<quicklz::errors::Error>),
+    #[fail(display = "{}", _0)]
+    ParsePacket(String),
+    #[fail(display = "Packet {} not in receive window [{};{}) for type {:?}",
+        id, next, limit, p_type)]
+    NotInReceiveWindow {
+        id: u16,
+        next: u16,
+        limit: u16,
+        p_type: packets::PacketType,
+    },
+    #[fail(display = "Got unallowed unencrypted packet")]
+    UnallowedUnencryptedPacket,
+    #[fail(display = "Got unexpected init packet")]
+    UnexpectedInitPacket,
+    #[fail(display = "Maximum length exceeded for {}", _0)]
+    MaxLengthExceeded(String),
+    #[fail(display = "Cannot parse command ({})", _0)]
+    ParseCommand(String),
+    #[fail(display = "{}", _0)]
+    Other(#[cause] failure::Compat<failure::Error>),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+impl From<ring::error::Unspecified> for Error {
+    fn from(e: ring::error::Unspecified) -> Self {
+        Error::Ring(e)
+    }
+}
+
+impl From<base64::DecodeError> for Error {
+    fn from(e: base64::DecodeError) -> Self {
+        Error::Base64(e)
+    }
+}
+
+impl From<std::str::Utf8Error> for Error {
+    fn from(e: std::str::Utf8Error) -> Self {
+        Error::Utf8(e)
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(e: std::num::ParseIntError) -> Self {
+        Error::ParseInt(e)
+    }
+}
+
+impl From<futures::Canceled> for Error {
+    fn from(e: futures::Canceled) -> Self {
+        Error::FutureCanceled(e)
+    }
+}
+
+impl From<openssl::error::ErrorStack> for Error {
+    fn from(e: openssl::error::ErrorStack) -> Self {
+        Error::Openssl(e)
+    }
+}
+
+impl From<yasna::ASN1Error> for Error {
+    fn from(e: yasna::ASN1Error) -> Self {
+        Error::Yasna(e)
+    }
+}
+
+#[cfg(feature = "tomcrypt")]
+impl From<tomcrypt::Error> for Error {
+    fn from(e: tomcrypt::Error) -> Self {
+        Error::Tomcrypt(e)
+    }
+}
+
+impl From<quicklz::errors::Error> for Error {
+    fn from(e: quicklz::errors::Error) -> Self {
+        Error::Quicklz(SyncFailure::new(e))
+    }
+}
+
+impl From<failure::Error> for Error {
+    fn from(e: failure::Error) -> Self {
+        let r: std::result::Result<(), _> = Err(e);
+        Error::Other(r.compat().unwrap_err())
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ClientId(pub SocketAddr);
@@ -227,8 +326,13 @@ impl<T, E> Stream for BufferStream<T, E> {
 }
 
 pub fn init() -> Result<()> {
-    tomcrypt::init();
-    tomcrypt::register_sprng()?;
-    tomcrypt::register_rijndael_cipher()?;
+    #[cfg(feature = "tomcrypt")]
+    {
+        tomcrypt::init();
+        tomcrypt::register_sprng()?;
+        tomcrypt::register_rijndael_cipher()?;
+    }
+    #[cfg(feature = "tomcrypt")]
+    openssl::init();
     Ok(())
 }
