@@ -2,7 +2,7 @@
 use std::u64;
 
 use byteorder::{NetworkEndian, WriteBytesExt};
-use num::BigUint;
+use num_bigint::BigUint;
 use quicklz::CompressionLevel;
 use ring::digest;
 

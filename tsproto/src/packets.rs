@@ -5,8 +5,9 @@ use std::io::prelude::*;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use num::{FromPrimitive, ToPrimitive};
 
-use {Error, HexSlice, Result};
+use {Error, Result};
 use commands::Command;
+use utils::HexSlice;
 
 include!(concat!(env!("OUT_DIR"), "/packets.rs"));
 

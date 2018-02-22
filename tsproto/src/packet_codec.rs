@@ -209,7 +209,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                         // If it is the first ack packet of a
                         // client, try to fake decrypt it.
                         let decrypted = if header.get_type() == PacketType::Ack
-                            && header.p_id == 0 && !is_client
+                            && header.p_id == 0
                         {
                             let udp_packet_bak = udp_packet.clone();
                             if algs::decrypt_fake(
@@ -525,6 +525,25 @@ impl<
             if let Some(params) = con.params.as_mut() {
                 let p_type = packet.header.get_type();
                 let type_i = p_type.to_usize().unwrap();
+
+                let (gen, p_id) = params.outgoing_p_ids[type_i];
+                // We fake encrypt the first command packet of the
+                // server (id 0) and the first command packet of the
+                // client (id 1) if the client uses the new protocol
+                // (the packet is a clientek).
+                let fake_encrypt =
+                    p_type == PacketType::Command && gen == 0
+                    && ((!is_client && p_id == 0)
+                        || (is_client && p_id == 1 && {
+                            // Test if it is a clientek packet
+                            if let Data::Command(ref cmd) =
+                                packet.data {
+                                cmd.command == "clientek"
+                            } else {
+                                false
+                            }
+                        }));
+
                 // Compress and split packet
                 let mut packets = if p_type == PacketType::Command
                     || p_type == PacketType::CommandLow
@@ -561,9 +580,7 @@ impl<
                             params.voice_encryption,
                         ) {
                             header.set_unencrypted(false);
-                            if header.get_type() == PacketType::Command
-                                && !is_client && header.p_id == 0
-                            {
+                            if fake_encrypt {
                                 algs::encrypt_fake(&mut header, &mut p_data)?;
                             } else {
                                 algs::encrypt(

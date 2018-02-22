@@ -10,7 +10,13 @@ use futures::{self, future, Future, Sink, Stream};
 use futures::future::Either;
 use futures::task::{self, Task};
 use futures::unsync::oneshot;
-use num::{BigUint, One, ToPrimitive};
+#[cfg(feature = "gmp")]
+use gmp::mpz::Mpz;
+#[cfg(not(feature = "gmp"))]
+use num::One;
+use num::ToPrimitive;
+#[cfg(not(feature = "gmp"))]
+use num_bigint::BigUint;
 use rand::{self, Rng};
 use tokio_core::reactor::Handle;
 
@@ -347,72 +353,96 @@ impl DefaultPacketHandlerStream {
                                 S2CInit::Init3 { ref x, ref n, level, ref random2 }), .. } = packet {
                                 // Solve RSA puzzle: y = x ^ (2 ^ level) % n
                                 // Use Montgomery Reduction
-                                let xi = BigUint::from_bytes_be(x);
-                                let ni = BigUint::from_bytes_be(n);
-                                // TODO use another thread + timeout after 5s
-                                let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-                                    "Solve RSA puzzle", logger.clone(),
-                                    ::slog::Level::Info);
-                                time_reporter.start("");
-                                // TODO implement Montgomery Reduction without
-                                // allocating the exponent
-                                let mut e = BigUint::one();
-                                e <<= level as usize;
-                                let yi = xi.modpow(&e, &ni);
-                                time_reporter.finish();
-                                info!(logger, "Solve RSA puzzle";
-                                      "level" => level, "x" => %xi, "n" => %ni,
-                                      "y" => %yi);
-                                let y = algs::biguint_to_array(&yi);
+                                if level > 10_000_000 {
+                                    // Reject too high exponents
+                                    None
+                                } else {
+                                    // Create clientinitiv
+                                    // TODO use another thread
+                                    let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
+                                        "Solve RSA puzzle", logger.clone(),
+                                        ::slog::Level::Info);
+                                    time_reporter.start("");
 
-                                // Create the command string
-                                let mut rng = rand::thread_rng();
-                                let alpha = rng.gen::<[u8; 10]>();
-                                // omega is an ASN.1-DER encoded public key from
-                                // the ECDH parameters.
-                                let alpha_s = base64::encode(&alpha);
-                                let omega_s = tryf!(data.private_key.to_ts_public());
-                                let mut command = Command::new("clientinitiv");
-                                command.push("alpha", alpha_s);
-                                command.push("omega", omega_s);
-                                command.push("ot", "1");
-                                command.push("ip", "");
+                                    // Use gmp for faster computations if it is
+                                    // available.
+                                    #[cfg(feature = "gmp")]
+                                    let y = {
+                                        let n = (n as &[u8]).into();
+                                        let x: Mpz = (x as &[u8]).into();
+                                        let mut e = Mpz::new();
+                                        e.setbit(level as usize);
+                                        let y = x.powm(&e, &n);
+                                        time_reporter.finish();
+                                        info!(logger, "Solve RSA puzzle";
+                                              "level" => level);
+                                        let ys = y.to_str_radix(10);
+                                        let yi = ys.parse().unwrap();
+                                        algs::biguint_to_array(&yi)
+                                    };
 
-                                let cheader = create_init_header();
-                                let data = C2SInit::Init4 {
-                                    version,
-                                    x: *x,
-                                    n: *n,
-                                    level,
-                                    random2: *random2,
-                                    y,
-                                    command: command.clone(),
-                                };
+                                    #[cfg(not(feature = "gmp"))]
+                                    let y = {
+                                        let xi = BigUint::from_bytes_be(x);
+                                        let ni = BigUint::from_bytes_be(n);
+                                        let mut e = BigUint::one();
+                                        e <<= level as usize;
+                                        let yi = xi.modpow(&e, &ni);
+                                        time_reporter.finish();
+                                        info!(logger, "Solve RSA puzzle";
+                                              "level" => level, "x" => %xi, "n" => %ni,
+                                              "y" => %yi);
+                                        algs::biguint_to_array(&yi)
+                                    };
 
-                                let state = ServerConnectionState::ClientInitIv {
-                                    alpha,
-                                };
+                                    // Create the command string
+                                    let mut rng = rand::thread_rng();
+                                    let alpha = rng.gen::<[u8; 10]>();
+                                    // omega is an ASN.1-DER encoded public key from
+                                    // the ECDH parameters.
+                                    let alpha_s = base64::encode(&alpha);
+                                    let omega_s = tryf!(data.private_key.to_ts_public());
+                                    let mut command = Command::new("clientinitiv");
+                                    command.push("alpha", alpha_s);
+                                    command.push("omega", omega_s);
+                                    command.push("ot", "1");
+                                    command.push("ip", "");
 
-                                ignore_packet = true;
-                                Some((state, Some(Packet::new(cheader,
-                                    packets::Data::C2SInit(data)))))
+                                    let cheader = create_init_header();
+                                    let data = C2SInit::Init4 {
+                                        version,
+                                        x: *x,
+                                        n: *n,
+                                        level,
+                                        random2: *random2,
+                                        y,
+                                        command: command.clone(),
+                                    };
+
+                                    let state = ServerConnectionState::ClientInitIv {
+                                        alpha,
+                                    };
+
+                                    ignore_packet = true;
+                                    Some((state, Some(Packet::new(cheader,
+                                        packets::Data::C2SInit(data)))))
+                                }
                             } else {
                                 None
                             }
                         }
                         ServerConnectionState::ClientInitIv { ref alpha } => {
                             let private_key = &data.private_key;
-                            let res = (|con_params: &mut Option<ConnectedParams>| -> Result<()> {
+                            let res = (|con_params: &mut Option<ConnectedParams>| -> Result<_> {
                                 if let Packet { data: packets::Data::Command(ref command), .. } = packet {
                                     let cmd = command.get_commands().remove(0);
-                                    if cmd.command != "initivexpand"
-                                        || !cmd.has_arg("alpha")
-                                        || !cmd.has_arg("beta")
-                                        || !cmd.has_arg("omega")
-                                        || base64::decode(cmd.args["alpha"])
-                                        .map(|a| a != alpha).unwrap_or(true) {
-                                        Err(format_err!("initivexpand command has wrong arguments"))?;
-                                    } else {
+                                    if cmd.command == "initivexpand"
+                                        && cmd.has_arg("alpha")
+                                        && cmd.has_arg("beta")
+                                        && cmd.has_arg("omega")
+                                        && base64::decode(cmd.args["alpha"])
+                                        .map(|a| a == alpha).unwrap_or(false) {
+
                                         let beta_vec = base64::decode(cmd.args["beta"])?;
                                         if beta_vec.len() != 10 {
                                             Err(format_err!("Incorrect beta length"))?;
@@ -436,17 +466,81 @@ impl DefaultPacketHandlerStream {
                                         params.incoming_p_ids[PacketType::Ack.to_usize().unwrap()]
                                             .1 = 1;
                                         *con_params = Some(params);
+                                        Ok(None)
+                                    } else if cmd.command == "initivexpand2"
+                                        && cmd.has_arg("l")
+                                        && cmd.has_arg("beta")
+                                        && cmd.has_arg("omega")
+                                        && cmd.has_arg("ot")
+                                        && cmd.args["ot"] == "1"
+                                        && cmd.has_arg("time")
+                                        && cmd.has_arg("beta") {
+
+                                        let beta_vec = base64::decode(cmd.args["beta"])?;
+                                        if beta_vec.len() != 54 {
+                                            Err(format_err!("Incorrect beta length"))?;
+                                        }
+                                        let mut beta = [0; 54];
+                                        beta.copy_from_slice(&beta_vec);
+                                        let mut server_key = ::crypto::EccKey::
+                                            from_ts(cmd.args["omega"])?;
+
+                                        let mut beta1 = [0; 10];
+                                        beta1.copy_from_slice(&beta_vec[..10]);
+
+                                        let (iv, mac) = algs::compute_iv_mac(
+                                            alpha, &beta1, private_key, &mut server_key)?;
+                                        let mut params = ConnectedParams::new(
+                                            server_key, iv, mac);
+                                        // We already sent a command packet.
+                                        params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
+                                            .1 = 1;
+                                        // We received a command packet.
+                                        params.incoming_p_ids[PacketType::Command.to_usize().unwrap()]
+                                            .1 = 1;
+                                        // And we sent an ack.
+                                        params.incoming_p_ids[PacketType::Ack.to_usize().unwrap()]
+                                            .1 = 1;
+                                        *con_params = Some(params);
+
+                                        // Send clientek
+                                        let mut command = Command::new("clientek");
+                                        let mut rng = rand::thread_rng();
+                                        let ek = rng.gen::<[u8; 32]>();
+                                        let ek_s = base64::encode(&ek);
+
+                                        // Proof: ECDSA signature of ek || beta
+                                        let mut all = Vec::with_capacity(32 + 54);
+                                        all.extend_from_slice(&ek);
+                                        all.extend_from_slice(&beta);
+                                        let proof = private_key.sign(&all)?;
+                                        let proof_s = base64::encode(&proof);
+
+                                        command.push("ek", ek_s);
+                                        command.push("proof", proof_s);
+
+                                        let mut cheader = create_init_header();
+                                        cheader.set_type(PacketType::Command);
+
+                                        ignore_packet = true;
+                                        Ok(Some(Packet::new(cheader,
+                                            packets::Data::Command(command))))
+                                    } else {
+                                        Err(format_err!("initivexpand command has wrong arguments").into())
                                     }
-                                    Ok(())
                                 } else {
-                                    Ok(())
+                                    Ok(None)
                                 }})(&mut con.params);
-                            if let Err(error) = res {
-                                error!(logger, "Handle udp init packet"; "error" => %error);
-                                None
-                            } else {
-                                ignore_packet = true;
-                                Some((ServerConnectionState::Connecting, None))
+
+                            match res {
+                                Ok(p) => {
+                                    ignore_packet = true;
+                                    Some((ServerConnectionState::Connecting, p))
+                                }
+                                Err(error) => {
+                                    error!(logger, "Handle udp init packet"; "error" => %error);
+                                    None
+                                }
                             }
                         }
                         ServerConnectionState::Connecting => {

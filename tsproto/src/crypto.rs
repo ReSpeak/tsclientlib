@@ -11,16 +11,17 @@ mod openssl_imports {
     pub use openssl::bn::BigNumContext;
     pub use openssl::derive::Deriver;
     pub use openssl::ec::{self, EcGroup, EcKey, EcPoint};
+    pub use openssl::hash::MessageDigest;
     pub use openssl::nid::Nid;
     pub use openssl::pkey::{self, PKey, Private, Public};
-    pub use openssl::sign::Signer;
+    pub use openssl::sign::{Signer, Verifier};
     pub use openssl::symm::{self, Cipher, Crypter, Mode};
 }
 
 #[cfg(feature="openssl")]
 use self::openssl_imports::*;
 
-use Result;
+use {Error, Result};
 
 pub enum KeyType {
     Public,
@@ -295,6 +296,52 @@ impl EccKey {
 
         let secret = deriver.derive_to_vec()?;
         Ok(secret)
+    }
+
+    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
+        #[cfg(feature = "openssl")]
+        {
+            if let EccKey::OpensslPrivate(ref key) = *self {
+                let pkey = PKey::from_ec_key(key.clone())?;
+                let mut signer = Signer::new(Some(MessageDigest::sha256()),
+                    &pkey)?;
+                signer.update(data)?;
+                return Ok(signer.sign_to_vec()?);
+            }
+        }
+
+        panic!("No private key found");
+    }
+
+    #[cfg(feature = "openssl")]
+    fn verify_ossl<T>(key: EcKey<T>, data: &[u8], signature: &[u8])
+        -> Result<()> where T: ::openssl::pkey::HasPublic {
+        let pkey = PKey::from_ec_key(key)?;
+        let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
+
+        // Data
+        verifier.update(&data)?;
+        let res = verifier.verify(&signature)?;
+        if res {
+            Ok(())
+        } else {
+            Err(Error::WrongSignature)
+        }
+    }
+
+    pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
+        #[cfg(feature = "openssl")]
+        match *self {
+            EccKey::OpensslPrivate(ref key) =>
+                return Self::verify_ossl(key.clone(), data, signature),
+            EccKey::OpensslPublic(ref key) =>
+                return Self::verify_ossl(key.clone(), data, signature),
+            #[cfg(feature = "tomcrypt")]
+            _ => {}
+        }
+
+        #[cfg(feature = "tomcrypt")]
+        unimplemented!("Verification using tomcrypt is not yet implemented");
     }
 }
 

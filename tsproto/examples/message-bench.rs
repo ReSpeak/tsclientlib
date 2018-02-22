@@ -1,5 +1,3 @@
-//! Benchmark the number of reconnects we can make per second.
-
 extern crate base64;
 extern crate futures;
 #[macro_use]
@@ -16,13 +14,14 @@ extern crate tsproto;
 use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use std::time::Duration;
 use std::time::Instant;
 
-use futures::{future, Future, Sink, Stream};
+use futures::{future, Future, Sink, stream, Stream};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Handle};
+use tokio_core::reactor::{Core, Handle, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
@@ -30,7 +29,8 @@ use tsproto::crypto::EccKey;
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(global_settings_raw = "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]")]
+#[structopt(raw(global_settings =
+    "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]"))]
 struct Args {
     #[structopt(short = "a", long = "address",
                 default_value = "127.0.0.1:9987",
@@ -39,6 +39,12 @@ struct Args {
     #[structopt(long = "local-address", default_value = "0.0.0.0:0",
                 help = "The listening address of the client")]
     local_address: SocketAddr,
+    #[structopt(short = "n", long = "amount", default_value = "100",
+                help = "The amount of packets to send")]
+    amount: u32,
+    #[structopt(short = "v", long = "verbose",
+                help = "Display the content of all packets")]
+    verbose: bool,
 }
 
 fn connect(
@@ -182,62 +188,75 @@ fn main() {
     }
 
     // Packet encoding
-    client::default_setup(c.clone(), true);
+    client::default_setup(c.clone(), args.verbose);
 
+    // Connect
+    let handle = core.handle();
+    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
+        args.address)) {
+        error!(logger, "Failed to connect"; "error" => ?error);
+        return;
+    }
+    info!(logger, "Connected");
+
+    // Wait some time
+    let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
+    core.run(action).unwrap();
+    info!(logger, "Waited");
+
+    // Send packet
     let mut header = Header::default();
     header.set_type(PacketType::Command);
     let mut cmd = commands::Command::new("sendtextmessage");
+
     cmd.push("targetmode", "3");
-    cmd.push("msg", "Hello");
 
-    let packet = Packet::new(header, Data::Command(cmd));
+    let con = c.borrow().connection_manager.get_connection(args.address)
+        .unwrap();
 
-    // Benchmark reconnecting
-    let count = 20;
+    // Benchmark sending messages
+    let count = args.amount;
     let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-        "Connection benchmark",
+        "Message benchmark",
         logger.clone(),
         slog::Level::Info,
     );
-    time_reporter.start("Connections");
+    time_reporter.start("Messages");
     let start = Instant::now();
-    let handle = core.handle();
-    let mut success_count = 0;
-    for _ in 0..count {
-        // The TS server does not accept the 3rd reconnect from the same port
-        let action = tokio_core::reactor::Timeout::new(
-            std::time::Duration::from_millis(2), &core.handle()).unwrap();
-        core.run(action).unwrap();
 
-        info!(logger, "Connecting");
-        if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
-            args.address)) {
-            error!(logger, "Failed to connect"; "error" => ?error);
-            break;
-        }
+    core.run(stream::iter_ok(0..count).and_then(move |i| {
+        let mut cmd = cmd.clone();
+        cmd.push("msg", format!("Hello {}", i));
+        let packet = Packet::new(header.clone(), Data::Command(cmd));
+        let packets = client::ClientConnection::get_packets(con.clone());
+        packets.send(packet)
+    }).for_each(|_| future::ok(()))).unwrap();
 
-        info!(logger, "Writing message");
-        let con = c.borrow().connection_manager.get_connection(args.address)
-            .unwrap();
-        let packets = client::ClientConnection::get_packets(con);
-        core.run(packets.send(packet.clone())).unwrap();
-        info!(logger, "Disconnecting");
-        core.run(disconnect(logger.clone(), c.clone(), args.address)).unwrap();
-        success_count += 1;
-    }
     time_reporter.finish();
     let dur = start.elapsed();
 
     info!(logger,
-        "{} connects in {}.{:03}s",
-        success_count,
+        "{} messages in {}.{:03}s",
+        count,
         dur.as_secs(),
-        dur.subsec_nanos() / 1000000
+        dur.subsec_nanos() / 1000000,
     );
-    let dur = dur / success_count;
+    let dur = dur / count;
     info!(logger,
-        "{}.{:03}s per connect",
-        dur.as_secs(),
-        dur.subsec_nanos() / 1000000
+        "{}.{:03}ms per message",
+        dur.subsec_nanos() / 1000000,
+        dur.subsec_nanos() / 1000,
     );
+
+    // Wait some time
+    let action = Timeout::new(Duration::from_secs(1), &core.handle()).unwrap();
+    core.run(action).unwrap();
+
+    // Disconnect
+    if let Err(error) = core.run(disconnect(logger.clone(), c.clone(),
+        args.address)) {
+        error!(logger, "Failed to disconnect"; "error" => ?error);
+        return;
+    }
+    info!(logger, "Disconnected");
 }

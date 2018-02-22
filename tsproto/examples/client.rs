@@ -29,8 +29,8 @@ use tsproto::crypto::EccKey;
 use tsproto::packets::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(global_settings_raw =
-    "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]")]
+#[structopt(raw(global_settings =
+    "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]"))]
 struct Args {
     #[structopt(short = "a", long = "address",
                 default_value = "127.0.0.1:9987",
@@ -153,7 +153,8 @@ fn main() {
 
     let logger = {
         let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        //let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
         slog::Logger::root(drain, o!())

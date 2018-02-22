@@ -7,9 +7,12 @@ extern crate chrono;
 #[macro_use]
 extern crate failure;
 extern crate futures;
+#[cfg(feature = "gmp")]
+extern crate gmp;
 #[macro_use]
 extern crate nom;
 extern crate num;
+extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
 #[cfg(feature = "openssl")]
@@ -27,7 +30,7 @@ extern crate tokio_core;
 extern crate tomcrypt;
 extern crate yasna;
 
-use std::{fmt, io};
+use std::io;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 
@@ -58,6 +61,7 @@ pub mod log;
 pub mod packets;
 pub mod packet_codec;
 pub mod resend;
+pub mod utils;
 
 type BoxFuture<T, E> = Box<Future<Item = T, Error = E>>;
 type Map<K, V> = std::collections::HashMap<K, V>;
@@ -120,6 +124,8 @@ pub enum Error {
     MaxLengthExceeded(String),
     #[fail(display = "Cannot parse command ({})", _0)]
     ParseCommand(String),
+    #[fail(display = "Wrong signature")]
+    WrongSignature,
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 }
@@ -199,29 +205,6 @@ pub struct ServerId(pub SocketAddr);
 
 #[derive(Default)]
 struct TsCodec;
-
-struct HexSlice<'a, T: fmt::LowerHex + 'a>(&'a [T]);
-
-impl<'a> fmt::Debug for HexSlice<'a, u8> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "[")?;
-        if let Some((l, m)) = self.0.split_last() {
-            for b in m {
-                if *b == 0 {
-                    write!(f, "0, ")?;
-                } else {
-                    write!(f, "{:#02x}, ", b)?;
-                }
-            }
-            if *l == 0 {
-                write!(f, "0")?;
-            } else {
-                write!(f, "{:#02x}", l)?;
-            }
-        }
-        write!(f, "]")
-    }
-}
 
 impl Into<SocketAddr> for ClientId {
     fn into(self) -> SocketAddr {
