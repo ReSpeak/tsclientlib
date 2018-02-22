@@ -5,7 +5,7 @@ use std::rc::{Rc, Weak};
 
 use chrono::{DateTime, Duration, Utc};
 use futures::{self, Stream};
-use tsproto::errors::Error as tsproto_error;
+use tsproto::Error as tsproto_error;
 use tsproto::client;
 use tsproto_commands::*;
 use tsproto_commands::messages::*;

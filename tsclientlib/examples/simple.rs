@@ -37,6 +37,12 @@ fn real_main() -> Result<(), failure::Error> {
     let mut cm = ConnectionManager::new(core.handle());
     let con_config = ConnectOptions::from_address(args.address);
 
+    // Optionally set the key of this client, otherwise a new key is generated.
+    let con_config = con_config.private_key_ts(
+        "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+        k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
+        C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+
     // Connect
     let con_id = core.run(cm.add_connection(con_config))?;
 

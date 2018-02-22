@@ -15,7 +15,6 @@ slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 tokio-core = "0.1"
-tomcrypt = "0.1"
 tsproto = { path = "../tsproto" }
 tsproto-commands = { path = "../tsproto-commands" }
 

@@ -7,7 +7,7 @@ use slog::Logger;
 use tsproto::commands::Command;
 use tsproto::connection::Connection;
 use tsproto::connectionmanager::ConnectionManager;
-use tsproto::errors::Error;
+use tsproto::Error;
 use tsproto::packets::{Data, Header, Packet, PacketType};
 
 use messages::Notification;

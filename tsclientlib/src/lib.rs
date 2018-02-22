@@ -18,7 +18,6 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio_core;
-extern crate tomcrypt;
 extern crate tsproto;
 extern crate tsproto_commands;
 
@@ -27,20 +26,17 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 
 use chrono::{DateTime, Duration, Utc};
-use failure::{SyncFailure, ResultExt};
+use failure::ResultExt;
 use futures::{future, Future, Sink, Stream};
 use slog::{Drain, Logger};
 use tokio_core::reactor::Handle;
 use tsproto::algorithms as algs;
-use tsproto::{client, packets, commands};
+use tsproto::{client, crypto, packets, commands};
 use tsproto::connectionmanager::ConnectionManager as TsprotoCM;
 use tsproto::connectionmanager::{Resender, ResenderEvent};
 use tsproto::packets::{Header, Packet, PacketType};
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
-
-// Reexports
-pub use tsproto_commands::MoveReason;
 
 macro_rules! copy_attrs {
     ($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
@@ -62,6 +58,10 @@ macro_rules! tryf {
 
 mod structs;
 
+// Reexports
+pub use tsproto_commands::MoveReason;
+pub use tsproto_commands::ConnectionId;
+
 type Result<T> = std::result::Result<T, Error>;
 type BoxFuture<T> = Box<Future<Item = T, Error = Error>>;
 type Map<K, V> = std::collections::HashMap<K, V>;
@@ -73,9 +73,7 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
-    Tomcrypt(#[cause] SyncFailure<tomcrypt::errors::Error>),
-    #[fail(display = "{}", _0)]
-    Tsproto(tsproto::errors::Error),
+    Tsproto(tsproto::Error),
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 }
@@ -86,15 +84,9 @@ impl From<base64::DecodeError> for Error {
     }
 }
 
-impl From<tomcrypt::errors::Error> for Error {
-    fn from(e: tomcrypt::errors::Error) -> Self {
-        Error::Tomcrypt(SyncFailure::new(e))
-    }
-}
-
-impl From<tsproto::errors::Error> for Error {
-    fn from(e: tsproto::errors::Error) -> Self {
-        Error::Tsproto(SyncFailure::new(e))
+impl From<tsproto::Error> for Error {
+    fn from(e: tsproto::Error) -> Self {
+        Error::Tsproto(e)
     }
 }
 
@@ -145,8 +137,17 @@ impl InnerCM {
 /// It can be created with the [`ConnectionManager::new`] function:
 ///
 /// ```
-/// let core = tokio_core::Core::new()?;
+/// # extern crate tokio_core;
+/// # extern crate tsclientlib;
+/// # use std::boxed::Box;
+/// # use std::error::Error;
+/// #
+/// # use tsclientlib::ConnectionManager;
+/// # fn main() {
+/// #
+/// let core = tokio_core::reactor::Core::new().unwrap();
 /// let cm = ConnectionManager::new(core.handle());
+/// # }
 /// ```
 ///
 /// [`ConnectionManager::new`]: #method.new
@@ -159,8 +160,20 @@ impl ConnectionManager {
     /// connections.
     ///
     /// ```
-    /// let core = tokio_core::Core::new()?;
+    /// # extern crate tokio_core;
+    /// # extern crate tsclientlib;
+    /// # use std::boxed::Box;
+    /// # use std::error::Error;
+    /// #
+    /// # use tsclientlib::ConnectionManager;
+    /// # fn main() { (|| -> Result<(), Box<Error>> {
+    /// #
+    /// let core = tokio_core::reactor::Core::new()?;
     /// let cm = ConnectionManager::new(core.handle());
+    /// #
+    /// # Ok(())
+    /// # })().unwrap();
+    /// # }
     /// ```
     ///
     /// Connecting to a server is done by [`ConnectionManager::add_connection`].
@@ -199,8 +212,7 @@ impl ConnectionManager {
         let private_key = tryf!(config.private_key.take().map(|k| Ok(k))
             .unwrap_or_else(|| {
                 // Create new ECDH key
-                let prng = tomcrypt::sprng();
-                tomcrypt::EccKey::new(prng, 32)
+                crypto::EccKey::create()
             }));
 
         let client = tryf!(client::ClientData::new(
@@ -235,7 +247,7 @@ impl ConnectionManager {
             let (offset, omega) = {
                 let mut c = client.borrow_mut();
                 (algs::hash_cash(&mut c.private_key, 8).unwrap(),
-                base64::encode(&c.private_key.export_public().unwrap()))
+                c.private_key.to_ts_public().unwrap())
             };
             time_reporter.finish();
             info!(logger, "Computed hash cash level";
@@ -313,24 +325,41 @@ impl ConnectionManager {
     ///
     /// Use default options:
     ///
-    /// ```
-    /// let mut core = tokio_core::Core::new()?;
+    /// ```rust,no_run
+    /// # extern crate tokio_core;
+    /// # extern crate tsclientlib;
+    /// # use std::boxed::Box;
+    /// #
+    /// # use tsclientlib::{ConnectionId, ConnectionManager};
+    /// # fn main() {
+    /// #
+    /// let mut core = tokio_core::reactor::Core::new().unwrap();
     /// let mut cm = ConnectionManager::new(core.handle());
     ///
     /// // Add connection...
     ///
     /// # let con_id = ConnectionId(0);
     /// let disconnect_future = cm.remove_connection(con_id, None);
-    /// core.run(disconnect_future)?;
+    /// core.run(disconnect_future).unwrap();
+    /// # }
     /// ```
     ///
-    /// ```
-    /// # let mut core = tokio_core::Core::new()?;
+    /// ```rust,no_run
+    /// # extern crate tokio_core;
+    /// # extern crate tsclientlib;
+    /// # use std::boxed::Box;
+    /// #
+    /// # use tsclientlib::{ConnectionId, ConnectionManager, DisconnectOptions,
+    /// # MoveReason};
+    /// # fn main() {
+    /// #
+    /// # let mut core = tokio_core::reactor::Core::new().unwrap();
     /// # let mut cm = ConnectionManager::new(core.handle());
     /// # let con_id = ConnectionId(0);
     /// cm.remove_connection(con_id, DisconnectOptions::new()
     ///     .reason(MoveReason::Clientdisconnect)
     ///     .message("Away for a while"));
+    /// # }
     /// ```
     pub fn remove_connection<O: Into<Option<DisconnectOptions>>>(&mut self,
         id: ConnectionId, options: O) -> BoxFuture<()> {
@@ -442,18 +471,28 @@ impl<'a> Connection<'a> {
 ///
 /// # Example
 ///
-/// ```
+/// ```rust,no_run
+/// # extern crate tokio_core;
+/// # extern crate tsclientlib;
+/// # use std::boxed::Box;
+/// #
+/// # use tsclientlib::{ConnectionManager, ConnectOptions};
+/// # fn main() {
+/// #
+/// let mut core = tokio_core::reactor::Core::new().unwrap();
+///
 /// let addr: std::net::SocketAddr = "127.0.0.1:9987".parse().unwrap();
 /// let con_config = ConnectOptions::from_address(addr);
 ///
-/// let mut cm = ConnectionManager::new();
-/// let con = cm.add_connection(con_config)?;
+/// let mut cm = ConnectionManager::new(core.handle());
+/// let con = core.run(cm.add_connection(con_config)).unwrap();
+/// # }
 /// ```
 #[derive(Debug)]
 pub struct ConnectOptions {
     address: Option<SocketAddr>,
     local_address: SocketAddr,
-    private_key: Option<tomcrypt::EccKey>,
+    private_key: Option<crypto::EccKey>,
     name: String,
 }
 
@@ -497,7 +536,7 @@ impl ConnectOptions {
     ///
     /// A new identity is generated when connecting.
     ///
-    pub fn private_key_tomcrypt(mut self, private_key: tomcrypt::EccKey)
+    pub fn private_key(mut self, private_key: crypto::EccKey)
         -> Self {
         self.private_key = Some(private_key);
         self
@@ -515,8 +554,7 @@ impl ConnectOptions {
     /// An error is returned if either the string is not encoded in valid base64
     /// or libtomcrypt cannot import the key.
     pub fn private_key_ts(mut self, private_key: &str) -> Result<Self> {
-        self.private_key = Some(tomcrypt::EccKey::import(
-            &base64::decode(private_key)?)?);
+        self.private_key = Some(crypto::EccKey::from_ts(private_key)?);
         Ok(self)
     }
 
