@@ -7,7 +7,7 @@ extern crate chrono;
 #[macro_use]
 extern crate failure;
 extern crate futures;
-#[cfg(feature = "gmp")]
+#[cfg(feature = "rust-gmp")]
 extern crate gmp;
 #[macro_use]
 extern crate nom;
@@ -15,7 +15,6 @@ extern crate num;
 extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
-#[cfg(feature = "openssl")]
 extern crate openssl;
 extern crate quicklz;
 extern crate rand;
@@ -26,8 +25,6 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio_core;
-#[cfg(feature = "tomcrypt")]
-extern crate tomcrypt;
 extern crate yasna;
 
 use std::io;
@@ -96,14 +93,10 @@ pub enum Error {
     ParseInt(std::num::ParseIntError),
     #[fail(display = "{}", _0)]
     FutureCanceled(futures::Canceled),
-    #[cfg(feature = "openssl")]
     #[fail(display = "{}", _0)]
     Openssl(openssl::error::ErrorStack),
     #[fail(display = "{}", _0)]
     Yasna(yasna::ASN1Error),
-    #[cfg(feature = "tomcrypt")]
-    #[fail(display = "{}", _0)]
-    Tomcrypt(tomcrypt::Error),
     #[fail(display = "{}", _0)]
     Quicklz(#[cause] SyncFailure<quicklz::errors::Error>),
     #[fail(display = "{}", _0)]
@@ -175,13 +168,6 @@ impl From<openssl::error::ErrorStack> for Error {
 impl From<yasna::ASN1Error> for Error {
     fn from(e: yasna::ASN1Error) -> Self {
         Error::Yasna(e)
-    }
-}
-
-#[cfg(feature = "tomcrypt")]
-impl From<tomcrypt::Error> for Error {
-    fn from(e: tomcrypt::Error) -> Self {
-        Error::Tomcrypt(e)
     }
 }
 
@@ -309,13 +295,6 @@ impl<T, E> Stream for BufferStream<T, E> {
 }
 
 pub fn init() -> Result<()> {
-    #[cfg(feature = "tomcrypt")]
-    {
-        tomcrypt::init();
-        tomcrypt::register_sprng()?;
-        tomcrypt::register_rijndael_cipher()?;
-    }
-    #[cfg(feature = "tomcrypt")]
     openssl::init();
     Ok(())
 }

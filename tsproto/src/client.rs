@@ -10,12 +10,12 @@ use futures::{self, future, Future, Sink, Stream};
 use futures::future::Either;
 use futures::task::{self, Task};
 use futures::unsync::oneshot;
-#[cfg(feature = "gmp")]
+#[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
-#[cfg(not(feature = "gmp"))]
+#[cfg(not(feature = "rust-gmp"))]
 use num::One;
 use num::ToPrimitive;
-#[cfg(not(feature = "gmp"))]
+#[cfg(not(feature = "rust-gmp"))]
 use num_bigint::BigUint;
 use rand::{self, Rng};
 use tokio_core::reactor::Handle;
@@ -366,7 +366,7 @@ impl DefaultPacketHandlerStream {
 
                                     // Use gmp for faster computations if it is
                                     // available.
-                                    #[cfg(feature = "gmp")]
+                                    #[cfg(feature = "rust-gmp")]
                                     let y = {
                                         let n = (n as &[u8]).into();
                                         let x: Mpz = (x as &[u8]).into();
@@ -381,7 +381,7 @@ impl DefaultPacketHandlerStream {
                                         algs::biguint_to_array(&yi)
                                     };
 
-                                    #[cfg(not(feature = "gmp"))]
+                                    #[cfg(not(feature = "rust-gmp"))]
                                     let y = {
                                         let xi = BigUint::from_bytes_be(x);
                                         let ni = BigUint::from_bytes_be(n);

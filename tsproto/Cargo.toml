@@ -15,10 +15,8 @@ build = "build/build.rs"
 [badges]
 travis-ci = { repository = "ReSpeak/tsclientlib" }
 
-# Use openssl by default, users can opt-in tomcrypt
 [features]
-default = ["openssl", "gmp"]
-gmp = ["rust-gmp"]
+default = ["rust-gmp"]
 
 [dependencies]
 base64 = "0.9"
@@ -42,8 +40,7 @@ tokio-core = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
 yasna = "0.1"
 
-openssl = { version = "0.10", git = "https://github.com/Flakebi/rust-openssl.git", optional = true }
-tomcrypt = { git = "https://github.com/ReSpeak/tomcrypt-rs.git", optional = true }
+openssl = { version = "0.10", git = "https://github.com/Flakebi/rust-openssl.git" }
 
 [dependencies.slog]
 version = "2"
