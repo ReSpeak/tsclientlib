@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "cargo-clippy",
-           allow(redundant_closure_call, clone_on_ref_ptr))]
+    allow(redundant_closure_call, clone_on_ref_ptr, let_and_return,
+    useless_format))]
 
 extern crate base64;
 extern crate byteorder;

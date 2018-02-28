@@ -51,12 +51,12 @@ fn connect(
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = Error>> {
-    let connect_fut = client::connect(client.clone(), server_addr);
+    let connect_fut = client::connect(&client, server_addr);
 
     // Listen for packets so we can answer them
     let con = client.borrow().connection_manager.get_connection(server_addr)
         .unwrap();
-    let packets = client::ClientConnection::get_packets(con.clone());
+    let packets = client::ClientConnection::get_packets(&con);
 
     let logger2 = logger.clone();
     let logger3 = logger.clone();
@@ -107,15 +107,14 @@ fn connect(
 
         let con = client.borrow().connection_manager
             .get_connection(server_addr).unwrap();
-        let sink = client::ClientConnection::get_packets(con);
+        let sink = client::ClientConnection::get_packets(&con);
         sink.send(clientinit_packet).and_then(move |_| {
-            client::wait_until_connected(client, server_addr)
+            client::wait_until_connected(&client, server_addr)
         })
     }))
 }
 
 fn disconnect(
-    _logger: slog::Logger,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = Error>> {
@@ -133,11 +132,11 @@ fn disconnect(
     let con = client.borrow().connection_manager
         .get_connection(server_addr).unwrap();
     con.borrow_mut().resender.handle_event(ResenderEvent::Disconnecting);
-    let sink = client::ClientConnection::get_packets(con);
+    let sink = client::ClientConnection::get_packets(&con);
     Box::new(sink
         .send(packet)
         .and_then(move |_| {
-            client::wait_for_state(client, server_addr, |state| {
+            client::wait_for_state(&client, server_addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
                     true
                 } else {
@@ -148,7 +147,7 @@ fn disconnect(
     )
 }
 
-fn connect_once(core: &mut Core, args: &Args, logger: slog::Logger)
+fn connect_once(core: &mut Core, args: &Args, logger: &slog::Logger)
     -> Result<(), tsproto::Error> {
     // Wait a bit
     std::thread::sleep(std::time::Duration::from_millis(15));
@@ -172,11 +171,11 @@ fn connect_once(core: &mut Core, args: &Args, logger: slog::Logger)
     {
         let c2 = c.clone();
         let mut c = c.borrow_mut();
-        c.connection_manager.set_data_ref(c2);
+        c.connection_manager.set_data_ref(&c2);
     }
 
     // Packet encoding
-    client::default_setup(c.clone(), false);
+    client::default_setup(&c, false);
 
     let handle = core.handle();
     // The TS server does not accept the 3rd reconnect from the same port
@@ -188,7 +187,7 @@ fn connect_once(core: &mut Core, args: &Args, logger: slog::Logger)
     core.run(connect(logger.clone(), &handle, c.clone(), args.address))?;
 
     info!(logger, "Disconnecting");
-    core.run(disconnect(logger.clone(), c.clone(), args.address)).unwrap();
+    core.run(disconnect(c.clone(), args.address)).unwrap();
     Ok(())
 }
 
@@ -217,7 +216,7 @@ fn main() {
     let start = Instant::now();
     let mut success_count = 0;
     for _ in 0..args.amount {
-        if let Err(error) = connect_once(&mut core, &args, logger.clone()) {
+        if let Err(error) = connect_once(&mut core, &args, &logger) {
             error!(logger, "Failed to connect"; "error" => ?error);
             break;
         }
@@ -230,12 +229,12 @@ fn main() {
         "{} connects in {}.{:03}s",
         success_count,
         dur.as_secs(),
-        dur.subsec_nanos() / 1000000
+        dur.subsec_nanos() / 1_000_000
     );
     let dur = dur / success_count;
     info!(logger,
         "{}.{:03}s per connect",
         dur.as_secs(),
-        dur.subsec_nanos() / 1000000
+        dur.subsec_nanos() / 1_000_000
     );
 }

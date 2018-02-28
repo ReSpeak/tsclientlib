@@ -47,12 +47,12 @@ fn connect(
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = Error>> {
-    let connect_fut = client::connect(client.clone(), server_addr);
+    let connect_fut = client::connect(&client, server_addr);
 
     // Listen for packets so we can answer them
     let con = client.borrow().connection_manager.get_connection(server_addr)
         .unwrap();
-    let packets = client::ClientConnection::get_packets(con.clone());
+    let packets = client::ClientConnection::get_packets(&con);
 
     let logger2 = logger.clone();
     let logger3 = logger.clone();
@@ -103,15 +103,14 @@ fn connect(
 
         let con = client.borrow().connection_manager
             .get_connection(server_addr).unwrap();
-        let sink = client::ClientConnection::get_packets(con);
+        let sink = client::ClientConnection::get_packets(&con);
         sink.send(clientinit_packet).and_then(move |_| {
-            client::wait_until_connected(client, server_addr)
+            client::wait_until_connected(&client, server_addr)
         })
     }))
 }
 
 fn disconnect(
-    _logger: slog::Logger,
     client: Rc<RefCell<client::ClientData>>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = (), Error = Error>> {
@@ -129,11 +128,11 @@ fn disconnect(
     let con = client.borrow().connection_manager
         .get_connection(server_addr).unwrap();
     con.borrow_mut().resender.handle_event(ResenderEvent::Disconnecting);
-    let sink = client::ClientConnection::get_packets(con);
+    let sink = client::ClientConnection::get_packets(&con);
     Box::new(sink
         .send(packet)
         .and_then(move |_| {
-            client::wait_for_state(client, server_addr, |state| {
+            client::wait_for_state(&client, server_addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
                     true
                 } else {
@@ -179,11 +178,11 @@ fn main() {
     {
         let c2 = c.clone();
         let mut c = c.borrow_mut();
-        c.connection_manager.set_data_ref(c2);
+        c.connection_manager.set_data_ref(&c2);
     }
 
     // Packet encoding
-    client::default_setup(c.clone(), true);
+    client::default_setup(&c, true);
 
     // Connect
     let handle = core.handle();
@@ -209,7 +208,7 @@ fn main() {
 
     let con = c.borrow().connection_manager.get_connection(args.address)
         .unwrap();
-    let packets = client::ClientConnection::get_packets(con);
+    let packets = client::ClientConnection::get_packets(&con);
     let packet = Packet::new(header, Data::Command(cmd));
     core.run(packets.send(packet.clone())).unwrap();
 
@@ -218,7 +217,7 @@ fn main() {
     core.run(action).unwrap();
 
     // Disconnect
-    if let Err(error) = core.run(disconnect(logger.clone(), c.clone(),
+    if let Err(error) = core.run(disconnect(c.clone(),
         args.address)) {
         error!(logger, "Failed to disconnect"; "error" => ?error);
         return;

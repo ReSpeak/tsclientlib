@@ -105,26 +105,26 @@ impl<CM: AttachedDataConnectionManager<ServerConnectionData> + 'static>
                 .unwrap();
 
             // Packet encoding
-            ::packet_codec::PacketCodecSink::apply(con.clone());
-            ::packet_codec::PacketCodecStream::apply(con.clone(), true);
+            ::packet_codec::PacketCodecSink::apply(&con);
+            ::packet_codec::PacketCodecStream::apply(&con, true);
 
             if let Some(ref logger) = self.logger {
                 // Logging
                 Connection::apply_packet_stream_wrapper::<
-                    ::log::PacketStreamLogger<_, _>>(con.clone(),
+                    ::log::PacketStreamLogger<_, _>>(&con,
                         (logger.clone(), data.is_client, key.clone()));
                 Connection::apply_packet_sink_wrapper::<
-                    ::log::PacketSinkLogger<_, _>>(con.clone(),
+                    ::log::PacketSinkLogger<_, _>>(&con,
                         (logger.clone(), data.is_client, key.clone()));
             }
 
             // Distribute packets
-            Connection::start_packet_distributor(con.clone(), &self.handle);
+            Connection::start_packet_distributor(&con, &self.handle);
         }
 
         // Default handlers are not usable with the wrapper system
         // TODO DefaultPacketHandler with wrapper system?
-        DefaultPacketHandler::apply(data.clone(), key);
+        DefaultPacketHandler::apply(&data, key);
         false
     }
 }
@@ -133,7 +133,7 @@ impl<CM: AttachedDataConnectionManager<ServerConnectionData> + 'static>
 /// of packets.
 pub fn default_setup<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static
->(data: Rc<RefCell<Data<CM>>>, log: bool) where CM::ConnectionsKey: Display {
+>(data: &Rc<RefCell<Data<CM>>>, log: bool) where CM::ConnectionsKey: Display {
     let mut logger = None;
     if log {
         // Logging
@@ -143,13 +143,13 @@ pub fn default_setup<
             (data.logger.clone(), data.is_client)
         };
         Data::apply_udp_packet_stream_wrapper::<
-            ::log::UdpPacketStreamLogger<_>>(data.clone(), a.clone());
+            ::log::UdpPacketStreamLogger<_>>(data, a.clone());
         Data::apply_udp_packet_sink_wrapper::<
-            ::log::UdpPacketSinkLogger<_>>(data.clone(), a);
+            ::log::UdpPacketSinkLogger<_>>(data, a);
     }
 
     // Discard packets which don't match a connection
-    let unknown_stream = Data::get_unknown_udp_packets(data.clone());
+    let unknown_stream = Data::get_unknown_udp_packets(data);
     let handle;
     {
         let data = data.borrow();
@@ -166,7 +166,7 @@ pub fn default_setup<
     }
 
     // Add distributor stream
-    Data::start_packet_distributor(data.clone());
+    Data::start_packet_distributor(data);
 
     // Register a connection listener which configures each connection
     data.borrow_mut().connection_listeners.push(Box::new(
@@ -178,7 +178,7 @@ pub fn default_setup<
 /// `is_state` should return `true`, if the state is reached and `false` if this
 /// function should continue waiting.
 pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
-    data: Rc<RefCell<ClientData>>,
+    data: &Rc<RefCell<ClientData>>,
     server_addr: SocketAddr,
     f: F,
 ) -> BoxFuture<(), Error> {
@@ -198,7 +198,7 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
         }));
         Box::new(
             recv.map_err(|e| e.into())
-                .and_then(move |_| wait_for_state(data2, server_addr, f)),
+                .and_then(move |_| wait_for_state(&data2, server_addr, f)),
         )
     } else {
         Box::new(future::ok(()))
@@ -206,7 +206,7 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
 }
 
 pub fn wait_until_connected(
-    data: Rc<RefCell<ClientData>>,
+    data: &Rc<RefCell<ClientData>>,
     server_addr: SocketAddr,
 ) -> BoxFuture<(), Error> {
     wait_for_state(data, server_addr, |state| {
@@ -227,7 +227,7 @@ pub fn wait_until_connected(
 /// [`ServerConnectionState::Connecting`]:
 /// [`wait_until_connected`]:
 pub fn connect(
-    data: Rc<RefCell<ClientData>>,
+    data: &Rc<RefCell<ClientData>>,
     server_addr: SocketAddr,
 ) -> BoxFuture<(), Error> {
     // Send the first init packet
@@ -240,14 +240,13 @@ pub fn connect(
     let random0 = rng.gen::<[u8; 4]>();
     let packet_data = C2SInit::Init0 {
         version: timestamp,
-        timestamp: timestamp,
+        timestamp,
         random0,
     };
 
     let cheader = create_init_header();
     // Add the connection to the connection list
-    Data::add_connection(data.clone(), Data::create_connection(data.clone(),
-        server_addr));
+    Data::add_connection(data, Data::create_connection(data, server_addr));
 
     // Change the state
     let data2 = data.clone();
@@ -262,13 +261,13 @@ pub fn connect(
     }
 
     let con = data.connection_manager.get_connection(server_addr).unwrap();
-    let packets = Connection::get_packets(con);
+    let packets = Connection::get_packets(&con);
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
     Box::new(
         packets.send(packet)
             .and_then(move |_| {
-                wait_for_state(data2, server_addr, |state| {
+                wait_for_state(&data2, server_addr, |state| {
                     if let ServerConnectionState::Connecting = *state {
                         true
                     } else {
@@ -289,7 +288,7 @@ impl DefaultPacketHandlerStream {
         InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     >(
-        data: Rc<RefCell<Data<CM>>>,
+        data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
         key: CM::ConnectionsKey,
@@ -297,7 +296,7 @@ impl DefaultPacketHandlerStream {
         let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
         let sink2 = sink.clone();
         let logger = data.borrow().logger.clone();
-        let data = Rc::downgrade(&data);
+        let data = Rc::downgrade(data);
         let inner_stream = Box::new(inner_stream.and_then(move |packet| -> BoxFuture<_, _> {
             // true, if the packet should not be handled further.
             let mut ignore_packet = false;
@@ -326,7 +325,7 @@ impl DefaultPacketHandlerStream {
                                     // Send next init packet
                                     let cheader = create_init_header();
                                     let data = C2SInit::Init2 {
-                                        version: version,
+                                        version,
                                         random1: *random1,
                                         random0_r: *random0_r,
                                     };
@@ -445,15 +444,23 @@ impl DefaultPacketHandlerStream {
 
                                         let beta_vec = base64::decode(cmd.args["beta"])?;
                                         if beta_vec.len() != 10 {
-                                            Err(format_err!("Incorrect beta length"))?;
+                                            return Err(format_err!(
+                                                "Incorrect beta length"))?;
                                         }
+
+                                        // Check if beta != 0
+                                        if beta_vec.iter().all(|i| *i == 0) {
+                                            return Err(format_err!(
+                                                "Beta is zero"))?;
+                                        }
+
                                         let mut beta = [0; 10];
                                         beta.copy_from_slice(&beta_vec);
                                         let mut server_key = ::crypto::EccKey::
                                             from_ts(cmd.args["omega"])?;
 
                                         let (iv, mac) = algs::compute_iv_mac(
-                                            alpha, &beta, private_key, &mut server_key)?;
+                                            alpha, &beta, private_key, &server_key)?;
                                         let mut params = ConnectedParams::new(
                                             server_key, iv, mac);
                                         // We already sent a command packet.
@@ -480,6 +487,13 @@ impl DefaultPacketHandlerStream {
                                         if beta_vec.len() != 54 {
                                             Err(format_err!("Incorrect beta length"))?;
                                         }
+
+                                        // Check if beta != 0
+                                        if beta_vec.iter().all(|i| *i == 0) {
+                                            return Err(format_err!(
+                                                "Beta is zero"))?;
+                                        }
+
                                         let mut beta = [0; 54];
                                         beta.copy_from_slice(&beta_vec);
                                         let mut server_key = ::crypto::EccKey::
@@ -489,7 +503,7 @@ impl DefaultPacketHandlerStream {
                                         beta1.copy_from_slice(&beta_vec[..10]);
 
                                         let (iv, mac) = algs::compute_iv_mac(
-                                            alpha, &beta1, private_key, &mut server_key)?;
+                                            alpha, &beta1, private_key, &server_key)?;
                                         let mut params = ConnectedParams::new(
                                             server_key, iv, mac);
                                         // We already sent a command packet.
@@ -598,7 +612,7 @@ impl DefaultPacketHandlerStream {
             };
 
             if is_end {
-                Data::remove_connection(data.upgrade().unwrap(), key.clone());
+                Data::remove_connection(&data.upgrade().unwrap(), key.clone());
             }
 
             if let Some((mut listeners, p)) = packet_res {
@@ -635,12 +649,10 @@ impl DefaultPacketHandlerStream {
                         future::ok(Some(packet))
                     }))
                 }
+            } else if ignore_packet {
+                Box::new(future::ok(None))
             } else {
-                if ignore_packet {
-                    Box::new(future::ok(None))
-                } else {
-                    Box::new(future::ok(Some(packet)))
-                }
+                Box::new(future::ok(Some(packet)))
             }
         })
         .filter_map(|p| p));
@@ -725,7 +737,7 @@ impl<
         InnerStream: Stream<Item = Packet, Error = Error> + 'static,
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     >(
-        data: Rc<RefCell<Data<CM>>>,
+        data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
         key: CM::ConnectionsKey,
@@ -756,7 +768,7 @@ impl<
 impl DefaultPacketHandler<Box<Sink<SinkItem = Packet, SinkError = Error>>> {
     pub fn apply<
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    >(data: Rc<RefCell<Data<CM>>>, key: CM::ConnectionsKey) {
+    >(data: &Rc<RefCell<Data<CM>>>, key: CM::ConnectionsKey) {
         let ((stream, sink), con) = {
             let mut data = data.borrow_mut();
             let con = data.connection_manager.get_connection(key.clone())

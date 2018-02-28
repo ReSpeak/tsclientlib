@@ -169,8 +169,8 @@ impl<T: Default + 'static> SocketConnectionManager<T> {
     }
 
     /// Sets the data reference in this connection manager.
-    pub fn set_data_ref(&mut self, data: Rc<RefCell<Data<Self>>>) {
-        self.data = Some(Rc::downgrade(&data));
+    pub fn set_data_ref(&mut self, data: &Rc<RefCell<Data<Self>>>) {
+        self.data = Some(Rc::downgrade(data));
     }
 }
 
@@ -211,13 +211,12 @@ impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
     fn add_connection(&mut self, con: Rc<RefCell<Connection<Self>>>,
         handle: &Handle) -> Self::ConnectionsKey {
         let key = con.borrow().address;
-        let key2 = key.clone();
         self.connections.insert(key, (Default::default(), con));
 
         let data = self.data.as_ref().unwrap().clone();
         handle.spawn(future::lazy(move || {
             let data_tmp = data.upgrade().unwrap();
-            let resend = ResendFuture::new(data_tmp.clone(), key);
+            let resend = ResendFuture::new(&data_tmp, key);
 
             // Start the actual resend future
             let logger = data_tmp.borrow().logger.clone();
@@ -232,7 +231,7 @@ impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
             })
         }));
 
-        key2
+        key
     }
 
     fn remove_connection(&mut self, key: Self::ConnectionsKey)

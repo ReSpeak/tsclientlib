@@ -134,7 +134,7 @@ pub struct Connection<CM: ConnectionManager + 'static> {
 
 impl<CM: ConnectionManager + 'static> Connection<CM> {
     /// Creates a new connection struct.
-    pub fn new(data: Rc<RefCell<Data<CM>>>, address: SocketAddr,
+    pub fn new(data: &Rc<RefCell<Data<CM>>>, address: SocketAddr,
         resender: CM::Resend) -> Rc<RefCell<Self>> {
         let (logger, is_client) = {
             let data = data.borrow();
@@ -161,11 +161,11 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
         }));
 
         // Set the udp stream and sink
-        let stream = ConnectionUdpPacketStream::new(con.clone());
+        let stream = ConnectionUdpPacketStream::new(&con);
         con.borrow_mut().udp_packet_stream = Some(Box::new(stream));
 
-        let data_packets = Data::get_udp_packets(data.clone());
-        let sink = ConnectionUdpPacketSink::new(data_packets, con.clone());
+        let data_packets = Data::get_udp_packets(data);
+        let sink = ConnectionUdpPacketSink::new(data_packets, &con);
         con.borrow_mut().udp_packet_sink = Some(Box::new(sink));
 
         con
@@ -175,7 +175,7 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
         W: StreamWrapper<UdpPacket, Error,
             Box<Stream<Item = UdpPacket, Error = Error>>>
             + 'static,
-    >(connection: Rc<RefCell<Self>>, a: W::A) {
+    >(connection: &Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.udp_packet_stream.take().unwrap();
         connection.udp_packet_stream = Some(Box::new(W::wrap(inner, a)));
@@ -185,7 +185,7 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
         W: SinkWrapper<UdpPacket, Error,
             Box<Sink<SinkItem = UdpPacket, SinkError = Error>>>
             + 'static,
-    >(connection: Rc<RefCell<Self>>, a: W::A) {
+    >(connection: &Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.udp_packet_sink.take().unwrap();
         connection.udp_packet_sink = Some(Box::new(W::wrap(inner, a)));
@@ -195,7 +195,7 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
         W: StreamWrapper<Packet, Error,
             Box<Stream<Item = Packet, Error = Error>>>
             + 'static,
-    >(connection: Rc<RefCell<Self>>, a: W::A) {
+    >(connection: &Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.packet_stream.take().unwrap();
         connection.packet_stream = Some(Box::new(W::wrap(inner, a)));
@@ -205,7 +205,7 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
         W: SinkWrapper<Packet, Error,
             Box<Sink<SinkItem = Packet, SinkError = Error>>>
             + 'static,
-    >(connection: Rc<RefCell<Self>>, a: W::A) {
+    >(connection: &Rc<RefCell<Self>>, a: W::A) {
         let mut connection = connection.borrow_mut();
         let inner = connection.packet_sink.take().unwrap();
         connection.packet_sink = Some(Box::new(W::wrap(inner, a)));
@@ -213,9 +213,9 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
 
     /// Gives a `Stream` and `Sink` of [`UdpPacket`]s, which always references the
     /// current stream in the `Connection` struct.
-    pub fn get_udp_packets(connection: Rc<RefCell<Self>>) -> UdpPackets<CM> {
+    pub fn get_udp_packets(connection: &Rc<RefCell<Self>>) -> UdpPackets<CM> {
         UdpPackets {
-            connection: Rc::downgrade(&connection),
+            connection: Rc::downgrade(connection),
         }
     }
 
@@ -223,31 +223,31 @@ impl<CM: ConnectionManager + 'static> Connection<CM> {
     /// current stream in the `Connection` struct.
     ///
     /// [`Packet`]: ../packets/struct.Packet.html
-    pub fn get_packets(connection: Rc<RefCell<Self>>) -> Packets<CM> {
+    pub fn get_packets(connection: &Rc<RefCell<Self>>) -> Packets<CM> {
         Packets {
-            connection: Rc::downgrade(&connection),
+            connection: Rc::downgrade(connection),
         }
     }
 
     /// Returns a stream of all `Command` and `CommandLow` packets that arrive
     /// for this connection.
-    pub fn get_commands(connection: Rc<RefCell<Self>>)
+    pub fn get_commands(connection: &Rc<RefCell<Self>>)
         -> ConnectionCommandPacketStream<CM> {
         ConnectionCommandPacketStream::new(connection)
     }
 
     /// Returns a stream of all `Voice` and `VoiceWhisper` packets that arrive
     /// for this connection.
-    pub fn get_voice(connection: Rc<RefCell<Self>>)
+    pub fn get_voice(connection: &Rc<RefCell<Self>>)
         -> ConnectionVoicePacketStream<CM> {
         ConnectionVoicePacketStream::new(connection)
     }
 
     /// Enables distributing incoming packets to the connections.
-    pub fn start_packet_distributor(connection: Rc<RefCell<Self>>,
+    pub fn start_packet_distributor(connection: &Rc<RefCell<Self>>,
         handle: &Handle) {
         let distributor = PacketDistributor::new(
-            Self::get_packets(connection.clone()), connection.clone());
+            Self::get_packets(connection), connection);
         let con = connection.borrow_mut();
         let logger = con.logger.clone();
         handle.spawn(distributor.for_each(|_| future::ok(())).map_err(move |e| {
@@ -418,8 +418,8 @@ struct ConnectionUdpPacketStream<CM: ConnectionManager + 'static> {
     connection: Weak<RefCell<Connection<CM>>>,
 }
 impl<CM: ConnectionManager + 'static> ConnectionUdpPacketStream<CM> {
-    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
-        Self { connection: Rc::downgrade(&con) }
+    fn new(con: &Rc<RefCell<Connection<CM>>>) -> Self {
+        Self { connection: Rc::downgrade(con) }
     }
 }
 impl<CM: ConnectionManager + 'static> Stream for ConnectionUdpPacketStream<CM> {
@@ -442,8 +442,8 @@ pub struct ConnectionCommandPacketStream<CM: ConnectionManager + 'static> {
     connection: Weak<RefCell<Connection<CM>>>,
 }
 impl<CM: ConnectionManager + 'static> ConnectionCommandPacketStream<CM> {
-    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
-        Self { connection: Rc::downgrade(&con) }
+    fn new(con: &Rc<RefCell<Connection<CM>>>) -> Self {
+        Self { connection: Rc::downgrade(con) }
     }
 }
 impl<CM: ConnectionManager + 'static> Stream for ConnectionCommandPacketStream<CM> {
@@ -466,8 +466,8 @@ pub struct ConnectionVoicePacketStream<CM: ConnectionManager + 'static> {
     connection: Weak<RefCell<Connection<CM>>>,
 }
 impl<CM: ConnectionManager + 'static> ConnectionVoicePacketStream<CM> {
-    fn new(con: Rc<RefCell<Connection<CM>>>) -> Self {
-        Self { connection: Rc::downgrade(&con) }
+    fn new(con: &Rc<RefCell<Connection<CM>>>) -> Self {
+        Self { connection: Rc::downgrade(con) }
     }
 }
 impl<CM: ConnectionManager + 'static> Stream for ConnectionVoicePacketStream<CM> {
@@ -500,10 +500,10 @@ impl<
     Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
     CM: ConnectionManager + 'static,
 > ConnectionUdpPacketSink<Inner, CM> {
-    fn new(inner: Inner, con: Rc<RefCell<Connection<CM>>>) -> Self {
+    fn new(inner: Inner, con: &Rc<RefCell<Connection<CM>>>) -> Self {
         Self {
             inner,
-            connection: Rc::downgrade(&con),
+            connection: Rc::downgrade(con),
         }
     }
 }
@@ -551,10 +551,10 @@ impl<
     Inner: Stream<Item = Packet, Error = Error>,
     CM: ConnectionManager + 'static,
 > PacketDistributor<Inner, CM> {
-    fn new(inner: Inner, connection: Rc<RefCell<Connection<CM>>>) -> Self {
+    fn new(inner: Inner, connection: &Rc<RefCell<Connection<CM>>>) -> Self {
         Self {
             inner,
-            connection: Rc::downgrade(&connection),
+            connection: Rc::downgrade(connection),
         }
     }
 }

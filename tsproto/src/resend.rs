@@ -43,7 +43,7 @@ impl Eq for SendRecord {}
 
 impl PartialOrd for SendRecord {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(&other))
+        Some(self.cmp(other))
     }
 }
 
@@ -277,7 +277,7 @@ impl Resender for DefaultResender {
                     ResendStates::Disconnecting { ref mut to_send, .. } => {
                         let mut to_send = mem::replace(to_send,
                             BinaryHeap::new()).into_vec();
-                        for rec in to_send.iter_mut() {
+                        for rec in &mut to_send {
                             rec.tries = 0;
                         }
 
@@ -325,7 +325,7 @@ impl Resender for DefaultResender {
         // Restart sending packets if we got a new packet
         let next_state = match self.state {
             ResendStates::Dead     { ref mut to_send, .. } => {
-                let to_send = mem::replace(to_send, Vec::new()).into();
+                let to_send = mem::replace(to_send, Vec::new());
                 // Switch to Stalling if the connection was dead
                 Some(ResendStates::Stalling {
                     to_send,
@@ -468,9 +468,9 @@ impl ResendStates {
     fn get_packet_interval(&self, config: &ResendConfig) -> Option<Duration> {
         match *self {
             ResendStates::Connecting { .. } => Some(config.connecting_interval),
-            ResendStates::Normal     { .. } => None,
-            ResendStates::Stalling   { .. } => Some(config.stalling_interval),
+            ResendStates::Normal     { .. } |
             ResendStates::Dead       { .. } => None,
+            ResendStates::Stalling   { .. } => Some(config.stalling_interval),
             ResendStates::Disconnecting { .. } => Some(config.disconnect_interval),
         }
     }
@@ -593,7 +593,7 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
 
 impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
     pub fn new(
-        data: Rc<RefCell<Data<CM>>>,
+        data: &Rc<RefCell<Data<CM>>>,
         connection_key: CM::ConnectionsKey,
     ) -> Self {
         let (handle, connection) = {
@@ -603,10 +603,10 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
                 .unwrap())
         };
         Self {
-            data: Rc::downgrade(&data),
+            data: Rc::downgrade(data),
             connection_key,
             connection: Rc::downgrade(&connection),
-            sink: Connection::get_udp_packets(connection),
+            sink: Connection::get_udp_packets(&connection),
             timeout: Timeout::new(
                 Duration::seconds(1).to_std().unwrap(),
                 &handle,
@@ -753,7 +753,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
             let con = con.borrow();
             info!(con.logger, "Exiting connection because it is not responding";
                 "current state" => con.resender.state.get_name());
-            Data::remove_connection(data, self.connection_key.clone());
+            Data::remove_connection(&data, self.connection_key.clone());
             return Ok(futures::Async::NotReady);
         }
 

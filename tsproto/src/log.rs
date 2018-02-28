@@ -22,12 +22,10 @@ impl PacketLogger {
             } else {
                 "IN"
             }
+        } else if !cfg!(windows) {
+            "\x1b[1;31mOUT\x1b[0m"
         } else {
-            if !cfg!(windows) {
-                "\x1b[1;31mOUT\x1b[0m"
-            } else {
-                "OUT"
-            }
+            "OUT"
         };
         let to_s = if is_client { "S" } else { "C" };
         let id_s = format!("{}", id);

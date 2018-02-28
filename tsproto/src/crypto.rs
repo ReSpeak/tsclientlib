@@ -88,6 +88,8 @@ impl EccKey {
                             let tag = ::yasna::Tag::context(0);
                             writer.next().write_tagged(tag, |writer| {
                                 writer.write_oid(
+                                    #[cfg_attr(feature = "cargo-clippy",
+                                       allow(unreadable_literal))]
                                     &::yasna::models::ObjectIdentifier::
                                     from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
                             });
@@ -194,7 +196,7 @@ impl EccKey {
                     })
                 });
 
-                return Ok(der);
+                Ok(der)
             }
             _ => Err(format_err!("Key contains no private key").into()),
         }
@@ -258,8 +260,8 @@ impl EccKey {
         let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
 
         // Data
-        verifier.update(&data)?;
-        let res = verifier.verify(&signature)?;
+        verifier.update(data)?;
+        let res = verifier.verify(signature)?;
         if res {
             Ok(())
         } else {
@@ -269,10 +271,10 @@ impl EccKey {
 
     pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
         match *self {
-            EccKey::OpensslPrivate(ref key) =>
-                return Self::verify_ossl(key.clone(), data, signature),
-            EccKey::OpensslPublic(ref key) =>
-                return Self::verify_ossl(key.clone(), data, signature),
+            EccKey::OpensslPrivate(ref key) => Self::verify_ossl(key.clone(),
+                data, signature),
+            EccKey::OpensslPublic(ref key) => Self::verify_ossl(key.clone(),
+                data, signature),
         }
     }
 }
@@ -351,15 +353,14 @@ impl Eax {
         mac_data.clear();
         mac_data.extend_from_slice(&[0; 15]);
         mac_data.push(2);
-        mac_data.extend_from_slice(&data);
+        mac_data.extend_from_slice(data);
         let c = Self::cmac(key, &mac_data)?;
 
         let mac2: Vec<_> = n.iter().zip(h.iter()).zip(c.iter()).map(
-            |((n, h), c)| n ^ h ^ c).collect();
+            |((n, h), c)| n ^ h ^ c).take(mac.len()).collect();
 
-        // Check mac
-        // TODO use secure compare, don't stop after a while
-        if !mac.iter().eq(&mac2[..mac.len()]) {
+        // Check mac using secure comparison
+        if !::openssl::memcmp::eq(mac, &mac2) {
             // TODO A custom error
             return Err(format_err!("Packet has wrong mac").into());
         }

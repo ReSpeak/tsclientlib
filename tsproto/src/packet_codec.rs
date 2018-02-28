@@ -27,10 +27,10 @@ pub struct PacketCodecStream<
 
 impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
     PacketCodecStream<CM, Inner> {
-    pub fn new(connection: Rc<RefCell<Connection<CM>>>, inner: Inner) -> Self {
+    pub fn new(connection: &Rc<RefCell<Connection<CM>>>, inner: Inner) -> Self {
         let is_client = connection.borrow().is_client;
         Self {
-            connection: Rc::downgrade(&connection),
+            connection: Rc::downgrade(connection),
             is_client,
             inner,
             receive_buffer: Vec::new(),
@@ -42,7 +42,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
     ///
     /// They have to be handled in the right order.
     fn handle_command_packet(
-        logger: slog::Logger,
+        logger: &slog::Logger,
         params: &mut ConnectedParams,
         mut header: Header,
         mut packet: UdpPacket,
@@ -187,7 +187,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
 
         let packets: Vec<Packet> = {
             let logger = con.logger.clone();
-            let res = if let Some(ref mut params) = con.params {
+            if let Some(ref mut params) = con.params {
                 if header.get_type() == PacketType::Init {
                     return Err(Error::UnexpectedInitPacket);
                 }
@@ -258,7 +258,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                                 ));
                             }
                             let res = Self::handle_command_packet(
-                                logger,
+                                &logger,
                                 params,
                                 header,
                                 UdpPacket(udp_packet),
@@ -308,7 +308,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                                     }
                                     Ok(vec![Packet::new(header, p_data)])
                                 }
-                                Err(error) => Err(error.into()),
+                                Err(error) => Err(error),
                             }
                         }
                     }
@@ -360,8 +360,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                     &mut Cursor::new(udp_packet),
                 )?;
                 Ok(vec![Packet::new(header, p_data)])
-            };
-            res
+            }
         }?;
 
         self.receive_buffer = packets;
@@ -388,14 +387,14 @@ impl<CM: ConnectionManager + 'static> PacketCodecStream<CM,
     ///
     /// `Ack`, `AckLow` and `Pong` packets can be suppressed by setting
     /// `send_acks` to `false`.
-    pub fn apply(connection: Rc<RefCell<Connection<CM>>>, send_acks: bool) {
-        let stream = Self::new(connection.clone(),
-            Connection::get_udp_packets(connection.clone()));
+    pub fn apply(connection: &Rc<RefCell<Connection<CM>>>, send_acks: bool) {
+        let stream = Self::new(connection,
+            Connection::get_udp_packets(connection));
         let connection2 = connection.clone();
         let mut connection = connection.borrow_mut();
         let stream: Box<Stream<Item=_, Error=_>> = if send_acks {
             Box::new(AckHandler::new(stream,
-                Connection::get_packets(connection2)))
+                Connection::get_packets(&connection2)))
         } else {
             Box::new(stream.filter_map(|(p, _)| p))
         };
@@ -463,10 +462,10 @@ pub struct PacketCodecSink<
 
 impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
     ::connection::UdpPackets<CM>> {
-    fn new(connection: Rc<RefCell<Connection<CM>>>) -> Self {
+    fn new(connection: &Rc<RefCell<Connection<CM>>>) -> Self {
         let is_client = connection.borrow().is_client;
         Self {
-            connection: Rc::downgrade(&connection),
+            connection: Rc::downgrade(connection),
             is_client,
             inner: Connection::get_udp_packets(connection),
             command_p_type: PacketType::Command,
@@ -476,8 +475,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
     }
 
     /// Add a packet codec sink to the connection.
-    pub fn apply(connection: Rc<RefCell<Connection<CM>>>) {
-        let sink = Self::new(connection.clone());
+    pub fn apply(connection: &Rc<RefCell<Connection<CM>>>) {
+        let sink = Self::new(connection);
         connection.borrow_mut().packet_sink = Some(Box::new(sink));
     }
 }
@@ -502,12 +501,10 @@ impl<
                     return Ok(futures::AsyncSink::NotReady(packet));
                 }
             }
-        } else {
+        } else if !self.other_send_buffer.is_empty() {
+            self.poll_complete()?;
             if !self.other_send_buffer.is_empty() {
-                self.poll_complete()?;
-                if !self.other_send_buffer.is_empty() {
-                    return Ok(futures::AsyncSink::NotReady(packet));
-                }
+                return Ok(futures::AsyncSink::NotReady(packet));
             }
         }
 
@@ -752,11 +749,9 @@ impl<
                     if let futures::AsyncSink::NotReady(p) =
                         self.used_sink.start_send(p)? {
                         self.ack_buffer = Some(p);
-                    } else {
-                        if let futures::Async::NotReady =
-                            self.used_sink.poll_complete()? {
-                            self.should_poll_complete = true;
-                        }
+                    } else if let futures::Async::NotReady =
+                        self.used_sink.poll_complete()? {
+                        self.should_poll_complete = true;
                     }
                 }
 
