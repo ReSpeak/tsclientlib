@@ -217,17 +217,17 @@ impl Command {
     }
 
     pub fn get_commands(&self) -> Vec<CanonicalCommand> {
-        let mut res = Vec::new();
         let statics = self.static_args
             .iter()
             .map(|&(ref k, ref v)| (k.as_str(), v.as_str()))
             .collect();
         if self.list_args.is_empty() {
-            res.push(CanonicalCommand {
+            vec![CanonicalCommand {
                 command: &self.command,
                 args: statics,
-            });
+            }]
         } else {
+            let mut res = Vec::with_capacity(self.list_args.len());
             for l in &self.list_args {
                 let mut v = statics.clone();
                 v.extend(
@@ -238,8 +238,8 @@ impl Command {
                     args: v,
                 });
             }
+            res
         }
-        res
     }
 }
 

@@ -231,6 +231,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                                 &mut udp_packet,
                                 gen_id,
                                 &params.shared_iv,
+                                &mut params.key_cache,
                             )?
                         }
                     } else if algs::must_encrypt(header.get_type()) {
@@ -585,6 +586,7 @@ impl<
                                     &mut p_data,
                                     gen,
                                     &params.shared_iv,
+                                    &mut params.key_cache,
                                 )?;
                             }
                         } else {

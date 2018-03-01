@@ -1,4 +1,5 @@
 extern crate base64;
+extern crate cpuprofiler;
 extern crate futures;
 #[macro_use]
 extern crate slog;
@@ -17,6 +18,7 @@ use std::rc::Rc;
 use std::time::Duration;
 use std::time::Instant;
 
+use cpuprofiler::PROFILER;
 use futures::{future, Future, Sink, stream, Stream};
 use slog::Drain;
 use structopt::StructOpt;
@@ -152,6 +154,7 @@ fn disconnect(
 fn main() {
     tsproto::init().unwrap();
 
+    PROFILER.lock().unwrap().start("./message-bench.profile").unwrap();
     // Parse command line options
     let args = Args::from_args();
     let mut core = Core::new().unwrap();
@@ -230,6 +233,7 @@ fn main() {
         let packets = client::ClientConnection::get_packets(&con);
         packets.send(packet)
     }).for_each(|_| future::ok(()))).unwrap();
+    PROFILER.lock().unwrap().stop().unwrap();
 
     time_reporter.finish();
     let dur = start.elapsed();

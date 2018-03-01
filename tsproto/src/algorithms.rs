@@ -7,6 +7,7 @@ use quicklz::CompressionLevel;
 use ring::digest;
 
 use {crypto, Result};
+use connection::CachedKey;
 use crypto::EccKey;
 use packets::*;
 
@@ -109,25 +110,33 @@ fn create_key_nonce(
     header: &Header,
     generation_id: u32,
     iv: &[u8; 20],
+    cache: &mut [CachedKey; 8],
 ) -> ([u8; 16], [u8; 16]) {
-    let mut temp = [0; 26];
-    if header.c_id.is_some() {
-        temp[0] = 0x31;
-    } else {
-        temp[0] = 0x30;
-    }
-    temp[1] = header.p_type & 0xf;
-    let mut buf = Vec::with_capacity(4);
-    buf.write_u32::<NetworkEndian>(generation_id).unwrap();
-    temp[2..6].copy_from_slice(&buf);
-    temp[6..].copy_from_slice(iv);
+    // Check if this generation is cached
+    let cache = &mut cache[(header.p_type & 0xf) as usize];
+    if cache.generation_id != generation_id {
+        // Update the cache
+        let mut temp = [0; 26];
+        if header.c_id.is_some() {
+            temp[0] = 0x31;
+        } else {
+            temp[0] = 0x30;
+        }
+        temp[1] = header.p_type & 0xf;
+        let mut buf = Vec::with_capacity(4);
+        buf.write_u32::<NetworkEndian>(generation_id).unwrap();
+        temp[2..6].copy_from_slice(&buf);
+        temp[6..].copy_from_slice(iv);
 
-    let keynonce = digest::digest(&digest::SHA256, &temp);
-    let keynonce = keynonce.as_ref();
-    let mut key = [0; 16];
-    let mut nonce = [0; 16];
-    key.copy_from_slice(&keynonce[..16]);
-    nonce.copy_from_slice(&keynonce[16..]);
+        let keynonce = digest::digest(&digest::SHA256, &temp);
+        let keynonce = keynonce.as_ref();
+        cache.key.copy_from_slice(&keynonce[..16]);
+        cache.nonce.copy_from_slice(&keynonce[16..]);
+    }
+
+    // Use the cached version
+    let mut key = cache.key.clone();
+    let nonce = cache.nonce.clone();
     key[0] ^= (header.p_id >> 8) as u8;
     key[1] ^= (header.p_id & 0xff) as u8;
     (key, nonce)
@@ -158,9 +167,9 @@ pub fn encrypt(
     data: &mut [u8],
     generation_id: u32,
     iv: &[u8; 20],
+    cache: &mut [CachedKey; 8],
 ) -> Result<()> {
-    // TODO Cache this more efficiently for a generation
-    let (key, nonce) = create_key_nonce(header, generation_id, iv);
+    let (key, nonce) = create_key_nonce(header, generation_id, iv, cache);
     encrypt_key_nonce(header, data, &key, &nonce)
 }
 
@@ -187,8 +196,9 @@ pub fn decrypt(
     data: &mut [u8],
     generation_id: u32,
     iv: &[u8; 20],
+    cache: &mut [CachedKey; 8],
 ) -> Result<()> {
-    let (key, nonce) = create_key_nonce(header, generation_id, iv);
+    let (key, nonce) = create_key_nonce(header, generation_id, iv, cache);
     decrypt_key_nonce(header, data, &key, &nonce)
 }
 

@@ -14,6 +14,28 @@ use connectionmanager::ConnectionManager;
 use packets::*;
 use handler_data::Data;
 
+/// A cache for the key and nonce for a generation id.
+/// This has to be stored for each packet type.
+#[derive(Debug)]
+pub struct CachedKey {
+    /// The generation id
+    pub generation_id: u32,
+    /// The key
+    pub key: [u8; 16],
+    /// The nonce
+    pub nonce: [u8; 16],
+}
+
+impl Default for CachedKey {
+    fn default() -> Self {
+        CachedKey {
+            generation_id: u32::max_value(),
+            key: [0; 16],
+            nonce: [0; 16],
+        }
+    }
+}
+
 /// Data that has to be stored for a connection when it is connected.
 #[derive(Debug)]
 pub struct ConnectedParams {
@@ -48,6 +70,8 @@ pub struct ConnectedParams {
     pub shared_iv: [u8; 20],
     /// The mac used for unencrypted packets.
     pub shared_mac: [u8; 8],
+    /// Cached key and nonce per packet type.
+    pub key_cache: [CachedKey; 8],
 }
 
 impl ConnectedParams {
@@ -63,6 +87,7 @@ impl ConnectedParams {
             public_key,
             shared_iv,
             shared_mac,
+            key_cache: Default::default(),
         }
     }
 

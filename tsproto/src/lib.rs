@@ -209,9 +209,7 @@ impl UdpCodec for TsCodec {
     type Out = (SocketAddr, UdpPacket);
 
     fn decode(&mut self, src: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        let mut res = Vec::with_capacity(buf.len());
-        res.extend_from_slice(buf);
-        Ok((*src, UdpPacket(res)))
+        Ok((*src, UdpPacket(buf.to_vec())))
     }
 
     /// The input packet has to be compressed, encrypted and fragmented already.
