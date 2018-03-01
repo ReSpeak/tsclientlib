@@ -92,7 +92,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                         }*/
                         let p_data = packets::Data::read(
                             &header,
-                            &mut Cursor::new(decompressed),
+                            &mut Cursor::new(decompressed.as_slice()),
                         )?;
                         Some(Packet::new(header, p_data))
                     } else {
@@ -125,7 +125,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                     }*/
                     let p_data = packets::Data::read(
                         &header,
-                        &mut Cursor::new(decompressed),
+                        &mut Cursor::new(decompressed.as_slice()),
                     )?;
                     Some(Packet::new(header, p_data))
                 };
@@ -177,7 +177,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
         let con = &mut *con.borrow_mut();
         let is_client = self.is_client;
         let (header, pos) = {
-            let mut r = Cursor::new(&udp_packet);
+            let mut r = Cursor::new(udp_packet.as_slice());
             (
                 packets::Header::read(&!is_client, &mut r)?,
                 r.position() as usize,
@@ -289,7 +289,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
 
                             match packets::Data::read(
                                 &header,
-                                &mut Cursor::new(udp_packet),
+                                &mut Cursor::new(udp_packet.as_slice()),
                             ) {
                                 Ok(p_data) => {
                                     // Remove command packet from send queue if the fitting ack is received.
@@ -358,7 +358,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                 }
                 let p_data = packets::Data::read(
                     &header,
-                    &mut Cursor::new(udp_packet),
+                    &mut Cursor::new(udp_packet.as_slice()),
                 )?;
                 Ok(vec![Packet::new(header, p_data)])
             }

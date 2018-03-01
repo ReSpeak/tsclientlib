@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
-use std::{fmt, io};
+use std::fmt;
 use std::io::prelude::*;
+use std::io::Cursor;
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use num::{FromPrimitive, ToPrimitive};

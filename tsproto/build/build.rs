@@ -107,7 +107,7 @@ impl Struct {
                 before.get_type()
             )?;
         }
-        writeln!(w, "r: &mut Read) -> Result<Self> {{")?;
+        writeln!(w, "r: &mut Cursor<&[u8]>) -> Result<Self> {{")?;
         if let Some(before) = before {
             writeln!(w, "\t\tlet _ = {};", to_snake_case(&before.name))?;
         }
@@ -301,7 +301,7 @@ impl Enum {
                 before.get_type()
             )?;
         }
-        writeln!(w, "r: &mut Read) -> Result<Self> {{")?;
+        writeln!(w, "r: &mut Cursor<&[u8]>) -> Result<Self> {{")?;
         if let Some(before) = before {
             writeln!(w, "\t\tlet _ = {};", to_snake_case(&before.name))?;
         }
@@ -346,8 +346,7 @@ impl Enum {
         // Create a buffer so we can read multiple times
         writeln!(
             w,
-            "let mut all_data_buf = Vec::new();\nr.read_to_end(&mut \
-             all_data_buf)?;\nlet mut err_buf = Vec::new();"
+            "let reset_cursor = r.clone();\nlet mut err_buf = Vec::new();"
         )?;
         // Try each possibility and pick the first that is `Ok`
         for p in &self.possibilities {
@@ -394,8 +393,8 @@ impl Enum {
 
             write!(
                 w,
-                "match (|| -> Result<_> {{\n\tlet mut r = \
-                 io::Cursor::new(&all_data_buf);\n\tlet r = &mut r;\n{}}})() \
+                "match (|| -> Result<_> {{\n\tlet mut r = reset_cursor.clone();\
+                 \n\tlet r = &mut r;\n{}}})() \
                  {{\n\tOk(res) => {{\n\t\treturn Ok(",
                 read
             )?;

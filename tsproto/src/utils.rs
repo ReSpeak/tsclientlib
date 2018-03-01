@@ -51,7 +51,7 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
 pub fn parse_packet(mut udp_packet: Vec<u8>, is_client: bool)
     -> Result<(Header, Vec<u8>)> {
     let (header, pos) = {
-        let mut r = Cursor::new(&udp_packet);
+        let mut r = Cursor::new(udp_packet.as_slice());
         (
             Header::read(&!is_client, &mut r)?,
             r.position() as usize,
