@@ -13,7 +13,6 @@ extern crate gmp;
 #[macro_use]
 extern crate nom;
 extern crate num;
-extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
 extern crate openssl;

@@ -28,7 +28,6 @@ nom = "3.2"
 num = "0.1"
 num-derive = "0.2"
 num-traits = "0.2"
-num-bigint = { path = "../../num-bigint" }
 rand = "0.4"
 ring = "0.13.0-alpha"
 rust-gmp = { version = "0.5", optional = true }

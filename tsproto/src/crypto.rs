@@ -305,27 +305,16 @@ impl Eax {
         // l = block cipher size = 128 (for AES-128) = 16 byte
         // 1. n ← OMAC(0 || Nonce)
         // (the 0 means the number zero in l bits)
-        let mut mac_data = Vec::with_capacity(16 * 2);
-        mac_data.extend_from_slice(&[0; 16]);
-        mac_data.extend_from_slice(nonce);
-        let n = Self::cmac(key, &mac_data)?;
+        let n = Self::cmac_with_iv(key, 0, nonce)?;
 
         // 2. h ← OMAC(1 || Nonce)
-        mac_data.clear();
-        mac_data.extend_from_slice(&[0; 15]);
-        mac_data.push(1);
-        mac_data.extend_from_slice(header);
-        let h = Self::cmac(key, &mac_data)?;
+        let h = Self::cmac_with_iv(key, 1, header)?;
 
         // 3. enc ← CTR(M) using n as iv
         let enc = symm::encrypt(Cipher::aes_128_ctr(), key, Some(&n), data)?;
 
         // 4. c ← OMAC(2 || enc)
-        mac_data.clear();
-        mac_data.extend_from_slice(&[0; 15]);
-        mac_data.push(2);
-        mac_data.extend_from_slice(&enc);
-        let c = Self::cmac(key, &mac_data)?;
+        let c = Self::cmac_with_iv(key, 2, &enc)?;
 
         // 5. tag ← n ^ h ^ c
         // (^ means xor)
@@ -337,24 +326,13 @@ impl Eax {
 
     pub fn decrypt(key: &[u8; 16], nonce: &[u8; 16], header: &[u8], data: &[u8],
         mac: &[u8]) -> Result<Vec<u8>> {
-        let mut mac_data = Vec::with_capacity(16 * 2);
-        mac_data.extend_from_slice(&[0; 16]);
-        mac_data.extend_from_slice(nonce);
-        let n = Self::cmac(key, &mac_data)?;
+        let n = Self::cmac_with_iv(key, 0, nonce)?;
 
         // 2. h ← OMAC(1 || Nonce)
-        mac_data.clear();
-        mac_data.extend_from_slice(&[0; 15]);
-        mac_data.push(1);
-        mac_data.extend_from_slice(header);
-        let h = Self::cmac(key, &mac_data)?;
+        let h = Self::cmac_with_iv(key, 1, header)?;
 
         // 4. c ← OMAC(2 || enc)
-        mac_data.clear();
-        mac_data.extend_from_slice(&[0; 15]);
-        mac_data.push(2);
-        mac_data.extend_from_slice(data);
-        let c = Self::cmac(key, &mac_data)?;
+        let c = Self::cmac_with_iv(key, 2, data)?;
 
         let mac2: Vec<_> = n.iter().zip(h.iter()).zip(c.iter()).map(
             |((n, h), c)| n ^ h ^ c).take(mac.len()).collect();
@@ -372,11 +350,16 @@ impl Eax {
     }
 
     /// CMAC/OMAC1
-    pub fn cmac(key: &[u8; 16], data: &[u8]) -> Result<Vec<u8>> {
-        // TODO Maybe take header and data and process blockwise
+    ///
+    /// To avoid constructing new buffers on the heap, an iv encoded into 16
+    /// bytes is prepended inside this function.
+    pub fn cmac_with_iv(key: &[u8; 16], iv: u8, data: &[u8]) -> Result<Vec<u8>> {
         let cipher = Cipher::aes_128_cbc();
         let key = PKey::cmac(&cipher, key)?;
         let mut signer = Signer::new(None, &key)?;
+
+        signer.update(&[0; 15])?;
+        signer.update(&[iv])?;
         signer.update(data)?;
 
         let sign = signer.sign_to_vec()?;
