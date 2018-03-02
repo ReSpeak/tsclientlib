@@ -227,3 +227,23 @@ impl Notification {
         }
     }
 }
+
+impl Into<Command> for Notification {
+    fn into(self) -> Command {
+        match self {
+            <# for notif in self.notifies.iter() { #>
+            Notification::<#= notif.1.enum_name #>(cmd) => cmd.into(),
+            <# } #>
+        }
+    }
+}
+
+impl<'a> Into<Command> for &'a Notification {
+    fn into(self) -> Command {
+        match *self {
+            <# for notif in self.notifies.iter() { #>
+            Notification::<#= notif.1.enum_name #>(ref cmd) => cmd.into(),
+            <# } #>
+        }
+    }
+}
