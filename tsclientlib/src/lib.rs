@@ -159,6 +159,10 @@ impl ConnectionManager {
     /// Creates a new `ConnectionManager` which is then used to add new
     /// connections.
     ///
+    /// Connecting to a server is done by [`ConnectionManager::add_connection`].
+    ///
+    /// # Example
+    ///
     /// ```
     /// # extern crate tokio_core;
     /// # extern crate tsclientlib;
@@ -166,17 +170,12 @@ impl ConnectionManager {
     /// # use std::error::Error;
     /// #
     /// # use tsclientlib::ConnectionManager;
-    /// # fn main() { (|| -> Result<(), Box<Error>> {
+    /// # fn main() {
     /// #
-    /// let core = tokio_core::reactor::Core::new()?;
+    /// let core = tokio_core::reactor::Core::new().unwrap();
     /// let cm = ConnectionManager::new(core.handle());
-    /// #
-    /// # Ok(())
-    /// # })().unwrap();
     /// # }
     /// ```
-    ///
-    /// Connecting to a server is done by [`ConnectionManager::add_connection`].
     ///
     /// [`ConnectionManager::add_connection`]: #method.add_connection
     pub fn new(handle: Handle) -> Self {
@@ -228,12 +227,12 @@ impl ConnectionManager {
         {
             let c2 = client.clone();
             let mut client = client.borrow_mut();
-            client.connection_manager.set_data_ref(c2);
+            client.connection_manager.set_data_ref(Rc::downgrade(&c2));
         }
-        client::default_setup(client.clone(), false);
+        client::default_setup(&client, false);
 
         // Create a connection
-        let connect_fut = client::connect(client.clone(), addr);
+        let connect_fut = client::connect(&client, addr);
 
         let logger = inner.logger.clone();
         let inner = Rc::downgrade(&self.inner);
@@ -276,17 +275,17 @@ impl ConnectionManager {
 
             let con = client.borrow().connection_manager
                 .get_connection(addr).unwrap();
-            let sink = client::ClientConnection::get_packets(con.clone());
+            let sink = client::ClientConnection::get_packets(Rc::downgrade(&con));
 
             let client2 = client.clone();
             let con_weak = Rc::downgrade(&con);
             sink.send(clientinit_packet).and_then(move |_| {
-                client::wait_until_connected(client2, addr)
+                client::wait_until_connected(&client2, addr)
             })
             .and_then(move |()| {
                 // Wait for the initserver packet
                 let stream = tsproto_commands::codec::CommandCodec::
-                    new_stream_from_connection(con);
+                    new_stream_from_connection(&con);
                 stream.into_future().map_err(|(e, _)| e)
             }).map_err(|e| e.into())
             .and_then(move |(p, stream)| {
@@ -343,6 +342,8 @@ impl ConnectionManager {
     /// core.run(disconnect_future).unwrap();
     /// # }
     /// ```
+    ///
+    /// Specify a reason and a quit message:
     ///
     /// ```rust,no_run
     /// # extern crate tokio_core;
@@ -401,9 +402,9 @@ impl ConnectionManager {
         }
 
         // TODO Remove connection here and also auto-remove on disconnect (e.g. kick)
-        let sink = client::ClientConnection::get_packets(client_con);
+        let sink = client::ClientConnection::get_packets(Rc::downgrade(&client_con));
         Box::new(sink.send(packet).and_then(move |_| {
-            client::wait_for_state(con.client_data, addr, |state| {
+            client::wait_for_state(&con.client_data, addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
                     true
                 } else {

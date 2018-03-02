@@ -1,6 +1,6 @@
 //! This module contains a stream and a sink which convert Packets to Commands.
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use futures::{future, Sink, stream, Stream};
 use slog::Logger;
@@ -42,10 +42,10 @@ impl CommandCodec {
 	}
 
 	pub fn new_stream_from_connection<CM: ConnectionManager + 'static>(
-		con: Rc<RefCell<Connection<CM>>>)
+		con: &Rc<RefCell<Connection<CM>>>)
 		-> Box<Stream<Item = Notification, Error = Error>> {
 		let logger = con.borrow().logger.clone();
-		Self::new_stream(Connection::get_commands(con), logger)
+		Self::new_stream(Connection::get_commands(Rc::downgrade(con)), logger)
 	}
 
 	pub fn new_sink<
@@ -60,7 +60,7 @@ impl CommandCodec {
 	}
 
 	pub fn new_sink_from_connection<CM: ConnectionManager + 'static>(
-		con: Rc<RefCell<Connection<CM>>>)
+		con: Weak<RefCell<Connection<CM>>>)
 		-> Box<Sink<SinkItem = Notification, SinkError = Error>> {
 		Self::new_sink(Connection::get_packets(con))
 	}

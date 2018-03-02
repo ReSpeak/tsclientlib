@@ -135,8 +135,8 @@ fn create_key_nonce(
     }
 
     // Use the cached version
-    let mut key = cache.key.clone();
-    let nonce = cache.nonce.clone();
+    let mut key = cache.key;
+    let nonce = cache.nonce;
     key[0] ^= (header.p_id >> 8) as u8;
     key[1] ^= (header.p_id & 0xff) as u8;
     (key, nonce)

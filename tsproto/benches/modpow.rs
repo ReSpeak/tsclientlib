@@ -1,12 +1,12 @@
 #![feature(test)]
 
-extern crate num_bigint;
+extern crate num;
 extern crate num_traits;
 extern crate gmp;
 extern crate test;
 
 use gmp::mpz::Mpz;
-use num_bigint::BigUint;
+use num::bigint::BigUint;
 use num_traits::One;
 use test::Bencher;
 
