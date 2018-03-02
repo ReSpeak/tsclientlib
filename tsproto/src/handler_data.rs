@@ -135,7 +135,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         }));
 
         // Set stream for unknown packets
-        let stream = UnknownUdpPacketStream::new(&data);
+        let stream = UnknownUdpPacketStream::new(Rc::downgrade(&data));
         data.borrow_mut().unknown_udp_packet_stream = Some(Box::new(stream));
 
         Ok(data)
@@ -243,27 +243,23 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
     /// Gives a `Stream` and `Sink` of `UdpPacket`s, which always references the
     /// current stream in the `Data` struct.
-    pub fn get_udp_packets(data: &Rc<RefCell<Self>>) -> DataUdpPackets<CM> {
-        DataUdpPackets {
-            data: Rc::downgrade(data),
-        }
+    pub fn get_udp_packets(data: Weak<RefCell<Self>>) -> DataUdpPackets<CM> {
+        DataUdpPackets { data }
     }
 
     /// Gives a `Stream` of `UdpPacket`s, which always references the current
     /// unknown stream in the `Data` struct.
     ///
     /// This stream contains all the packets for which no connection is known.
-    pub fn get_unknown_udp_packets(data: &Rc<RefCell<Self>>) ->
+    pub fn get_unknown_udp_packets(data: Weak<RefCell<Self>>) ->
         UnknownDataUdpPackets<CM> {
-        UnknownDataUdpPackets {
-            data: Rc::downgrade(data),
-        }
+        UnknownDataUdpPackets { data }
     }
 
     /// Enables distributing incoming packets to the connections.
     pub fn start_packet_distributor(data: &Rc<RefCell<Self>>) {
         let distributor = PacketDistributor::new(
-            Self::get_udp_packets(data), data);
+            Self::get_udp_packets(Rc::downgrade(data)), Rc::downgrade(data));
         let data = data.borrow_mut();
         let logger = data.logger.clone();
         data.handle.spawn(distributor.map_err(move |e| {
@@ -406,10 +402,8 @@ struct UnknownUdpPacketStream<CM: ConnectionManager> {
 }
 
 impl<CM: ConnectionManager> UnknownUdpPacketStream<CM> {
-    fn new(data: &Rc<RefCell<Data<CM>>>) -> Self {
-        Self {
-            data: Rc::downgrade(data),
-        }
+    fn new(data: Weak<RefCell<Data<CM>>>) -> Self {
+        Self { data }
     }
 }
 
@@ -449,11 +443,8 @@ impl<
     Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
     CM: ConnectionManager,
 > PacketDistributor<Inner, CM> {
-    fn new(inner: Inner, data: &Rc<RefCell<Data<CM>>>) -> Self {
-        Self {
-            inner,
-            data: Rc::downgrade(data),
-        }
+    fn new(inner: Inner, data: Weak<RefCell<Data<CM>>>) -> Self {
+        Self { inner, data }
     }
 }
 

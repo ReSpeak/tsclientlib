@@ -226,26 +226,28 @@ impl UdpCodec for TsCodec {
 ///
 /// Implementors of this trait supply just one method `wrap`, that takes a
 /// stream as an argument and returns a wrapped stream of the same type.
-pub trait StreamWrapper<I, E, T: Stream<Item = I, Error = E>>:
-    Stream<Item = I, Error = E> {
+pub trait StreamWrapper<I, E, T: Stream<Item = I, Error = E>> {
     /// The type of additional arguments for the `wrap` function.
     type A;
+    /// The resulting stream type.
+    type Result: Stream<Item = I, Error = E>;
 
     /// `A` holds additional arguments.
-    fn wrap(inner: T, a: Self::A) -> Self;
+    fn wrap(inner: T, a: Self::A) -> Self::Result;
 }
 
 /// A trait for a `Sink` wrapper.
 ///
 /// Implementors of this trait supply just one method `wrap`, that takes a
 /// sink as an argument and returns a wrapped sink of the same type.
-pub trait SinkWrapper<I, E, T: Sink<SinkItem = I, SinkError = E>>:
-    Sink<SinkItem = I, SinkError = E> {
+pub trait SinkWrapper<I, E, T: Sink<SinkItem = I, SinkError = E>> {
     /// The type of additional arguments for the `wrap` function.
     type A;
+    /// The resulting sink type.
+    type Result: Sink<SinkItem = I, SinkError = E>;
 
     /// `A` holds additional arguments.
-    fn wrap(inner: T, a: Self::A) -> Self where Self: Sink<SinkItem = I, SinkError = E>;
+    fn wrap(inner: T, a: Self::A) -> Self::Result;
 }
 
 /// A stream which provides elements that are inserted into a buffer.

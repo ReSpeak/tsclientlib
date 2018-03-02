@@ -390,12 +390,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecStream<CM,
     /// `send_acks` to `false`.
     pub fn apply(connection: &Rc<RefCell<Connection<CM>>>, send_acks: bool) {
         let stream = Self::new(connection,
-            Connection::get_udp_packets(connection));
+            Connection::get_udp_packets(Rc::downgrade(connection)));
         let connection2 = connection.clone();
         let mut connection = connection.borrow_mut();
         let stream: Box<Stream<Item=_, Error=_>> = if send_acks {
             Box::new(AckHandler::new(stream,
-                Connection::get_packets(&connection2)))
+                Connection::get_packets(Rc::downgrade(&connection2))))
         } else {
             Box::new(stream.filter_map(|(p, _)| p))
         };
@@ -468,7 +468,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
         Self {
             connection: Rc::downgrade(connection),
             is_client,
-            inner: Connection::get_udp_packets(connection),
+            inner: Connection::get_udp_packets(Rc::downgrade(connection)),
             command_p_type: PacketType::Command,
             command_send_buffer: Vec::new(),
             other_send_buffer: Vec::new(),

@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::net::SocketAddr;
 
-use futures::{self, Sink, Stream};
+use futures::{future, Sink, Stream};
 use slog::Logger;
 
 use {Error, SinkWrapper, StreamWrapper};
@@ -55,226 +55,72 @@ impl PacketLogger {
     }
 }
 
-// TODO Don't use custom streams here, but just return a stream.inspect(...)
-pub struct UdpPacketStreamLogger<
-    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-> {
-    inner: Inner,
-    logger: Logger,
-    is_client: bool,
-}
+pub struct UdpPacketStreamLogger;
 
-impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>>
+impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error> + 'static>
     StreamWrapper<(SocketAddr, UdpPacket), Error, Inner> for
-    UdpPacketStreamLogger<Inner> {
+    UdpPacketStreamLogger {
     /// (logger, is_client)
     type A = (Logger, bool);
+    type Result = Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>;
 
-    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
-        Self { inner, logger, is_client }
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self::Result {
+        Box::new(inner.inspect(move |&(addr, ref packet)|
+            PacketLogger::log_udp_packet(&logger, addr, is_client, true, packet)
+        ))
     }
 }
 
-impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>> Stream
-    for UdpPacketStreamLogger<Inner> {
-    type Item = (SocketAddr, UdpPacket);
-    type Error = Error;
+pub struct UdpPacketSinkLogger;
 
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let res = self.inner.poll();
-        if let Ok(futures::Async::Ready(Some((addr, ref packet)))) = res {
-            PacketLogger::log_udp_packet(
-                &self.logger,
-                addr,
-                self.is_client,
-                true,
-                packet,
-            );
-        }
-        res
-    }
-}
-
-pub struct UdpPacketSinkLogger<
-    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
-> {
-    inner: Inner,
-    logger: Logger,
-    is_client: bool,
-    /// The buffer to save a packet that is already logged.
-    buf: Option<(SocketAddr, UdpPacket)>,
-}
-
-impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
-    SinkWrapper<(SocketAddr, UdpPacket), Error, Inner> for
-    UdpPacketSinkLogger<Inner> {
+impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error> + 'static>
+    SinkWrapper<(SocketAddr, UdpPacket), Error, Inner> for UdpPacketSinkLogger {
     /// (logger, is_client)
     type A = (Logger, bool);
+    type Result = Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>;
 
-    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self {
-        Self { inner, logger, is_client, buf: None }
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self::Result {
+        Box::new(inner.with(move |(addr, packet)| {
+            PacketLogger::log_udp_packet(&logger, addr, is_client, false,
+                &packet);
+            future::ok((addr, packet))
+        }))
     }
 }
 
-impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>
-    Sink for UdpPacketSinkLogger<Inner> {
-    type SinkItem = (SocketAddr, UdpPacket);
-    type SinkError = Error;
-
-    fn start_send(
-        &mut self,
-        (addr, packet): Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        // Check if the buffer is full
-        if let Some(p) = self.buf.take() {
-            if let futures::AsyncSink::NotReady(p) = self.inner.start_send(p)? {
-                self.buf = Some(p);
-                return Ok(futures::AsyncSink::NotReady((addr, packet)));
-            }
-        }
-
-        PacketLogger::log_udp_packet(
-            &self.logger,
-            addr,
-            self.is_client,
-            false,
-            &packet,
-        );
-        let res = self.inner.start_send((addr, packet))?;
-        // Buffer the packet if it was not sent
-        if let futures::AsyncSink::NotReady(p) = res {
-            self.buf = Some(p);
-            Ok(futures::AsyncSink::Ready)
-        } else {
-            Ok(res)
-        }
-    }
-
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        // Check if the buffer is full
-        if let Some(p) = self.buf.take() {
-            if let futures::AsyncSink::NotReady(p) = self.inner.start_send(p)? {
-                self.buf = Some(p);
-                return Ok(futures::Async::NotReady);
-            }
-        }
-
-        self.inner.poll_complete()
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        self.inner.poll_complete()
-    }
+pub struct PacketStreamLogger<Id> {
+    phantom: ::std::marker::PhantomData<Id>,
 }
 
-pub struct PacketStreamLogger<
-    Inner: Stream<Item = Packet, Error = Error>,
-    Id: Display
-> {
-    inner: Inner,
-    logger: Logger,
-    is_client: bool,
-    /// The identification of the connection
-    id: Id,
-}
-
-impl<Inner: Stream<Item = Packet, Error = Error>, Id: Display>
-    StreamWrapper<Packet, Error, Inner> for
-    PacketStreamLogger<Inner, Id> {
+impl<Inner: Stream<Item = Packet, Error = Error> + 'static,
+    Id: Display + 'static>
+    StreamWrapper<Packet, Error, Inner> for PacketStreamLogger<Id> {
     /// (logger, is_client, id)
     type A = (Logger, bool, Id);
+    type Result = Box<Stream<Item = Packet, Error = Error>>;
 
-    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self {
-        Self { inner, logger, is_client, id }
+    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self::Result {
+        Box::new(inner.inspect(move |packet|
+            PacketLogger::log_packet(&logger, &id, is_client, true, packet)
+        ))
     }
 }
 
-impl<Inner: Stream<Item = Packet, Error = Error>, Id: Display> Stream
-    for PacketStreamLogger<Inner, Id> {
-    type Item = Packet;
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let res = self.inner.poll();
-        if let Ok(futures::Async::Ready(Some(ref packet))) = res {
-            PacketLogger::log_packet(
-                &self.logger,
-                &self.id,
-                self.is_client,
-                true,
-                packet,
-            );
-        }
-        res
-    }
+pub struct PacketSinkLogger<Id> {
+    phantom: ::std::marker::PhantomData<Id>,
 }
 
-pub struct PacketSinkLogger<
-    Inner: Sink<SinkItem = Packet, SinkError = Error>,
-    Id: Display,
-> {
-    inner: Inner,
-    logger: Logger,
-    is_client: bool,
-    /// The buffer to save a packet that is already logged.
-    buf: Option<Packet>,
-    /// The identification of the connection
-    id: Id,
-}
-
-impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display>
-    SinkWrapper<Packet, Error, Inner> for PacketSinkLogger<Inner, Id> {
+impl<Inner: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+    Id: Display + 'static>
+    SinkWrapper<Packet, Error, Inner> for PacketSinkLogger<Id> {
     /// (logger, is_client, id)
     type A = (Logger, bool, Id);
+    type Result = Box<Sink<SinkItem = Packet, SinkError = Error>>;
 
-    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self {
-        Self { inner, logger, is_client, buf: None, id }
-    }
-}
-
-impl<Inner: Sink<SinkItem = Packet, SinkError = Error>, Id: Display> Sink
-    for PacketSinkLogger<Inner, Id> {
-    type SinkItem = Packet;
-    type SinkError = Error;
-
-    fn start_send(&mut self, packet: Self::SinkItem)
-        -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        // Check if the buffer is full
-        if let Some(p) = self.buf.take() {
-            if let futures::AsyncSink::NotReady(p) = self.inner.start_send(p)? {
-                self.buf = Some(p);
-                return Ok(futures::AsyncSink::NotReady(packet));
-            }
-        }
-
-        PacketLogger::log_packet(
-            &self.logger,
-            &self.id,
-            self.is_client,
-            false,
-            &packet,
-        );
-        let res = self.inner.start_send(packet)?;
-        // Buffer the packet if it was not sent
-        if let futures::AsyncSink::NotReady(p) = res {
-            self.buf = Some(p);
-            Ok(futures::AsyncSink::Ready)
-        } else {
-            Ok(res)
-        }
-    }
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        // Check if the buffer is full
-        if let Some(p) = self.buf.take() {
-            if let futures::AsyncSink::NotReady(p) = self.inner.start_send(p)? {
-                self.buf = Some(p);
-                return Ok(futures::Async::NotReady);
-            }
-        }
-
-        self.inner.poll_complete()
-    }
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        self.inner.poll_complete()
+    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self::Result {
+        Box::new(inner.with(move |packet| {
+            PacketLogger::log_packet(&logger, &id, is_client, false, &packet);
+            future::ok(packet)
+        }))
     }
 }

@@ -169,8 +169,8 @@ impl<T: Default + 'static> SocketConnectionManager<T> {
     }
 
     /// Sets the data reference in this connection manager.
-    pub fn set_data_ref(&mut self, data: &Rc<RefCell<Data<Self>>>) {
-        self.data = Some(Rc::downgrade(data));
+    pub fn set_data_ref(&mut self, data: Weak<RefCell<Data<Self>>>) {
+        self.data = Some(data);
     }
 }
 

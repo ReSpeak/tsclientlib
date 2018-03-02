@@ -111,10 +111,10 @@ impl<CM: AttachedDataConnectionManager<ServerConnectionData> + 'static>
             if let Some(ref logger) = self.logger {
                 // Logging
                 Connection::apply_packet_stream_wrapper::<
-                    ::log::PacketStreamLogger<_, _>>(&con,
+                    ::log::PacketStreamLogger<_>>(&con,
                         (logger.clone(), data.is_client, key.clone()));
                 Connection::apply_packet_sink_wrapper::<
-                    ::log::PacketSinkLogger<_, _>>(&con,
+                    ::log::PacketSinkLogger<_>>(&con,
                         (logger.clone(), data.is_client, key.clone()));
             }
 
@@ -143,13 +143,13 @@ pub fn default_setup<
             (data.logger.clone(), data.is_client)
         };
         Data::apply_udp_packet_stream_wrapper::<
-            ::log::UdpPacketStreamLogger<_>>(data, a.clone());
+            ::log::UdpPacketStreamLogger>(data, a.clone());
         Data::apply_udp_packet_sink_wrapper::<
-            ::log::UdpPacketSinkLogger<_>>(data, a);
+            ::log::UdpPacketSinkLogger>(data, a);
     }
 
     // Discard packets which don't match a connection
-    let unknown_stream = Data::get_unknown_udp_packets(data);
+    let unknown_stream = Data::get_unknown_udp_packets(Rc::downgrade(data));
     let handle;
     {
         let data = data.borrow();
@@ -261,7 +261,7 @@ pub fn connect(
     }
 
     let con = data.connection_manager.get_connection(server_addr).unwrap();
-    let packets = Connection::get_packets(&con);
+    let packets = Connection::get_packets(Rc::downgrade(&con));
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
     Box::new(

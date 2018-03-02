@@ -606,7 +606,7 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
             data: Rc::downgrade(data),
             connection_key,
             connection: Rc::downgrade(&connection),
-            sink: Connection::get_udp_packets(&connection),
+            sink: Connection::get_udp_packets(Rc::downgrade(&connection)),
             timeout: Timeout::new(
                 Duration::seconds(1).to_std().unwrap(),
                 &handle,
