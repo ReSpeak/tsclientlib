@@ -23,7 +23,7 @@ extern crate tsproto_commands;
 
 use std::cell::{Ref, RefCell};
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use chrono::{DateTime, Duration, Utc};
 use failure::ResultExt;
@@ -31,9 +31,10 @@ use futures::{future, Future, Sink, Stream};
 use slog::{Drain, Logger};
 use tokio_core::reactor::Handle;
 use tsproto::algorithms as algs;
-use tsproto::{client, crypto, packets, commands};
+use tsproto::{client, crypto, packets, commands, handler_data};
 use tsproto::connectionmanager::ConnectionManager as TsprotoCM;
 use tsproto::connectionmanager::{Resender, ResenderEvent};
+use tsproto::handler_data::ConnectionListener;
 use tsproto::packets::{Header, Packet, PacketType};
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
@@ -288,13 +289,32 @@ impl ConnectionManager {
                     new_stream_from_connection(&con);
                 stream.into_future().map_err(|(e, _)| e)
             }).map_err(|e| e.into())
-            .and_then(move |(p, stream)| {
+            .and_then(move |(p, stream)| -> BoxFuture<_> {
                 if let Some(Notification::InitServer(p)) = p {
                     // Create a connection id
+                    let inner2 = inner.clone();
                     let inner = inner.upgrade().expect(
                         "Connection manager does not exist anymore");
                     let mut inner = inner.borrow_mut();
                     let id = inner.find_connection_id();
+
+                    {
+                        let mut client = client.borrow_mut();
+                        client.connection_listeners.push(Box::new(
+                            RemoveListener {
+                                connection_id: id,
+                                inner: inner2,
+                            }));
+                    }
+
+                    // Wait until we are fully connected
+                    let wait_for_state = client::wait_for_state(&client, addr, |state| {
+                        if let client::ServerConnectionState::Connected = *state {
+                            true
+                        } else {
+                            false
+                        }
+                    });
 
                     // Create the connection
                     let con = structs::NetworkWrapper::new(id, client, con_weak,
@@ -303,12 +323,11 @@ impl ConnectionManager {
                     // Add the connection
                     inner.connections.insert(id, con);
 
-                    // TODO spawn a future that polls the NetworkWrapper for this connection
-
-                    future::ok(id)
+                    Box::new(wait_for_state.map(move |_| id)
+                        .map_err(|e| e.into()))
                 } else {
-                    future::err(Error::ConnectionFailed(String::from(
-                        "Got no initserver")))
+                    Box::new(future::err(Error::ConnectionFailed(String::from(
+                        "Got no initserver"))))
                 }
             })
         }))
@@ -364,15 +383,19 @@ impl ConnectionManager {
     /// ```
     pub fn remove_connection<O: Into<Option<DisconnectOptions>>>(&mut self,
         id: ConnectionId, options: O) -> BoxFuture<()> {
-        let con = {
-            let mut inner = self.inner.borrow_mut();
-            if let Some(con) = inner.connections.remove(&id) {
-                con
+        let client_con;
+        let client_data;
+        {
+            let inner_b = self.inner.borrow();
+            if let Some(con) = inner_b.connections.get(&id) {
+                client_con = con.client_connection.clone();
+                client_data = con.client_data.clone();
             } else {
                 return Box::new(future::ok(()));
             }
-        };
-        let client_con = if let Some(c) = con.client_connection.upgrade() {
+        }
+
+        let client_con = if let Some(c) = client_con.upgrade() {
             c
         } else {
             // Already disconnected
@@ -401,17 +424,16 @@ impl ConnectionManager {
             addr = con.address;
         }
 
-        // TODO Remove connection here and also auto-remove on disconnect (e.g. kick)
         let sink = client::ClientConnection::get_packets(Rc::downgrade(&client_con));
-        Box::new(sink.send(packet).and_then(move |_| {
-            client::wait_for_state(&con.client_data, addr, |state| {
-                if let client::ServerConnectionState::Disconnected = *state {
-                    true
-                } else {
-                    false
-                }
-            })
-        }).map_err(|e| e.into()))
+        let wait_for_state = client::wait_for_state(&client_data, addr, |state| {
+            if let client::ServerConnectionState::Disconnected = *state {
+                true
+            } else {
+                false
+            }
+        });
+        Box::new(sink.send(packet).and_then(move |_| wait_for_state)
+            .map_err(|e| e.into()))
     }
 
     pub fn get_connection(&self, id: ConnectionId) -> Option<Connection> {
@@ -454,6 +476,25 @@ impl ConnectionManager {
 
     fn get_chat_entry(&self, _con: ConnectionId, _sender: ClientId) -> Ref<structs::ChatEntry> {
         unimplemented!("Chatting is not yet implemented")
+    }
+}
+
+struct RemoveListener {
+    connection_id: ConnectionId,
+    inner: Weak<RefCell<InnerCM>>,
+}
+
+impl<CM: TsprotoCM> ConnectionListener<CM> for RemoveListener {
+    fn on_connection_removed(&mut self, _: Rc<RefCell<handler_data::Data<CM>>>,
+        _: CM::ConnectionsKey) -> bool {
+        let inner = if let Some(inner) = self.inner.upgrade() {
+            inner
+        } else {
+            return true;
+        };
+        let mut inner = inner.borrow_mut();
+        inner.connections.remove(&self.connection_id);
+        false
     }
 }
 
