@@ -16,7 +16,7 @@ use gmp::mpz::Mpz;
 use num::One;
 use num::ToPrimitive;
 #[cfg(not(feature = "rust-gmp"))]
-use num_bigint::BigUint;
+use num::bigint::BigUint;
 use rand::{self, Rng};
 use tokio_core::reactor::Handle;
 

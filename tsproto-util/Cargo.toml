@@ -1,0 +1,11 @@
+[package]
+name = "tsproto-util"
+version = "0.1.0"
+authors = ["Splamy <splamyn@gmail.com>"]
+
+[dependencies]
+regex = "0.2"
+t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
+csv = "1.0.0-beta.5"
+serde = "1"
+serde_derive = "1"

@@ -21,11 +21,11 @@
     let all_props = ids.iter().chain(props.iter());
 
 #>
-<#= document(&struc.values.doc) #>
+<#= doc_comment(&struc.values.doc) #>
 pub struct <#= struc.name #> {
 <# for p in all_props {
     if !p.values.doc.is_empty() { #>
-<#= indent(document(&p.values.doc), 1) #>
+<#= indent(doc_comment(&p.values.doc), 1) #>
 <# } #>
     pub <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
 <# }
@@ -33,7 +33,7 @@ pub struct <#= struc.name #> {
 // Nested structs
 for p in &nesteds {
     if !p.values.doc.is_empty() { #>
-<#= indent(document(&p.values.doc), 1) #>
+<#= indent(doc_comment(&p.values.doc), 1) #>
 <# } #>
     pub <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
 <# } #>

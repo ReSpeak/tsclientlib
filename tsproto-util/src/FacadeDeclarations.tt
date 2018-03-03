@@ -19,7 +19,7 @@
     //    p.struct_name == struc.name).collect();
 
 #>
-<#= document(&struc.values.doc) #>
+<#= doc_comment(&struc.values.doc) #>
 pub struct <#= struc.name #><'a> {
     cm: &'a ConnectionManager,
 <# for p in &ids { #>
@@ -27,7 +27,7 @@ pub struct <#= struc.name #><'a> {
 <# } #>
 }
 
-<#= document(&struc.values.doc) #>
+<#= doc_comment(&struc.values.doc) #>
 pub struct <#= struc.name #>Mut<'a> {
     cm: &'a mut ConnectionManager,
 <# for p in &ids { #>

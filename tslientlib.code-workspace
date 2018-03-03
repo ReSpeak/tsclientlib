@@ -17,6 +17,10 @@
 			"name": "Declarations"
 		},
 		{
+			"path": "tsproto-util"
+			"name": "Utility"
+		},
+		{
 			"path": "target",
 			"name": "Build Target Dir"
 		}
