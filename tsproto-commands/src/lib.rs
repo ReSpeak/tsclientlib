@@ -110,7 +110,7 @@ pub enum CodecEncryptionMode {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
-pub enum MoveReason {
+pub enum Reason {
 	/// No reason data
 	None,
 	/// Has invoker
@@ -151,7 +151,7 @@ pub enum GroupNamingMode {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
-pub enum PermissionGroupDatabaseType {
+pub enum GroupType {
 	/// Template group (used for new virtual servers).
 	Template,
 	/// Regular group (used for regular clients).

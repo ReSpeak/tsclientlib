@@ -36,10 +36,10 @@ fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
         "LicenseType" |
         "Codec" |
         "CodecEncryptionMode" |
-        "MoveReason" |
+        "Reason" |
         "ClientType" |
         "GroupNamingMode" |
-        "PermissionGroupDatabaseType" |
+        "GroupType" |
         "Permission" |
         "Error" => { tmp = format!("{}::from_u32(val.parse()?).ok_or(Box::new(Error::ParameterConvert))?", rust_type); &tmp}
         "Duration" =>
@@ -92,10 +92,10 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
         "LicenseType" |
         "Codec" |
         "CodecEncryptionMode" |
-        "MoveReason" |
+        "Reason" |
         "ClientType" |
         "GroupNamingMode" |
-        "PermissionGroupDatabaseType" |
+        "GroupType" |
         "Permission" |
         "Error" => "val.to_u32().unwrap().to_string()",
         "Duration" =>

@@ -38,7 +38,7 @@ pub struct <#= struc.name #>Mut<'a> {
 
 fn create_id_getter(f: &mut ::std::fmt::Formatter, struc: &Struct, p: &Property)
     -> ::std::fmt::Result { #>
-    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= get_return_type(&p.type_s) #> {
+    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= if p.type_s == "String" { String::from("&str") } else { get_return_type(&p.type_s) } #> {
     <# if p.type_s == "Option<String>" { #>
         self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
     <# } else if p.type_s.starts_with("Option<") {

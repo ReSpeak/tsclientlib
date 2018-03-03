@@ -39,76 +39,33 @@ impl Connection {
                 phonetic_name,
                 hostbanner_mode,
                 protocol_version,
+                icon_id,
+                temp_channel_default_delete_delay,
                 ;
 
                 connection_id: id,
                 uid: server_uid,
-                name: packet.server_name.clone(),
+                name: packet.name.clone(),
                 platform: packet.server_platform.clone(),
                 version: packet.server_version.clone(),
                 created: packet.server_created,
-                icon: packet.icon_id,
                 ip: packet.server_ip.clone(),
                 ask_for_privilegekey: packet.ask_for_privilege,
-                temp_channel_default_delete_delay:
-                    packet.default_temp_channel_delete_delay,
                 license: packet.license_type,
 
                 optional_data: None,
                 connection_data: None,
                 clients: Map::new(),
                 channels: Map::new(),
+                groups: Map::new(),
             ),
         }
     }
 
     fn handle_message(&mut self, msg: &Notification) {
+        // TODO Replace by code generation
+        // Also raise events
         match *msg {
-            Notification::ChannelList(ref packet) => {
-                // Add new channel
-                let channel = copy_attrs!(packet, Channel;
-                    name,
-                    topic,
-                    codec,
-                    codec_quality,
-                    order,
-                    has_password,
-                    codec_latency_factor,
-                    delete_delay,
-                    needed_talk_power,
-                    forced_silence,
-                    phonetic_name,
-                    is_unencrypted,
-                    is_private,
-                    ;
-
-                    connection_id: self.id,
-                    id: packet.channel_id,
-                    parent: packet.channel_parent_id,
-                    max_clients: if packet.is_max_clients_unlimited {
-                        None
-                    } else {
-                        Some(packet.max_clients)
-                    },
-                    max_family_clients: if packet.is_max_family_clients_unlimited {
-                        None
-                    } else {
-                        Some(packet.max_family_clients)
-                    },
-                    channel_type: if packet.is_permanent {
-                        ChannelType::Permanent
-                    } else if packet.is_semi_permanent {
-                        ChannelType::SemiPermanent
-                    } else {
-                        ChannelType::Temporary
-                    },
-                    default: packet.is_default_channel,
-                    icon: packet.icon_id,
-
-                    optional_data: None,
-                );
-                self.server.channels.insert(channel.id, channel);
-            }
             _ => {} // TODO
         }
     }

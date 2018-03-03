@@ -92,6 +92,9 @@ fn get_id_args(ids: &[&Property], struc: &Struct) -> String {
         if !res.is_empty() {
             res.push_str(", ");
         }
+        if is_ref_type(&id.type_s) {
+            res.push('&');
+        }
         res.push_str("self.");
         res.push_str(&id.get_attr_name(&struc.name));
     }

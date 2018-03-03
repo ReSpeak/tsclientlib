@@ -13,7 +13,7 @@ use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
 
 use tsclientlib::{ConnectOptions, ConnectionManager, DisconnectOptions,
-    MoveReason};
+    Reason};
 
 #[derive(StructOpt, Debug)]
 #[structopt(global_settings_raw =
@@ -58,7 +58,7 @@ fn real_main() -> Result<(), failure::Error> {
 
     // Disconnect
     core.run(cm.remove_connection(con_id, DisconnectOptions::new()
-        .reason(MoveReason::Clientdisconnect)
+        .reason(Reason::Clientdisconnect)
         .message("Is this the real world?")))?;
 
     Ok(())

@@ -60,7 +60,7 @@ macro_rules! tryf {
 mod structs;
 
 // Reexports
-pub use tsproto_commands::MoveReason;
+pub use tsproto_commands::Reason;
 pub use tsproto_commands::ConnectionId;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -370,14 +370,14 @@ impl ConnectionManager {
     /// # use std::boxed::Box;
     /// #
     /// # use tsclientlib::{ConnectionId, ConnectionManager, DisconnectOptions,
-    /// # MoveReason};
+    /// # Reason};
     /// # fn main() {
     /// #
     /// # let mut core = tokio_core::reactor::Core::new().unwrap();
     /// # let mut cm = ConnectionManager::new(core.handle());
     /// # let con_id = ConnectionId(0);
     /// cm.remove_connection(con_id, DisconnectOptions::new()
-    ///     .reason(MoveReason::Clientdisconnect)
+    ///     .reason(Reason::Clientdisconnect)
     ///     .message("Away for a while"));
     /// # }
     /// ```
@@ -447,6 +447,7 @@ impl ConnectionManager {
 
 // Private methods
 impl ConnectionManager {
+    // TODO What if something doesn't exist?
     fn get_server(&self, con: ConnectionId) -> Ref<structs::Server> {
         Ref::map(self.inner.borrow(), |r| &r.connections[&con].server)
     }
@@ -472,6 +473,14 @@ impl ConnectionManager {
     }
     fn get_optional_channel_data(&self, con: ConnectionId, chan: ChannelId) -> Ref<structs::OptionalChannelData> {
         Ref::map(self.inner.borrow(), |r| r.connections[&con].server.channels[&chan].optional_data.as_ref().unwrap())
+    }
+
+    fn get_server_group(&self, con: ConnectionId, group: ServerGroupId) -> Ref<structs::ServerGroup> {
+        Ref::map(self.inner.borrow(), |r| &r.connections[&con].server.groups[&group])
+    }
+
+    fn get_file(&self, _con: ConnectionId, _chan: ChannelId, _path: &str, _file: &str) -> Ref<structs::File> {
+        unimplemented!("File transfer is not yet implemented")
     }
 
     fn get_chat_entry(&self, _con: ConnectionId, _sender: ClientId) -> Ref<structs::ChatEntry> {
@@ -612,7 +621,7 @@ impl ConnectOptions {
 }
 
 pub struct DisconnectOptions {
-    reason: Option<MoveReason>,
+    reason: Option<Reason>,
     message: Option<String>,
 }
 
@@ -635,7 +644,7 @@ impl DisconnectOptions {
     /// # Default
     ///
     /// None
-    pub fn reason(mut self, reason: MoveReason) -> Self {
+    pub fn reason(mut self, reason: Reason) -> Self {
         self.reason = Some(reason);
         self
     }
