@@ -20,7 +20,7 @@ pub use book_parser::BookDeclarations;
 pub use message_parser::MessageDeclarations;
 pub use error_parser::Errors;
 pub use permission_parser::Permissions;
-pub use messages_to_book_parser::MessagesToBook;
+pub use messages_to_book_parser::MessagesToBookDeclarations;
 pub use facade_parser::FacadeDeclarations;
 
 type Map<K, V> = std::collections::HashMap<K, V>;
