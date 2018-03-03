@@ -21,7 +21,7 @@ extern crate tokio_core;
 extern crate tsproto;
 extern crate tsproto_commands;
 
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefCell, RefMut};
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
@@ -447,38 +447,6 @@ impl ConnectionManager {
 
 // Private methods
 impl ConnectionManager {
-    // TODO What if something doesn't exist?
-    fn get_server(&self, con: ConnectionId) -> Ref<structs::Server> {
-        Ref::map(self.inner.borrow(), |r| &r.connections[&con].server)
-    }
-    fn get_optional_server_data(&self, con: ConnectionId) -> Ref<structs::OptionalServerData> {
-        Ref::map(self.inner.borrow(), |r| r.connections[&con].server.optional_data.as_ref().unwrap())
-    }
-    fn get_connection_server_data(&self, con: ConnectionId) -> Ref<structs::ConnectionServerData> {
-        Ref::map(self.inner.borrow(), |r| r.connections[&con].server.connection_data.as_ref().unwrap())
-    }
-
-    fn get_client(&self, con: ConnectionId, client: ClientId) -> Ref<structs::Client> {
-        Ref::map(self.inner.borrow(), |r| &r.connections[&con].server.clients[&client])
-    }
-    fn get_optional_client_data(&self, con: ConnectionId, client: ClientId) -> Ref<structs::OptionalClientData> {
-        Ref::map(self.inner.borrow(), |r| r.connections[&con].server.clients[&client].optional_data.as_ref().unwrap())
-    }
-    fn get_connection_client_data(&self, con: ConnectionId, client: ClientId) -> Ref<structs::ConnectionClientData> {
-        Ref::map(self.inner.borrow(), |r| r.connections[&con].server.clients[&client].connection_data.as_ref().unwrap())
-    }
-
-    fn get_channel(&self, con: ConnectionId, chan: ChannelId) -> Ref<structs::Channel> {
-        Ref::map(self.inner.borrow(), |r| &r.connections[&con].server.channels[&chan])
-    }
-    fn get_optional_channel_data(&self, con: ConnectionId, chan: ChannelId) -> Ref<structs::OptionalChannelData> {
-        Ref::map(self.inner.borrow(), |r| r.connections[&con].server.channels[&chan].optional_data.as_ref().unwrap())
-    }
-
-    fn get_server_group(&self, con: ConnectionId, group: ServerGroupId) -> Ref<structs::ServerGroup> {
-        Ref::map(self.inner.borrow(), |r| &r.connections[&con].server.groups[&group])
-    }
-
     fn get_file(&self, _con: ConnectionId, _chan: ChannelId, _path: &str, _file: &str) -> Ref<structs::File> {
         unimplemented!("File transfer is not yet implemented")
     }
@@ -487,6 +455,7 @@ impl ConnectionManager {
         unimplemented!("Chatting is not yet implemented")
     }
 }
+include!(concat!(env!("OUT_DIR"), "/getters.rs"));
 
 struct RemoveListener {
     connection_id: ConnectionId,

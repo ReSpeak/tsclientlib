@@ -203,7 +203,6 @@ impl Into<Command> for <#= msg.class_name #> {
     }
 }
 
-<#/* TODO add To<T> */#>
 <# }
 // Create notification types
 #>

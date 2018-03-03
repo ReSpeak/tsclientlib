@@ -15,6 +15,7 @@ mod message_parser;
 mod permission_parser;
 mod messages_to_book_parser;
 mod facade_parser;
+mod connection_manager_getters;
 
 pub use book_parser::BookDeclarations;
 pub use message_parser::MessageDeclarations;
@@ -22,6 +23,7 @@ pub use error_parser::Errors;
 pub use permission_parser::Permissions;
 pub use messages_to_book_parser::MessagesToBookDeclarations;
 pub use facade_parser::FacadeDeclarations;
+pub use connection_manager_getters::ConnectionManagerGetters;
 
 type Map<K, V> = std::collections::HashMap<K, V>;
 
@@ -93,6 +95,16 @@ pub fn to_snake_case<S: AsRef<str>>(text: S) -> String {
     s
 }
 
+fn is_ref_type(s: &str) -> bool {
+    if s.starts_with("Option<") {
+        is_ref_type(&s[7..s.len() - 1])
+    } else {
+        !(s == "bool" || s.starts_with("i") || s.starts_with("u")
+            || s.starts_with("f") || s.ends_with("Id") || s.ends_with("Type")
+            || s.ends_with("Mode"))
+    }
+}
+
 /// Prepend `/// ` to each line of a string.
 pub fn doc_comment(s: &str) -> String {
     s.lines().map(|l| format!("/// {}\n", l)).collect()
@@ -111,4 +123,16 @@ pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
         result.push('\n');
     }
     result
+}
+
+pub fn join<S: AsRef<str>, S2: AsRef<str>, I: Iterator<Item = S>>(i: I, joiner: S2) -> String {
+    let joiner = joiner.as_ref();
+    let mut res = String::new();
+    for e in i {
+        if !res.is_empty() {
+            res.push_str(joiner);
+        }
+        res.push_str(e.as_ref());
+    }
+    res
 }

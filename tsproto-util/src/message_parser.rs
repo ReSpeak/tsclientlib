@@ -6,7 +6,7 @@ use ::*;
 pub struct MessageDeclarations {
     pub(crate) fields: Map<String, Field>,
     pub(crate) messages: Map<String, Message>,
-    notifies: Map<String, Notify>,
+    pub notifies: Map<String, Notify>,
 }
 
 impl Declaration for MessageDeclarations {

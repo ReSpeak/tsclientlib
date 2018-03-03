@@ -6,16 +6,6 @@ use book_parser::*;
 #[derive(Default, Debug)]
 pub struct FacadeDeclarations(pub BookDeclarations);
 
-fn is_ref_type(s: &str) -> bool {
-    if s.starts_with("Option<") {
-        is_ref_type(&s[7..s.len() - 1])
-    } else {
-        !(s == "bool" || s.starts_with("i") || s.starts_with("u")
-            || s.starts_with("f") || s.ends_with("Id") || s.ends_with("Type")
-            || s.ends_with("Mode"))
-    }
-}
-
 fn get_return_type(s: &str) -> String {
     if s.starts_with("Option<") {
         format!("Option<{}>", get_return_type(&s[7..s.len() - 1]))

@@ -36,7 +36,7 @@ enum RuleKind<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum RuleOp {
     Add,
     Remove,
@@ -168,4 +168,37 @@ fn mod_to_enu(modi: &str, i: usize) -> RuleOp {
         "" => RuleOp::Update,
         _ => panic!("Unknown modifier in line {}", i)
     }
+}
+
+impl<'a> RuleKind<'a> {
+    fn is_map(&self) -> bool {
+        if let RuleKind::Map { .. } = *self {
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_function(&self) -> bool {
+        if let RuleKind::Function { .. } = *self {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn get_id_args(event: &Event) -> String {
+    let mut res = String::new();
+    for id in &event.id {
+        if !res.is_empty() {
+            res.push_str(", ");
+        }
+        if is_ref_type(&id.rust_type) {
+            res.push('&');
+        }
+        res.push_str("cmd.");
+        res.push_str(&id.rust_name);
+    }
+    res
 }
