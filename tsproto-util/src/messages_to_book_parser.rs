@@ -1,8 +1,8 @@
 use ::*;
-use message_parser::Message;
-use book_parser::Struct;
-use message_parser::Field;
-use book_parser::Property;
+use message_parser::{Message, Field};
+use book_parser::{Struct, Property, Nested};
+use regex::{Regex};
+use std::io::BufReader;
 
 #[derive(Template)]
 #[TemplatePath = "src/MessagesToBook.tt"]
@@ -15,9 +15,9 @@ pub struct MessagesToBookDeclarations<'a> {
 
 #[derive(Debug)]
 struct Event<'a> {
-    /// Unique access tuple to get the property
     op: RuleOp,
-    id: Vec<String>,
+    /// Unique access tuple to get the property
+    id: Vec<IdKind<'a>>,
     msg: &'a Message,
     book_struct: &'a Struct,
     rules: Vec<RuleKind<'a>>,
@@ -32,7 +32,7 @@ enum RuleKind<'a> {
     },
     Function {
         name: String,
-        to: Vec<&'a Property>
+        to: Vec<PropKind<'a>>
     }
 }
 
@@ -43,10 +43,129 @@ enum RuleOp {
     Update,
 }
 
+#[derive(Debug)]
+enum IdKind<'a> {
+    Fld(&'a Field),
+    Id(),
+}
+
+#[derive(Debug)]
+enum PropKind<'a> {
+    Prop(&'a Property),
+    Nested(&'a Nested),
+}
+
 impl<'a> Declaration for MessagesToBookDeclarations<'a> {
+    type Dep = (&'a BookDeclarations, &'a MessageDeclarations);
+
     fn get_filename() -> &'static str { "MessagesToBook.txt" }
 
-    fn parse(s: &str) -> Self {
-        panic!()
+    fn parse_from_read(read: &mut Read, (book, messages): Self::Dep) -> Self {
+        let rgx_event = Regex::new(r##"^\s*(?P<msg>\w+)\s*->\s*(?P<stru>\w+)\[(?P<id>(\s*(@|\w+))*)\](?P<mod>(\+|-)?)$"##).unwrap();
+        let rgx_rule = Regex::new(r##"^\s*(?P<fld>\w+)\s*->\s*(?P<prop>(\w+|\(((\s*\w+\s*)(,(\s*\w+\s*))*)\)))(?P<mod>(\+|-)?)$"##).unwrap();
+
+        let mut decls = Vec::new();
+        let mut buildev: Option<(Event, Vec<&Field>)> = None;
+
+        for (i, line) in BufReader::new(read).lines().map(Result::unwrap).enumerate() {
+            let i = i + 1;
+            let trimmed = line.trim_left();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+
+            if rgx_event.is_match(&trimmed) {
+                if let Some(buildfin) = buildev.take() {
+                    decls.push(buildfin.0);
+                }
+
+                let capture = rgx_event.captures(&trimmed).unwrap();
+
+                let msg = &capture["msg"];
+                let stru = &capture["stru"];
+                let id = &capture["id"];
+                let modi = &capture["mod"];
+
+                let set_msg = messages.messages.get(msg).expect(&format!("Cannot find message defined in line {}", i));
+                let msg_fields = set_msg.params.iter().map(|f| messages.fields.get(f)).map(Option::unwrap).collect::<Vec<_>>();
+                let set_stru = book.structs.iter().find(|s| s.name == stru).expect(&format!("Cannot find struct defined in line {}", i));
+                let set_id = id
+                    .split(" ")
+                    .map(|s| s.trim())
+                    .map(|s|
+                        if s.starts_with('@') { IdKind::Id() }
+                        else { IdKind::Fld(find_field(s, &msg_fields, i)) } )
+                    .collect::<Vec<_>>();
+                let set_modi = mod_to_enu(modi, i);
+
+                buildev = Some((Event {
+                    op: set_modi,
+                    id: set_id,
+                    msg: set_msg,
+                    book_struct: set_stru,
+                    rules: Vec::new(),
+                }, msg_fields));
+            } else if rgx_rule.is_match(&trimmed) {
+                let buildev = buildev.as_mut().expect(&format!("No event declaration found before this rule (line {})", i));
+
+                let capture = rgx_rule.captures(&trimmed).unwrap();
+
+                let find_prop = |name, book_struct: &Struct| {
+                    if let Some(prop) = book.properties.iter().find(|p| p.struct_name == book_struct.name && p.name == name) {
+                        return PropKind::Prop(prop);
+                    }
+                    if let Some(nest) = book.nesteds.iter().find(|p| p.struct_name == book_struct.name && p.name == name) {
+                        return PropKind::Nested(nest);
+                    }
+                    panic!("No such (nested) property found in struct (line {})", i);
+                };
+
+                let fld = &capture["fld"];
+                let prop = &capture["prop"];
+                let modi = &capture["mod"];
+
+                let set_modi = mod_to_enu(modi, i);
+
+                let event = if prop.starts_with("(") { // Function
+                    RuleKind::Function {
+                        name: fld.to_string(),
+                        to: prop.trim_left_matches('(').trim_right_matches(')').split(",").map(|x| x.trim()).map(|x| find_prop(x, buildev.0.book_struct)).collect::<Vec<_>>(),
+                    }
+                } else { // Map
+                    if let PropKind::Prop(prop) = find_prop(prop, buildev.0.book_struct) {
+                        RuleKind::Map {
+                            from: find_field(fld, &buildev.1, i),
+                            to: prop,
+                            op: set_modi
+                        }
+                    }
+                    else { panic!("Mapped values cannot be nested types.") }
+                };
+                buildev.0.rules.push(event);
+            } else {
+                panic!("Parse error in line {}", i);
+            }
+        }
+
+        if let Some(buildfin) = buildev.take() {
+            decls.push(buildfin.0);
+        }
+
+        MessagesToBookDeclarations{ book, messages, decls }
+    }
+}
+
+// the in rust callable name (in PascalCase) from the field
+fn find_field<'a>(name: &str, msg_fields: &Vec<&'a Field>, i: usize) -> &'a Field {
+    let name_snake = to_snake_case(name);
+    *msg_fields.iter().find(|f| f.rust_name == name_snake).expect(&format!("Cannot find field '{}' in line {}", name, i))
+}
+
+fn mod_to_enu(modi: &str, i: usize) -> RuleOp {
+    match modi {
+        "+" => RuleOp::Add,
+        "-" => RuleOp::Remove,
+        "" => RuleOp::Update,
+        _ => panic!("Unknown modifier in line {}", i)
     }
 }

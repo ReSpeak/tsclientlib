@@ -13,7 +13,7 @@ fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
 
     // Read errors
-    let decls = Errors::from_file(&base_dir);
+    let decls = Errors::from_file(&base_dir, ());
 
     // Write errors
     let path = Path::new(&out_dir);
@@ -21,7 +21,7 @@ fn main() {
     write!(&mut structs, "{}", decls).unwrap();
 
     // Read permissions
-    let decls = Permissions::from_file(&base_dir);
+    let decls = Permissions::from_file(&base_dir, ());
 
     // Write permissions
     let path = Path::new(&out_dir);
@@ -29,7 +29,7 @@ fn main() {
     write!(&mut structs, "{}", decls).unwrap();
 
     // Read messages
-    let decls = MessageDeclarations::from_file(&base_dir);
+    let decls = MessageDeclarations::from_file(&base_dir, ());
 
     // Write messages
     let path = Path::new(&out_dir);

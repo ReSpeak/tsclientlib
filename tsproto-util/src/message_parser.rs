@@ -4,15 +4,17 @@ use ::*;
 #[TemplatePath = "src/MessageDeclarations.tt"]
 #[derive(Default, Debug)]
 pub struct MessageDeclarations {
-    fields: Map<String, Field>,
-    messages: Map<String, Message>,
+    pub(crate) fields: Map<String, Field>,
+    pub(crate) messages: Map<String, Message>,
     notifies: Map<String, Notify>,
 }
 
 impl Declaration for MessageDeclarations {
+    type Dep = ();
+
     fn get_filename() -> &'static str { "Messages.txt" }
 
-    fn parse(s: &str) -> MessageDeclarations {
+    fn parse(s: &str, (): Self::Dep) -> MessageDeclarations {
         let mut decls = MessageDeclarations::default();
 
         for l in s.lines() {
@@ -76,6 +78,7 @@ impl Declaration for MessageDeclarations {
 pub struct Field {
     pub ts_name: String,
     pub name: String,
+    /// rust callable name in snake_case
     pub rust_name: String,
     pub type_orig: String,
     pub rust_type: String,
@@ -87,6 +90,7 @@ pub struct Message {
     pub notify_name: String,
     pub is_notify: bool,
     pub is_response: bool,
+    /// list of: mapping name of a field used by this message.
     pub params: Vec<String>,
 }
 

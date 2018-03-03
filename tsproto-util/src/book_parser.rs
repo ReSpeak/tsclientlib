@@ -11,9 +11,11 @@ pub struct BookDeclarations {
 }
 
 impl Declaration for BookDeclarations {
+    type Dep = ();
+
     fn get_filename() -> &'static str { "BookDeclarations.txt" }
 
-    fn parse(s: &str) -> Self {
+    fn parse(s: &str, (): Self::Dep) -> Self {
         let param_re = Regex::new(r#"\s*(?P<pname>(get|set|doc|id))\s*:\s*(?P<pval>(?:\w+|"([^"]|["\\n])*"|\[[^]]*\]))\s*,?"#).unwrap();
         let struct_re = Regex::new(r"\s*(?P<name>\w+)\s*;?").unwrap();
         let prop_re = Regex::new(r"\s*(?P<name>\w+)\s*,\s*(?P<type>\w+)(?P<mod>(\?|\[\])?)\s*;?").unwrap();
@@ -157,9 +159,12 @@ pub struct Struct {
 
 #[derive(Default, Clone, Debug)]
 pub struct Property {
+    /// The name of this property (in PascalCase) which can be called from rust when generated.
     pub name: String,
+    /// The rust declaration type.
     pub type_s: String,
     pub values: Values,
+    /// The name of the struct which is containing this property.
     pub struct_name: String,
 }
 

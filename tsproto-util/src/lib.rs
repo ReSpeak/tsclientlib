@@ -33,26 +33,28 @@ pub struct EnumValue {
 }
 
 pub trait Declaration {
+    type Dep;
+
     fn get_filename() -> &'static str;
 
-    fn parse(s: &str) -> Self where Self: Sized {
+    fn parse(s: &str, dep: Self::Dep) -> Self where Self: Sized {
         let mut cursor = Cursor::new(s.as_bytes());
-        Self::parse_from_read(&mut cursor)
+        Self::parse_from_read(&mut cursor, dep)
     }
 
-    fn parse_from_read(read: &mut Read) -> Self where Self: Sized {
+    fn parse_from_read(read: &mut Read, dep: Self::Dep) -> Self where Self: Sized {
         let mut v = Vec::new();
         read.read_to_end(&mut v).unwrap();
         let s = String::from_utf8(v).unwrap();
-        Self::parse(&s)
+        Self::parse(&s, dep)
     }
 
-    fn from_file(base: &str) -> Self where Self: Sized {
+    fn from_file(base: &str, dep: Self::Dep) -> Self where Self: Sized {
         let file = format!("{}/declarations/{}", base, Self::get_filename());
         println!("cargo:rerun-if-changed={}", file);
 
         let mut fread = File::open(file).unwrap();
-        Self::parse_from_read(&mut fread)
+        Self::parse_from_read(&mut fread, dep)
     }
 }
 
