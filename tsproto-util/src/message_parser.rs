@@ -74,7 +74,7 @@ impl Declaration for MessageDeclarations {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Eq, PartialEq)]
 pub struct Field {
     pub ts_name: String,
     pub name: String,

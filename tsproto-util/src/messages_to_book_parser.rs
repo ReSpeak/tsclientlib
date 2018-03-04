@@ -75,9 +75,7 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
             }
 
             if rgx_event.is_match(&trimmed) {
-                if let Some(buildfin) = buildev.take() {
-                    decls.push(buildfin.0);
-                }
+                finalize(book, &mut decls, buildev);
 
                 let capture = rgx_event.captures(&trimmed).unwrap();
 
@@ -133,8 +131,12 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
                     }
                 } else { // Map
                     if let PropKind::Prop(prop) = find_prop(prop, buildev.0.book_struct) {
+                        let from_fld = find_field(fld, &buildev.1, i);
+                        if from_fld.name == prop.name {
+                            println!("This field assignment is already implicitly defined (line {})", i);
+                        }
                         RuleKind::Map {
-                            from: find_field(fld, &buildev.1, i),
+                            from: from_fld,
                             to: prop,
                             op: set_modi
                         }
@@ -147,11 +149,29 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
             }
         }
 
-        if let Some(buildfin) = buildev.take() {
-            decls.push(buildfin.0);
-        }
+        finalize(book, &mut decls, buildev);
 
         MessagesToBookDeclarations{ book, messages, decls }
+    }
+}
+
+fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev: Option<(Event<'a>, Vec<&'a Field>)>) {
+    if let Some((mut ev, flds)) = buildev {
+        let used_flds = ev.rules.iter().filter_map(|f| match *f { RuleKind::Map{ from, .. } => Some(from), _ => None, }).collect::<Vec<_>>();
+        for fld in flds {
+            if used_flds.contains(&fld) {
+                continue;
+            }
+            if let Some(prop) = book.properties.iter().find(|p| p.struct_name == ev.book_struct.name && p.name == fld.name) {
+                ev.rules.push(RuleKind::Map {
+                    from: fld,
+                    to: prop,
+                    op: RuleOp::Update,
+                });
+            }
+        }
+
+        decls.push(ev);
     }
 }
 
