@@ -22,6 +22,7 @@ extern crate tsproto;
 extern crate tsproto_commands;
 
 use std::cell::{Ref, RefCell, RefMut};
+use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 

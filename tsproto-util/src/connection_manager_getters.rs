@@ -42,7 +42,8 @@ impl Default for ConnectionManagerGetters {
             get: "r.connections[&con].server.optional_data.as_ref().unwrap()",
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.optional_data.as_mut().unwrap()",
-            add: None, // TODO
+            add: Some("mem::replace(&mut r.connections.get_mut(&con).unwrap()
+                .server.optional_data, Some(val))"),
             remove: None,
         });
 
@@ -56,7 +57,8 @@ impl Default for ConnectionManagerGetters {
             get: "r.connections[&con].server.connection_data.as_ref().unwrap()",
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.connection_data.as_mut().unwrap()",
-            add: None, // TODO
+            add: Some("mem::replace(&mut r.connections.get_mut(&con).unwrap()
+                .server.connection_data, Some(val))"),
             remove: None,
         });
 
@@ -70,8 +72,10 @@ impl Default for ConnectionManagerGetters {
             get: "&r.connections[&con].server.clients[&client]",
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.clients.get_mut(&client).unwrap()",
-            add: None, // TODO
-            remove: None, // TODO
+            add: Some("r.connections.get_mut(&con).unwrap()
+                .server.clients.insert(client, val)"),
+            remove: Some("r.connections.get_mut(&con).unwrap()
+                .server.clients.remove(&client)"),
         });
 
         res.getters.push(Getter {
@@ -87,7 +91,9 @@ impl Default for ConnectionManagerGetters {
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.clients.get_mut(&client).unwrap()
                 .optional_data.as_mut().unwrap()",
-            add: None, // TODO
+            add: Some("mem::replace(&mut r.connections.get_mut(&con).unwrap()
+                .server.clients.get_mut(&client).unwrap()
+                .optional_data, Some(val))"),
             remove: None,
         });
 
@@ -104,7 +110,9 @@ impl Default for ConnectionManagerGetters {
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.clients.get_mut(&client).unwrap()
                 .connection_data.as_mut().unwrap()",
-            add: None, // TODO
+            add: Some("mem::replace(&mut r.connections.get_mut(&con).unwrap()
+                .server.clients.get_mut(&client).unwrap()
+                .connection_data, Some(val))"),
             remove: None,
         });
 
@@ -118,8 +126,10 @@ impl Default for ConnectionManagerGetters {
             get: "&r.connections[&con].server.channels[&channel]",
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.channels.get_mut(&channel).unwrap()",
-            add: None, // TODO
-            remove: None, // TODO
+            add: Some("r.connections.get_mut(&con).unwrap()
+                .server.channels.insert(channel, val)"),
+            remove: Some("r.connections.get_mut(&con).unwrap()
+                .server.channels.remove(&channel)"),
         });
 
         res.getters.push(Getter {
@@ -135,7 +145,9 @@ impl Default for ConnectionManagerGetters {
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.channels.get_mut(&channel).unwrap()
                 .optional_data.as_mut().unwrap()",
-            add: None, // TODO
+            add: Some("mem::replace(&mut r.connections.get_mut(&con).unwrap()
+                .server.channels.get_mut(&channel).unwrap()
+                .optional_data, Some(val))"),
             remove: None,
         });
 
@@ -149,8 +161,10 @@ impl Default for ConnectionManagerGetters {
             get: "&r.connections[&con].server.groups[&group]",
             get_mut: "r.connections.get_mut(&con).unwrap()
                 .server.groups.get_mut(&group).unwrap()",
-            add: None, // TODO
-            remove: None, // TODO
+            add: Some("r.connections.get_mut(&con).unwrap()
+                .server.groups.insert(group, val)"),
+            remove: Some("r.connections.get_mut(&con).unwrap()
+                .server.groups.remove(&group)"),
         });
 
         res

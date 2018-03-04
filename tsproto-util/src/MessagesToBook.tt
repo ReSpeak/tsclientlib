@@ -2,6 +2,8 @@
 impl Connection {
     fn handle_message_generated(&mut self, msg: &Notification) {
         // TODO Also raise events for changes, adds, removes
+        // TODO We cannot be sure that the ideas that we get really exist, so
+        // check if have the channel, etc. first.
         match *msg {
 <# for event in &self.decls {
     let enum_name = &self.messages.notifies[&event.msg.notify_name].enum_name;

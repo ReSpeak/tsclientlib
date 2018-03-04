@@ -13,14 +13,14 @@ impl ConnectionManager {
     }
 <# if let Some(add) = g.add { #>
     /// Returns the old element with the same key if it existed.
-    fn add_<#= g.name #>(&mut self, <#= g.args #>, val: <#= g.return_type #>) -> Option<RefMut<<#= g.return_type #>>> {
+    fn add_<#= g.name #>(&mut self, <#= g.args #>, val: <#= g.return_type #>) -> Option<<#= g.return_type #>> {
         let mut r = self.inner.borrow_mut();
         <#= add #>
     }
 <# } #>
 <# if let Some(remove) = g.remove { #>
     /// Returns the old element if it existed.
-    fn remove_<#= g.name #>(&mut self, <#= g.args #>) -> Option<RefMut<<#= g.return_type #>>> {
+    fn remove_<#= g.name #>(&mut self, <#= g.args #>) -> Option<<#= g.return_type #>> {
         let mut r = self.inner.borrow_mut();
         <#= remove #>
     }
