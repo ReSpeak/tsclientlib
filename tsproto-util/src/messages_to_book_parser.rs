@@ -157,12 +157,35 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
 
 fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev: Option<(Event<'a>, Vec<&'a Field>)>) {
     if let Some((mut ev, flds)) = buildev {
-        let used_flds = ev.rules.iter().filter_map(|f| match *f { RuleKind::Map{ from, .. } => Some(from), _ => None, }).collect::<Vec<_>>();
+        let used_flds = ev.rules
+            .iter()
+            .filter_map(|f| match *f { RuleKind::Map{ from, .. } => Some(from), _ => None, })
+            .collect::<Vec<_>>();
+
+        let mut used_props = vec![];
+        for rule in &ev.rules {
+            match rule {
+                &RuleKind::Function{ ref to, .. } => {
+                    for propk in to {
+                        match *propk {
+                            PropKind::Prop(prop) => used_props.push(prop),
+                            _ => {}
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
+
         for fld in flds {
             if used_flds.contains(&fld) {
                 continue;
             }
             if let Some(prop) = book.properties.iter().find(|p| p.struct_name == ev.book_struct.name && p.name == fld.name) {
+                if used_props.contains(&prop) {
+                    continue;
+                }
+
                 ev.rules.push(RuleKind::Map {
                     from: fld,
                     to: prop,
@@ -224,4 +247,12 @@ fn get_id_args(event: &Event) -> String {
         }
     }
     res
+}
+
+fn gen_return_match(to: &[PropKind]) -> String {
+    if to.len() == 1 {
+        get_prop_name(&to[0])
+    } else {
+        format!("({})", join(to.iter().map(get_prop_name), ", "))
+    }
 }

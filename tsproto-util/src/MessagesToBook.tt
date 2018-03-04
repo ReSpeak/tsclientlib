@@ -35,7 +35,7 @@ impl Connection {
                         }
 
                         RuleKind::Function { ref name, ref to } => { #>
-                let (<#= join(to.iter().map(|p| get_prop_name(p)), ", ") #>) = self.<#= to_snake_case(name) #>(cmd, &mut *r);
+                let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd, &mut *r);
             <# for p in to.iter() { #>
                 r.<#= get_prop_name(p) #> = <#= get_prop_name(p) #>;
             <# }
@@ -47,7 +47,7 @@ impl Connection {
                 // First, call all functions
                 for fun in event.rules.iter().filter(|r| r.is_function()) {
                     if let RuleKind::Function { ref name, ref to } = *fun { #>
-                let (<#= join(to.iter().map(|p| get_prop_name(p)), ", ") #>) = self.<#= to_snake_case(name) #>(cmd);
+                let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
                     <# }
                 } #>
                 let r = <#= event.book_struct.name #> {

@@ -13,6 +13,7 @@ use tsproto_commands::messages::*;
 use {ChannelType, Map, MaxFamilyClients, TalkPowerRequest};
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
+include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
 
 impl Connection {
     fn new(id: ConnectionId, server_uid: Uid, packet: &InitServer)
@@ -68,6 +69,80 @@ impl Connection {
         match *msg {
             _ => {} // TODO
         }
+    }
+
+    // Backing functions for MessageToBook declarations
+
+    fn return_false<T>(&self, _: T) -> bool { false }
+    fn return_none<T, O>(&self, _: T) -> Option<O> { None }
+
+    fn max_clients_cc_fun(&self, cmd: &ChannelCreated) -> (Option<u16>, MaxFamilyClients) {
+        let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
+        let ch_fam =
+            if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
+            else if cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
+            else { MaxFamilyClients::Limited(cmd.max_family_clients) };
+        (ch, ch_fam)
+    }
+    fn max_clients_ce_fun(&self, cmd: &ChannelEdited, _: &mut Channel) -> (Option<u16>, MaxFamilyClients) {
+        let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
+        let ch_fam =
+            if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
+            else if cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
+            else { MaxFamilyClients::Limited(cmd.max_family_clients) };
+        (ch, ch_fam)
+    }
+    fn max_clients_cl_fun(&self, cmd: &ChannelList) -> (Option<u16>, MaxFamilyClients) {
+        let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
+        let ch_fam =
+            if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
+            else if cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
+            else { MaxFamilyClients::Limited(cmd.max_family_clients) };
+        (ch, ch_fam)
+    }
+
+    fn channel_type_cc_fun(&self, cmd: &ChannelCreated) -> ChannelType {
+        if cmd.is_permanent { ChannelType::Permanent }
+        else if cmd.is_semi_permanent { ChannelType::SemiPermanent }
+        else { ChannelType::Temporary }
+    }
+
+    fn channel_type_ce_fun(&self, cmd: &ChannelEdited, _: &mut Channel) -> ChannelType {
+        if cmd.is_permanent { ChannelType::Permanent }
+        else if cmd.is_semi_permanent { ChannelType::SemiPermanent }
+        else { ChannelType::Temporary }
+    }
+
+    fn channel_type_cl_fun(&self, cmd: &ChannelList) -> ChannelType {
+        if cmd.is_permanent { ChannelType::Permanent }
+        else if cmd.is_semi_permanent { ChannelType::SemiPermanent }
+        else { ChannelType::Temporary }
+    }
+
+    fn away_fun(&self, cmd: &ClientEnterView) -> Option<String> {
+        if cmd.is_away { Some(cmd.away_message.clone()) }
+        else { None }
+    }
+
+    fn talk_power_fun(&self, cmd: &ClientEnterView) -> Option<TalkPowerRequest> {
+        // TODO optional time && msg
+        if cmd.talk_power_request_time.timestamp() > 0 {
+            Some( TalkPowerRequest {
+                time: cmd.talk_power_request_time,
+                message: cmd.talk_power_request_message.clone(),
+            })
+        } else {
+            None
+        }
+    }
+
+    fn badges_fun(&self, _cmd: &ClientEnterView) -> Vec<String> {
+        Vec::new() // TODO
+    }
+
+    fn address_fun(&self, cmd: &ConnectionInfo) -> Option<SocketAddr> {
+        let ip = if let Ok(ip) = cmd.ip.parse() { ip } else { return None };
+        Some(SocketAddr::new(ip, cmd.port))
     }
 }
 
