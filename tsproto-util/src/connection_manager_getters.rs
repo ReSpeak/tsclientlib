@@ -156,15 +156,3 @@ impl Default for ConnectionManagerGetters {
         res
     }
 }
-
-fn get_arg_names(args: &str) -> String {
-    let mut res = String::new();
-    for arg in args.split(',') {
-        let arg = arg.split(':').next().unwrap();
-        if !res.is_empty() {
-            res.push_str(", ");
-        }
-        res.push_str(arg);
-    }
-    res
-}

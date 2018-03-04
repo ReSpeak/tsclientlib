@@ -25,6 +25,8 @@ fn main() {
 
     {
         let m2bdecls = MessagesToBookDeclarations::from_file(&base_dir, (&decls, &messages));
+        let mut structs = File::create(&path.join("m2bdecls.rs")).unwrap();
+        write!(&mut structs, "{}", m2bdecls).unwrap();
     }
 
     // Write facades

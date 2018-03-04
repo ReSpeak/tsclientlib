@@ -18,34 +18,34 @@ impl Connection {
                             // Put field from packet into bookkeeping struct
                             match op {
                                 RuleOp::Update => { #>
-                r.<#= to.name #> = cmd.<#= from.rust_name #>;
+                r.<#= to_snake_case(&to.name) #> = cmd.<#= from.rust_name #>;
                                 <# }
                                 // The field in the struct is a vector
                                 RuleOp::Add => { #>
-                r.<#= to.name #>.push(cmd.<#= from.rust_name #>);
+                r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.rust_name #>);
                                 <# }
                                 RuleOp::Remove => { #>
                                     // Find index and remove
-                let i = r.<#= to.name #>.iter().position(cmd.<#= from.rust_name #>);
-                r.<#= to.name #>.remove(i);
+                let i = r.<#= to_snake_case(&to.name) #>.iter().position(cmd.<#= from.rust_name #>);
+                r.<#= to_snake_case(&to.name) #>.remove(i);
                                 <# }
                             }
                         }
 
                         RuleKind::Function { ref name, ref to } => { #>
-                let (<#= join(to.iter().map(|p| &p.name), ",") #>) = self.<#= name #>(cmd, &*r);
+                let (<#= join(to.iter().map(|p| get_prop_name(p)), ", ") #>) = self.<#= to_snake_case(name) #>(cmd, &*r);
             <# for p in to.iter() { #>
-                r.<#= p.name #> = <#= p.name #>;
+                r.<#= get_prop_name(p) #> = <#= get_prop_name(p) #>;
             <# }
                         }
                     }
-                } #>
-            <# } else if event.op == RuleOp::Add {
+                }
+            } else if event.op == RuleOp::Add {
                 // Create a new object
                 // First, call all functions
                 for fun in event.rules.iter().filter(|r| r.is_function()) {
                     if let RuleKind::Function { ref name, ref to } = *fun { #>
-                let (<#= join(to.iter().map(|p| &p.name), ",") #>) = self.<#= name #>(cmd, &*r);
+                let (<#= join(to.iter().map(|p| get_prop_name(p)), ", ") #>) = self.<#= to_snake_case(name) #>(cmd);
                     <# }
                 } #>
                 let r = <#= event.book_struct.name #> {
@@ -57,11 +57,14 @@ impl Connection {
                     } else {
                         &v
                     }) { #>
-                    <#= p.name #>,
+                    <#= get_prop_name(p) #>,
                 <# }
                 for p in event.rules.iter() {
-                    if let RuleKind::Map { from, to, op } = *p { #>
-                    <#= to.name #>: cmd.<#= from.rust_name #>,
+                    if let RuleKind::Map { from, to, op } = *p {
+                        if op != RuleOp::Update {
+                            panic!("Cannot add or remove when adding a new struct");
+                        } #>
+                    <#= to_snake_case(&to.name) #>: cmd.<#= from.rust_name #>,
                     <# }
                 } #>
                 };

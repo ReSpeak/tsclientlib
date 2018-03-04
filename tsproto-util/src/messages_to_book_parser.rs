@@ -46,7 +46,7 @@ enum RuleOp {
 #[derive(Debug)]
 enum IdKind<'a> {
     Fld(&'a Field),
-    Id(),
+    Id,
 }
 
 #[derive(Debug)]
@@ -93,7 +93,7 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
                     .split(" ")
                     .map(|s| s.trim())
                     .map(|s|
-                        if s.starts_with('@') { IdKind::Id() }
+                        if s.starts_with('@') { IdKind::Id }
                         else { IdKind::Fld(find_field(s, &msg_fields, i)) } )
                     .collect::<Vec<_>>();
                 let set_modi = mod_to_enu(modi, i);
@@ -171,14 +171,6 @@ fn mod_to_enu(modi: &str, i: usize) -> RuleOp {
 }
 
 impl<'a> RuleKind<'a> {
-    fn is_map(&self) -> bool {
-        if let RuleKind::Map { .. } = *self {
-            true
-        } else {
-            false
-        }
-    }
-
     fn is_function(&self) -> bool {
         if let RuleKind::Function { .. } = *self {
             true
@@ -188,17 +180,28 @@ impl<'a> RuleKind<'a> {
     }
 }
 
+fn get_prop_name<'a>(p: &PropKind<'a>) -> String {
+    to_snake_case(match *p {
+        PropKind::Prop(ref p) => &p.name,
+        PropKind::Nested(ref p) => &p.name,
+    })
+}
+
 fn get_id_args(event: &Event) -> String {
     let mut res = String::new();
     for id in &event.id {
         if !res.is_empty() {
             res.push_str(", ");
         }
-        if is_ref_type(&id.rust_type) {
-            res.push('&');
+        if let IdKind::Fld(f) = *id {
+            if is_ref_type(&f.rust_type) {
+                res.push('&');
+            }
+            res.push_str("cmd.");
+            res.push_str(&f.rust_name);
+        } else {
+            res.push_str("self.id");
         }
-        res.push_str("cmd.");
-        res.push_str(&id.rust_name);
     }
     res
 }
