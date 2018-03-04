@@ -10,7 +10,7 @@ use tsproto::client;
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
 
-use {ChannelType, Map};
+use {ChannelType, Map, MaxFamilyClients, TalkPowerRequest};
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 
