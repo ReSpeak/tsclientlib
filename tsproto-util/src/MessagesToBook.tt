@@ -10,17 +10,24 @@ impl Connection {
 #>
             Notification::<#= enum_name #>(ref cmd) => {
             <# if event.op == RuleOp::Remove { #>
-                self.cm.remove_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>);
+                self.remove_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>);
             <# } else if event.op == RuleOp::Update { #>
-                let mut r = self.cm.get_mut_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>);
                 <# // Update the object
+                // Functions first
+                for rule in &event.rules {
+                    if let RuleKind::Function { ref name, ref to } = *rule { #>
+                let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
+                    <# }
+                } #>
+                let mut r = self.get_mut_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>);
+                <#
                 for rule in &event.rules {
                     match *rule {
                         RuleKind::Map { from, to, op } => {
                             // Put field from packet into bookkeeping struct
                             match op {
                                 RuleOp::Update => { #>
-                r.<#= to_snake_case(&to.name) #> = cmd.<#= from.rust_name #>;
+                r.<#= to_snake_case(&to.name) #> = cmd.<#= get_notification_field(from) #>;
                                 <# }
                                 // The field in the struct is a vector
                                 RuleOp::Add => { #>
@@ -28,14 +35,13 @@ impl Connection {
                                 <# }
                                 RuleOp::Remove => { #>
                                     // Find index and remove
-                let i = r.<#= to_snake_case(&to.name) #>.iter().position(cmd.<#= from.rust_name #>);
+                let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.rust_name #>);
                 r.<#= to_snake_case(&to.name) #>.remove(i);
                                 <# }
                             }
                         }
 
-                        RuleKind::Function { ref name, ref to } => { #>
-                let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd, &mut *r);
+                        RuleKind::Function { ref to, .. } => { #>
             <# for p in to.iter() { #>
                 r.<#= get_prop_name(p) #> = <#= get_prop_name(p) #>;
             <# }
@@ -51,7 +57,30 @@ impl Connection {
                     <# }
                 } #>
                 let r = <#= event.book_struct.name #> {
-                <# let v = vec![];
+                <# // Add ids
+                let ids: Vec<_>;
+                if !event.book_struct.values.id.is_empty() {
+                    ids = event.book_struct.values.id
+                        .trim_left_matches('[').trim_right_matches(']')
+                        .split(' ')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| self.book.get_property(s.trim()))
+                        .collect();
+                } else {
+                    ids = Vec::new();
+                }
+                for (id, eid) in ids.iter().zip(event.id.iter()) {
+                    match *eid {
+                        IdKind::Fld(fld) => { #>
+                    <#= id.get_attr_name(&event.book_struct.name) #>: cmd.<#= get_notification_field(fld) #>,
+                        <# }
+                        IdKind::Id => { #>
+                    <#= id.get_attr_name(&event.book_struct.name) #>: self.id,
+                        <# }
+                    }
+                }
+
+                let v = vec![];
                 // Function return values
                 for p in event.rules.iter()
                     .flat_map(|f| if let RuleKind::Function { ref to, .. } = *f {
@@ -66,11 +95,11 @@ impl Connection {
                         if op != RuleOp::Update {
                             panic!("Cannot add or remove when adding a new struct");
                         } #>
-                    <#= to_snake_case(&to.name) #>: cmd.<#= from.rust_name #>,
+                    <#= to_snake_case(&to.name) #>: cmd.<#= get_notification_field(from) #>,
                     <# }
                 } #>
                 };
-                self.cm.add_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>, r);
+                self.add_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>, r);
             <# } #>
             }
 <# } #>

@@ -242,11 +242,17 @@ fn get_id_args(event: &Event) -> String {
             }
             res.push_str("cmd.");
             res.push_str(&f.rust_name);
-        } else {
-            res.push_str("self.id");
         }
     }
     res
+}
+
+fn get_notification_field(from: &Field) -> String {
+    if from.rust_type == "String" || from.rust_type == "Uid" || from.rust_type.starts_with("Vec<") {
+        format!("{}.clone()", from.rust_name)
+    } else {
+        from.rust_name.clone()
+    }
 }
 
 fn gen_return_match(to: &[PropKind]) -> String {

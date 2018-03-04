@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::mem;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
@@ -65,11 +66,26 @@ impl Connection {
 
     fn handle_message(&mut self, msg: &Notification) {
         // TODO Replace by code generation
+        self.handle_message_generated(msg);
         // Also raise events
         match *msg {
             _ => {} // TODO
         }
     }
+
+    fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
+    fn add_server_group(&mut self, group: ServerGroupId, r: ServerGroup) -> Option<ServerGroup> { self.server.groups.insert(group, r) }
+
+    fn get_mut_client(&mut self, client: ClientId) -> &mut Client { self.server.clients.get_mut(&client).unwrap() }
+    fn add_client(&mut self, client: ClientId, r: Client) -> Option<Client> { self.server.clients.insert(client, r) }
+    fn remove_client(&mut self, client: ClientId) -> Option<Client> { self.server.clients.remove(&client) }
+    fn add_connection_client_data(&mut self, client: ClientId, r: ConnectionClientData) -> Option<ConnectionClientData> {
+        mem::replace(&mut self.server.clients.get_mut(&client).unwrap().connection_data, Some(r))
+    }
+
+    fn get_mut_channel(&mut self, channel: ChannelId) -> &mut Channel { self.server.channels.get_mut(&channel).unwrap() }
+    fn add_channel(&mut self, channel: ChannelId, r: Channel) -> Option<Channel> { self.server.channels.insert(channel, r) }
+    fn remove_channel(&mut self, channel: ChannelId) -> Option<Channel> { self.server.channels.remove(&channel) }
 
     // Backing functions for MessageToBook declarations
 
@@ -84,7 +100,7 @@ impl Connection {
             else { MaxFamilyClients::Limited(cmd.max_family_clients) };
         (ch, ch_fam)
     }
-    fn max_clients_ce_fun(&self, cmd: &ChannelEdited, _: &mut Channel) -> (Option<u16>, MaxFamilyClients) {
+    fn max_clients_ce_fun(&self, cmd: &ChannelEdited) -> (Option<u16>, MaxFamilyClients) {
         let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
         let ch_fam =
             if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
@@ -107,7 +123,7 @@ impl Connection {
         else { ChannelType::Temporary }
     }
 
-    fn channel_type_ce_fun(&self, cmd: &ChannelEdited, _: &mut Channel) -> ChannelType {
+    fn channel_type_ce_fun(&self, cmd: &ChannelEdited) -> ChannelType {
         if cmd.is_permanent { ChannelType::Permanent }
         else if cmd.is_semi_permanent { ChannelType::SemiPermanent }
         else { ChannelType::Temporary }

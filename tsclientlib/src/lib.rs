@@ -1,6 +1,23 @@
-//! The base class of this library is the [`ConnectionManager`].
+//! tsclientlib is a library which makes it simple to create TeamSpeak clients
+//! and bots.
+//!
+//! If you want a full client application, you might want to have a look at
+//! [Qint].
+//!
+//! The base class of this library is the [`ConnectionManager`]. From there you
+//! can create, inspect, modify and remove connections.
 //!
 //! [`ConnectionManager`]: struct.ConnectionManager.html
+//! [Qint]: https://github.com/ReSpeak/Qint
+
+// # Internal structure
+// ConnectionManager is a wrapper around Rc<RefCell<InnerCM>>,
+// it contains the api to create and destroy connections.
+// To inspect/modify things, facade objects are used (included in lib.rs).
+// All facade objects exist in a mutable and non-mutable version and they borrow
+// the ConnectionManager.
+//
+// InnerCM contains a Map<ConnectionId, structs::NetworkWrapper>
 
 // TODO
 #![allow(dead_code)]
@@ -494,6 +511,22 @@ impl<CM: TsprotoCM> ConnectionListener<CM> for RemoveListener {
 impl<'a> Connection<'a> {
     pub fn get_server(&self) -> Server {
         Server {
+            cm: self.cm,
+            connection_id: self.id,
+        }
+    }
+}
+
+impl<'a> ConnectionMut<'a> {
+    pub fn get_server(&self) -> Server {
+        Server {
+            cm: self.cm,
+            connection_id: self.id,
+        }
+    }
+
+    pub fn get_mut_server(&mut self) -> ServerMut {
+        ServerMut {
             cm: self.cm,
             connection_id: self.id,
         }
