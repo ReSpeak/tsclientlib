@@ -454,6 +454,21 @@ impl ConnectionManager {
     fn get_chat_entry(&self, _con: ConnectionId, _sender: ClientId) -> Ref<structs::ChatEntry> {
         unimplemented!("Chatting is not yet implemented")
     }
+
+    fn return_false<T>(&self, _: T) -> bool { false }
+    fn return_none<T, O>(&self, _: T) -> Option<O> { None }
+
+    fn max_clients_fun(&self, cmd: &ChannelCreated) -> (Option<u32>, Option<u32>) {
+        let ch = if cmd.IsMaxClientsUnlimited { None } else { cmd.MaxClients };
+        let ch_fam = if cmd.IsMaxFamilyClientsUnlimited { None }
+            else { cmd.MaxFamilyClients };
+        (ch, ch_fam)
+    }
+    fn max_clients_fun2(&self, cmd: &ChannelCreated, _: &mut Channel) -> (Option<u32>, Option<u32>) {
+        self.max_clients_fun(cmd)
+    }
+
+    fn channel_type_fun(&self)
 }
 include!(concat!(env!("OUT_DIR"), "/getters.rs"));
 

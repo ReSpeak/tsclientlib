@@ -33,7 +33,7 @@ impl Connection {
                         }
 
                         RuleKind::Function { ref name, ref to } => { #>
-                let (<#= join(to.iter().map(|p| get_prop_name(p)), ", ") #>) = self.<#= to_snake_case(name) #>(cmd, &*r);
+                let (<#= join(to.iter().map(|p| get_prop_name(p)), ", ") #>) = self.<#= to_snake_case(name) #>(cmd, &mut *r);
             <# for p in to.iter() { #>
                 r.<#= get_prop_name(p) #> = <#= get_prop_name(p) #>;
             <# }
