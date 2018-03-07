@@ -1,3 +1,4 @@
+extern crate base64;
 extern crate csv;
 extern crate regex;
 #[macro_use]
@@ -10,20 +11,22 @@ use std::io::prelude::*;
 use std::fs::File;
 
 mod book_parser;
-mod error_parser;
-mod message_parser;
-mod permission_parser;
-mod messages_to_book_parser;
-mod facade_parser;
 mod connection_manager_getters;
+mod error_parser;
+mod facade_parser;
+mod message_parser;
+mod messages_to_book_parser;
+mod permission_parser;
+mod version_parser;
 
 pub use book_parser::BookDeclarations;
-pub use message_parser::MessageDeclarations;
-pub use error_parser::Errors;
-pub use permission_parser::Permissions;
-pub use messages_to_book_parser::MessagesToBookDeclarations;
-pub use facade_parser::FacadeDeclarations;
 pub use connection_manager_getters::ConnectionManagerGetters;
+pub use error_parser::Errors;
+pub use facade_parser::FacadeDeclarations;
+pub use message_parser::MessageDeclarations;
+pub use messages_to_book_parser::MessagesToBookDeclarations;
+pub use permission_parser::Permissions;
+pub use version_parser::Versions;
 
 type Map<K, V> = std::collections::HashMap<K, V>;
 

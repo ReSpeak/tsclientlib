@@ -212,7 +212,7 @@ impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
             <#= &field.rust_name #>: {
                 let val = cmd.args.get("<#= field.ts_name #>")
                     .ok_or(ParseError::ParameterNotFound {
-                        arg: "<#= field.ts_name #>",
+                        arg: "<#= field.name #>",
                     })?;
             <#= generate_deserializer(field) #>},
 <# } #>

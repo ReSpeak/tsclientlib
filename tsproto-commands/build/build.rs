@@ -5,7 +5,8 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-use tsproto_util::{Declaration, MessageDeclarations, Permissions, Errors};
+use tsproto_util::{Declaration, MessageDeclarations, Permissions, Errors,
+    Versions};
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -34,5 +35,13 @@ fn main() {
     // Write messages
     let path = Path::new(&out_dir);
     let mut structs = File::create(&path.join("messages.rs")).unwrap();
+    write!(&mut structs, "{}", decls).unwrap();
+
+    // Read versions
+    let decls = Versions::from_file(&base_dir, ());
+
+    // Write versions
+    let path = Path::new(&out_dir);
+    let mut structs = File::create(&path.join("versions.rs")).unwrap();
     write!(&mut structs, "{}", decls).unwrap();
 }

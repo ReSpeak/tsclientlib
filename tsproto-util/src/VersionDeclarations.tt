@@ -1,0 +1,34 @@
+<#@ template cleanws="true" #>
+#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
+#[allow(non_camel_case_types)]
+pub enum Version {
+<# for v in &self.0 { #>
+	<#= v.get_enum_name() #>,
+<# } #>
+}
+
+impl Version {
+	pub fn get_platform(&self) -> &'static str {
+		match *self {
+		<# for v in &self.0 { #>
+			Version::<#= v.get_enum_name() #> => "<#= v.platform #>",
+		<# } #>
+		}
+	}
+
+	pub fn get_version_string(&self) -> &'static str {
+		match *self {
+		<# for v in &self.0 { #>
+			Version::<#= v.get_enum_name() #> => "<#= v.version #>",
+		<# } #>
+		}
+	}
+
+	pub fn get_signature(&self) -> &'static [u8] {
+		match *self {
+		<# for v in &self.0 { #>
+			Version::<#= v.get_enum_name() #> => &[<#= v.get_sign_array() #>],
+		<# } #>
+		}
+	}
+}

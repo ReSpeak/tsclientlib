@@ -111,8 +111,6 @@ pub fn disconnect(
 ) -> Box<Future<Item = (), Error = Error>> {
     let header = Header::new(PacketType::Command);
     let mut command = commands::Command::new("clientdisconnect");
-    // Never times out
-    //let mut command = commands::Command::new("clientinitiv");
 
     // Reason: Disconnect
     command.push("reasonid", "8");

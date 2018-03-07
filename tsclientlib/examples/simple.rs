@@ -68,5 +68,5 @@ fn real_main() -> Result<(), failure::Error> {
 
 /// Only retain a certain set of characters.
 fn sanitize(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric() || [' ', '\t', '-', '_', '"', '\''].contains(&c)).collect()
+    s.chars().filter(|c| c.is_alphanumeric() || [' ', '\t', '-', '_', '"', '\''].contains(c)).collect()
 }

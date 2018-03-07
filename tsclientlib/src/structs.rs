@@ -178,10 +178,10 @@ impl NetworkWrapper {
         id: ConnectionId,
         client_data: Rc<RefCell<client::ClientData>>,
         client_connection: Weak<RefCell<client::ClientConnection>>,
-        initserver: InitServer,
+        initserver: &InitServer,
     ) -> Self {
         let connection = Connection::new(id, Uid(String::from("TODO")),
-            &initserver);
+            initserver);
         let inner_stream = ::codec::CommandCodec::new_stream(&client_data);
         Self {
             connection,

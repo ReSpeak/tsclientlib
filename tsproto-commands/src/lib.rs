@@ -8,8 +8,9 @@ extern crate num_derive;
 extern crate tsproto;
 
 pub mod errors;
-pub mod permissions;
 pub mod messages;
+pub mod permissions;
+pub mod versions;
 
 /// A `ConnectionId` identifies a connection from us to a server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]

@@ -227,7 +227,7 @@ impl DefaultPacketHandlerStream {
         let data = Rc::downgrade(data);
         let inner_stream = Box::new(inner_stream.and_then(move |(key, packet)| -> BoxFuture<_, _> {
             // true, if the packet should not be handled further.
-            let mut ignore_packet = false;
+            let mut ignore_packet = true;
             // If the connection should be removed
             let mut is_end = false;
             // Check if we have a connection for this server
@@ -342,7 +342,6 @@ impl DefaultPacketHandlerStream {
                             version,
                         };
 
-                        *ignore_packet = true;
                         Some((state, Some(Packet::new(cheader,
                             packets::Data::C2SInit(data)))))
                     } else {
@@ -428,7 +427,6 @@ impl DefaultPacketHandlerStream {
                             alpha,
                         };
 
-                        *ignore_packet = true;
                         Some((state, Some(Packet::new(cheader,
                             packets::Data::C2SInit(data)))))
                     }
@@ -541,7 +539,6 @@ impl DefaultPacketHandlerStream {
                             let mut cheader = create_init_header();
                             cheader.set_type(PacketType::Command);
 
-                            *ignore_packet = true;
                             Ok(Some(Packet::new(cheader,
                                 packets::Data::Command(command))))
                         } else {
@@ -553,7 +550,6 @@ impl DefaultPacketHandlerStream {
 
                 match res {
                     Ok(p) => {
-                        *ignore_packet = true;
                         Some((ServerConnectionState::Connecting, p))
                     }
                     Err(error) => {
@@ -579,11 +575,13 @@ impl DefaultPacketHandlerStream {
                         // Notify the resender that we are connected
                         con.resender.handle_event(ResenderEvent::Connected);
                         res = Some((ServerConnectionState::Connected, None));
+                        *ignore_packet = false;
                     }
                 }
                 res
             }
             ServerConnectionState::Connected => {
+                *ignore_packet = false;
                 let mut res = None;
                 if let Packet { data: packets::Data::Command(ref cmd), .. } = *packet {
                     let cmd = cmd.get_commands().remove(0);
@@ -594,6 +592,25 @@ impl DefaultPacketHandlerStream {
                                 *is_end = true;
                                 res = Some((ServerConnectionState::Disconnected, None));
                             }
+                        }
+                    } else if cmd.command == "notifyplugincmd"
+                        && cmd.has_arg("name") && cmd.has_arg("data")
+                        && cmd.args["name"] == "cliententerview" {
+                        if cmd.args["data"] == "version" {
+                            let mut command = Command::new("plugincmd");
+                            command.push("name", "cliententerview");
+                            command.push("data", format!("{},{}-{}",
+                                con.params.as_ref().unwrap().c_id,
+                                env!("CARGO_PKG_NAME"),
+                                env!("CARGO_PKG_VERSION"),
+                            ));
+                            command.push("targetmode", "1");
+
+                            let header = Header::new(PacketType::Command);
+
+                            let p = Some(Packet::new(header,
+                                packets::Data::Command(command)));
+                            res = Some((ServerConnectionState::Connected, p));
                         }
                     }
                 }

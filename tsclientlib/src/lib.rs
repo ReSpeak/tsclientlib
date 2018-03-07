@@ -96,8 +96,9 @@ pub mod codec;
 mod structs;
 
 // Reexports
-pub use tsproto_commands::Reason;
 pub use tsproto_commands::ConnectionId;
+pub use tsproto_commands::Reason;
+pub use tsproto_commands::versions::Version;
 
 use codec::Message;
 
@@ -278,7 +279,7 @@ impl ConnectionManager {
             let inner = self.inner.borrow();
             let addr = config.address.expect(
                 "Invalid ConnectOptions, this should not happen");
-            let private_key = match config.private_key.take().map(|k| Ok(k))
+            let private_key = match config.private_key.take().map(Ok)
                 .unwrap_or_else(|| {
                     // Create new ECDH key
                     crypto::EccKey::create()
@@ -352,7 +353,7 @@ impl ConnectionManager {
 
                         // Create the connection
                         let con = structs::NetworkWrapper::new(id, client2,
-                            Rc::downgrade(&con), p);
+                            Rc::downgrade(&con), &p);
 
                         // Add the connection
                         inner.connections.insert(id, con);
@@ -365,8 +366,7 @@ impl ConnectionManager {
                 });
 
             // TODO Also select2 with run so other connections get work too
-            res = Box::new(connect_fut.map_err(|e| e.into())
-            .and_then(move |()| {
+            res = Box::new(connect_fut.and_then(move |()| {
                 // TODO Add possibility to specify offset and level in ConnectOptions
                 // Compute hash cash
                 let mut time_reporter = slog_perf::TimeReporter::new_with_level(
@@ -375,7 +375,7 @@ impl ConnectionManager {
                 time_reporter.start("Compute public key hash cash level");
                 let (offset, omega) = {
                     let mut c = client.borrow_mut();
-                    (algs::hash_cash(&mut c.private_key, 8).unwrap(),
+                    (algs::hash_cash(&c.private_key, 8).unwrap(),
                     c.private_key.to_ts_public().unwrap())
                 };
                 time_reporter.finish();
@@ -387,15 +387,16 @@ impl ConnectionManager {
                 let header = Header::new(PacketType::Command);
                 let mut command = commands::Command::new("clientinit");
                 command.push("client_nickname", config.name);
-                command.push("client_version", "3.1.6 [Build: 1502873983]");
-                command.push("client_platform", "Linux");
+                command.push("client_version", config.version.get_version_string());
+                command.push("client_platform", config.version.get_platform());
                 command.push("client_input_hardware", "1");
                 command.push("client_output_hardware", "1");
                 command.push("client_default_channel", "");
                 command.push("client_default_channel_password", "");
                 command.push("client_server_password", "");
                 command.push("client_meta_data", "");
-                command.push("client_version_sign", "o+l92HKfiUF+THx2rBsuNjj/S1QpxG1fd5o3Q7qtWxkviR3LI3JeWyc26eTmoQoMTgI3jjHV7dCwHsK1BVu6Aw==");
+                command.push("client_version_sign", base64::encode(
+                    config.version.get_signature()));
                 command.push("client_key_offset", offset.to_string());
                 command.push("client_nickname_phonetic", "");
                 command.push("client_default_token", "");
@@ -488,7 +489,6 @@ impl ConnectionManager {
         let header = Header::new(PacketType::Command);
         let mut command = commands::Command::new("clientdisconnect");
 
-        // TODO use Notification for this
         let options = options.into().unwrap_or_default();
         if let Some(reason) = options.reason {
             command.push("reasonid", (reason as u8).to_string());
@@ -538,7 +538,7 @@ impl ConnectionManager {
     }
 
     /// Creates a future to handle all packets.
-    pub fn run<'a>(&'a mut self) -> Run<'a> {
+    pub fn run(&mut self) -> Run {
         Run { cm: self }
     }
 }
@@ -760,6 +760,7 @@ pub struct ConnectOptions {
     local_address: SocketAddr,
     private_key: Option<crypto::EccKey>,
     name: String,
+    version: Version,
 }
 
 impl ConnectOptions {
@@ -773,6 +774,7 @@ impl ConnectOptions {
             local_address: "0.0.0.0:0".parse().unwrap(),
             private_key: None,
             name: String::from("TeamSpeakUser"),
+            version: Version::Linux_3_1_8,
         }
     }
 
@@ -831,6 +833,16 @@ impl ConnectOptions {
     /// TeamSpeakUser
     pub fn name(mut self, name: String) -> Self {
         self.name = name;
+        self
+    }
+
+    /// The displayed version of the client.
+    ///
+    /// # Default
+    ///
+    /// 3.1.8 on Linux
+    pub fn version(mut self, version: Version) -> Self {
+        self.version = version;
         self
     }
 }
