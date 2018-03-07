@@ -12,6 +12,8 @@ pub mod messages;
 pub mod permissions;
 pub mod versions;
 
+use std::fmt;
+
 /// A `ConnectionId` identifies a connection from us to a server.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ConnectionId(pub usize);
@@ -173,4 +175,40 @@ pub enum LicenseType
 	Npl = 3,
 	/// Unknown License
 	Unknown = 4,
+}
+
+impl fmt::Display for ConnectionId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+impl fmt::Display for ClientId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+impl fmt::Display for Uid {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+impl fmt::Display for ClientDbId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+impl fmt::Display for ChannelId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+impl fmt::Display for ServerGroupId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
+}
+impl fmt::Display for ChannelGroupId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "{}", self.0)
+	}
 }

@@ -116,9 +116,9 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
-    Tsproto(tsproto::Error),
+    Tsproto(#[cause] tsproto::Error),
     #[fail(display = "{}", _0)]
-    ParseNotification(tsproto_commands::messages::ParseError),
+    ParseNotification(#[cause] tsproto_commands::messages::ParseError),
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 }
@@ -365,7 +365,6 @@ impl ConnectionManager {
                     }
                 });
 
-            // TODO Also select2 with run so other connections get work too
             res = Box::new(connect_fut.and_then(move |()| {
                 // TODO Add possibility to specify offset and level in ConnectOptions
                 // Compute hash cash
@@ -521,6 +520,7 @@ impl ConnectionManager {
         Disconnect::new_from_future(self.run().select(fut))
     }
 
+    #[inline]
     pub fn get_connection(&self, id: ConnectionId) -> Option<Connection> {
         if self.inner.borrow().connections.contains_key(&id) {
             Some(Connection { cm: self, id })
@@ -529,6 +529,7 @@ impl ConnectionManager {
         }
     }
 
+    #[inline]
     pub fn get_mut_connection(&mut self, id: ConnectionId) -> Option<ConnectionMut> {
         if self.inner.borrow().connections.contains_key(&id) {
             Some(ConnectionMut { cm: self, id })
@@ -537,6 +538,7 @@ impl ConnectionManager {
         }
     }
 
+    #[inline]
     /// Creates a future to handle all packets.
     pub fn run(&mut self) -> Run {
         Run { cm: self }
@@ -603,6 +605,7 @@ impl ConnectionManager {
         result
     }
 
+    #[inline]
     // Poll like a future created by (ConnectionManager as Stream).for_each().
     fn poll_future(&mut self) -> futures::Poll<(), Error> {
         loop {
@@ -632,6 +635,7 @@ impl<'a> Future for Run<'a> {
     type Item = ();
     type Error = Error;
 
+    #[inline]
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
         self.cm.poll_future()
     }
@@ -695,6 +699,7 @@ impl<'a> Future for Disconnect<'a> {
     type Item = ();
     type Error = Error;
 
+    #[inline]
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
         match self.inner {
             None => Ok(futures::Async::Ready(())),
@@ -707,6 +712,7 @@ impl<'a> Future for Disconnect<'a> {
 }
 
 impl<'a> Connection<'a> {
+    #[inline]
     pub fn get_server(&self) -> Server {
         Server {
             cm: self.cm,
@@ -716,6 +722,7 @@ impl<'a> Connection<'a> {
 }
 
 impl<'a> ConnectionMut<'a> {
+    #[inline]
     pub fn get_server(&self) -> Server {
         Server {
             cm: self.cm,
@@ -723,6 +730,7 @@ impl<'a> ConnectionMut<'a> {
         }
     }
 
+    #[inline]
     pub fn get_mut_server(&mut self) -> ServerMut {
         ServerMut {
             cm: self.cm,
@@ -768,6 +776,7 @@ impl ConnectOptions {
     ///
     /// This is not in the public interface because the created configuration
     /// is invalid.
+    #[inline]
     fn default() -> Self {
         Self {
             address: None,
@@ -781,6 +790,7 @@ impl ConnectOptions {
     /// Start creating the configuration of a new connection.
     ///
     /// The address of the server has to be supplied.
+    #[inline]
     pub fn from_address(address: SocketAddr) -> Self {
         Self {
             address: Some(address),
@@ -793,6 +803,7 @@ impl ConnectOptions {
     /// # Default
     ///
     /// 0.0.0.0:0
+    #[inline]
     pub fn local_address(mut self, local_address: SocketAddr) -> Self {
         self.local_address = local_address;
         self
@@ -803,7 +814,7 @@ impl ConnectOptions {
     /// # Default
     ///
     /// A new identity is generated when connecting.
-    ///
+    #[inline]
     pub fn private_key(mut self, private_key: crypto::EccKey)
         -> Self {
         self.private_key = Some(private_key);
@@ -821,6 +832,7 @@ impl ConnectOptions {
     ///
     /// An error is returned if either the string is not encoded in valid base64
     /// or libtomcrypt cannot import the key.
+    #[inline]
     pub fn private_key_ts(mut self, private_key: &str) -> Result<Self> {
         self.private_key = Some(crypto::EccKey::from_ts(private_key)?);
         Ok(self)
@@ -831,6 +843,7 @@ impl ConnectOptions {
     /// # Default
     ///
     /// TeamSpeakUser
+    #[inline]
     pub fn name(mut self, name: String) -> Self {
         self.name = name;
         self
@@ -841,6 +854,7 @@ impl ConnectOptions {
     /// # Default
     ///
     /// 3.1.8 on Linux
+    #[inline]
     pub fn version(mut self, version: Version) -> Self {
         self.version = version;
         self
@@ -853,6 +867,7 @@ pub struct DisconnectOptions {
 }
 
 impl Default for DisconnectOptions {
+    #[inline]
     fn default() -> Self {
         Self {
             reason: None,
@@ -862,6 +877,7 @@ impl Default for DisconnectOptions {
 }
 
 impl DisconnectOptions {
+    #[inline]
     pub fn new() -> Self {
         Self::default()
     }
@@ -871,6 +887,7 @@ impl DisconnectOptions {
     /// # Default
     ///
     /// None
+    #[inline]
     pub fn reason(mut self, reason: Reason) -> Self {
         self.reason = Some(reason);
         self
@@ -884,6 +901,7 @@ impl DisconnectOptions {
     /// # Default
     ///
     /// None
+    #[inline]
     pub fn message<S: Into<String>>(mut self, message: S) -> Self {
         self.message = Some(message.into());
         self

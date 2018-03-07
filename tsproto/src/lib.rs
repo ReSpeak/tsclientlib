@@ -30,20 +30,11 @@ extern crate yasna;
 use std::io;
 use std::net::SocketAddr;
 
-use failure::{ResultExt, SyncFailure};
+use failure::ResultExt;
 use futures::{Future, Sink, Stream};
 use tokio_core::net::UdpCodec;
 
 use packets::UdpPacket;
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(e) => e,
-            Err(error) => return Box::new(future::err(error.into())),
-        }
-    };
-}
 
 pub mod algorithms;
 pub mod client;
@@ -77,23 +68,23 @@ const FAKE_NONCE: [u8; 16] = *b"m\\firewall32.cpl";
 #[derive(Fail, Debug)]
 pub enum Error {
     #[fail(display = "{}", _0)]
-    Io(std::io::Error),
+    Io(#[cause] std::io::Error),
     #[fail(display = "{}", _0)]
-    Ring(ring::error::Unspecified),
+    Ring(#[cause] ring::error::Unspecified),
     #[fail(display = "{}", _0)]
-    Base64(base64::DecodeError),
+    Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
-    Utf8(std::str::Utf8Error),
+    Utf8(#[cause] std::str::Utf8Error),
     #[fail(display = "{}", _0)]
-    ParseInt(std::num::ParseIntError),
+    ParseInt(#[cause] std::num::ParseIntError),
     #[fail(display = "{}", _0)]
-    FutureCanceled(futures::Canceled),
+    FutureCanceled(#[cause] futures::Canceled),
     #[fail(display = "{}", _0)]
-    Openssl(openssl::error::ErrorStack),
+    Openssl(#[cause] openssl::error::ErrorStack),
     #[fail(display = "{}", _0)]
-    Yasna(yasna::ASN1Error),
+    Yasna(#[cause] yasna::ASN1Error),
     #[fail(display = "{}", _0)]
-    Quicklz(#[cause] SyncFailure<quicklz::errors::Error>),
+    Quicklz(#[cause] quicklz::Error),
     #[fail(display = "{}", _0)]
     ParsePacket(String),
     #[fail(display = "Packet {} not in receive window [{};{}) for type {:?}",
@@ -166,9 +157,9 @@ impl From<yasna::ASN1Error> for Error {
     }
 }
 
-impl From<quicklz::errors::Error> for Error {
-    fn from(e: quicklz::errors::Error) -> Self {
-        Error::Quicklz(SyncFailure::new(e))
+impl From<quicklz::Error> for Error {
+    fn from(e: quicklz::Error) -> Self {
+        Error::Quicklz(e)
     }
 }
 

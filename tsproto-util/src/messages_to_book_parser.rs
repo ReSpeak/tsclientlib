@@ -262,3 +262,12 @@ fn gen_return_match(to: &[PropKind]) -> String {
         format!("({})", join(to.iter().map(get_prop_name), ", "))
     }
 }
+
+fn try_result(s: &str) -> &'static str {
+    match s {
+        "get_mut_client" |
+        "get_mut_channel" |
+        "add_connection_client_data" => "?",
+        _ => "",
+    }
+}

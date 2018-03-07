@@ -11,7 +11,7 @@ use tsproto::client;
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
 
-use {ChannelType, Map, MaxFamilyClients, TalkPowerRequest};
+use {ChannelType, Map, MaxFamilyClients, TalkPowerRequest, Result};
 use codec::Message;
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
@@ -65,28 +65,39 @@ impl Connection {
         }
     }
 
-    fn handle_message(&mut self, msg: &Message) {
+    fn handle_message(&mut self, msg: &Message) -> Result<()> {
         if let Message::Notification(ref notification) = *msg {
-            self.handle_message_generated(notification);
+            self.handle_message_generated(notification)?;
         }
 
         // Also raise events
         match *msg {
             _ => {} // TODO
         }
+        Ok(())
     }
 
     fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
     fn add_server_group(&mut self, group: ServerGroupId, r: ServerGroup) -> Option<ServerGroup> { self.server.groups.insert(group, r) }
 
-    fn get_mut_client(&mut self, client: ClientId) -> &mut Client { self.server.clients.get_mut(&client).unwrap() }
+    fn get_mut_client(&mut self, client: ClientId) -> Result<&mut Client> {
+        self.server.clients.get_mut(&client).ok_or_else(||
+            format_err!("Client {} not found", client).into())
+    }
     fn add_client(&mut self, client: ClientId, r: Client) -> Option<Client> { self.server.clients.insert(client, r) }
     fn remove_client(&mut self, client: ClientId) -> Option<Client> { self.server.clients.remove(&client) }
-    fn add_connection_client_data(&mut self, client: ClientId, r: ConnectionClientData) -> Option<ConnectionClientData> {
-        mem::replace(&mut self.server.clients.get_mut(&client).unwrap().connection_data, Some(r))
+    fn add_connection_client_data(&mut self, client: ClientId, r: ConnectionClientData) -> Result<Option<ConnectionClientData>> {
+        if let Some(client) = self.server.clients.get_mut(&client) {
+            Ok(mem::replace(&mut client.connection_data, Some(r)))
+        } else {
+            Err(format_err!("Client {} not found", client).into())
+        }
     }
 
-    fn get_mut_channel(&mut self, channel: ChannelId) -> &mut Channel { self.server.channels.get_mut(&channel).unwrap() }
+    fn get_mut_channel(&mut self, channel: ChannelId) -> Result<&mut Channel> {
+        self.server.channels.get_mut(&channel).ok_or_else(||
+            format_err!("Channel {} not found", channel).into())
+    }
     fn add_channel(&mut self, channel: ChannelId, r: Channel) -> Option<Channel> { self.server.channels.insert(channel, r) }
     fn remove_channel(&mut self, channel: ChannelId) -> Option<Channel> { self.server.channels.remove(&channel) }
 
@@ -213,7 +224,10 @@ impl Stream for NetworkWrapper {
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner_stream.poll()?;
         if let futures::Async::Ready(Some((_, ref msg))) = res {
-            self.connection.handle_message(msg);
+            if let Err(error) = self.connection.handle_message(msg) {
+                warn!(self.client_data.borrow().logger,
+                    "Error when handling message"; "error" => ?error);
+            }
         }
         Ok(res)
     }

@@ -1,16 +1,15 @@
 <#@ template cleanws="true" #>
 impl Connection {
-    fn handle_message_generated(&mut self, msg: &Notification) {
+    fn handle_message_generated(&mut self, msg: &Notification) -> Result<()> {
         // TODO Also raise events for changes, adds, removes
-        // TODO We cannot be sure that the ideas that we get really exist, so
-        // check if have the channel, etc. first.
         match *msg {
 <# for event in &self.decls {
     let enum_name = &self.messages.notifies[&event.msg.notify_name].enum_name;
 #>
             Notification::<#= enum_name #>(ref cmd) => {
-            <# if event.op == RuleOp::Remove { #>
-                self.remove_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>);
+            <# if event.op == RuleOp::Remove {
+                let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name)); #>
+                self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
             <# } else if event.op == RuleOp::Update { #>
                 <# // Update the object
                 // Functions first
@@ -18,8 +17,9 @@ impl Connection {
                     if let RuleKind::Function { ref name, ref to } = *rule { #>
                 let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
                     <# }
-                } #>
-                let mut r = self.get_mut_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>);
+                }
+                let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name)); #>
+                let mut r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
                 <#
                 for rule in &event.rules {
                     match *rule {
@@ -97,13 +97,15 @@ impl Connection {
                         } #>
                     <#= to_snake_case(&to.name) #>: cmd.<#= get_notification_field(from) #>,
                     <# }
-                } #>
+                }
+                let function_name = format!("add_{}", to_snake_case(&event.book_struct.name)); #>
                 };
-                self.add_<#= to_snake_case(&event.book_struct.name) #>(<#= get_id_args(event) #>, r);
+                self.<#= function_name #>(<#= get_id_args(event) #>, r)<#= try_result(&function_name) #>;
             <# } #>
             }
 <# } #>
             _ => {} // Ignore unmentioned messages
         }
+        Ok(())
     }
 }

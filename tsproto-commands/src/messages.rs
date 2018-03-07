@@ -28,14 +28,14 @@ pub enum ParseError {
     ParseInt {
         arg: &'static str,
         value: String,
-        error: ParseIntError,
+        #[cause] error: ParseIntError,
     },
     #[fail(display = "Cannot parse \"{}\" as float for parameter {} ({})",
         value, arg, error)]
     ParseFloat {
         arg: &'static str,
         value: String,
-        error: ParseFloatError,
+        #[cause] error: ParseFloatError,
     },
     #[fail(display = "Cannot parse \"{}\" as bool for parameter {}", value,
         arg)]

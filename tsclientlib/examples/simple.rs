@@ -18,8 +18,8 @@ use tsclientlib::{ConnectOptions, ConnectionManager, DisconnectOptions,
     Reason};
 
 #[derive(StructOpt, Debug)]
-#[structopt(global_settings_raw =
-    "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]")]
+#[structopt(raw(global_settings =
+    "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]"))]
 struct Args {
     #[structopt(short = "a", long = "address",
                 default_value = "127.0.0.1:9987",
