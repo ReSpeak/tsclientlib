@@ -1,4 +1,5 @@
 extern crate failure;
+extern crate futures;
 extern crate structopt;
 #[macro_use]
 extern crate structopt_derive;
@@ -8,6 +9,7 @@ extern crate tsclientlib;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use futures::Future;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
@@ -54,7 +56,7 @@ fn real_main() -> Result<(), failure::Error> {
 
     // Wait some time
     let action = Timeout::new(Duration::from_secs(1), &core.handle())?;
-    core.run(action)?;
+    core.run(action.select2(cm.run())).unwrap();
 
     // Disconnect
     core.run(cm.remove_connection(con_id, DisconnectOptions::new()

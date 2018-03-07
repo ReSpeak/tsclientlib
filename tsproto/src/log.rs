@@ -92,16 +92,16 @@ pub struct PacketStreamLogger<Id> {
     phantom: ::std::marker::PhantomData<Id>,
 }
 
-impl<Inner: Stream<Item = Packet, Error = Error> + 'static,
+impl<Inner: Stream<Item = (Id, Packet), Error = Error> + 'static,
     Id: Display + 'static>
-    StreamWrapper<Packet, Error, Inner> for PacketStreamLogger<Id> {
-    /// (logger, is_client, id)
-    type A = (Logger, bool, Id);
-    type Result = Box<Stream<Item = Packet, Error = Error>>;
+    StreamWrapper<(Id, Packet), Error, Inner> for PacketStreamLogger<Id> {
+    /// (logger, is_client)
+    type A = (Logger, bool);
+    type Result = Box<Stream<Item = (Id, Packet), Error = Error>>;
 
-    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self::Result {
-        Box::new(inner.inspect(move |packet|
-            PacketLogger::log_packet(&logger, &id, is_client, true, packet)
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self::Result {
+        Box::new(inner.inspect(move |&(ref id, ref packet)|
+            PacketLogger::log_packet(&logger, id, is_client, true, packet)
         ))
     }
 }
@@ -110,17 +110,17 @@ pub struct PacketSinkLogger<Id> {
     phantom: ::std::marker::PhantomData<Id>,
 }
 
-impl<Inner: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+impl<Inner: Sink<SinkItem = (Id, Packet), SinkError = Error> + 'static,
     Id: Display + 'static>
-    SinkWrapper<Packet, Error, Inner> for PacketSinkLogger<Id> {
-    /// (logger, is_client, id)
-    type A = (Logger, bool, Id);
-    type Result = Box<Sink<SinkItem = Packet, SinkError = Error>>;
+    SinkWrapper<(Id, Packet), Error, Inner> for PacketSinkLogger<Id> {
+    /// (logger, is_client)
+    type A = (Logger, bool);
+    type Result = Box<Sink<SinkItem = (Id, Packet), SinkError = Error>>;
 
-    fn wrap(inner: Inner, (logger, is_client, id): Self::A) -> Self::Result {
-        Box::new(inner.with(move |packet| {
+    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self::Result {
+        Box::new(inner.with(move |(id, packet)| {
             PacketLogger::log_packet(&logger, &id, is_client, false, &packet);
-            future::ok(packet)
+            future::ok((id, packet))
         }))
     }
 }

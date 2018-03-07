@@ -1,13 +1,12 @@
 extern crate chrono;
+#[macro_use]
+extern crate failure;
 extern crate futures;
 extern crate num;
 #[macro_use]
 extern crate num_derive;
-#[macro_use]
-extern crate slog;
 extern crate tsproto;
 
-pub mod codec;
 pub mod errors;
 pub mod permissions;
 pub mod messages;

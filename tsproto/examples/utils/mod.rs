@@ -49,9 +49,7 @@ pub fn connect(
     let connect_fut = client::connect(&client, server_addr);
 
     // Listen for packets so we can answer them
-    let con = client.borrow().connection_manager.get_connection(server_addr)
-        .unwrap();
-    let packets = client::ClientConnection::get_packets(Rc::downgrade(&con));
+    let packets = handler_data::Data::get_packets(Rc::downgrade(&client));
 
     let logger2 = logger.clone();
     let logger3 = logger.clone();
@@ -100,10 +98,8 @@ pub fn connect(
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 
-        let con = client.borrow().connection_manager
-            .get_connection(server_addr).unwrap();
-        let sink = client::ClientConnection::get_packets(Rc::downgrade(&con));
-        sink.send(clientinit_packet).and_then(move |_| {
+        let sink = handler_data::Data::get_packets(Rc::downgrade(&client));
+        sink.send((server_addr, clientinit_packet)).and_then(move |_| {
             client::wait_until_connected(&client, server_addr)
         })
     }))
@@ -127,9 +123,9 @@ pub fn disconnect(
     let con = client.borrow().connection_manager
         .get_connection(server_addr).unwrap();
     con.borrow_mut().resender.handle_event(ResenderEvent::Disconnecting);
-    let sink = client::ClientConnection::get_packets(Rc::downgrade(&con));
+    let sink = handler_data::Data::get_packets(Rc::downgrade(&client));
     Box::new(sink
-        .send(packet)
+        .send((server_addr, packet))
         .and_then(move |_| {
             client::wait_for_state(&client, server_addr, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {

@@ -28,12 +28,10 @@ extern crate tokio_core;
 extern crate yasna;
 
 use std::io;
-use std::collections::VecDeque;
 use std::net::SocketAddr;
 
 use failure::{ResultExt, SyncFailure};
-use futures::{Future, Sink, Stream, task};
-use futures::task::Task;
+use futures::{Future, Sink, Stream};
 use tokio_core::net::UdpCodec;
 
 use packets::UdpPacket;
@@ -70,9 +68,6 @@ const MAX_FRAGMENTS_LENGTH: usize = 40960;
 /// The maximum number of packets which are stored, if they are received
 /// out-of-order.
 const MAX_QUEUE_LEN: usize = 50;
-/// The maximum number of packets which are put into the stream buffer of a
-/// connection.
-const STREAM_BUFFER_MAX_SIZE: usize = 50;
 /// The maximum decompressed size of a packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;
@@ -248,50 +243,6 @@ pub trait SinkWrapper<I, E, T: Sink<SinkItem = I, SinkError = E>> {
 
     /// `A` holds additional arguments.
     fn wrap(inner: T, a: Self::A) -> Self::Result;
-}
-
-/// A stream which provides elements that are inserted into a buffer.
-///
-/// This is used to distribute one stream into multiple streams (e. g. for each
-/// connection).
-pub struct BufferStream<T, E> {
-    /// The buffer for new packets.
-    pub buffer: VecDeque<T>,
-    /// The task should be notified if a new packet was inserted.
-    pub task: Option<Task>,
-    phantom: std::marker::PhantomData<E>,
-}
-
-impl<T, E> Default for BufferStream<T, E> {
-    fn default() -> Self {
-        Self {
-            buffer: Default::default(),
-            task: None,
-            phantom: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T, E> BufferStream<T, E> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl<T, E> Stream for BufferStream<T, E> {
-    type Item = T;
-    type Error = E;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        self.task = Some(task::current());
-
-        // Check if there is a packet available
-        if let Some(packet) = self.buffer.pop_front() {
-            Ok(futures::Async::Ready(Some(packet)))
-        } else {
-            Ok(futures::Async::NotReady)
-        }
-    }
 }
 
 pub fn init() -> Result<()> {

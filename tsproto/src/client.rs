@@ -18,15 +18,15 @@ use num::ToPrimitive;
 #[cfg(not(feature = "rust-gmp"))]
 use num::bigint::BigUint;
 use rand::{self, Rng};
-use tokio_core::reactor::Handle;
+use slog::Logger;
 
 use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
 use commands::Command;
 use connection::*;
-use connectionmanager::{AttachedDataConnectionManager, ConnectionManager,
-    Resender, ResenderEvent, SocketConnectionManager};
-use handler_data::{ConnectionListener, Data};
+use connectionmanager::{AttachedDataConnectionManager, Resender, ResenderEvent,
+    SocketConnectionManager};
+use handler_data::Data;
 use packets::*;
 
 /// The data of our client.
@@ -79,98 +79,29 @@ fn create_init_header() -> Header {
     header
 }
 
-struct DefaultConnectionSetup {
-    handle: Handle,
-    /// `None` if logging is disabled.
-    logger: Option<::slog::Logger>,
-}
-
-impl DefaultConnectionSetup {
-    fn new(handle: Handle, logger: Option<::slog::Logger>) -> Self {
-        Self {
-            handle,
-            logger,
-        }
-    }
-}
-
-impl<CM: AttachedDataConnectionManager<ServerConnectionData> + 'static>
-    ConnectionListener<CM> for DefaultConnectionSetup
-    where CM::ConnectionsKey: Display {
-    fn on_connection_created(&mut self, data: Rc<RefCell<Data<CM>>>,
-        key: CM::ConnectionsKey) -> bool {
-        {
-            let data = data.borrow();
-            let con = data.connection_manager.get_connection(key.clone())
-                .unwrap();
-
-            // Packet encoding
-            ::packet_codec::PacketCodecSink::apply(&con);
-            ::packet_codec::PacketCodecStream::apply(&con, true);
-
-            if let Some(ref logger) = self.logger {
-                // Logging
-                Connection::apply_packet_stream_wrapper::<
-                    ::log::PacketStreamLogger<_>>(&con,
-                        (logger.clone(), data.is_client, key.clone()));
-                Connection::apply_packet_sink_wrapper::<
-                    ::log::PacketSinkLogger<_>>(&con,
-                        (logger.clone(), data.is_client, key.clone()));
-            }
-
-            // Distribute packets
-            Connection::start_packet_distributor(&con, &self.handle);
-        }
-
-        // Default handlers are not usable with the wrapper system
-        // TODO DefaultPacketHandler with wrapper system?
-        DefaultPacketHandler::apply(&data, key);
-        false
-    }
-}
-
 /// Configures the default setup chain, including logging and decoding
 /// of packets.
 pub fn default_setup<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
 >(data: &Rc<RefCell<Data<CM>>>, log: bool) where CM::ConnectionsKey: Display {
-    let mut logger = None;
     if log {
         // Logging
         let a = {
             let data = data.borrow();
-            logger = Some(data.logger.clone());
             (data.logger.clone(), data.is_client)
         };
         Data::apply_udp_packet_stream_wrapper::<
             ::log::UdpPacketStreamLogger>(data, a.clone());
         Data::apply_udp_packet_sink_wrapper::<
-            ::log::UdpPacketSinkLogger>(data, a);
+            ::log::UdpPacketSinkLogger>(data, a.clone());
+
+        Data::apply_packet_stream_wrapper::<
+            ::log::PacketStreamLogger<CM::ConnectionsKey>>(data, a.clone());
+        Data::apply_packet_sink_wrapper::<
+            ::log::PacketSinkLogger<CM::ConnectionsKey>>(data, a);
     }
 
-    // Discard packets which don't match a connection
-    let unknown_stream = Data::get_unknown_udp_packets(Rc::downgrade(data));
-    let handle;
-    {
-        let data = data.borrow();
-        handle = data.handle.clone();
-        let logger = data.logger.clone();
-        let logger2 = data.logger.clone();
-        data.handle.spawn(unknown_stream.for_each(move |(addr, _)| {
-            warn!(logger, "Got packet without connection"; "from" => %addr);
-            Ok(())
-        }).map_err(move |e| {
-            error!(logger2, "Unknown packet stream errored"; "error" => ?e);
-            ()
-        }));
-    }
-
-    // Add distributor stream
-    Data::start_packet_distributor(data);
-
-    // Register a connection listener which configures each connection
-    data.borrow_mut().connection_listeners.push(Box::new(
-        DefaultConnectionSetup::new(handle, logger)));
+    DefaultPacketHandler::apply(data);
 }
 
 /// Wait until a client reaches a certain state.
@@ -260,12 +191,11 @@ pub fn connect(
         };
     }
 
-    let con = data.connection_manager.get_connection(server_addr).unwrap();
-    let packets = Connection::get_packets(Rc::downgrade(&con));
+    let packets = Data::get_packets(Rc::downgrade(&data2));
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
     Box::new(
-        packets.send(packet)
+        packets.send((server_addr, packet))
             .and_then(move |_| {
                 wait_for_state(&data2, server_addr, |state| {
                     if let ServerConnectionState::Connecting = *state {
@@ -278,26 +208,24 @@ pub fn connect(
     )
 }
 
-pub struct DefaultPacketHandlerStream {
-    inner_stream: Box<Stream<Item = Packet, Error = Error>>,
-}
+struct DefaultPacketHandlerStream;
 
 impl DefaultPacketHandlerStream {
     pub fn new<
-        InnerStream: Stream<Item = Packet, Error = Error> + 'static,
-        InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+        InnerStream: Stream<Item = (CM::ConnectionsKey, Packet), Error = Error> + 'static,
+        InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
     >(
         data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
-        key: CM::ConnectionsKey,
-    ) -> (Self, Rc<RefCell<Either<InnerSink, Option<Task>>>>) {
+    ) -> (Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
+        Rc<RefCell<Either<InnerSink, Option<Task>>>>) {
         let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
         let sink2 = sink.clone();
         let logger = data.borrow().logger.clone();
         let data = Rc::downgrade(data);
-        let inner_stream = Box::new(inner_stream.and_then(move |packet| -> BoxFuture<_, _> {
+        let inner_stream = Box::new(inner_stream.and_then(move |(key, packet)| -> BoxFuture<_, _> {
             // true, if the packet should not be handled further.
             let mut ignore_packet = false;
             // If the connection should be removed
@@ -312,291 +240,14 @@ impl DefaultPacketHandlerStream {
                     let mut con = con.borrow_mut();
                     let state = data.connection_manager
                         .get_mut_data(key.clone()).unwrap();
-                    let handle_res = match state.state {
-                        ServerConnectionState::Uninitialized =>
-                            unreachable!("ServerConnectionState is uninitialized"),
-                        ServerConnectionState::Init0 { version, ref random0 } => {
-                            // Handle an Init1
-                            if let Packet { data: packets::Data::S2CInit(
-                                S2CInit::Init1 { ref random1, ref random0_r }), .. } = packet {
-                                // Check the response
-                                if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
-                                    // The packet is correct.
-                                    // Send next init packet
-                                    let cheader = create_init_header();
-                                    let data = C2SInit::Init2 {
-                                        version,
-                                        random1: *random1,
-                                        random0_r: *random0_r,
-                                    };
-
-                                    let state = ServerConnectionState::Init2 {
-                                        version,
-                                    };
-
-                                    ignore_packet = true;
-                                    Some((state, Some(Packet::new(cheader,
-                                        packets::Data::C2SInit(data)))))
-                                } else {
-                                    error!(logger, "Init: Got wrong data in the \
-                                        Init1 response packet");
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                        ServerConnectionState::Init2 { version } => {
-                            // Handle an Init3
-                            if let Packet { data: packets::Data::S2CInit(
-                                S2CInit::Init3 { ref x, ref n, level, ref random2 }), .. } = packet {
-                                // Solve RSA puzzle: y = x ^ (2 ^ level) % n
-                                // Use Montgomery Reduction
-                                if level > 10_000_000 {
-                                    // Reject too high exponents
-                                    None
-                                } else {
-                                    // Create clientinitiv
-                                    // TODO use another thread
-                                    let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-                                        "Solve RSA puzzle", logger.clone(),
-                                        ::slog::Level::Info);
-                                    time_reporter.start("");
-
-                                    // Use gmp for faster computations if it is
-                                    // available.
-                                    #[cfg(feature = "rust-gmp")]
-                                    let y = {
-                                        let n = (n as &[u8]).into();
-                                        let x: Mpz = (x as &[u8]).into();
-                                        let mut e = Mpz::new();
-                                        e.setbit(level as usize);
-                                        let y = x.powm(&e, &n);
-                                        time_reporter.finish();
-                                        info!(logger, "Solve RSA puzzle";
-                                              "level" => level);
-                                        let ys = y.to_str_radix(10);
-                                        let yi = ys.parse().unwrap();
-                                        algs::biguint_to_array(&yi)
-                                    };
-
-                                    #[cfg(not(feature = "rust-gmp"))]
-                                    let y = {
-                                        let xi = BigUint::from_bytes_be(x);
-                                        let ni = BigUint::from_bytes_be(n);
-                                        let mut e = BigUint::one();
-                                        e <<= level as usize;
-                                        let yi = xi.modpow(&e, &ni);
-                                        time_reporter.finish();
-                                        info!(logger, "Solve RSA puzzle";
-                                              "level" => level, "x" => %xi, "n" => %ni,
-                                              "y" => %yi);
-                                        algs::biguint_to_array(&yi)
-                                    };
-
-                                    // Create the command string
-                                    let mut rng = rand::thread_rng();
-                                    let alpha = rng.gen::<[u8; 10]>();
-                                    // omega is an ASN.1-DER encoded public key from
-                                    // the ECDH parameters.
-                                    let alpha_s = base64::encode(&alpha);
-                                    let omega_s = tryf!(data.private_key.to_ts_public());
-                                    let mut command = Command::new("clientinitiv");
-                                    command.push("alpha", alpha_s);
-                                    command.push("omega", omega_s);
-                                    command.push("ot", "1");
-                                    command.push("ip", "");
-
-                                    let cheader = create_init_header();
-                                    let data = C2SInit::Init4 {
-                                        version,
-                                        x: *x,
-                                        n: *n,
-                                        level,
-                                        random2: *random2,
-                                        y,
-                                        command: command.clone(),
-                                    };
-
-                                    let state = ServerConnectionState::ClientInitIv {
-                                        alpha,
-                                    };
-
-                                    ignore_packet = true;
-                                    Some((state, Some(Packet::new(cheader,
-                                        packets::Data::C2SInit(data)))))
-                                }
-                            } else {
-                                None
-                            }
-                        }
-                        ServerConnectionState::ClientInitIv { ref alpha } => {
-                            let private_key = &data.private_key;
-                            let res = (|con_params: &mut Option<ConnectedParams>| -> Result<_> {
-                                if let Packet { data: packets::Data::Command(ref command), .. } = packet {
-                                    let cmd = command.get_commands().remove(0);
-                                    if cmd.command == "initivexpand"
-                                        && cmd.has_arg("alpha")
-                                        && cmd.has_arg("beta")
-                                        && cmd.has_arg("omega")
-                                        && base64::decode(cmd.args["alpha"])
-                                        .map(|a| a == alpha).unwrap_or(false) {
-
-                                        let beta_vec = base64::decode(cmd.args["beta"])?;
-                                        if beta_vec.len() != 10 {
-                                            return Err(format_err!(
-                                                "Incorrect beta length"))?;
-                                        }
-
-                                        // Check if beta != 0
-                                        if beta_vec.iter().all(|i| *i == 0) {
-                                            return Err(format_err!(
-                                                "Beta is zero"))?;
-                                        }
-
-                                        let mut beta = [0; 10];
-                                        beta.copy_from_slice(&beta_vec);
-                                        let mut server_key = ::crypto::EccKey::
-                                            from_ts(cmd.args["omega"])?;
-
-                                        let (iv, mac) = algs::compute_iv_mac(
-                                            alpha, &beta, private_key, &server_key)?;
-                                        let mut params = ConnectedParams::new(
-                                            server_key, iv, mac);
-                                        // We already sent a command packet.
-                                        params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
-                                            .1 = 1;
-                                        // We received a command packet.
-                                        params.incoming_p_ids[PacketType::Command.to_usize().unwrap()]
-                                            .1 = 1;
-                                        // And we sent an ack.
-                                        params.incoming_p_ids[PacketType::Ack.to_usize().unwrap()]
-                                            .1 = 1;
-                                        *con_params = Some(params);
-                                        Ok(None)
-                                    } else if cmd.command == "initivexpand2"
-                                        && cmd.has_arg("l")
-                                        && cmd.has_arg("beta")
-                                        && cmd.has_arg("omega")
-                                        && cmd.has_arg("ot")
-                                        && cmd.args["ot"] == "1"
-                                        && cmd.has_arg("time")
-                                        && cmd.has_arg("beta") {
-
-                                        let beta_vec = base64::decode(cmd.args["beta"])?;
-                                        if beta_vec.len() != 54 {
-                                            Err(format_err!("Incorrect beta length"))?;
-                                        }
-
-                                        // Check if beta != 0
-                                        if beta_vec.iter().all(|i| *i == 0) {
-                                            return Err(format_err!(
-                                                "Beta is zero"))?;
-                                        }
-
-                                        let mut beta = [0; 54];
-                                        beta.copy_from_slice(&beta_vec);
-                                        let mut server_key = ::crypto::EccKey::
-                                            from_ts(cmd.args["omega"])?;
-
-                                        let mut beta1 = [0; 10];
-                                        beta1.copy_from_slice(&beta_vec[..10]);
-
-                                        let (iv, mac) = algs::compute_iv_mac(
-                                            alpha, &beta1, private_key, &server_key)?;
-                                        let mut params = ConnectedParams::new(
-                                            server_key, iv, mac);
-                                        // We already sent a command packet.
-                                        params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
-                                            .1 = 1;
-                                        // We received a command packet.
-                                        params.incoming_p_ids[PacketType::Command.to_usize().unwrap()]
-                                            .1 = 1;
-                                        // And we sent an ack.
-                                        params.incoming_p_ids[PacketType::Ack.to_usize().unwrap()]
-                                            .1 = 1;
-                                        *con_params = Some(params);
-
-                                        // Send clientek
-                                        let mut command = Command::new("clientek");
-                                        let mut rng = rand::thread_rng();
-                                        let ek = rng.gen::<[u8; 32]>();
-                                        let ek_s = base64::encode(&ek);
-
-                                        // Proof: ECDSA signature of ek || beta
-                                        let mut all = Vec::with_capacity(32 + 54);
-                                        all.extend_from_slice(&ek);
-                                        all.extend_from_slice(&beta);
-                                        let proof = private_key.sign(&all)?;
-                                        let proof_s = base64::encode(&proof);
-
-                                        command.push("ek", ek_s);
-                                        command.push("proof", proof_s);
-
-                                        let mut cheader = create_init_header();
-                                        cheader.set_type(PacketType::Command);
-
-                                        ignore_packet = true;
-                                        Ok(Some(Packet::new(cheader,
-                                            packets::Data::Command(command))))
-                                    } else {
-                                        Err(format_err!("initivexpand command has wrong arguments").into())
-                                    }
-                                } else {
-                                    Ok(None)
-                                }})(&mut con.params);
-
-                            match res {
-                                Ok(p) => {
-                                    ignore_packet = true;
-                                    Some((ServerConnectionState::Connecting, p))
-                                }
-                                Err(error) => {
-                                    error!(logger, "Handle udp init packet"; "error" => %error);
-                                    None
-                                }
-                            }
-                        }
-                        ServerConnectionState::Connecting => {
-                            let mut res = None;
-                            if let Packet { data: packets::Data::Command(ref cmd), .. } = packet {
-                                let cmd = cmd.get_commands().remove(0);
-                                if cmd.command == "initserver" && cmd.has_arg("aclid") {
-                                    // Handle an initserver
-                                    if let Some(ref mut params) = con.params {
-                                        if let Ok(c_id) = cmd.args["aclid"].parse() {
-                                            params.c_id = c_id;
-                                        }
-                                    }
-                                    // initserver is the ack for clientinit
-                                    // Remove from send queue
-                                    con.resender.ack_packet(PacketType::Command, 1);
-                                    // Notify the resender that we are connected
-                                    con.resender.handle_event(ResenderEvent::Connected);
-                                    res = Some((ServerConnectionState::Connected, None));
-                                }
-                            }
-                            res
-                        }
-                        ServerConnectionState::Connected => {
-                            let mut res = None;
-                            if let Packet { data: packets::Data::Command(ref cmd), .. } = packet {
-                                let cmd = cmd.get_commands().remove(0);
-                                if cmd.command == "notifyclientleftview" && cmd.has_arg("clid") {
-                                    // Handle a disconnect
-                                    if let Some(ref mut params) = con.params {
-                                        if cmd.args["clid"].parse() == Ok(params.c_id) {
-                                            is_end = true;
-                                            res = Some((ServerConnectionState::Disconnected, None));
-                                        }
-                                    }
-                                }
-                            }
-                            res
-                        }
-                        ServerConnectionState::Disconnected => {
-                            warn!(logger, "Got packet from server after disconnecting");
-                            return Box::new(future::ok(None));
+                    let handle_res = match Self::handle_packet(state, &packet,
+                        &mut ignore_packet, &mut is_end, &data.private_key,
+                        &mut con, &logger) {
+                        Ok(res) => res,
+                        Err(error) => {
+                            error!(logger, "Error when handling packet";
+                                "error" => ?error);
+                            None
                         }
                     };
                     if let Some((s, packet)) = handle_res {
@@ -629,8 +280,11 @@ impl DefaultPacketHandlerStream {
                     };
                     // Send the packet
                     let sink = sink.clone();
-                    Box::new(l_fut.and_then(move |_| tmp_sink.send(p).map(move |tmp_sink| {
-                        let s: Either<InnerSink, Option<Task>> = mem::replace(&mut *sink.borrow_mut(), Either::A(tmp_sink));
+                    Box::new(l_fut.and_then(move |_| tmp_sink
+                            .send((key.clone(), p))
+                            .map(move |tmp_sink| {
+                        let s: Either<InnerSink, Option<Task>> =
+                            mem::replace(&mut *sink.borrow_mut(), Either::A(tmp_sink));
                         if let Either::B(Some(task)) = s {
                             // Notify the task, that the sink is available
                             task.notify();
@@ -639,55 +293,345 @@ impl DefaultPacketHandlerStream {
                         if ignore_packet {
                             None
                         } else {
-                            Some(packet)
+                            Some((key, packet))
                         }
                     })))
                 } else {
                     Box::new(l_fut.and_then(move |_| if ignore_packet {
                         future::ok(None)
                     } else {
-                        future::ok(Some(packet))
+                        future::ok(Some((key, packet)))
                     }))
                 }
-            } else if ignore_packet {
+            } else if ignore_packet || is_end {
                 Box::new(future::ok(None))
             } else {
-                Box::new(future::ok(Some(packet)))
+                Box::new(future::ok(Some((key, packet))))
             }
         })
         .filter_map(|p| p));
-        (Self { inner_stream }, sink2)
+        (inner_stream, sink2)
     }
-}
 
-impl Stream for DefaultPacketHandlerStream {
-    type Item = Packet;
-    type Error = Error;
+    fn handle_packet<
+        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    >(state: &mut ServerConnectionData, packet: &Packet,
+        ignore_packet: &mut bool, is_end: &mut bool,
+        private_key: &::crypto::EccKey, con: &mut Connection<CM>,
+        logger: &Logger)
+        -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+        let res = match state.state {
+            ServerConnectionState::Uninitialized =>
+                return Err(format_err!("ServerConnectionState is uninitialized").into()),
+            ServerConnectionState::Init0 { version, ref random0 } => {
+                // Handle an Init1
+                if let Packet { data: packets::Data::S2CInit(
+                    S2CInit::Init1 { ref random1, ref random0_r }), .. } = *packet {
+                    // Check the response
+                    if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
+                        // The packet is correct.
+                        // Send next init packet
+                        let cheader = create_init_header();
+                        let data = C2SInit::Init2 {
+                            version,
+                            random1: *random1,
+                            random0_r: *random0_r,
+                        };
 
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        self.inner_stream.poll()
+                        let state = ServerConnectionState::Init2 {
+                            version,
+                        };
+
+                        *ignore_packet = true;
+                        Some((state, Some(Packet::new(cheader,
+                            packets::Data::C2SInit(data)))))
+                    } else {
+                        return Err(format_err!("Init: Got wrong data in the Init1 response packet").into());
+                    }
+                } else {
+                    None
+                }
+            }
+            ServerConnectionState::Init2 { version } => {
+                // Handle an Init3
+                if let Packet { data: packets::Data::S2CInit(
+                    S2CInit::Init3 { ref x, ref n, level, ref random2 }), .. } = *packet {
+                    // Solve RSA puzzle: y = x ^ (2 ^ level) % n
+                    // Use Montgomery Reduction
+                    if level > 10_000_000 {
+                        // Reject too high exponents
+                        None
+                    } else {
+                        // Create clientinitiv
+                        // TODO use another thread
+                        let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
+                            "Solve RSA puzzle", logger.clone(),
+                            ::slog::Level::Info);
+                        time_reporter.start("");
+
+                        // Use gmp for faster computations if it is
+                        // available.
+                        #[cfg(feature = "rust-gmp")]
+                        let y = {
+                            let n = (n as &[u8]).into();
+                            let x: Mpz = (x as &[u8]).into();
+                            let mut e = Mpz::new();
+                            e.setbit(level as usize);
+                            let y = x.powm(&e, &n);
+                            time_reporter.finish();
+                            info!(logger, "Solve RSA puzzle";
+                                  "level" => level);
+                            let ys = y.to_str_radix(10);
+                            let yi = ys.parse().unwrap();
+                            algs::biguint_to_array(&yi)
+                        };
+
+                        #[cfg(not(feature = "rust-gmp"))]
+                        let y = {
+                            let xi = BigUint::from_bytes_be(x);
+                            let ni = BigUint::from_bytes_be(n);
+                            let mut e = BigUint::one();
+                            e <<= level as usize;
+                            let yi = xi.modpow(&e, &ni);
+                            time_reporter.finish();
+                            info!(logger, "Solve RSA puzzle";
+                                  "level" => level, "x" => %xi, "n" => %ni,
+                                  "y" => %yi);
+                            algs::biguint_to_array(&yi)
+                        };
+
+                        // Create the command string
+                        let mut rng = rand::thread_rng();
+                        let alpha = rng.gen::<[u8; 10]>();
+                        // omega is an ASN.1-DER encoded public key from
+                        // the ECDH parameters.
+                        let alpha_s = base64::encode(&alpha);
+                        let omega_s = private_key.to_ts_public().unwrap();
+                        let mut command = Command::new("clientinitiv");
+                        command.push("alpha", alpha_s);
+                        command.push("omega", omega_s);
+                        command.push("ot", "1");
+                        command.push("ip", "");
+
+                        let cheader = create_init_header();
+                        let data = C2SInit::Init4 {
+                            version,
+                            x: *x,
+                            n: *n,
+                            level,
+                            random2: *random2,
+                            y,
+                            command: command.clone(),
+                        };
+
+                        let state = ServerConnectionState::ClientInitIv {
+                            alpha,
+                        };
+
+                        *ignore_packet = true;
+                        Some((state, Some(Packet::new(cheader,
+                            packets::Data::C2SInit(data)))))
+                    }
+                } else {
+                    None
+                }
+            }
+            ServerConnectionState::ClientInitIv { ref alpha } => {
+                let res = (|con_params: &mut Option<ConnectedParams>| -> Result<_> {
+                    if let Packet { data: packets::Data::Command(ref command), .. } = *packet {
+                        let cmd = command.get_commands().remove(0);
+                        if cmd.command == "initivexpand"
+                            && cmd.has_arg("alpha")
+                            && cmd.has_arg("beta")
+                            && cmd.has_arg("omega")
+                            && base64::decode(cmd.args["alpha"])
+                            .map(|a| a == alpha).unwrap_or(false) {
+
+                            let beta_vec = base64::decode(cmd.args["beta"])?;
+                            if beta_vec.len() != 10 {
+                                return Err(format_err!(
+                                    "Incorrect beta length"))?;
+                            }
+
+                            // Check if beta != 0
+                            if beta_vec.iter().all(|i| *i == 0) {
+                                return Err(format_err!(
+                                    "Beta is zero"))?;
+                            }
+
+                            let mut beta = [0; 10];
+                            beta.copy_from_slice(&beta_vec);
+                            let mut server_key = ::crypto::EccKey::
+                                from_ts(cmd.args["omega"])?;
+
+                            let (iv, mac) = algs::compute_iv_mac(
+                                alpha, &beta, private_key, &server_key)?;
+                            let mut params = ConnectedParams::new(
+                                server_key, iv, mac);
+                            // We already sent a command packet.
+                            params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
+                                .1 = 1;
+                            // We received a command packet.
+                            params.incoming_p_ids[PacketType::Command.to_usize().unwrap()]
+                                .1 = 1;
+                            // And we sent an ack.
+                            params.incoming_p_ids[PacketType::Ack.to_usize().unwrap()]
+                                .1 = 1;
+                            *con_params = Some(params);
+                            Ok(None)
+                        } else if cmd.command == "initivexpand2"
+                            && cmd.has_arg("l")
+                            && cmd.has_arg("beta")
+                            && cmd.has_arg("omega")
+                            && cmd.has_arg("ot")
+                            && cmd.args["ot"] == "1"
+                            && cmd.has_arg("time")
+                            && cmd.has_arg("beta") {
+
+                            let beta_vec = base64::decode(cmd.args["beta"])?;
+                            if beta_vec.len() != 54 {
+                                Err(format_err!("Incorrect beta length"))?;
+                            }
+
+                            // Check if beta != 0
+                            if beta_vec.iter().all(|i| *i == 0) {
+                                return Err(format_err!(
+                                    "Beta is zero"))?;
+                            }
+
+                            let mut beta = [0; 54];
+                            beta.copy_from_slice(&beta_vec);
+                            let mut server_key = ::crypto::EccKey::
+                                from_ts(cmd.args["omega"])?;
+
+                            let mut beta1 = [0; 10];
+                            beta1.copy_from_slice(&beta_vec[..10]);
+
+                            let (iv, mac) = algs::compute_iv_mac(
+                                alpha, &beta1, private_key, &server_key)?;
+                            let mut params = ConnectedParams::new(
+                                server_key, iv, mac);
+                            // We already sent a command packet.
+                            params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
+                                .1 = 1;
+                            // We received a command packet.
+                            params.incoming_p_ids[PacketType::Command.to_usize().unwrap()]
+                                .1 = 1;
+                            // And we sent an ack.
+                            params.incoming_p_ids[PacketType::Ack.to_usize().unwrap()]
+                                .1 = 1;
+                            *con_params = Some(params);
+
+                            // Send clientek
+                            let mut command = Command::new("clientek");
+                            let mut rng = rand::thread_rng();
+                            let ek = rng.gen::<[u8; 32]>();
+                            let ek_s = base64::encode(&ek);
+
+                            // Proof: ECDSA signature of ek || beta
+                            let mut all = Vec::with_capacity(32 + 54);
+                            all.extend_from_slice(&ek);
+                            all.extend_from_slice(&beta);
+                            let proof = private_key.sign(&all)?;
+                            let proof_s = base64::encode(&proof);
+
+                            command.push("ek", ek_s);
+                            command.push("proof", proof_s);
+
+                            let mut cheader = create_init_header();
+                            cheader.set_type(PacketType::Command);
+
+                            *ignore_packet = true;
+                            Ok(Some(Packet::new(cheader,
+                                packets::Data::Command(command))))
+                        } else {
+                            Err(format_err!("initivexpand command has wrong arguments").into())
+                        }
+                    } else {
+                        Ok(None)
+                    }})(&mut con.params);
+
+                match res {
+                    Ok(p) => {
+                        *ignore_packet = true;
+                        Some((ServerConnectionState::Connecting, p))
+                    }
+                    Err(error) => {
+                        error!(logger, "Handle udp init packet"; "error" => %error);
+                        None
+                    }
+                }
+            }
+            ServerConnectionState::Connecting => {
+                let mut res = None;
+                if let Packet { data: packets::Data::Command(ref cmd), .. } = *packet {
+                    let cmd = cmd.get_commands().remove(0);
+                    if cmd.command == "initserver" && cmd.has_arg("aclid") {
+                        // Handle an initserver
+                        if let Some(ref mut params) = con.params {
+                            if let Ok(c_id) = cmd.args["aclid"].parse() {
+                                params.c_id = c_id;
+                            }
+                        }
+                        // initserver is the ack for clientinit
+                        // Remove from send queue
+                        con.resender.ack_packet(PacketType::Command, 1);
+                        // Notify the resender that we are connected
+                        con.resender.handle_event(ResenderEvent::Connected);
+                        res = Some((ServerConnectionState::Connected, None));
+                    }
+                }
+                res
+            }
+            ServerConnectionState::Connected => {
+                let mut res = None;
+                if let Packet { data: packets::Data::Command(ref cmd), .. } = *packet {
+                    let cmd = cmd.get_commands().remove(0);
+                    if cmd.command == "notifyclientleftview" && cmd.has_arg("clid") {
+                        // Handle a disconnect
+                        if let Some(ref mut params) = con.params {
+                            if cmd.args["clid"].parse() == Ok(params.c_id) {
+                                *is_end = true;
+                                res = Some((ServerConnectionState::Disconnected, None));
+                            }
+                        }
+                    }
+                }
+                res
+            }
+            ServerConnectionState::Disconnected => {
+                warn!(logger, "Got packet from server after disconnecting");
+                *is_end = true;
+                None
+            }
+        };
+        Ok(res)
     }
 }
 
 pub struct DefaultPacketHandlerSink<
-    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
 > {
     inner_sink: Rc<RefCell<Either<InnerSink, Option<Task>>>>,
+    phantom: ::std::marker::PhantomData<CM>,
 }
 
 impl<
-    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-> DefaultPacketHandlerSink<InnerSink> {
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+> DefaultPacketHandlerSink<CM, InnerSink> {
     pub fn new(
         inner_sink: Rc<RefCell<Either<InnerSink, Option<Task>>>>,
     ) -> Self {
-        Self { inner_sink }
+        Self { inner_sink, phantom: ::std::marker::PhantomData }
     }
 }
 
 impl<
-    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-> Sink for DefaultPacketHandlerSink<InnerSink> {
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+> Sink for DefaultPacketHandlerSink<CM, InnerSink> {
     type SinkItem = InnerSink::SinkItem;
     type SinkError = InnerSink::SinkError;
 
@@ -724,29 +668,28 @@ impl<
 }
 
 pub struct DefaultPacketHandler<
-    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
 > {
-    inner_stream: DefaultPacketHandlerStream,
-    inner_sink: DefaultPacketHandlerSink<InnerSink>,
+    inner_stream: Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
+    inner_sink: DefaultPacketHandlerSink<CM, InnerSink>,
 }
 
 impl<
-    InnerSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-> DefaultPacketHandler<InnerSink> {
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+> DefaultPacketHandler<CM, InnerSink> {
     pub fn new<
-        InnerStream: Stream<Item = Packet, Error = Error> + 'static,
-        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+        InnerStream: Stream<Item = (CM::ConnectionsKey, Packet), Error = Error> + 'static,
     >(
         data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
-        key: CM::ConnectionsKey,
     ) -> Self {
         let (inner_stream, inner_sink) = DefaultPacketHandlerStream::new(
             data,
             inner_stream,
             inner_sink,
-            key,
         );
         let inner_sink = DefaultPacketHandlerSink::new(inner_sink);
         Self {
@@ -755,37 +698,28 @@ impl<
         }
     }
 
-    pub fn split(
-        self,
-    ) -> (
-        DefaultPacketHandlerSink<InnerSink>,
-        DefaultPacketHandlerStream,
+    pub fn split(self) -> (
+        DefaultPacketHandlerSink<CM, InnerSink>,
+        Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
     ) {
         (self.inner_sink, self.inner_stream)
     }
 }
 
-impl DefaultPacketHandler<Box<Sink<SinkItem = Packet, SinkError = Error>>> {
-    pub fn apply<
-        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    >(data: &Rc<RefCell<Data<CM>>>, key: CM::ConnectionsKey) {
-        let ((stream, sink), con) = {
+impl<
+    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+> DefaultPacketHandler<CM, Box<Sink<SinkItem = (CM::ConnectionsKey, Packet),
+    SinkError = Error>>> {
+    pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
+        let (stream, sink) = {
             let mut data = data.borrow_mut();
-            let con = data.connection_manager.get_connection(key.clone())
-                .unwrap();
-            let i = {
-                let mut con = con.borrow_mut();
-                (
-                    con.packet_stream.take().unwrap(),
-                    con.packet_sink.take().unwrap(),
-                )
-            };
-            (i, con)
+            (data.packet_stream.take().unwrap(),
+                data.packet_sink.take().unwrap())
         };
-        let handler = Self::new(data, stream, sink, key);
+        let handler = Self::new(data, stream, sink);
         let (sink, stream) = handler.split();
-        let mut con = con.borrow_mut();
-        con.packet_stream = Some(Box::new(stream));
-        con.packet_sink = Some(Box::new(sink));
+        let mut data = data.borrow_mut();
+        data.packet_stream = Some(Box::new(stream));
+        data.packet_sink = Some(Box::new(sink));
     }
 }

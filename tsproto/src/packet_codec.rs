@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::io::Cursor;
+use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::u16;
 
@@ -10,27 +11,28 @@ use slog;
 
 use {packets, Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN };
 use algorithms as algs;
-use connection::{Connection, ConnectedParams};
+use connection::ConnectedParams;
 use connectionmanager::{ConnectionManager, Resender};
+use handler_data::Data;
 use packets::*;
 
 pub struct PacketCodecStream<
     CM: ConnectionManager + 'static,
-    Inner: Stream<Item = UdpPacket, Error = Error>,
+    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > {
-    connection: Weak<RefCell<Connection<CM>>>,
+    data: Weak<RefCell<Data<CM>>>,
     is_client: bool,
     inner: Inner,
-    receive_buffer: Vec<Packet>,
-    ack_packet: Option<Packet>,
+    receive_buffer: Vec<(CM::ConnectionsKey, Packet)>,
+    ack_packet: Option<(CM::ConnectionsKey, Packet)>,
 }
 
-impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
-    PacketCodecStream<CM, Inner> {
-    pub fn new(connection: &Rc<RefCell<Connection<CM>>>, inner: Inner) -> Self {
-        let is_client = connection.borrow().is_client;
+impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
+    Error = Error>> PacketCodecStream<CM, Inner> {
+    pub fn new(data: &Rc<RefCell<Data<CM>>>, inner: Inner) -> Self {
+        let is_client = data.borrow().is_client;
         Self {
-            connection: Rc::downgrade(connection),
+            data: Rc::downgrade(data),
             is_client,
             inner,
             receive_buffer: Vec::new(),
@@ -42,11 +44,12 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
     ///
     /// They have to be handled in the right order.
     fn handle_command_packet(
+        con_key: CM::ConnectionsKey,
         logger: &slog::Logger,
         params: &mut ConnectedParams,
         mut header: Header,
         mut packet: UdpPacket,
-    ) -> Result<Vec<Packet>> {
+    ) -> Result<Vec<(CM::ConnectionsKey, Packet)>> {
         let mut id = header.p_id;
         let type_i = header.get_type().to_usize().unwrap();
         let cmd_i = if header.get_type() == PacketType::Command {
@@ -130,7 +133,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                     Some(Packet::new(header, p_data))
                 };
                 if let Some(p) = res_packet {
-                    packets.push(p);
+                    packets.push((con_key.clone(), p));
                 }
 
                 // Check if there are following packets in the receive queue.
@@ -166,14 +169,28 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
         }
     }
 
-    fn on_packet_received(&mut self, mut udp_packet: Vec<u8>)
+    fn on_packet_received(&mut self, addr: SocketAddr, udp_packet: UdpPacket)
         -> futures::Poll<Option<<Self as Stream>::Item>,
             <Self as Stream>::Error> {
-        let con = if let Some(con) = self.connection.upgrade() {
-            con
+        // Get the connection
+        let data = if let Some(data) = self.data.upgrade() {
+            data
         } else {
             return Ok(futures::Async::Ready(None));
         };
+        let con_key;
+        let con = {
+            let data = data.borrow();
+            let con = data.connection_manager.get_connection_for_udp_packet(addr, &udp_packet);
+            if let Some(con) = con {
+                con_key = con.clone();
+                data.connection_manager.get_connection(con).unwrap()
+            } else {
+                return Ok(futures::Async::NotReady);
+            }
+        };
+
+        let UdpPacket(mut udp_packet) = udp_packet;
         let con = &mut *con.borrow_mut();
         let is_client = self.is_client;
         let (header, pos) = {
@@ -185,7 +202,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
         };
         let mut udp_packet = udp_packet.split_off(pos);
 
-        let packets: Vec<Packet> = {
+        let packets: Vec<(CM::ConnectionsKey, Packet)> = {
             let logger = con.logger.clone();
             if let Some(ref mut params) = con.params {
                 if header.get_type() == PacketType::Init {
@@ -259,6 +276,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                                 ));
                             }
                             let res = Self::handle_command_packet(
+                                con_key.clone(),
                                 &logger,
                                 params,
                                 header,
@@ -307,7 +325,8 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                                         }
                                         _ => {}
                                     }
-                                    Ok(vec![Packet::new(header, p_data)])
+                                    Ok(vec![(con_key.clone(),
+                                        Packet::new(header, p_data))])
                                 }
                                 Err(error) => Err(error),
                             }
@@ -336,7 +355,8 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                 if let Some((ack_type, ack_packet)) = ack {
                     let mut ack_header = Header::default();
                     ack_header.set_type(ack_type);
-                    self.ack_packet = Some(Packet::new(ack_header, ack_packet));
+                    self.ack_packet = Some((con_key,
+                        Packet::new(ack_header, ack_packet)));
                 }
                 res
             } else {
@@ -347,11 +367,10 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                         // Send ack
                         let mut ack_header = Header::default();
                         ack_header.set_type(PacketType::Ack);
-                        self.ack_packet = Some(Packet::new(
-                                ack_header,
-                                packets::Data::Ack(header.p_id),
-                            )
-                        );
+                        self.ack_packet = Some((con_key.clone(), Packet::new(
+                            ack_header,
+                            packets::Data::Ack(header.p_id),
+                        )));
                     } else {
                         udp_packet.copy_from_slice(&udp_packet_bak);
                     }
@@ -360,7 +379,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
                     &header,
                     &mut Cursor::new(udp_packet.as_slice()),
                 )?;
-                Ok(vec![Packet::new(header, p_data)])
+                Ok(vec![(con_key, Packet::new(header, p_data))])
             }
         }?;
 
@@ -383,33 +402,34 @@ impl<CM: ConnectionManager, Inner: Stream<Item = UdpPacket, Error = Error>>
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecStream<CM,
-    ::connection::UdpPackets<CM>> {
+    ::handler_data::DataUdpPackets<CM>> {
     /// Add a packet codec stream to the connection.
     ///
     /// `Ack`, `AckLow` and `Pong` packets can be suppressed by setting
     /// `send_acks` to `false`.
-    pub fn apply(connection: &Rc<RefCell<Connection<CM>>>, send_acks: bool) {
-        let stream = Self::new(connection,
-            Connection::get_udp_packets(Rc::downgrade(connection)));
-        let connection2 = connection.clone();
-        let mut connection = connection.borrow_mut();
+    pub fn apply(data: &Rc<RefCell<Data<CM>>>, send_acks: bool) {
+        let stream = Self::new(data,
+            Data::get_udp_packets(Rc::downgrade(data)));
+        let data2 = data.clone();
+        let mut data = data.borrow_mut();
         let stream: Box<Stream<Item=_, Error=_>> = if send_acks {
             Box::new(AckHandler::new(stream,
-                Connection::get_packets(Rc::downgrade(&connection2))))
+                Data::get_packets(Rc::downgrade(&data2))))
         } else {
             Box::new(stream.filter_map(|(p, _)| p))
         };
 
-        connection.packet_stream = Some(stream);
+        data.packet_stream = Some(stream);
     }
 }
 
 impl<
     CM: ConnectionManager,
-    Inner: Stream<Item = UdpPacket, Error = Error>,
+    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
 > Stream for PacketCodecStream<CM, Inner> {
     /// Source packet, optional ack packet if one should be sent.
-    type Item = (Option<Packet>, Option<Packet>);
+    type Item = (Option<(CM::ConnectionsKey, Packet)>,
+        Option<(CM::ConnectionsKey, Packet)>);
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
@@ -422,16 +442,16 @@ impl<
         }
         // Don't return an error, that will terminate the stream (log them only)
         let res: Result<_> = match self.inner.poll()? {
-            futures::Async::Ready(Some(UdpPacket(mut udp_packet))) =>
-                self.on_packet_received(udp_packet),
+            futures::Async::Ready(Some((addr, udp_packet))) =>
+                self.on_packet_received(addr, udp_packet),
             futures::Async::Ready(None) => Ok(futures::Async::Ready(None)),
             futures::Async::NotReady => Ok(futures::Async::NotReady),
         };
 
         if let Err(error) = res {
             // Log error
-            let logger = if let Some(con) = self.connection.upgrade() {
-                con.borrow().logger.clone()
+            let logger = if let Some(data) = self.data.upgrade() {
+                data.borrow().logger.clone()
             } else {
                 return Ok(futures::Async::Ready(None));
             };
@@ -448,13 +468,15 @@ impl<
 
 pub struct PacketCodecSink<
     CM: ConnectionManager + 'static,
-    Inner: Sink<SinkItem = UdpPacket, SinkError = Error>,
+    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > {
-    connection: Weak<RefCell<Connection<CM>>>,
+    data: Weak<RefCell<Data<CM>>>,
     is_client: bool,
     inner: Inner,
     /// The type of the packets in the current send buffer.
     command_p_type: PacketType,
+    connection_key: Option<CM::ConnectionsKey>,
+    addr: Option<SocketAddr>,
     /// Currently buffered id and packet.
     command_send_buffer: Vec<(u16, UdpPacket)>,
     /// Send buffer for other packets
@@ -462,36 +484,38 @@ pub struct PacketCodecSink<
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
-    ::connection::UdpPackets<CM>> {
-    fn new(connection: &Rc<RefCell<Connection<CM>>>) -> Self {
-        let is_client = connection.borrow().is_client;
+    ::handler_data::DataUdpPackets<CM>> {
+    fn new(data: &Rc<RefCell<Data<CM>>>) -> Self {
+        let is_client = data.borrow().is_client;
         Self {
-            connection: Rc::downgrade(connection),
+            data: Rc::downgrade(data),
             is_client,
-            inner: Connection::get_udp_packets(Rc::downgrade(connection)),
+            inner: Data::get_udp_packets(Rc::downgrade(data)),
             command_p_type: PacketType::Command,
+            connection_key: None,
+            addr: None,
             command_send_buffer: Vec::new(),
             other_send_buffer: Vec::new(),
         }
     }
 
     /// Add a packet codec sink to the connection.
-    pub fn apply(connection: &Rc<RefCell<Connection<CM>>>) {
-        let sink = Self::new(connection);
-        connection.borrow_mut().packet_sink = Some(Box::new(sink));
+    pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
+        let sink = Self::new(data);
+        data.borrow_mut().packet_sink = Some(Box::new(sink));
     }
 }
 
 impl<
     CM: ConnectionManager,
-    Inner: Sink<SinkItem = UdpPacket, SinkError = Error>,
+    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
 > Sink for PacketCodecSink<CM, Inner> {
-    type SinkItem = Packet;
+    type SinkItem = (CM::ConnectionsKey, Packet);
     type SinkError = Error;
 
     fn start_send(
         &mut self,
-        packet: Self::SinkItem,
+        (con_key, packet): Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         // Check if there are unsent packets in the queue for this packet type
         let p_type = packet.header.get_type();
@@ -499,17 +523,18 @@ impl<
             if !self.command_send_buffer.is_empty() {
                 self.poll_complete()?;
                 if !self.command_send_buffer.is_empty() {
-                    return Ok(futures::AsyncSink::NotReady(packet));
+                    return Ok(futures::AsyncSink::NotReady((con_key, packet)));
                 }
             }
         } else if !self.other_send_buffer.is_empty() {
             self.poll_complete()?;
             if !self.other_send_buffer.is_empty() {
-                return Ok(futures::AsyncSink::NotReady(packet));
+                return Ok(futures::AsyncSink::NotReady((con_key, packet)));
             }
         }
 
         // The resulting list of udp packets
+        let addr;
         let mut packets = {
             let is_client = self.is_client;
             let use_newprotocol =
@@ -517,9 +542,16 @@ impl<
                 || packet.header.get_type() == PacketType::CommandLow)
                 && is_client;
 
+            // Get connection
+            let con = {
+                let data = self.data.upgrade().unwrap();
+                let data = data.borrow();
+                data.connection_manager.get_connection(con_key.clone()).unwrap()
+            };
+
             // Get the connection parameters
-            let con = self.connection.upgrade().unwrap();
             let mut con = con.borrow_mut();
+            addr = con.address;
             if let Some(params) = con.params.as_mut() {
                 let p_type = packet.header.get_type();
                 let type_i = p_type.to_usize().unwrap();
@@ -534,7 +566,7 @@ impl<
                     && ((!is_client && p_id == 0)
                         || (is_client && p_id == 1 && {
                             // Test if it is a clientek packet
-                            if let Data::Command(ref cmd) =
+                            if let ::packets::Data::Command(ref cmd) =
                                 packet.data {
                                 cmd.command == "clientek"
                             } else {
@@ -635,9 +667,11 @@ impl<
         // TODO Send init packets using the resender
         // TODO The following init packet has to be handled as an ack packet.
         if p_type == PacketType::Command || p_type == PacketType::CommandLow {
+            self.connection_key = Some(con_key);
             self.command_send_buffer = packets;
             self.command_p_type = p_type;
         } else {
+            self.addr = Some(addr);
             self.other_send_buffer = packets;
         }
         Ok(futures::AsyncSink::Ready)
@@ -646,27 +680,41 @@ impl<
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
         // Check if there are unsent command packets in the queue
         let command_res = {
-            let con = self.connection.upgrade().unwrap();
-            let mut con = con.borrow_mut();
             if let Some((p_id, packet)) = self.command_send_buffer.pop() {
-                if let futures::AsyncSink::NotReady((_, p_id, packet)) =
-                    con.resender.start_send((self.command_p_type, p_id, packet))?
-                {
-                    self.command_send_buffer.push((p_id, packet));
+                // Get the connection
+                let data = if let Some(data) = self.data.upgrade() {
+                    data
                 } else {
-                    futures::task::current().notify();
+                    return Err(format_err!("Data does not exist").into());
+                };
+                let data = data.borrow();
+                if let Some(con) = data.connection_manager
+                    .get_connection(self.connection_key.as_ref()
+                        .expect("Forgot to set the connection key").clone()) {
+                    let mut con = con.borrow_mut();
+                    if let futures::AsyncSink::NotReady((_, p_id, packet)) =
+                        con.resender.start_send((self.command_p_type, p_id, packet))?
+                    {
+                        self.command_send_buffer.push((p_id, packet));
+                    } else {
+                        futures::task::current().notify();
+                    }
+                    futures::Async::NotReady
+                } else {
+                    warn!(data.logger, "Cannot send packet for missing connection");
+                    futures::Async::Ready(())
                 }
-                futures::Async::NotReady
             } else {
-                con.resender.poll_complete()?
+                futures::Async::Ready(())
             }
         };
 
         // Check if there are other unsent packets in the queue
         let other_res = {
             if let Some((p_id, packet)) = self.other_send_buffer.pop() {
-                if let futures::AsyncSink::NotReady(packet) =
-                    self.inner.start_send(packet)?
+                if let futures::AsyncSink::NotReady((_, packet)) =
+                    self.inner.start_send((self.addr
+                        .expect("Forgot to set the address"), packet))?
                 {
                     self.other_send_buffer.push((p_id, packet));
                 } else {
@@ -691,23 +739,25 @@ impl<
 }
 
 pub struct AckHandler<
-    UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-    InnerStream: Stream<Item = (Option<Packet>, Option<Packet>), Error = Error>
-        + 'static,
+    T,
+    UsedSink: Sink<SinkItem = (T, Packet), SinkError = Error> + 'static,
+    InnerStream: Stream<Item = (Option<(T, Packet)>, Option<(T, Packet)>),
+        Error = Error> + 'static,
 > {
     used_sink: UsedSink,
     inner_stream: InnerStream,
     /// A buffer for an ack packet.
-    ack_buffer: Option<Packet>,
+    ack_buffer: Option<(T, Packet)>,
     /// If we have put a packet into the sink and should poll for completion.
     should_poll_complete: bool,
 }
 
 impl<
-    UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-    InnerStream: Stream<Item = (Option<Packet>, Option<Packet>), Error = Error>
-        + 'static,
-> AckHandler<UsedSink, InnerStream> {
+    T,
+    UsedSink: Sink<SinkItem = (T, Packet), SinkError = Error> + 'static,
+    InnerStream: Stream<Item = (Option<(T, Packet)>, Option<(T, Packet)>),
+        Error = Error> + 'static,
+> AckHandler<T, UsedSink, InnerStream> {
     pub fn new(inner_stream: InnerStream, used_sink: UsedSink) -> Self {
         Self {
             used_sink,
@@ -719,11 +769,12 @@ impl<
 }
 
 impl<
-    UsedSink: Sink<SinkItem = Packet, SinkError = Error> + 'static,
-    InnerStream: Stream<Item = (Option<Packet>, Option<Packet>), Error = Error>
-        + 'static,
-> Stream for AckHandler<UsedSink, InnerStream> {
-    type Item = Packet;
+    T,
+    UsedSink: Sink<SinkItem = (T, Packet), SinkError = Error> + 'static,
+    InnerStream: Stream<Item = (Option<(T, Packet)>, Option<(T, Packet)>),
+        Error = Error> + 'static,
+> Stream for AckHandler<T, UsedSink, InnerStream> {
+    type Item = (T, Packet);
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {

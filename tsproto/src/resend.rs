@@ -582,7 +582,7 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
     data: Weak<RefCell<Data<CM>>>,
     connection_key: CM::ConnectionsKey,
     connection: Weak<RefCell<Connection<CM>>>,
-    sink: ::connection::UdpPackets<CM>,
+    sink: ::handler_data::DataUdpPackets<CM>,
     /// The future to wake us up when the next packet should be resent.
     timeout: Timeout,
     /// The future to wake us up when the current state times out.
@@ -606,7 +606,7 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
             data: Rc::downgrade(data),
             connection_key,
             connection: Rc::downgrade(&connection),
-            sink: Connection::get_udp_packets(Rc::downgrade(&connection)),
+            sink: Data::get_udp_packets(Rc::downgrade(data)),
             timeout: Timeout::new(
                 Duration::seconds(1).to_std().unwrap(),
                 &handle,
@@ -633,10 +633,15 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
             // Quit if the connection does not exist anymore
             return Ok(futures::Async::Ready(()));
         };
+        let addr;
         {
             // Set task
             let mut con = con.borrow_mut();
-            con.resender.resender_future_task = Some(task::current());
+            if !con.resender.resender_future_task.as_ref()
+                .map(|t| t.will_notify_current()).unwrap_or(false) {
+                con.resender.resender_future_task = Some(task::current());
+            }
+            addr = con.address;
         }
 
         if self.is_sending {
@@ -806,7 +811,7 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
         } {
             // Try to send this packet
             if let futures::AsyncSink::NotReady(_) =
-                self.sink.start_send(packet)?
+                self.sink.start_send((addr, packet))?
             {
                 // The sink should notify us if it is ready
                 break;
@@ -852,12 +857,16 @@ impl<CM: ConnectionManager<Resend = DefaultResender> + 'static> Future for
                 rec.tries += 1;
 
                 if rec.tries != 1 {
-                    let to_s = if con.is_client { "S" } else { "C" };
+                    let data = self.data.upgrade().unwrap();
+                    let to_s = if data.borrow().is_client { "S" } else { "C" };
                     warn!(con.logger, "Resend";
                         "p_id" => rec.p_id,
                         "tries" => rec.tries,
                         "last" => %rec.last,
                         "to" => to_s,
+                        //"srtt" => ?con.resender.srtt,
+                        //"srtt_dev" => ?con.resender.srtt_dev,
+                        //"rto" => %rto,
                     );
                 }
             }

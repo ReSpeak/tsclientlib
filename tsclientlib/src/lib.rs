@@ -16,8 +16,23 @@
 // To inspect/modify things, facade objects are used (included in lib.rs).
 // All facade objects exist in a mutable and non-mutable version and they borrow
 // the ConnectionManager.
+// That means all references have to be handed back before the ConnectionManager
+// can be used again.
 //
-// InnerCM contains a Map<ConnectionId, structs::NetworkWrapper>
+// InnerCM contains a Map<ConnectionId, structs::NetworkWrapper>.
+//
+// NetworkWrapper contains the Connection which is the bookkeeping struct,
+// the Rc<RefCell<client::ClientData>>, which is the tsproto connection,
+// a reference to the ClientConnection of tsproto
+// and a stream of Notifications.
+//
+// The NetworkWrapper wraps the stream of Notifications and updates the
+// bookkeeping, raises events, etc. on new packets.
+// The ConnectionManager wraps all those streams into one stream (like a
+// select). To progress, the user of the library has to poll the
+// ConnectionManager for new notifications and sound.
+//
+// The items of the stream are either Notifications or audio data.
 
 // TODO
 #![allow(dead_code)]
@@ -28,8 +43,6 @@ extern crate chrono;
 extern crate failure;
 extern crate futures;
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate slog;
 extern crate slog_async;
 extern crate slog_perf;
@@ -39,20 +52,24 @@ extern crate tsproto;
 extern crate tsproto_commands;
 
 use std::cell::{Ref, RefCell, RefMut};
+use std::fmt;
 use std::mem;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
+use std::sync::{Once, ONCE_INIT};
+use std::rc::Rc;
 
 use chrono::{DateTime, Duration, Utc};
 use failure::ResultExt;
 use futures::{future, Future, Sink, Stream};
+use futures::task::{self, Task};
+use futures::future::Either;
 use slog::{Drain, Logger};
 use tokio_core::reactor::Handle;
 use tsproto::algorithms as algs;
-use tsproto::{client, crypto, packets, commands, handler_data};
+use tsproto::{client, crypto, packets, commands};
 use tsproto::connectionmanager::ConnectionManager as TsprotoCM;
 use tsproto::connectionmanager::{Resender, ResenderEvent};
-use tsproto::handler_data::ConnectionListener;
+use tsproto::handler_data::Data;
 use tsproto::packets::{Header, Packet, PacketType};
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
@@ -75,15 +92,21 @@ macro_rules! tryf {
     };
 }
 
+pub mod codec;
 mod structs;
 
 // Reexports
 pub use tsproto_commands::Reason;
 pub use tsproto_commands::ConnectionId;
 
+use codec::Message;
+
 type Result<T> = std::result::Result<T, Error>;
 type BoxFuture<T> = Box<Future<Item = T, Error = Error>>;
 type Map<K, V> = std::collections::HashMap<K, V>;
+
+include!(concat!(env!("OUT_DIR"), "/facades.rs"));
+include!(concat!(env!("OUT_DIR"), "/getters.rs"));
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -93,6 +116,8 @@ pub enum Error {
     Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
     Tsproto(tsproto::Error),
+    #[fail(display = "{}", _0)]
+    ParseNotification(tsproto_commands::messages::ParseError),
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 }
@@ -106,6 +131,12 @@ impl From<base64::DecodeError> for Error {
 impl From<tsproto::Error> for Error {
     fn from(e: tsproto::Error) -> Self {
         Error::Tsproto(e)
+    }
+}
+
+impl From<tsproto_commands::messages::ParseError> for Error {
+    fn from(e: tsproto_commands::messages::ParseError) -> Self {
+        Error::ParseNotification(e)
     }
 }
 
@@ -134,14 +165,6 @@ pub enum MaxFamilyClients {
 pub struct TalkPowerRequest {
     pub time: DateTime<Utc>,
     pub message: String,
-}
-
-include!(concat!(env!("OUT_DIR"), "/facades.rs"));
-
-lazy_static! {
-    /// Initialize `tsproto`
-    static ref TSPROTO_INIT: () = tsproto::init()
-        .expect("tsproto failed to initialize");
 }
 
 /// The connection manager which can be shared and cloned.
@@ -185,6 +208,16 @@ impl InnerCM {
 /// [`ConnectionManager::new`]: #method.new
 pub struct ConnectionManager {
     inner: Rc<RefCell<InnerCM>>,
+    /// The index of the connection which should be polled next.
+    ///
+    /// This is used to ensure that connections don't starve if one connection
+    /// always returns something. It is used in the `Stream` implementation of
+    /// `ConnectionManager`.
+    poll_index: usize,
+    /// The task of the current `Run`, which polls all connections.
+    ///
+    /// It will be notified when a new connection is added.
+    task: Option<Task>,
 }
 
 impl ConnectionManager {
@@ -212,7 +245,9 @@ impl ConnectionManager {
     /// [`ConnectionManager::add_connection`]: #method.add_connection
     pub fn new(handle: Handle) -> Self {
         // Initialize tsproto if it was not done yet
-        *TSPROTO_INIT;
+        static TSPROTO_INIT: Once = ONCE_INIT;
+        TSPROTO_INIT.call_once(|| tsproto::init()
+            .expect("tsproto failed to initialize"));
 
         // TODO Create with builder so the logger is optional
         // Don't log anything to console as default setting
@@ -231,137 +266,154 @@ impl ConnectionManager {
                 logger,
                 connections: Map::new(),
             })),
+            poll_index: 0,
+            task: None,
         }
     }
 
     /// Connect to a server.
-    pub fn add_connection(&mut self, mut config: ConnectOptions)
-        -> BoxFuture<ConnectionId> {
-        let inner = self.inner.borrow();
-        let addr = config.address.expect(
-            "Invalid ConnectOptions, this should not happen");
-        let private_key = tryf!(config.private_key.take().map(|k| Ok(k))
-            .unwrap_or_else(|| {
-                // Create new ECDH key
-                crypto::EccKey::create()
-            }));
-
-        let client = tryf!(client::ClientData::new(
-            config.local_address,
-            private_key,
-            inner.handle.clone(),
-            true,
-            tsproto::connectionmanager::SocketConnectionManager::new(),
-            None,
-        ));
-
-        // Set the data reference
+    pub fn add_connection(&mut self, mut config: ConnectOptions) -> Connect {
+        let res: BoxFuture<_>;
         {
-            let c2 = client.clone();
-            let mut client = client.borrow_mut();
-            client.connection_manager.set_data_ref(Rc::downgrade(&c2));
-        }
-        client::default_setup(&client, false);
-
-        // Create a connection
-        let connect_fut = client::connect(&client, addr);
-
-        let logger = inner.logger.clone();
-        let inner = Rc::downgrade(&self.inner);
-        Box::new(connect_fut.map_err(|e| e.into()).and_then(move |()| {
-            // TODO Add possibility to specify offset and level in ConnectOptions
-            // Compute hash cash
-            let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-                "Compute public key hash cash level", logger.clone(),
-                slog::Level::Info);
-            time_reporter.start("Compute public key hash cash level");
-            let (offset, omega) = {
-                let mut c = client.borrow_mut();
-                (algs::hash_cash(&mut c.private_key, 8).unwrap(),
-                c.private_key.to_ts_public().unwrap())
+            let inner = self.inner.borrow();
+            let addr = config.address.expect(
+                "Invalid ConnectOptions, this should not happen");
+            let private_key = match config.private_key.take().map(|k| Ok(k))
+                .unwrap_or_else(|| {
+                    // Create new ECDH key
+                    crypto::EccKey::create()
+                }) {
+                Ok(key) => key,
+                Err(error) => return Connect::new_from_error(error.into()),
             };
-            time_reporter.finish();
-            info!(logger, "Computed hash cash level";
-                "level" => algs::get_hash_cash_level(&omega, offset),
-                "offset" => offset);
 
-            // Create clientinit packet
-            let header = Header::new(PacketType::Command);
-            let mut command = commands::Command::new("clientinit");
-            command.push("client_nickname", config.name);
-            command.push("client_version", "3.1.6 [Build: 1502873983]");
-            command.push("client_platform", "Linux");
-            command.push("client_input_hardware", "1");
-            command.push("client_output_hardware", "1");
-            command.push("client_default_channel", "");
-            command.push("client_default_channel_password", "");
-            command.push("client_server_password", "");
-            command.push("client_meta_data", "");
-            command.push("client_version_sign", "o+l92HKfiUF+THx2rBsuNjj/S1QpxG1fd5o3Q7qtWxkviR3LI3JeWyc26eTmoQoMTgI3jjHV7dCwHsK1BVu6Aw==");
-            command.push("client_key_offset", offset.to_string());
-            command.push("client_nickname_phonetic", "");
-            command.push("client_default_token", "");
-            command.push("hwid", "123,456");
-            let p_data = packets::Data::Command(command);
-            let clientinit_packet = Packet::new(header, p_data);
+            let client = match client::ClientData::new(
+                config.local_address,
+                private_key,
+                inner.handle.clone(),
+                true,
+                tsproto::connectionmanager::SocketConnectionManager::new(),
+                None,
+            ) {
+                Ok(client) => client,
+                Err(error) => return Connect::new_from_error(error.into()),
+            };
 
-            let con = client.borrow().connection_manager
-                .get_connection(addr).unwrap();
-            let sink = client::ClientConnection::get_packets(Rc::downgrade(&con));
+            // Set the data reference
+            {
+                let c2 = client.clone();
+                let mut client = client.borrow_mut();
+                client.connection_manager.set_data_ref(Rc::downgrade(&c2));
+            }
+            client::default_setup(&client, true); // TODO false/specify in options
 
+            // Create a connection
+            let connect_fut = client::connect(&client, addr);
+
+            let logger = inner.logger.clone();
+            let inner = Rc::downgrade(&self.inner);
             let client2 = client.clone();
-            let con_weak = Rc::downgrade(&con);
-            sink.send(clientinit_packet).and_then(move |_| {
-                client::wait_until_connected(&client2, addr)
-            })
-            .and_then(move |()| {
-                // Wait for the initserver packet
-                let stream = tsproto_commands::codec::CommandCodec::
-                    new_stream_from_connection(&con);
-                stream.into_future().map_err(|(e, _)| e)
-            }).map_err(|e| e.into())
-            .and_then(move |(p, stream)| -> BoxFuture<_> {
-                if let Some(Notification::InitServer(p)) = p {
-                    // Create a connection id
-                    let inner2 = inner.clone();
-                    let inner = inner.upgrade().expect(
-                        "Connection manager does not exist anymore");
-                    let mut inner = inner.borrow_mut();
-                    let id = inner.find_connection_id();
 
-                    {
-                        let mut client = client.borrow_mut();
-                        client.connection_listeners.push(Box::new(
-                            RemoveListener {
-                                connection_id: id,
-                                inner: inner2,
-                            }));
+            // Poll the connection for packets
+            let initserver_poll = client::ClientData::get_packets(
+                Rc::downgrade(&client))
+                .filter_map(|(_, p)| {
+                    // Filter commands
+                    if let Packet { data: packets::Data::Command(cmd), .. } = p {
+                        Some(cmd)
+                    } else {
+                        None
                     }
+                })
+                .into_future().map_err(|(e, _)| e.into())
+                .and_then(move |(cmd, _)| -> BoxFuture<_> {
+                    let cmd = if let Some(cmd) = cmd {
+                        cmd
+                    } else {
+                        return Box::new(future::err(Error::ConnectionFailed(
+                            String::from("Connection ended"))));
+                    };
 
-                    // Wait until we are fully connected
-                    let wait_for_state = client::wait_for_state(&client, addr, |state| {
-                        if let client::ServerConnectionState::Connected = *state {
-                            true
-                        } else {
-                            false
+                    let cmd = cmd.get_commands().remove(0);
+                    let notif = tryf!(Notification::parse(cmd));
+                    if let Notification::InitServer(p) = notif {
+                        // Create a connection id
+                        let inner = inner.upgrade().expect(
+                            "Connection manager does not exist anymore");
+                        let mut inner = inner.borrow_mut();
+                        let id = inner.find_connection_id();
+
+                        let con;
+                        {
+                            let mut client = client2.borrow_mut();
+                            con = client.connection_manager
+                                .get_connection(addr).unwrap();
                         }
-                    });
 
-                    // Create the connection
-                    let con = structs::NetworkWrapper::new(id, client, con_weak,
-                        stream, p);
+                        // Create the connection
+                        let con = structs::NetworkWrapper::new(id, client2,
+                            Rc::downgrade(&con), p);
 
-                    // Add the connection
-                    inner.connections.insert(id, con);
+                        // Add the connection
+                        inner.connections.insert(id, con);
 
-                    Box::new(wait_for_state.map(move |_| id)
-                        .map_err(|e| e.into()))
-                } else {
-                    Box::new(future::err(Error::ConnectionFailed(String::from(
-                        "Got no initserver"))))
-                }
+                        Box::new(future::ok(id))
+                    } else {
+                        Box::new(future::err(Error::ConnectionFailed(
+                            String::from("Got no initserver"))))
+                    }
+                });
+
+            // TODO Also select2 with run so other connections get work too
+            res = Box::new(connect_fut.map_err(|e| e.into())
+            .and_then(move |()| {
+                // TODO Add possibility to specify offset and level in ConnectOptions
+                // Compute hash cash
+                let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+                    "Compute public key hash cash level", logger.clone(),
+                    slog::Level::Info);
+                time_reporter.start("Compute public key hash cash level");
+                let (offset, omega) = {
+                    let mut c = client.borrow_mut();
+                    (algs::hash_cash(&mut c.private_key, 8).unwrap(),
+                    c.private_key.to_ts_public().unwrap())
+                };
+                time_reporter.finish();
+                info!(logger, "Computed hash cash level";
+                    "level" => algs::get_hash_cash_level(&omega, offset),
+                    "offset" => offset);
+
+                // Create clientinit packet
+                let header = Header::new(PacketType::Command);
+                let mut command = commands::Command::new("clientinit");
+                command.push("client_nickname", config.name);
+                command.push("client_version", "3.1.6 [Build: 1502873983]");
+                command.push("client_platform", "Linux");
+                command.push("client_input_hardware", "1");
+                command.push("client_output_hardware", "1");
+                command.push("client_default_channel", "");
+                command.push("client_default_channel_password", "");
+                command.push("client_server_password", "");
+                command.push("client_meta_data", "");
+                command.push("client_version_sign", "o+l92HKfiUF+THx2rBsuNjj/S1QpxG1fd5o3Q7qtWxkviR3LI3JeWyc26eTmoQoMTgI3jjHV7dCwHsK1BVu6Aw==");
+                command.push("client_key_offset", offset.to_string());
+                command.push("client_nickname_phonetic", "");
+                command.push("client_default_token", "");
+                command.push("hwid", "123,456");
+                let p_data = packets::Data::Command(command);
+                let clientinit_packet = Packet::new(header, p_data);
+
+                let sink = Data::get_packets(Rc::downgrade(&client));
+
+                sink.send((addr, clientinit_packet))
             })
-        }))
+            .map_err(|e| e.into())
+            // Wait until we sent the clientinit packet and afterwards received
+            // the initserver packet.
+            .join(initserver_poll)
+            .map(|(_, id)| id));
+        }
+        Connect::new_from_future(self.run().select2(res))
     }
 
     /// Disconnect from a server.
@@ -413,7 +465,7 @@ impl ConnectionManager {
     /// # }
     /// ```
     pub fn remove_connection<O: Into<Option<DisconnectOptions>>>(&mut self,
-        id: ConnectionId, options: O) -> BoxFuture<()> {
+        id: ConnectionId, options: O) -> Disconnect {
         let client_con;
         let client_data;
         {
@@ -422,7 +474,7 @@ impl ConnectionManager {
                 client_con = con.client_connection.clone();
                 client_data = con.client_data.clone();
             } else {
-                return Box::new(future::ok(()));
+                return Disconnect::new_from_ok();
             }
         }
 
@@ -430,7 +482,7 @@ impl ConnectionManager {
             c
         } else {
             // Already disconnected
-            return Box::new(future::ok(()));
+            return Disconnect::new_from_ok();
         };
 
         let header = Header::new(PacketType::Command);
@@ -455,7 +507,7 @@ impl ConnectionManager {
             addr = con.address;
         }
 
-        let sink = client::ClientConnection::get_packets(Rc::downgrade(&client_con));
+        let sink = Data::get_packets(Rc::downgrade(&client_data));
         let wait_for_state = client::wait_for_state(&client_data, addr, |state| {
             if let client::ServerConnectionState::Disconnected = *state {
                 true
@@ -463,16 +515,31 @@ impl ConnectionManager {
                 false
             }
         });
-        Box::new(sink.send(packet).and_then(move |_| wait_for_state)
-            .map_err(|e| e.into()))
+        let fut: BoxFuture<_> = Box::new(sink.send((addr, packet))
+            .and_then(move |_| wait_for_state)
+            .map_err(|e| e.into()));
+        Disconnect::new_from_future(self.run().select(fut))
     }
 
     pub fn get_connection(&self, id: ConnectionId) -> Option<Connection> {
         if self.inner.borrow().connections.contains_key(&id) {
-            Some(Connection { cm: &self, id })
+            Some(Connection { cm: self, id })
         } else {
             None
         }
+    }
+
+    pub fn get_mut_connection(&mut self, id: ConnectionId) -> Option<ConnectionMut> {
+        if self.inner.borrow().connections.contains_key(&id) {
+            Some(ConnectionMut { cm: self, id })
+        } else {
+            None
+        }
+    }
+
+    /// Creates a future to handle all packets.
+    pub fn run<'a>(&'a mut self) -> Run<'a> {
+        Run { cm: self }
     }
 }
 
@@ -485,26 +552,157 @@ impl ConnectionManager {
     fn get_chat_entry(&self, _con: ConnectionId, _sender: ClientId) -> Ref<structs::ChatEntry> {
         unimplemented!("Chatting is not yet implemented")
     }
+
+    /// Poll like a stream to get the next message.
+    fn poll_stream(&mut self) -> futures::Poll<Option<(ConnectionId, Message)>,
+        Error> {
+        if !self.task.as_ref().map(|t| t.will_notify_current()).unwrap_or(false) {
+            self.task = Some(task::current());
+        }
+
+        // Poll all connections
+        let inner = &mut *self.inner.borrow_mut();
+        let keys: Vec<_> = inner.connections.keys().cloned().collect();
+        if keys.is_empty() {
+            // Wait until our task gets notified
+            return Ok(futures::Async::NotReady);
+        }
+
+        if self.poll_index >= keys.len() {
+            self.poll_index = 0;
+        }
+
+        let mut remove_connection = false;
+        let mut result = Ok(futures::Async::NotReady);
+        for con_id in 0..keys.len() {
+            let i = (self.poll_index + con_id) % keys.len();
+            let con = inner.connections.get_mut(&keys[i]).unwrap();
+            match con.poll() {
+                Ok(futures::Async::Ready(None)) =>
+                    warn!(inner.logger, "Got None from a connection";
+                        "connection" => %keys[i].0),
+                Ok(futures::Async::Ready(Some((_, res)))) => {
+                    // Check if the connection is still alive
+                    if con.client_connection.upgrade().is_none() {
+                        remove_connection = true;
+                    }
+                    self.poll_index = i + 1;
+                    result = Ok(futures::Async::Ready(Some((keys[i], res))));
+                    break;
+                }
+                Ok(futures::Async::NotReady) => {}
+                Err(error) =>
+                    warn!(inner.logger, "Got an error from a connection";
+                        "error" => ?error, "connection" => %keys[i].0),
+            }
+        }
+        if remove_connection {
+            // Remove the connection
+            inner.connections.remove(&keys[self.poll_index - 1]);
+        }
+        result
+    }
+
+    // Poll like a future created by (ConnectionManager as Stream).for_each().
+    fn poll_future(&mut self) -> futures::Poll<(), Error> {
+        loop {
+            match self.poll_stream()? {
+                futures::Async::Ready(Some(_)) => {}
+                futures::Async::Ready(None) =>
+                    return Ok(futures::Async::Ready(())),
+                futures::Async::NotReady => return Ok(futures::Async::NotReady),
+            }
+        }
+    }
 }
 
-include!(concat!(env!("OUT_DIR"), "/getters.rs"));
-
-struct RemoveListener {
-    connection_id: ConnectionId,
-    inner: Weak<RefCell<InnerCM>>,
+impl fmt::Debug for ConnectionManager {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ConnectionManager(...)")
+    }
 }
 
-impl<CM: TsprotoCM> ConnectionListener<CM> for RemoveListener {
-    fn on_connection_removed(&mut self, _: Rc<RefCell<handler_data::Data<CM>>>,
-        _: CM::ConnectionsKey) -> bool {
-        let inner = if let Some(inner) = self.inner.upgrade() {
-            inner
-        } else {
-            return true;
-        };
-        let mut inner = inner.borrow_mut();
-        inner.connections.remove(&self.connection_id);
-        false
+/// A future which runs the `ConnectionManager` indefinitely.
+#[derive(Debug)]
+pub struct Run<'a> {
+    cm: &'a mut ConnectionManager,
+}
+
+impl<'a> Future for Run<'a> {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        self.cm.poll_future()
+    }
+}
+
+pub struct Connect<'a> {
+    /// Contains an error if the `add_connection` functions should return an
+    /// error.
+    inner: Either<Option<Error>,
+        futures::future::Select2<Run<'a>, BoxFuture<ConnectionId>>>,
+}
+
+impl<'a> Connect<'a> {
+    fn new_from_error(error: Error) -> Self {
+        Self { inner: Either::A(Some(error)) }
+    }
+
+    fn new_from_future(future: futures::future::Select2<Run<'a>,
+        BoxFuture<ConnectionId>>) -> Self {
+        Self { inner: Either::B(future) }
+    }
+}
+
+impl<'a> Future for Connect<'a> {
+    type Item = ConnectionId;
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        match self.inner {
+            // Take the error, this will panic if called twice
+            Either::A(ref mut error) => Err(error.take().unwrap()),
+            Either::B(ref mut inner) => match inner.poll() {
+                Ok(futures::Async::Ready(Either::A(((), _)))) =>
+                    Err(format_err!("Could not connect").into()),
+                Ok(futures::Async::Ready(Either::B((id, _)))) =>
+                    Ok(futures::Async::Ready(id)),
+                Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
+                Err(Either::A((error, _))) |
+                Err(Either::B((error, _))) => Err(error),
+            }
+        }
+    }
+}
+
+pub struct Disconnect<'a> {
+    inner: Option<futures::future::Select<Run<'a>, BoxFuture<()>>>,
+}
+
+impl<'a> Disconnect<'a> {
+    fn new_from_ok() -> Self {
+        Self { inner: None }
+    }
+
+    fn new_from_future(future: futures::future::Select<Run<'a>, BoxFuture<()>>)
+        -> Self {
+        Self { inner: Some(future) }
+    }
+}
+
+impl<'a> Future for Disconnect<'a> {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
+        match self.inner {
+            None => Ok(futures::Async::Ready(())),
+            Some(ref mut f) => f.poll().map(|r| match r {
+                futures::Async::Ready(_) => futures::Async::Ready(()),
+                futures::Async::NotReady => futures::Async::NotReady,
+            }).map_err(|(e, _)| e),
+        }
     }
 }
 

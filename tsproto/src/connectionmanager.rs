@@ -53,7 +53,7 @@ pub trait ConnectionManager: Sized {
 
     /// Find the connection for an incoming udp packet.
     fn get_connection_for_udp_packet(&self, src_addr: SocketAddr,
-        udp_packet: &UdpPacket) -> Option<Rc<RefCell<Connection<Self>>>>;
+        udp_packet: &UdpPacket) -> Option<Self::ConnectionsKey>;
 }
 
 /// A connection manager, that allows to attach a custom data object to each
@@ -245,7 +245,11 @@ impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
     }
 
     fn get_connection_for_udp_packet(&self, src_addr: SocketAddr,
-        _: &UdpPacket) -> Option<Rc<RefCell<Connection<Self>>>> {
-        self.get_connection(src_addr)
+        _: &UdpPacket) -> Option<Self::ConnectionsKey> {
+        if self.connections.contains_key(&src_addr) {
+            Some(src_addr)
+        } else {
+            None
+        }
     }
 }

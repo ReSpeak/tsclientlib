@@ -22,7 +22,6 @@ use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
 use tsproto::*;
-use tsproto::connectionmanager::ConnectionManager;
 use tsproto::packets::*;
 
 mod utils;
@@ -81,11 +80,9 @@ fn main() {
     cmd.push("targetmode", "3");
     cmd.push("msg", "Hello");
 
-    let con = c.borrow().connection_manager.get_connection(args.address)
-        .unwrap();
-    let packets = client::ClientConnection::get_packets(Rc::downgrade(&con));
+    let packets = handler_data::Data::get_packets(Rc::downgrade(&c));
     let packet = Packet::new(header, Data::Command(cmd));
-    core.run(packets.send(packet.clone())).unwrap();
+    core.run(packets.send((args.address, packet.clone()))).unwrap();
 
     // Wait some time
     let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();

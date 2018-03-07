@@ -23,7 +23,6 @@ use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Timeout};
 use tsproto::*;
-use tsproto::connectionmanager::ConnectionManager;
 use tsproto::packets::*;
 
 mod utils;
@@ -86,9 +85,6 @@ fn main() {
 
     cmd.push("targetmode", "3");
 
-    let con = c.borrow().connection_manager.get_connection(args.address)
-        .unwrap();
-
     // Benchmark sending messages
     let count = args.amount;
     let mut time_reporter = slog_perf::TimeReporter::new_with_level(
@@ -100,12 +96,14 @@ fn main() {
     let start = Instant::now();
 
     //cpuprofiler::PROFILER.lock().unwrap().start("./message-bench.profile").unwrap();
+    let c2 = c.clone();
+    let addr = args.address;
     core.run(stream::iter_ok(0..count).and_then(move |i| {
         let mut cmd = cmd.clone();
         cmd.push("msg", format!("Hello {}", i));
         let packet = Packet::new(header.clone(), Data::Command(cmd));
-        let packets = client::ClientConnection::get_packets(Rc::downgrade(&con));
-        packets.send(packet)
+        let packets = handler_data::Data::get_packets(Rc::downgrade(&c2));
+        packets.send((addr, packet))
     }).for_each(|_| future::ok(()))).unwrap();
     //cpuprofiler::PROFILER.lock().unwrap().stop().unwrap();
 

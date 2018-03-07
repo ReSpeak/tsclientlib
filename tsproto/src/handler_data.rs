@@ -1,12 +1,10 @@
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use {slog, slog_async, slog_term};
-use futures::{self, Future, Sink, Stream, task};
-use futures::task::Task;
+use futures::{self, Sink, Stream};
 use slog::Drain;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
@@ -56,27 +54,18 @@ pub struct Data<CM: ConnectionManager> {
     pub logger: slog::Logger,
 
     /// The stream of `UdpPacket`s.
-    ///
-    /// [`UdpPacket`]: ../packets/struct.UdpPacket.html
     pub udp_packet_stream:
         Option<Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>,
-    /// The sink of [`UdpPacket`]s.
-    ///
-    /// [`UdpPacket`]: ../packets/struct.UdpPacket.html
+    /// The sink of `UdpPacket`s.
     pub udp_packet_sink:
-        Option<Box<Sink<SinkItem = (SocketAddr, UdpPacket),
-            SinkError = Error>>>,
+        Option<Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>,
 
-    /// The stream of `UdpPacket`s which don't belong to any connection.
-    ///
-    /// [`UdpPacket`]: ../packets/struct.UdpPacket.html
-    pub unknown_udp_packet_stream:
-        Option<Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>,
-    unknown_stream_buffer: VecDeque<(SocketAddr, UdpPacket)>,
-    unknown_stream_task: Option<Task>,
-
-    /// The task of the packet distributor.
-    distributor_task: Option<Task>,
+    /// The stream of `Packet`s.
+    pub packet_stream:
+        Option<Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>>,
+    /// The sink of `Packet`s.
+    pub packet_sink:
+        Option<Box<Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error>>>,
 
     /// A list of all connected clients or servers
     ///
@@ -126,29 +115,30 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             logger,
             udp_packet_stream: Some(stream),
             udp_packet_sink: Some(sink),
-            unknown_udp_packet_stream: None,
-            unknown_stream_buffer: Default::default(),
-            unknown_stream_task: None,
-            distributor_task: None,
+            packet_stream: None,
+            packet_sink: None,
             connection_manager,
             connection_listeners: Vec::new(),
         }));
 
-        // Set stream for unknown packets
-        let stream = UnknownUdpPacketStream::new(Rc::downgrade(&data));
-        data.borrow_mut().unknown_udp_packet_stream = Some(Box::new(stream));
+        // Apply packet codec to set packet stream and sink
+        ::packet_codec::PacketCodecSink::apply(&data);
+        ::packet_codec::PacketCodecStream::apply(&data, true);
 
         Ok(data)
     }
 
     pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
         -> Rc<RefCell<Connection<CM>>> {
-        let resender = {
+        let (resender, logger) = {
             let data = data.borrow();
-            data.connection_manager.create_resender()
+            (data.connection_manager.create_resender(),
+                data.logger.clone())
         };
 
-        Connection::new(data, addr, resender)
+        // TODO Add options like ip to logger
+
+        Connection::new(addr, resender, logger)
     }
 
     /// Add a new connection to this socket.
@@ -231,14 +221,24 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         data.udp_packet_sink = Some(Box::new(W::wrap(inner, a)));
     }
 
-    pub fn apply_unknown_udp_packet_stream_wrapper<
-        W: StreamWrapper<(SocketAddr, UdpPacket), Error,
-            Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>
+    pub fn apply_packet_stream_wrapper<
+        W: StreamWrapper<(CM::ConnectionsKey, Packet), Error,
+            Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>>
             + 'static,
     >(data: &Rc<RefCell<Self>>, a: W::A) {
         let mut data = data.borrow_mut();
-        let inner = data.unknown_udp_packet_stream.take().unwrap();
-        data.unknown_udp_packet_stream = Some(Box::new(W::wrap(inner, a)));
+        let inner = data.packet_stream.take().unwrap();
+        data.packet_stream = Some(Box::new(W::wrap(inner, a)));
+    }
+
+    pub fn apply_packet_sink_wrapper<
+        W: SinkWrapper<(CM::ConnectionsKey, Packet), Error,
+            Box<Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error>>>
+            + 'static,
+    >(data: &Rc<RefCell<Self>>, a: W::A) {
+        let mut data = data.borrow_mut();
+        let inner = data.packet_sink.take().unwrap();
+        data.packet_sink = Some(Box::new(W::wrap(inner, a)));
     }
 
     /// Gives a `Stream` and `Sink` of `UdpPacket`s, which always references the
@@ -247,36 +247,10 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         DataUdpPackets { data }
     }
 
-    /// Gives a `Stream` of `UdpPacket`s, which always references the current
-    /// unknown stream in the `Data` struct.
-    ///
-    /// This stream contains all the packets for which no connection is known.
-    pub fn get_unknown_udp_packets(data: Weak<RefCell<Self>>) ->
-        UnknownDataUdpPackets<CM> {
-        UnknownDataUdpPackets { data }
-    }
-
-    /// Enables distributing incoming packets to the connections.
-    pub fn start_packet_distributor(data: &Rc<RefCell<Self>>) {
-        let distributor = PacketDistributor::new(
-            Self::get_udp_packets(Rc::downgrade(data)), Rc::downgrade(data));
-        let data = data.borrow_mut();
-        let logger = data.logger.clone();
-        data.handle.spawn(distributor.map_err(move |e| {
-            error!(logger, "Distributor exited with error"; "error" => ?e);
-        }));
-    }
-}
-
-impl<CM: ConnectionManager> Drop for Data<CM> {
-    fn drop(&mut self) {
-        // Drop the distributor if we are dropped
-        if let Some(ref task) = self.distributor_task {
-            task.notify();
-        }
-        if let Some(ref task) = self.unknown_stream_task {
-            task.notify();
-        }
+    /// Gives a `Stream` and `Sink` of `Packet`s, which always references the
+    /// current stream in the `Data` struct.
+    pub fn get_packets(data: Weak<RefCell<Self>>) -> DataPackets<CM> {
+        DataPackets { data }
     }
 }
 
@@ -362,19 +336,17 @@ impl<CM: ConnectionManager> Sink for DataUdpPackets<CM> {
     }
 }
 
-/// A `Stream` of [`UdpPacket`]s, which always references the current unknown
+/// A `Stream` and `Sink` of [`Packet`]s, which always references the current
 /// stream in the [`Data`] struct.
 ///
-/// This stream contains all packets for which no connection is known.
-///
-/// [`UdpPacket`]: ../packets/struct.UdpPacket.html
+/// [`Packet`]: ../packets/struct.Packet.html
 /// [`Data`]: struct.Data.html
-pub struct UnknownDataUdpPackets<CM: ConnectionManager> {
+pub struct DataPackets<CM: ConnectionManager> {
     data: Weak<RefCell<Data<CM>>>,
 }
 
-impl<CM: ConnectionManager> Stream for UnknownDataUdpPackets<CM> {
-    type Item = (SocketAddr, UdpPacket);
+impl<CM: ConnectionManager> Stream for DataPackets<CM> {
+    type Item = (CM::ConnectionsKey, Packet);
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
@@ -385,140 +357,63 @@ impl<CM: ConnectionManager> Stream for UnknownDataUdpPackets<CM> {
         };
         let mut stream = {
             let mut data = data.borrow_mut();
-            data.unknown_udp_packet_stream
+            data.packet_stream
                 .take()
                 .unwrap()
         };
         let res = stream.poll();
         let mut data = data.borrow_mut();
-        data.unknown_udp_packet_stream = Some(stream);
+        data.packet_stream = Some(stream);
         res
     }
 }
 
-/// The stream which fetches packets from the `Data` object.
-struct UnknownUdpPacketStream<CM: ConnectionManager> {
-    data: Weak<RefCell<Data<CM>>>,
-}
+impl<CM: ConnectionManager> Sink for DataPackets<CM> {
+    type SinkItem = (CM::ConnectionsKey, Packet);
+    type SinkError = Error;
 
-impl<CM: ConnectionManager> UnknownUdpPacketStream<CM> {
-    fn new(data: Weak<RefCell<Data<CM>>>) -> Self {
-        Self { data }
-    }
-}
-
-impl<CM: ConnectionManager> Stream for UnknownUdpPacketStream<CM> {
-    type Item = (SocketAddr, UdpPacket);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            // The connection does not exist anymore, just quit
-            return Ok(futures::Async::Ready(None));
-        };
-        // Set task
-        let mut data = data.borrow_mut();
-        data.unknown_stream_task = Some(task::current());
-
-        // Check if there is a packet available
-        if let Some(packet) = data.unknown_stream_buffer.pop_front() {
-            Ok(futures::Async::Ready(Some(packet)))
-        } else {
-            Ok(futures::Async::NotReady)
-        }
-    }
-}
-
-pub struct PacketDistributor<
-    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-    CM: ConnectionManager,
-> {
-    inner: Inner,
-    data: Weak<RefCell<Data<CM>>>,
-}
-
-impl<
-    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-    CM: ConnectionManager,
-> PacketDistributor<Inner, CM> {
-    fn new(inner: Inner, data: Weak<RefCell<Data<CM>>>) -> Self {
-        Self { inner, data }
-    }
-}
-
-impl<
-    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-    CM: ConnectionManager + 'static,
-> Future for PacketDistributor<Inner, CM> {
-    type Item = ();
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::Ready(()));
-        };
-        // Set the task
-        {
+    fn start_send(
+        &mut self,
+        item: Self::SinkItem,
+    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
+        let mut sink = {
             let mut data = data.borrow_mut();
-            data.distributor_task = Some(task::current());
-        }
+            data.packet_sink
+                .take()
+                .unwrap()
+        };
+        let res = sink.start_send(item);
+        let mut data = data.borrow_mut();
+        data.packet_sink = Some(sink);
+        res
+    }
 
-        // Check if a packet is available
-        if let futures::Async::Ready(res) = self.inner.poll()? {
-            if let Some((addr, packet)) = res {
-                // Find the connection
-                let mut data = data.borrow_mut();
-                let con = data.connection_manager.get_connection_for_udp_packet(
-                    addr, &packet);
-                if let Some(con) = con {
-                    let mut con = con.borrow_mut();
-                    if con.udp_packet_buffer_stream.buffer.len() >=
-                        ::STREAM_BUFFER_MAX_SIZE {
-                        warn!(data.logger,
-                            "Dropping packet, stream buffer too full";
-                            "length" => con.udp_packet_buffer_stream.buffer
-                                .len());
-                    } else {
-                        // Add packet to queue and notify stream
-                        con.udp_packet_buffer_stream.buffer.push_back(packet);
+    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
+        let mut sink = {
+            let mut data = data.borrow_mut();
+            data.packet_sink
+                .take()
+                .unwrap()
+        };
+        let res = sink.poll_complete();
+        let mut data = data.borrow_mut();
+        data.packet_sink = Some(sink);
+        res
+    }
 
-                        if let Some(ref task) = con.udp_packet_buffer_stream.task {
-                            task.notify();
-                        } else {
-                            warn!(data.logger,
-                                "Distributor found no stream task");
-                        }
-                    }
-                } else if data.unknown_stream_buffer.len()
-                    >= ::STREAM_BUFFER_MAX_SIZE {
-                    warn!(data.logger,
-                        "Dropping packet, unknown stream buffer too full");
-                } else {
-                    // Add packet to queue and notify stream
-                    data.unknown_stream_buffer.push_back((addr, packet));
-
-                    if let Some(ref task) = data.unknown_stream_task {
-                        task.notify();
-                    } else {
-                        warn!(data.logger,
-                            "Distributor found no unknown stream task");
-                    }
-                }
-
-                // Request next packet
-                task::current().notify();
-            } else {
-                // Stream ended
-                let data = data.borrow();
-                warn!(data.logger, "Stream for distributor ended");
-                return Ok(futures::Async::Ready(()));
-            }
-        }
-
-        Ok(futures::Async::NotReady)
+    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
+        let data = self.data.upgrade().unwrap();
+        let mut sink = {
+            let mut data = data.borrow_mut();
+            data.packet_sink
+                .take()
+                .unwrap()
+        };
+        let res = sink.close();
+        let mut data = data.borrow_mut();
+        data.packet_sink = Some(sink);
+        res
     }
 }

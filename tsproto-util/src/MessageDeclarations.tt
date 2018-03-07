@@ -13,23 +13,42 @@ fn generate_deserializer(field: &Field) -> String {
     }
 }
 
-fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
-    let tmp;
+fn single_value_deserializer(field: &Field, rust_type: &str)
+    -> String {
     match rust_type {
          "i8" |  "u8" |
         "i16" | "u16" |
         "i32" | "u32" |
-        "i64" | "u64" |
-        "f32" | "f64" => "val.parse()?",
-        "bool" => "match *val { \"0\" => false, \"1\" => true, _ => Err(Error::ParameterConvert)? }",
-        "Uid" => "Uid(val.to_string())",
-        "String" => "val.to_string()",
-        "IconHash" => "IconHash(val.parse::<u64>()? as i32)",
+        "i64" | "u64" => format!("val.parse().map_err(|e| ParseError::ParseInt {{
+                arg: \"{}\",
+                value: val.to_string(),
+                error: e,
+            }})?", field.name),
+        "f32" | "f64" => format!("val.parse().map_err(|e| ParseError::ParseFloat {{
+                arg: \"{}\",
+                value: val.to_string(),
+                error: e,
+            }})?", field.name),
+        "bool" => format!("match *val {{ \"0\" => false, \"1\" => true, _ => Err(ParseError::ParseBool {{
+                arg: \"{}\",
+                value: val.to_string(),
+            }})? }}", field.name),
+        "Uid" => "Uid(val.to_string())".into(),
+        "String" => "val.to_string()".into(),
+        "IconHash" => format!("IconHash(val.parse::<u64>().map_err(|e| ParseError::ParseInt {{
+                arg: \"{}\",
+                value: val.to_string(),
+                error: e,
+            }})? as i32)", field.name),
         "ClientId" |
         "ClientDbId" |
         "ChannelId" |
         "ServerGroupId" |
-        "ChannelGroupId" => { tmp = format!("{}(val.parse()?)", rust_type); &tmp}
+        "ChannelGroupId" => format!("{}(val.parse().map_err(|e| ParseError::ParseInt {{
+                arg: \"{}\",
+                value: val.to_string(),
+                error: e,
+            }})?)", rust_type, field.name),
         "TextMessageTargetMode" |
         "HostMessageMode" |
         "HostBannerMode" |
@@ -41,23 +60,50 @@ fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
         "GroupNamingMode" |
         "GroupType" |
         "Permission" |
-        "Error" => { tmp = format!("{}::from_u32(val.parse()?).ok_or(Box::new(Error::ParameterConvert))?", rust_type); &tmp}
+        "Error" => format!("{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
+                arg: \"{}\",
+                value: val.to_string(),
+                error: e,
+            }})?).ok_or(ParseError::InvalidValue {{
+                arg: \"{1}\",
+                value: val.to_string(),
+                }})?", rust_type, field.name),
         "Duration" =>
             if field.type_orig == "TimeSpanSecondsT" {
-                "let val = val.parse::<i64>()?; if let Some(_) = val.checked_mul(1000) { Duration::seconds(val) } else { Err(Error::ParameterConvert)? }"
+                format!("let val = val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
+                    arg: \"{}\",
+                    value: val.to_string(),
+                    error: e,
+                }})?;
+                if let Some(_) = val.checked_mul(1000) {{ Duration::seconds(val) }}
+                else {{ Err(ParseError::InvalidValue {{
+                    arg: \"{0}\",
+                    value: val.to_string(),
+                    }})? }}", field.name)
             } else if field.type_orig == "TimeSpanMillisecT" {
-                "Duration::milliseconds(val.parse::<i64>()?)"
+                format!("Duration::milliseconds(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
+                    arg: \"{}\",
+                    value: val.to_string(),
+                    error: e,
+                }})?)", field.name)
             } else {
                 panic!("Unknown original time type found.");
             },
-        "DateTime<Utc>" => "DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse()?, 0).ok_or(Box::new(Error::ParameterConvert))?, Utc)",
+        "DateTime<Utc>" => format!("DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse().map_err(|e| ParseError::ParseInt {{
+                    arg: \"{}\",
+                    value: val.to_string(),
+                    error: e,
+                }})?, 0).ok_or(ParseError::InvalidValue {{
+                    arg: \"{0}\",
+                    value: val.to_string(),
+                }})?, Utc)", field.name),
         _ => panic!("Unknown Type '{}'", rust_type),
-    }.to_string()
+    }
 }
 
 fn vector_value_deserializer(field: &Field) -> String {
     let inner_type = &field.rust_type[4..field.rust_type.len()-1];
-    String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>,Box<std::error::Error>>>()?",
+    String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>, ParseError>>()?",
         single_value_deserializer(field, inner_type), inner_type))
 }
 
@@ -123,7 +169,7 @@ fn vector_value_serializer(field: &Field, can_move: bool) -> String {
 #>
 
 <# for msg in self.messages.values() {#>
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct <#= msg.class_name #> {
 <# if msg.is_response { #>
     pub return_code: String,
@@ -156,14 +202,19 @@ impl Response for <#= msg.class_name #> {
 <# } #>
 
 impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
-    type Err = Box<std::error::Error>;
+    type Err = ParseError;
     fn try_from(<#= if msg.params.len() == 0 { "_cmd" } else { "cmd" } #>: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
         Ok(<#= msg.class_name #> {
 <#
     for p in &msg.params {
         let field = self.fields.get(p).unwrap();
 #>
-            <#= &field.rust_name #>: { let val = cmd.args.get("<#= field.ts_name #>").ok_or(Error::ParameterNotFound)?; <#= generate_deserializer(field) #>},
+            <#= &field.rust_name #>: {
+                let val = cmd.args.get("<#= field.ts_name #>")
+                    .ok_or(ParseError::ParameterNotFound {
+                        arg: "<#= field.ts_name #>",
+                    })?;
+            <#= generate_deserializer(field) #>},
 <# } #>
         })
     }
@@ -206,6 +257,7 @@ impl Into<Command> for <#= msg.class_name #> {
 <# }
 // Create notification types
 #>
+#[derive(Debug, Clone)]
 pub enum Notification {
 <# for notif in self.notifies.iter() {
     let notify_n = notif.0.as_str();
@@ -215,14 +267,14 @@ pub enum Notification {
 }
 
 impl Notification {
-    pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Notification, Box<std::error::Error>> {
+    pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Notification, ParseError> {
         match cmd.command {
             <# for notif in self.notifies.iter() {
                 let notify_n = notif.0.as_str();
                 let cn = self.messages.iter().find(|x| { x.1.notify_name == notify_n }).unwrap().1; #>
             "<#= notif.0.as_str() #>" => Ok(Notification::<#= notif.1.enum_name #>(<#= cn.class_name #>::try_from(&cmd)?)),
             <# } #>
-            _ => Err(Box::new(Error::CommandNotFound))
+            _ => Err(ParseError::UnknownCommand(cmd.command.to_string()))
         }
     }
 }

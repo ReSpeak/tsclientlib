@@ -6,10 +6,10 @@ build = "build/build.rs"
 
 [dependencies]
 chrono = "0.4"
+failure = "0.1"
 futures = "0.1"
 num = "0.1"
 num-derive = "0.1"
-slog = "2"
 tsproto = { path = "../tsproto" }
 
 [build-dependencies]

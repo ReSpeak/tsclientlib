@@ -12,6 +12,7 @@ use tsproto_commands::*;
 use tsproto_commands::messages::*;
 
 use {ChannelType, Map, MaxFamilyClients, TalkPowerRequest};
+use codec::Message;
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
@@ -64,9 +65,11 @@ impl Connection {
         }
     }
 
-    fn handle_message(&mut self, msg: &Notification) {
-        // TODO Replace by code generation
-        self.handle_message_generated(msg);
+    fn handle_message(&mut self, msg: &Message) {
+        if let Message::Notification(ref notification) = *msg {
+            self.handle_message_generated(notification);
+        }
+
         // Also raise events
         match *msg {
             _ => {} // TODO
@@ -166,7 +169,8 @@ pub struct NetworkWrapper {
     connection: Connection,
     pub client_data: Rc<RefCell<client::ClientData>>,
     pub client_connection: Weak<RefCell<client::ClientConnection>>,
-    pub inner_stream: Box<Stream<Item = Notification, Error = tsproto_error>>,
+    pub inner_stream: Box<Stream<Item = (SocketAddr, Message),
+        Error = tsproto_error>>,
 }
 
 impl NetworkWrapper {
@@ -174,11 +178,11 @@ impl NetworkWrapper {
         id: ConnectionId,
         client_data: Rc<RefCell<client::ClientData>>,
         client_connection: Weak<RefCell<client::ClientConnection>>,
-        inner_stream: Box<Stream<Item = Notification, Error = tsproto_error>>,
         initserver: InitServer,
     ) -> Self {
         let connection = Connection::new(id, Uid(String::from("TODO")),
             &initserver);
+        let inner_stream = ::codec::CommandCodec::new_stream(&client_data);
         Self {
             connection,
             client_data,
@@ -203,12 +207,12 @@ impl DerefMut for NetworkWrapper {
 }
 
 impl Stream for NetworkWrapper {
-    type Item = Notification;
+    type Item = (SocketAddr, Message);
     type Error = tsproto_error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
         let res = self.inner_stream.poll()?;
-        if let futures::Async::Ready(Some(ref msg)) = res {
+        if let futures::Async::Ready(Some((_, ref msg))) = res {
             self.connection.handle_message(msg);
         }
         Ok(res)
