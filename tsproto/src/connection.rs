@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::fmt;
 use std::net::SocketAddr;
 use std::rc::Rc;
 use std::u16;
@@ -28,6 +29,26 @@ impl Default for CachedKey {
             generation_id: u32::max_value(),
             key: [0; 16],
             nonce: [0; 16],
+        }
+    }
+}
+
+pub enum SharedIv {
+    /// The protocol until TeamSpeak server 3.1 (excluded) uses this format.
+    ProtocolOrig([u8; 20]),
+    /// The protocol since TeamSpeak server 3.1 uses this format.
+    Protocol31([u8; 64]),
+}
+
+impl fmt::Debug for SharedIv {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            SharedIv::ProtocolOrig(ref data) =>
+                write!(f, "SharedIv::ProtocolOrig({:?})",
+                    ::utils::HexSlice(data)),
+            SharedIv::Protocol31(ref data) =>
+                write!(f, "SharedIv::Protocol32({:?})",
+                    ::utils::HexSlice(data)),
         }
     }
 }
@@ -63,7 +84,7 @@ pub struct ConnectedParams {
 
     pub public_key: EccKeyPubP256,
     /// The iv used to encrypt and decrypt packets.
-    pub shared_iv: [u8; 20],
+    pub shared_iv: SharedIv,
     /// The mac used for unencrypted packets.
     pub shared_mac: [u8; 8],
     /// Cached key and nonce per packet type.
@@ -72,7 +93,7 @@ pub struct ConnectedParams {
 
 impl ConnectedParams {
     /// Fills the parameters for a connection with their default state.
-    pub fn new(public_key: EccKeyPubP256, shared_iv: [u8; 20],
+    pub fn new(public_key: EccKeyPubP256, shared_iv: SharedIv,
         shared_mac: [u8; 8]) -> Self {
         Self {
             outgoing_p_ids: Default::default(),

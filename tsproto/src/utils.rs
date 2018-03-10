@@ -44,7 +44,8 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
         })
            .collect::<::std::result::Result<Vec<_>, _>>()?)
     } else {
-        Err(format_err!("Unknown hex format").into())
+        Ok(s.as_bytes().chunks(2).map(|s| u8::from_str_radix(::std::str::from_utf8(s).unwrap(), 16))
+           .collect::<::std::result::Result<Vec<_>, _>>()?)
     }
 }
 

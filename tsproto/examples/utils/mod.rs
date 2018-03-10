@@ -8,12 +8,12 @@ use tokio_core::reactor::Handle;
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
-use tsproto::crypto::P256EccKey;
+use tsproto::crypto::EccKeyPrivP256;
 use tsproto::packets::*;
 
 pub fn create_client(local_address: SocketAddr, handle: Handle, logger: slog::Logger, log: bool) -> Rc<RefCell<client::ClientData>> {
     // Get P-256 ECDH key
-    let private_key = P256EccKey::from_ts(
+    let private_key = EccKeyPrivP256::from_ts(
         "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
         k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
         DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -61,7 +61,7 @@ pub fn connect(
     handle.spawn(listen);
 
     Box::new(connect_fut.and_then(move |()| {
-        let private_key = P256EccKey::from_ts(
+        let private_key = EccKeyPrivP256::from_ts(
             "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
             k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
             DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -71,8 +71,9 @@ pub fn connect(
             "Compute public key hash cash level", logger.clone(),
             slog::Level::Info);
         time_reporter.start("Compute public key hash cash level");
-        let offset = algs::hash_cash(&private_key, 8).unwrap();
-        let omega = private_key.to_ts_public().unwrap();
+        let private_key_as_pub = private_key.to_pub();
+        let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
+        let omega = private_key_as_pub.to_ts().unwrap();
         time_reporter.finish();
         info!(logger, "Computed hash cash level";
             "level" => algs::get_hash_cash_level(&omega, offset),
@@ -94,7 +95,8 @@ pub fn connect(
         command.push("client_key_offset", offset.to_string());
         command.push("client_nickname_phonetic", "");
         command.push("client_default_token", "");
-        command.push("hwid", "123,456");
+        command.push("client_badges", "Overwolf=0");
+        command.push("hwid", "923f136fb1e22ae6ce95e60244429c00,d13230b1bc33edfecfb8169cc7a63bcc");
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 

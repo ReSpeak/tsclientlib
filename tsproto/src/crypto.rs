@@ -154,7 +154,7 @@ impl EccKeyPubP256 {
         Ok(der)
     }
 
-    fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
+    pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
         let pkey = PKey::from_ec_key(self.0)?;
         let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
 
@@ -302,6 +302,13 @@ impl EccKeyPubEd25519 {
         EccKeyPubEd25519(CompressedEdwardsY(data))
     }
 
+    pub fn from_base64(data: &str) -> Result<Self> {
+        let mut bs = [0; 32];
+        let decoded = base64::decode(data)?;
+        bs.copy_from_slice(&decoded);
+        Ok(Self::from_bytes(bs))
+    }
+
     pub fn to_base64(&self) -> String {
         let EccKeyPubEd25519(CompressedEdwardsY(ref data)) = *self;
         base64::encode(data)
@@ -309,13 +316,26 @@ impl EccKeyPubEd25519 {
 }
 
 impl EccKeyPrivEd25519 {
+    pub fn create() -> Result<Self> {
+        Ok(EccKeyPrivEd25519(Scalar::random(&mut ::rand::OsRng::new()?)))
+    }
+
     pub fn from_bytes(data: [u8; 32]) -> Result<Self> {
-        Ok(EccKeyPrivEd25519(Scalar::from_canonical_bytes(data).ok_or_else(||
-            format_err!("Private key is not canonical"))?))
+        Ok(EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data)/*.ok_or_else(||
+            format_err!("Private key is not canonical"))?*/))
     }
 
     pub fn to_base64(&self) -> String {
         base64::encode(self.0.as_bytes())
+    }
+
+    /// This has to be the private key, the other one has to be the public key.
+    pub fn create_shared_secret(&self, other: &EccKeyPubEd25519)
+        -> Result<[u8; 32]> {
+        let pub_key = other.0.decompress().ok_or_else(||
+            format_err!("Cannot decompress public key"))?;
+        let res = pub_key * self.0;
+        Ok(res.compress().0)
     }
 }
 
@@ -404,5 +424,23 @@ impl Eax {
 
         let sign = signer.sign_to_vec()?;
         Ok(sign)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_p256_priv_key() {
+        EccKeyPrivP256::from_ts("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTA\
+            O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
+            DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+    }
+
+    #[test]
+    fn parse_ed25519_pub_key() {
+        EccKeyPubEd25519::from_base64("zQ3irtRjRVCafjz9j2iz3HVVsp3M7HPNGHUPmTgS\
+            QIo=").unwrap();
     }
 }

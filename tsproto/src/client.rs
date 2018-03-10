@@ -26,8 +26,9 @@ use commands::Command;
 use connection::*;
 use connectionmanager::{AttachedDataConnectionManager, Resender, ResenderEvent,
     SocketConnectionManager};
-use crypto::{EccKeyPrivP256, EccKeyPubP256};
+use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519, EccKeyPubEd25519};
 use handler_data::Data;
+use license::Licenses;
 use packets::*;
 
 /// The data of our client.
@@ -466,7 +467,7 @@ impl DefaultPacketHandlerStream {
                             let (iv, mac) = algs::compute_iv_mac(alpha, &beta,
                                 private_key.clone(), server_key.clone())?;
                             let mut params = ConnectedParams::new(
-                                server_key, iv, mac);
+                                server_key, SharedIv::ProtocolOrig(iv), mac);
                             // We already sent a command packet.
                             params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
                                 .1 = 1;
@@ -487,29 +488,40 @@ impl DefaultPacketHandlerStream {
                             && cmd.has_arg("time")
                             && cmd.has_arg("beta") {
 
+                            let mut server_key = EccKeyPubP256::
+                                from_ts(cmd.args["omega"])?;
+                            // Check signature of l (proof)
+                            // TODO
+
                             let beta_vec = base64::decode(cmd.args["beta"])?;
                             if beta_vec.len() != 54 {
-                                Err(format_err!("Incorrect beta length"))?;
+                                return Err(format_err!(
+                                    "Incorrect beta length").into());
                             }
 
                             // Check if beta != 0
                             if beta_vec.iter().all(|i| *i == 0) {
-                                return Err(format_err!(
-                                    "Beta is zero"))?;
+                                return Err(format_err!("Beta is zero").into());
                             }
 
                             let mut beta = [0; 54];
                             beta.copy_from_slice(&beta_vec);
-                            let mut server_key = EccKeyPubP256::
-                                from_ts(cmd.args["omega"])?;
 
-                            let mut beta1 = [0; 10];
-                            beta1.copy_from_slice(&beta_vec[..10]);
+                            // Parse license argument
+                            let licenses = Licenses::parse(&base64::decode(
+                                cmd.args["l"])?)?;
+                            // Ephemeral key of server
+                            let server_ek = licenses.derive_public_key()?;
+                            let server_ek = EccKeyPubEd25519(
+                                server_ek.compress());
 
-                            let (iv, mac) = algs::compute_iv_mac(alpha, &beta1,
-                                private_key.clone(), server_key.clone())?;
+                            // Create own ephemeral key
+                            let ek = EccKeyPrivEd25519::create()?;
+
+                            let (iv, mac) = algs::compute_iv_mac31(alpha,
+                                &beta, &ek, &server_ek)?;
                             let mut params = ConnectedParams::new(
-                                server_key, iv, mac);
+                                server_key, SharedIv::Protocol31(iv), mac);
                             // We already sent a command packet.
                             params.outgoing_p_ids[PacketType::Command.to_usize().unwrap()]
                                 .1 = 1;
@@ -523,13 +535,11 @@ impl DefaultPacketHandlerStream {
 
                             // Send clientek
                             let mut command = Command::new("clientek");
-                            let mut rng = rand::thread_rng();
-                            let ek = rng.gen::<[u8; 32]>();
-                            let ek_s = base64::encode(&ek);
+                            let ek_s = base64::encode(ek.0.as_bytes());
 
                             // Proof: ECDSA signature of ek || beta
                             let mut all = Vec::with_capacity(32 + 54);
-                            all.extend_from_slice(&ek);
+                            all.extend_from_slice(ek.0.as_bytes());
                             all.extend_from_slice(&beta);
                             let proof = private_key.clone().sign(&all)?;
                             let proof_s = base64::encode(&proof);
@@ -537,8 +547,7 @@ impl DefaultPacketHandlerStream {
                             command.push("ek", ek_s);
                             command.push("proof", proof_s);
 
-                            let mut cheader = create_init_header();
-                            cheader.set_type(PacketType::Command);
+                            let mut cheader = Header::new(PacketType::Command);
 
                             Ok(Some(Packet::new(cheader,
                                 packets::Data::Command(command))))
