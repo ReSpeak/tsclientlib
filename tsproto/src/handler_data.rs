@@ -12,6 +12,7 @@ use tokio_core::reactor::Handle;
 use {Error, Result, TsCodec, StreamWrapper, SinkWrapper};
 use connection::*;
 use connectionmanager::ConnectionManager;
+use crypto::EccKeyPrivP256;
 use packets::*;
 
 /// A listener for added and removed connections.
@@ -49,7 +50,7 @@ pub struct Data<CM: ConnectionManager> {
     /// The address of the socket.
     pub local_addr: SocketAddr,
     /// The private key of this instance.
-    pub private_key: ::crypto::EccKey,
+    pub private_key: EccKeyPrivP256,
     pub handle: Handle,
     pub logger: slog::Logger,
 
@@ -86,7 +87,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     /// be created.
     pub fn new<L: Into<Option<slog::Logger>>>(
         local_addr: SocketAddr,
-        private_key: ::crypto::EccKey,
+        private_key: EccKeyPrivP256,
         handle: Handle,
         is_client: bool,
         connection_manager: CM,

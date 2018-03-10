@@ -8,7 +8,7 @@ use ring::digest;
 
 use {crypto, Result};
 use connection::CachedKey;
-use crypto::EccKey;
+use crypto::{EccKeyPrivP256, EccKeyPubP256};
 use packets::*;
 
 pub fn must_encrypt(t: PacketType) -> bool {
@@ -206,8 +206,8 @@ pub fn decrypt(
 pub fn compute_iv_mac(
     alpha: &[u8; 10],
     beta: &[u8; 10],
-    our_key: &EccKey,
-    other_key: &EccKey,
+    our_key: EccKeyPrivP256,
+    other_key: EccKeyPubP256,
 ) -> Result<([u8; 20], [u8; 8])> {
     let shared_secret = our_key.create_shared_secret(other_key)?;
     let mut shared_iv = [0; 20];
@@ -226,8 +226,8 @@ pub fn compute_iv_mac(
     Ok((shared_iv, shared_mac))
 }
 
-pub fn hash_cash(key: &EccKey, level: u8) -> Result<u64> {
-    let omega = key.to_ts_public()?;
+pub fn hash_cash(key: &EccKeyPubP256, level: u8) -> Result<u64> {
+    let omega = key.to_ts()?;
     let mut offset = 0;
     while offset < u64::MAX && get_hash_cash_level(&omega, offset) < level {
         offset += 1;

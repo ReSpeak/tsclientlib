@@ -7,6 +7,7 @@ use slog;
 use num::ToPrimitive;
 
 use connectionmanager::ConnectionManager;
+use crypto::EccKeyPubP256;
 use packets::*;
 
 /// A cache for the key and nonce for a generation id.
@@ -60,7 +61,7 @@ pub struct ConnectedParams {
     /// If voice packets should be encrypted
     pub voice_encryption: bool,
 
-    pub public_key: ::crypto::EccKey,
+    pub public_key: EccKeyPubP256,
     /// The iv used to encrypt and decrypt packets.
     pub shared_iv: [u8; 20],
     /// The mac used for unencrypted packets.
@@ -71,7 +72,8 @@ pub struct ConnectedParams {
 
 impl ConnectedParams {
     /// Fills the parameters for a connection with their default state.
-    pub fn new(public_key: ::crypto::EccKey, shared_iv: [u8; 20], shared_mac: [u8; 8]) -> Self {
+    pub fn new(public_key: EccKeyPubP256, shared_iv: [u8; 20],
+        shared_mac: [u8; 8]) -> Self {
         Self {
             outgoing_p_ids: Default::default(),
             receive_queue: Default::default(),

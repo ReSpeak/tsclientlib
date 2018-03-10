@@ -26,6 +26,7 @@ use commands::Command;
 use connection::*;
 use connectionmanager::{AttachedDataConnectionManager, Resender, ResenderEvent,
     SocketConnectionManager};
+use crypto::{EccKeyPrivP256, EccKeyPubP256};
 use handler_data::Data;
 use packets::*;
 
@@ -317,7 +318,7 @@ impl DefaultPacketHandlerStream {
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     >(state: &mut ServerConnectionData, packet: &Packet,
         ignore_packet: &mut bool, is_end: &mut bool,
-        private_key: &::crypto::EccKey, con: &mut Connection<CM>,
+        private_key: &EccKeyPrivP256, con: &mut Connection<CM>,
         logger: &Logger)
         -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
         let res = match state.state {
@@ -405,7 +406,7 @@ impl DefaultPacketHandlerStream {
                         // omega is an ASN.1-DER encoded public key from
                         // the ECDH parameters.
                         let alpha_s = base64::encode(&alpha);
-                        let omega_s = private_key.to_ts_public().unwrap();
+                        let omega_s = private_key.to_pub().to_ts().unwrap();
                         let mut command = Command::new("clientinitiv");
                         command.push("alpha", alpha_s);
                         command.push("omega", omega_s);
@@ -459,11 +460,11 @@ impl DefaultPacketHandlerStream {
 
                             let mut beta = [0; 10];
                             beta.copy_from_slice(&beta_vec);
-                            let mut server_key = ::crypto::EccKey::
+                            let mut server_key = EccKeyPubP256::
                                 from_ts(cmd.args["omega"])?;
 
-                            let (iv, mac) = algs::compute_iv_mac(
-                                alpha, &beta, private_key, &server_key)?;
+                            let (iv, mac) = algs::compute_iv_mac(alpha, &beta,
+                                private_key.clone(), server_key.clone())?;
                             let mut params = ConnectedParams::new(
                                 server_key, iv, mac);
                             // We already sent a command packet.
@@ -499,14 +500,14 @@ impl DefaultPacketHandlerStream {
 
                             let mut beta = [0; 54];
                             beta.copy_from_slice(&beta_vec);
-                            let mut server_key = ::crypto::EccKey::
+                            let mut server_key = EccKeyPubP256::
                                 from_ts(cmd.args["omega"])?;
 
                             let mut beta1 = [0; 10];
                             beta1.copy_from_slice(&beta_vec[..10]);
 
-                            let (iv, mac) = algs::compute_iv_mac(
-                                alpha, &beta1, private_key, &server_key)?;
+                            let (iv, mac) = algs::compute_iv_mac(alpha, &beta1,
+                                private_key.clone(), server_key.clone())?;
                             let mut params = ConnectedParams::new(
                                 server_key, iv, mac);
                             // We already sent a command packet.
@@ -530,7 +531,7 @@ impl DefaultPacketHandlerStream {
                             let mut all = Vec::with_capacity(32 + 54);
                             all.extend_from_slice(&ek);
                             all.extend_from_slice(&beta);
-                            let proof = private_key.sign(&all)?;
+                            let proof = private_key.clone().sign(&all)?;
                             let proof_s = base64::encode(&proof);
 
                             command.push("ek", ek_s);

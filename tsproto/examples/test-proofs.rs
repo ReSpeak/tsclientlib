@@ -7,7 +7,7 @@ extern crate tsproto;
 
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tsproto::crypto::EccKey;
+use tsproto::crypto::P256EccKey;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings =
@@ -32,8 +32,8 @@ fn main() {
 
     let data = base64::decode(&args.data).unwrap();
     let signature = base64::decode(&args.signature).unwrap();
-    let key = EccKey::from_ts(&args.key).unwrap();
-    /*let keyts = tomcrypt::EccKey::import(&base64::decode(&args.key).unwrap())
+    let key = P256EccKey::from_ts(&args.key).unwrap();
+    /*let keyts = tomcrypt::P256EccKey::import(&base64::decode(&args.key).unwrap())
         .unwrap();
     let res = keyts.verify_hash(&data, &signature).unwrap();
     println!("Res: {:?}", res);*/

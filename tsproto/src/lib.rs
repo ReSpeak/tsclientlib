@@ -5,6 +5,7 @@
 extern crate base64;
 extern crate byteorder;
 extern crate chrono;
+extern crate curve25519_dalek;
 #[macro_use]
 extern crate failure;
 extern crate futures;
@@ -43,6 +44,7 @@ pub mod connection;
 pub mod connectionmanager;
 pub mod crypto;
 pub mod handler_data;
+pub mod license;
 pub mod log;
 pub mod packets;
 pub mod packet_codec;

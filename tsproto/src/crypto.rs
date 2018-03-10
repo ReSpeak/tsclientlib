@@ -4,12 +4,14 @@ use std::fmt;
 use base64;
 use num::BigUint;
 
+use curve25519_dalek::edwards::CompressedEdwardsY;
+use curve25519_dalek::scalar::Scalar;
 use openssl::bn::BigNumContext;
 use openssl::derive::Deriver;
 use openssl::ec::{self, EcGroup, EcKey, EcPoint};
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
-use openssl::pkey::{self, PKey, Private, Public};
+use openssl::pkey::{PKey, Private, Public};
 use openssl::sign::{Signer, Verifier};
 use openssl::symm::{self, Cipher};
 
@@ -20,37 +22,54 @@ pub enum KeyType {
     Private,
 }
 
-/// An ecc key either saved by openssl or by tomcrypt.
+/// A public ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-pub enum EccKey {
-    OpensslPublic(EcKey<Public>),
-    OpensslPrivate(EcKey<Private>),
-}
+#[derive(Clone)]
+pub struct EccKeyPubP256(pub EcKey<Public>);
+/// A private ecc key.
+///
+/// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
+#[derive(Clone)]
+pub struct EccKeyPrivP256(pub EcKey<Private>);
 
-impl fmt::Debug for EccKey {
+/// A public ecc key.
+///
+/// The curve of this key is Ed25519.
+#[derive(Clone)]
+pub struct EccKeyPubEd25519(pub CompressedEdwardsY);
+/// A private ecc key.
+///
+/// The curve of this key is Ed25519.
+#[derive(Clone)]
+pub struct EccKeyPrivEd25519(pub Scalar);
+
+impl fmt::Debug for EccKeyPubP256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            EccKey::OpensslPublic(_) => write!(f, "OpensslPublic(")?,
-            EccKey::OpensslPrivate(_) => write!(f, "OpensslPrivate(")?,
-        }
-        match self.key_type() {
-            KeyType::Private => write!(f, "{})", self.to_ts_private()
-                .unwrap_or_default())?,
-            KeyType::Public => write!(f, "{})", self.to_ts_public()
-                .unwrap_or_default())?,
-        }
-        Ok(())
+        write!(f, "EccKeyPubP256({})", self.to_ts().unwrap())
     }
 }
 
-impl EccKey {
-    /// Create a new key key pair.
-    pub fn create() -> Result<Self> {
-        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-        Ok(EccKey::OpensslPrivate(EcKey::generate(&group)?))
+impl fmt::Debug for EccKeyPrivP256 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // TODO Use more minimal version
+        write!(f, "EccKeyPrivP256({})", self.to_ts().unwrap())
     }
+}
 
+impl fmt::Debug for EccKeyPubEd25519 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "EccKeyPubEd25519({})", self.to_base64())
+    }
+}
+
+impl fmt::Debug for EccKeyPrivEd25519 {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "EccKeyPrivEd25519({})", self.to_base64())
+    }
+}
+
+impl EccKeyPubP256 {
     /// From base64 encoded tomcrypt key.
     pub fn from_ts(data: &str) -> Result<Self> {
         Self::from_tomcrypt(&base64::decode(data)?)
@@ -63,44 +82,20 @@ impl EccKey {
                 let f = reader.next().read_bitvec()?;
                 if f.len() != 1 {
                     return Err(::yasna::ASN1Error::new(
-                            ::yasna::ASN1ErrorKind::Invalid));
+                        ::yasna::ASN1ErrorKind::Invalid));
                 }
 
                 let key_size = reader.next().read_u16()? as usize;
                 let pubkey_x = reader.next().read_biguint()?;
                 let pubkey_y = reader.next().read_biguint()?;
 
-                let secret = if f[0] {
-                    Some(reader.next().read_biguint()?)
-                } else {
-                    None
-                };
+                if f[0] {
+                    // Got a private key but expected a public key
+                    return Err(::yasna::ASN1Error::new(
+                        ::yasna::ASN1ErrorKind::Invalid));
+                }
 
-                let res: Result<Self> = (|| if let Some(secret) = secret {
-                    // Private key
-                    let der = ::yasna::construct_der(|writer| {
-                        writer.write_sequence(|writer| {
-                            // version
-                            writer.next().write_u8(1);
-                            // privateKey
-                            writer.next().write_bytes(&secret.to_bytes_be());
-                            // parameters
-                            let tag = ::yasna::Tag::context(0);
-                            writer.next().write_tagged(tag, |writer| {
-                                writer.write_oid(
-                                    #[cfg_attr(feature = "cargo-clippy",
-                                       allow(unreadable_literal))]
-                                    &::yasna::models::ObjectIdentifier::
-                                    from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
-                            });
-                            // Skipt the publicKey as it is not needed
-                        })
-                    });
-                    let k = EcKey::private_key_from_der(&der)?;
-                    Ok(EccKey::OpensslPrivate(k))
-                } else {
-                    // Public key
-
+                let res: Result<Self> = (|| {
                     // TODO use from_public_key_affine_coordinates
                     // Convert public key to octet format is specified in RFC 5480 which
                     // delegates to [SEC1] (available here atm: http://www.secg.org/sec1-v2.pdf).
@@ -124,7 +119,7 @@ impl EccKey {
                     let mut ctx = BigNumContext::new()?;
                     let point = EcPoint::from_bytes(&group, &octets, &mut ctx)?;
                     let k = EcKey::from_public_key(&group, &point)?;
-                    Ok(EccKey::OpensslPublic(k))
+                    Ok(EccKeyPubP256(k))
                 })();
                 Ok(res)
             })
@@ -132,18 +127,14 @@ impl EccKey {
     }
 
     /// Convert to base64 encoded public tomcrypt key.
-    pub fn to_ts_public(&self) -> Result<String> {
-        Ok(base64::encode(&self.to_tomcrypt_public()?))
+    pub fn to_ts(&self) -> Result<String> {
+        Ok(base64::encode(&self.to_tomcrypt()?))
     }
 
-    pub fn to_tomcrypt_public(&self) -> Result<Vec<u8>> {
-        let pubkey = match *self {
-            EccKey::OpensslPrivate(ref key) => key.public_key(),
-            EccKey::OpensslPublic(ref key) => key.public_key(),
-        };
+    pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
         let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
         let mut ctx = BigNumContext::new()?;
-        let pubkey_bin = pubkey.to_bytes(&group,
+        let pubkey_bin = self.0.public_key().to_bytes(&group,
             ec::PointConversionForm::UNCOMPRESSED, &mut ctx)?;
         let pub_len = (pubkey_bin.len() - 1) / 2;
         let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..1 + pub_len]);
@@ -163,100 +154,8 @@ impl EccKey {
         Ok(der)
     }
 
-    /// Convert to base64 encoded private tomcrypt key.
-    pub fn to_ts_private(&self) -> Result<String> {
-        Ok(base64::encode(&self.to_tomcrypt_private()?))
-    }
-
-    pub fn to_tomcrypt_private(&self) -> Result<Vec<u8>> {
-        match *self {
-            EccKey::OpensslPrivate(ref key) => {
-                let pubkey = key.public_key();
-                let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-                let mut ctx = BigNumContext::new()?;
-                let pubkey_bin = pubkey.to_bytes(&group,
-                    ec::PointConversionForm::UNCOMPRESSED, &mut ctx)?;
-                let pub_len = (pubkey_bin.len() - 1) / 2;
-                let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..1 + pub_len]);
-                let pubkey_y = BigUint::from_bytes_be(&pubkey_bin[1 + pub_len..]);
-
-                let privkey = BigUint::from_bytes_be(&key.private_key()
-                    .to_vec());
-
-                // Write tomcrypt DER
-                let der = ::yasna::construct_der(|writer| {
-                    writer.write_sequence(|writer| {
-                        writer.next().write_bitvec(&::std::iter::once(true)
-                            .collect());
-                        writer.next().write_u16(32);
-                        writer.next().write_biguint(&pubkey_x);
-                        writer.next().write_biguint(&pubkey_y);
-
-                        writer.next().write_biguint(&privkey);
-                    })
-                });
-
-                Ok(der)
-            }
-            _ => Err(format_err!("Key contains no private key").into()),
-        }
-    }
-
-    pub fn key_type(&self) -> KeyType {
-        match *self {
-            EccKey::OpensslPublic(_) => KeyType::Public,
-            EccKey::OpensslPrivate(_) => KeyType::Private,
-        }
-    }
-
-    /// This has to be the private key, the other one has to be the public key.
-    pub fn create_shared_secret(&self, other_public: &EccKey)
-        -> Result<Vec<u8>> {
-        let key = if let EccKey::OpensslPrivate(ref key) = *self {
-            key.clone()
-        } else {
-            return Err(format_err!(
-                "No private key found to create shared secret").into());
-        };
-
-        let k1: PKey<pkey::Private>;
-        let k2: PKey<pkey::Public>;
-        let privkey = PKey::from_ec_key(key)?;
-        let mut deriver = Deriver::new(&privkey)?;
-
-        match *other_public {
-            EccKey::OpensslPrivate(ref key) => {
-                k1 = PKey::from_ec_key(key.clone())?;
-                deriver.set_peer(&k1)?;
-            }
-            EccKey::OpensslPublic(ref key) => {
-                k2 = PKey::from_ec_key(key.clone())?;
-                deriver.set_peer(&k2)?;
-            }
-        }
-
-        let secret = deriver.derive_to_vec()?;
-        Ok(secret)
-    }
-
-    /// # Panics
-    ///
-    /// If this key contains no private key.
-    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        if let EccKey::OpensslPrivate(ref key) = *self {
-            let pkey = PKey::from_ec_key(key.clone())?;
-            let mut signer = Signer::new(Some(MessageDigest::sha256()),
-                &pkey)?;
-            signer.update(data)?;
-            return Ok(signer.sign_to_vec()?);
-        }
-
-        panic!("No private key found");
-    }
-
-    fn verify_ossl<T>(key: EcKey<T>, data: &[u8], signature: &[u8])
-        -> Result<()> where T: ::openssl::pkey::HasPublic {
-        let pkey = PKey::from_ec_key(key)?;
+    fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
+        let pkey = PKey::from_ec_key(self.0)?;
         let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
 
         // Data
@@ -268,14 +167,155 @@ impl EccKey {
             Err(Error::WrongSignature)
         }
     }
+}
 
-    pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
-        match *self {
-            EccKey::OpensslPrivate(ref key) => Self::verify_ossl(key.clone(),
-                data, signature),
-            EccKey::OpensslPublic(ref key) => Self::verify_ossl(key.clone(),
-                data, signature),
-        }
+impl EccKeyPrivP256 {
+    /// Create a new key key pair.
+    pub fn create() -> Result<Self> {
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+        Ok(EccKeyPrivP256(EcKey::generate(&group)?))
+    }
+
+    /// From base64 encoded tomcrypt key.
+    pub fn from_ts(data: &str) -> Result<Self> {
+        Self::from_tomcrypt(&base64::decode(data)?)
+    }
+
+    pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
+        // Read tomcrypt DER
+        Ok(::yasna::parse_der(data, |reader| {
+            reader.read_sequence(|reader| {
+                let f = reader.next().read_bitvec()?;
+                if f.len() != 1 {
+                    return Err(::yasna::ASN1Error::new(
+                        ::yasna::ASN1ErrorKind::Invalid));
+                }
+
+                let _key_size = reader.next().read_u16()? as usize;
+                let _pubkey_x = reader.next().read_biguint()?;
+                let _pubkey_y = reader.next().read_biguint()?;
+
+                if !f[0] {
+                    // Expected a private key but got a public key
+                    return Err(::yasna::ASN1Error::new(
+                        ::yasna::ASN1ErrorKind::Invalid));
+                };
+                let secret = reader.next().read_biguint()?;
+
+                let res: Result<Self> = (|| {
+                    // Private key
+                    let der = ::yasna::construct_der(|writer| {
+                        writer.write_sequence(|writer| {
+                            // version
+                            writer.next().write_u8(1);
+                            // privateKey
+                            writer.next().write_bytes(&secret.to_bytes_be());
+                            // parameters
+                            let tag = ::yasna::Tag::context(0);
+                            writer.next().write_tagged(tag, |writer| {
+                                writer.write_oid(
+                                    #[cfg_attr(feature = "cargo-clippy",
+                                       allow(unreadable_literal))]
+                                    &::yasna::models::ObjectIdentifier::
+                                    from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
+                            });
+                            // Skipt the publicKey as it is not needed
+                        })
+                    });
+                    let k = EcKey::private_key_from_der(&der)?;
+                    Ok(EccKeyPrivP256(k))
+                })();
+                Ok(res)
+            })
+        })??)
+    }
+
+    /// Convert to base64 encoded private tomcrypt key.
+    pub fn to_ts(&self) -> Result<String> {
+        Ok(base64::encode(&self.to_tomcrypt()?))
+    }
+
+    pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
+        let pubkey = self.0.public_key();
+        let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+        let mut ctx = BigNumContext::new()?;
+        let pubkey_bin = pubkey.to_bytes(&group,
+            ec::PointConversionForm::UNCOMPRESSED, &mut ctx)?;
+        let pub_len = (pubkey_bin.len() - 1) / 2;
+        let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..1 + pub_len]);
+        let pubkey_y = BigUint::from_bytes_be(&pubkey_bin[1 + pub_len..]);
+
+        let privkey = BigUint::from_bytes_be(&self.0.private_key()
+            .to_vec());
+
+        // Write tomcrypt DER
+        let der = ::yasna::construct_der(|writer| {
+            writer.write_sequence(|writer| {
+                writer.next().write_bitvec(&::std::iter::once(true)
+                    .collect());
+                writer.next().write_u16(32);
+                writer.next().write_biguint(&pubkey_x);
+                writer.next().write_biguint(&pubkey_y);
+
+                writer.next().write_biguint(&privkey);
+            })
+        });
+
+        Ok(der)
+    }
+
+    /// This has to be the private key, the other one has to be the public key.
+    pub fn create_shared_secret(self, other: EccKeyPubP256)
+        -> Result<Vec<u8>> {
+        let privkey = PKey::from_ec_key(self.0)?;
+        let pubkey = PKey::from_ec_key(other.0)?;
+        let mut deriver = Deriver::new(&privkey)?;
+
+        deriver.set_peer(&pubkey)?;
+
+        let secret = deriver.derive_to_vec()?;
+        Ok(secret)
+    }
+
+    pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
+        let pkey = PKey::from_ec_key(self.0)?;
+        let mut signer = Signer::new(Some(MessageDigest::sha256()),
+            &pkey)?;
+        signer.update(data)?;
+        Ok(signer.sign_to_vec()?)
+    }
+
+    pub fn to_pub(&self) -> EccKeyPubP256 {
+        self.into()
+    }
+}
+
+impl<'a> Into<EccKeyPubP256> for &'a EccKeyPrivP256 {
+    fn into(self) -> EccKeyPubP256 {
+        EccKeyPubP256(EcKey::from_public_key(&self.0.group(),
+            &self.0.public_key()).unwrap())
+    }
+}
+
+impl EccKeyPubEd25519 {
+    pub fn from_bytes(data: [u8; 32]) -> Self {
+        EccKeyPubEd25519(CompressedEdwardsY(data))
+    }
+
+    pub fn to_base64(&self) -> String {
+        let EccKeyPubEd25519(CompressedEdwardsY(ref data)) = *self;
+        base64::encode(data)
+    }
+}
+
+impl EccKeyPrivEd25519 {
+    pub fn from_bytes(data: [u8; 32]) -> Result<Self> {
+        Ok(EccKeyPrivEd25519(Scalar::from_canonical_bytes(data).ok_or_else(||
+            format_err!("Private key is not canonical"))?))
+    }
+
+    pub fn to_base64(&self) -> String {
+        base64::encode(self.0.as_bytes())
     }
 }
 

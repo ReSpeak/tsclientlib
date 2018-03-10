@@ -8,12 +8,12 @@ use tokio_core::reactor::Handle;
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
-use tsproto::crypto::EccKey;
+use tsproto::crypto::P256EccKey;
 use tsproto::packets::*;
 
 pub fn create_client(local_address: SocketAddr, handle: Handle, logger: slog::Logger, log: bool) -> Rc<RefCell<client::ClientData>> {
     // Get P-256 ECDH key
-    let private_key = EccKey::from_ts(
+    let private_key = P256EccKey::from_ts(
         "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
         k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
         DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -61,7 +61,7 @@ pub fn connect(
     handle.spawn(listen);
 
     Box::new(connect_fut.and_then(move |()| {
-        let private_key = EccKey::from_ts(
+        let private_key = P256EccKey::from_ts(
             "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
             k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
             DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
