@@ -8,10 +8,8 @@ extern crate tsproto;
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::constants;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-//use tsproto::crypto::EccKey;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings =

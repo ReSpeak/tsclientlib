@@ -279,8 +279,7 @@ impl EccKeyPrivP256 {
 
     pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
         let pkey = PKey::from_ec_key(self.0)?;
-        let mut signer = Signer::new(Some(MessageDigest::sha256()),
-            &pkey)?;
+        let mut signer = Signer::new(MessageDigest::sha256(), &pkey)?;
         signer.update(data)?;
         Ok(signer.sign_to_vec()?)
     }
@@ -416,7 +415,7 @@ impl Eax {
     pub fn cmac_with_iv(key: &[u8; 16], iv: u8, data: &[u8]) -> Result<Vec<u8>> {
         let cipher = Cipher::aes_128_cbc();
         let key = PKey::cmac(&cipher, key)?;
-        let mut signer = Signer::new(None, &key)?;
+        let mut signer = Signer::new_without_digest(&key)?;
 
         signer.update(&[0; 15])?;
         signer.update(&[iv])?;
