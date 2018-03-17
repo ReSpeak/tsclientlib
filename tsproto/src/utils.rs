@@ -33,6 +33,10 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
         // Wireshark
         Ok(s.split(':').map(|s| u8::from_str_radix(s, 16))
            .collect::<::std::result::Result<Vec<_>, _>>()?)
+    } else if s.chars().nth(2) == Some(' ') {
+        // Wireshark
+        Ok(s.split(' ').map(|s| u8::from_str_radix(s, 16))
+           .collect::<::std::result::Result<Vec<_>, _>>()?)
     } else if s.starts_with("0x") {
         // Own dumps
         Ok(s[2..].split(", ").map(|s| {
