@@ -4,7 +4,8 @@ use std::fmt;
 use base64;
 use num::BigUint;
 
-use curve25519_dalek::edwards::CompressedEdwardsY;
+use curve25519_dalek::constants;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use openssl::bn::BigNumContext;
 use openssl::derive::Deriver;
@@ -315,13 +316,13 @@ impl EccKeyPubEd25519 {
 }
 
 impl EccKeyPrivEd25519 {
+    /// This is not used to create TeamSpeak keys, as they are not canonical.
     pub fn create() -> Result<Self> {
         Ok(EccKeyPrivEd25519(Scalar::random(&mut ::rand::OsRng::new()?)))
     }
 
     pub fn from_bytes(data: [u8; 32]) -> Result<Self> {
-        Ok(EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data)/*.ok_or_else(||
-            format_err!("Private key is not canonical"))?*/))
+        Ok(EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data)))
     }
 
     pub fn to_base64(&self) -> String {
@@ -329,12 +330,17 @@ impl EccKeyPrivEd25519 {
     }
 
     /// This has to be the private key, the other one has to be the public key.
-    pub fn create_shared_secret(&self, other: &EccKeyPubEd25519)
+    pub fn create_shared_secret(&self, pub_key: &EdwardsPoint)
         -> Result<[u8; 32]> {
-        let pub_key = other.0.decompress().ok_or_else(||
-            format_err!("Cannot decompress public key"))?;
         let res = pub_key * self.0;
         Ok(res.compress().0)
+    }
+}
+
+impl<'a> Into<EccKeyPubEd25519> for &'a EccKeyPrivEd25519 {
+    fn into(self) -> EccKeyPubEd25519 {
+        EccKeyPubEd25519((&constants::ED25519_BASEPOINT_TABLE * &self.0)
+            .compress())
     }
 }
 

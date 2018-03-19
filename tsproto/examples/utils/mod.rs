@@ -1,10 +1,11 @@
 use std::cell::RefCell;
 use std::net::SocketAddr;
 use std::rc::Rc;
+use std::time::Duration;
 
 use {slog, slog_perf};
 use futures::{future, Future, Sink, Stream};
-use tokio_core::reactor::Handle;
+use tokio_core::reactor::{Handle, Timeout};
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
@@ -60,7 +61,12 @@ pub fn connect(
             "error" => ?error));
     handle.spawn(listen);
 
-    Box::new(connect_fut.and_then(move |()| {
+    let handle2 = handle.clone();
+    Box::new(connect_fut.and_then(move |_| {
+        // Wait some time
+        // TODO Document in protocol paper
+        Timeout::new(Duration::from_millis(5), &handle2).unwrap().map_err(|e| e.into())
+    }).and_then(move |()| {
         let private_key = EccKeyPrivP256::from_ts(
             "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
             k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
@@ -83,7 +89,7 @@ pub fn connect(
         let header = Header::new(PacketType::Command);
         let mut command = commands::Command::new("clientinit");
         command.push("client_nickname", "Bot");
-        command.push("client_version", "3.1.6 [Build: 1502873983]");
+        command.push("client_version", "3.1.8 [Build: 1516614607]");
         command.push("client_platform", "Linux");
         command.push("client_input_hardware", "1");
         command.push("client_output_hardware", "1");
@@ -91,7 +97,7 @@ pub fn connect(
         command.push("client_default_channel_password", "");
         command.push("client_server_password", "");
         command.push("client_meta_data", "");
-        command.push("client_version_sign", "o+l92HKfiUF+THx2rBsuNjj/S1QpxG1fd5o3Q7qtWxkviR3LI3JeWyc26eTmoQoMTgI3jjHV7dCwHsK1BVu6Aw==");
+        command.push("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==");
         command.push("client_key_offset", offset.to_string());
         command.push("client_nickname_phonetic", "");
         command.push("client_default_token", "");

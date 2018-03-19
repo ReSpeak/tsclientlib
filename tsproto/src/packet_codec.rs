@@ -200,6 +200,12 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                 r.position() as usize,
             )
         };
+        // TODO Move this check into Header parser
+        if (header.p_type & 0xf) > 8 {
+            // Invalid packet type
+            return Err(Error::UnknownPacketType(header.p_type));
+        }
+
         let mut udp_packet = udp_packet.split_off(pos);
 
         let packets: Vec<(CM::ConnectionsKey, Packet)> = {

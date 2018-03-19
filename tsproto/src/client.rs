@@ -269,10 +269,10 @@ impl DefaultPacketHandlerStream {
             }
 
             if let Some((mut listeners, p)) = packet_res {
-                // Notify state changed listeners
-                let l_fut = future::join_all(listeners.drain(..).map(|mut l| l()).collect::<Vec<_>>());
-
-                if let Some(p) = p {
+                // First send the packet, then notify the listeners, this
+                // ensures that the clientek packet is sent before the
+                // clientinit.
+                let res_fut: BoxFuture<(), _> = if let Some(p) = p {
                     // Take sink
                     let tmp_sink = mem::replace(&mut *sink.borrow_mut(), Either::B(None));
                     let tmp_sink = if let Either::A(sink) = tmp_sink {
@@ -282,8 +282,7 @@ impl DefaultPacketHandlerStream {
                     };
                     // Send the packet
                     let sink = sink.clone();
-                    Box::new(l_fut.and_then(move |_| tmp_sink
-                            .send((key.clone(), p))
+                    Box::new(tmp_sink.send((key.clone(), p))
                             .map(move |tmp_sink| {
                         let s: Either<InnerSink, Option<Task>> =
                             mem::replace(&mut *sink.borrow_mut(), Either::A(tmp_sink));
@@ -291,20 +290,22 @@ impl DefaultPacketHandlerStream {
                             // Notify the task, that the sink is available
                             task.notify();
                         }
-                        // Already handled
-                        if ignore_packet {
-                            None
-                        } else {
-                            Some((key, packet))
-                        }
-                    })))
+                    }))
                 } else {
-                    Box::new(l_fut.and_then(move |_| if ignore_packet {
+                    Box::new(future::ok(()))
+                };
+
+                Box::new(res_fut.and_then(move |_| {
+                    // Notify state changed listeners
+                    let listeners = listeners.drain(..).map(|mut l| l())
+                        .collect::<Vec<_>>();
+                    future::join_all(listeners)
+                }).and_then(move |_|
+                    if ignore_packet {
                         future::ok(None)
                     } else {
                         future::ok(Some((key, packet)))
                     }))
-                }
             } else if ignore_packet || is_end {
                 Box::new(future::ok(None))
             } else {
@@ -453,12 +454,6 @@ impl DefaultPacketHandlerStream {
                                     "Incorrect beta length"))?;
                             }
 
-                            // Check if beta != 0
-                            if beta_vec.iter().all(|i| *i == 0) {
-                                return Err(format_err!(
-                                    "Beta is zero"))?;
-                            }
-
                             let mut beta = [0; 10];
                             beta.copy_from_slice(&beta_vec);
                             let mut server_key = EccKeyPubP256::
@@ -499,11 +494,6 @@ impl DefaultPacketHandlerStream {
                                     "Incorrect beta length").into());
                             }
 
-                            // Check if beta != 0
-                            if beta_vec.iter().all(|i| *i == 0) {
-                                return Err(format_err!("Beta is zero").into());
-                            }
-
                             let mut beta = [0; 54];
                             beta.copy_from_slice(&beta_vec);
 
@@ -512,8 +502,6 @@ impl DefaultPacketHandlerStream {
                                 cmd.args["l"])?)?;
                             // Ephemeral key of server
                             let server_ek = licenses.derive_public_key()?;
-                            let server_ek = EccKeyPubEd25519(
-                                server_ek.compress());
 
                             // Create own ephemeral key
                             let ek = EccKeyPrivEd25519::create()?;
@@ -535,11 +523,12 @@ impl DefaultPacketHandlerStream {
 
                             // Send clientek
                             let mut command = Command::new("clientek");
-                            let ek_s = base64::encode(ek.0.as_bytes());
+                            let ek_pub: EccKeyPubEd25519 = (&ek).into();
+                            let ek_s = base64::encode(ek_pub.0.as_bytes());
 
                             // Proof: ECDSA signature of ek || beta
                             let mut all = Vec::with_capacity(32 + 54);
-                            all.extend_from_slice(ek.0.as_bytes());
+                            all.extend_from_slice(ek_pub.0.as_bytes());
                             all.extend_from_slice(&beta);
                             let proof = private_key.clone().sign(&all)?;
                             let proof_s = base64::encode(&proof);

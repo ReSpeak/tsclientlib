@@ -105,6 +105,8 @@ pub enum Error {
     UnallowedUnencryptedPacket,
     #[fail(display = "Got unexpected init packet")]
     UnexpectedInitPacket,
+    #[fail(display = "Got a packet with unknown type ({})", _0)]
+    UnknownPacketType(u8),
     #[fail(display = "Maximum length exceeded for {}", _0)]
     MaxLengthExceeded(String),
     #[fail(display = "Cannot parse command ({})", _0)]

@@ -1,6 +1,7 @@
 //! Benchmark the number of reconnects we can make per second.
 
 extern crate base64;
+extern crate cpuprofiler;
 extern crate futures;
 #[macro_use]
 extern crate slog;
@@ -32,26 +33,23 @@ struct Args {
                 default_value = "127.0.0.1:9987",
                 help = "The address of the server to connect to")]
     address: SocketAddr,
-    #[structopt(short = "n", long = "amount", default_value = "20",
+    #[structopt(short = "n", long = "amount", default_value = "5",
                 help = "The amount of connections")]
     amount: u32,
     #[structopt(long = "local-address", default_value = "0.0.0.0:0",
                 help = "The listening address of the client")]
     local_address: SocketAddr,
+    #[structopt(short = "v", long = "verbose",
+                help = "Display the content of all packets")]
+    verbose: bool,
 }
 
 fn connect_once(core: &mut Core, args: &Args, logger: &slog::Logger)
     -> Result<(), tsproto::Error> {
-    // Wait a bit
-    std::thread::sleep(std::time::Duration::from_millis(15));
-
-    let c = create_client(args.local_address, core.handle(), logger.clone(), false);
-
+    let c = create_client(args.local_address, core.handle(), logger.clone(), args.verbose);
     let handle = core.handle();
+
     // The TS server does not accept the 3rd reconnect from the same port
-    let action = tokio_core::reactor::Timeout::new(
-        std::time::Duration::from_millis(2), &handle).unwrap();
-    core.run(action).unwrap();
 
     info!(logger, "Connecting");
     core.run(connect(logger.clone(), &handle, c.clone(), args.address))?;
@@ -85,13 +83,18 @@ fn main() {
     time_reporter.start("Connections");
     let start = Instant::now();
     let mut success_count = 0;
+    //cpuprofiler::PROFILER.lock().unwrap().start("./connect-bench.profile").unwrap();
     for _ in 0..args.amount {
+        // Wait a bit
+        std::thread::sleep(std::time::Duration::from_millis(15));
+
         if let Err(error) = connect_once(&mut core, &args, &logger) {
             error!(logger, "Failed to connect"; "error" => ?error);
             break;
         }
         success_count += 1;
     }
+    //cpuprofiler::PROFILER.lock().unwrap().stop().unwrap();
     time_reporter.finish();
     let dur = start.elapsed();
 
