@@ -54,7 +54,8 @@ impl Connection {
                 created: packet.server_created,
                 ip: packet.server_ip.clone(),
                 ask_for_privilegekey: packet.ask_for_privilege,
-                license: packet.license_type,
+                // TODO license: packet.license_type,
+                license: LicenseType::NoLicense,
 
                 optional_data: None,
                 connection_data: None,

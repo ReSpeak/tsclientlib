@@ -282,7 +282,7 @@ impl ConnectionManager {
             let private_key = match config.private_key.take().map(Ok)
                 .unwrap_or_else(|| {
                     // Create new ECDH key
-                    crypto::EccKey::create()
+                    crypto::EccKeyPrivP256::create()
                 }) {
                 Ok(key) => key,
                 Err(error) => return Connect::new_from_error(error.into()),
@@ -306,7 +306,7 @@ impl ConnectionManager {
                 let mut client = client.borrow_mut();
                 client.connection_manager.set_data_ref(Rc::downgrade(&c2));
             }
-            client::default_setup(&client, true); // TODO false/specify in options
+            client::default_setup(&client, config.log_packets);
 
             // Create a connection
             let connect_fut = client::connect(&client, addr);
@@ -374,8 +374,9 @@ impl ConnectionManager {
                 time_reporter.start("Compute public key hash cash level");
                 let (offset, omega) = {
                     let mut c = client.borrow_mut();
-                    (algs::hash_cash(&c.private_key, 8).unwrap(),
-                    c.private_key.to_ts_public().unwrap())
+                    let pub_k = c.private_key.to_pub();
+                    (algs::hash_cash(&pub_k, 8).unwrap(),
+                    pub_k.to_ts().unwrap())
                 };
                 time_reporter.finish();
                 info!(logger, "Computed hash cash level";
@@ -741,7 +742,7 @@ impl<'a> ConnectionMut<'a> {
 
 /// The configuration used to create a new connection.
 ///
-/// Basically, this is a builder for a connection.
+/// This is a builder for a connection.
 ///
 /// # Example
 ///
@@ -766,9 +767,10 @@ impl<'a> ConnectionMut<'a> {
 pub struct ConnectOptions {
     address: Option<SocketAddr>,
     local_address: SocketAddr,
-    private_key: Option<crypto::EccKey>,
+    private_key: Option<crypto::EccKeyPrivP256>,
     name: String,
     version: Version,
+    log_packets: bool,
 }
 
 impl ConnectOptions {
@@ -784,6 +786,7 @@ impl ConnectOptions {
             private_key: None,
             name: String::from("TeamSpeakUser"),
             version: Version::Linux_3_1_8,
+            log_packets: false,
         }
     }
 
@@ -815,7 +818,7 @@ impl ConnectOptions {
     ///
     /// A new identity is generated when connecting.
     #[inline]
-    pub fn private_key(mut self, private_key: crypto::EccKey)
+    pub fn private_key(mut self, private_key: crypto::EccKeyPrivP256)
         -> Self {
         self.private_key = Some(private_key);
         self
@@ -834,7 +837,7 @@ impl ConnectOptions {
     /// or libtomcrypt cannot import the key.
     #[inline]
     pub fn private_key_ts(mut self, private_key: &str) -> Result<Self> {
-        self.private_key = Some(crypto::EccKey::from_ts(private_key)?);
+        self.private_key = Some(crypto::EccKeyPrivP256::from_ts(private_key)?);
         Ok(self)
     }
 
@@ -857,6 +860,18 @@ impl ConnectOptions {
     #[inline]
     pub fn version(mut self, version: Version) -> Self {
         self.version = version;
+        self
+    }
+
+    /// If the content of all packets in high-level and byte-array form should
+    /// be written to the logger.
+    ///
+    /// # Default
+    ///
+    /// false
+    #[inline]
+    pub fn log_packets(mut self, log_packets: bool) -> Self {
+        self.log_packets = log_packets;
         self
     }
 }

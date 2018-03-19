@@ -335,6 +335,10 @@ impl EccKeyPrivEd25519 {
         let res = pub_key * self.0;
         Ok(res.compress().0)
     }
+
+    pub fn to_pub(&self) -> EccKeyPubEd25519 {
+        self.into()
+    }
 }
 
 impl<'a> Into<EccKeyPubEd25519> for &'a EccKeyPrivEd25519 {

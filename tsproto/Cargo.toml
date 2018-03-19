@@ -29,7 +29,7 @@ nom = "3.2"
 num = "0.1"
 num-derive = "0.2"
 num-traits = "0.2"
-openssl = { git = "https://github.com/Flakebi/rust-openssl.git" }
+openssl = { git = "https://github.com/sfackler/rust-openssl.git" }
 rand = "0.4"
 ring = "0.13.0-alpha"
 rust-gmp = { version = "0.5", optional = true }

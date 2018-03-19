@@ -26,7 +26,7 @@ use commands::Command;
 use connection::*;
 use connectionmanager::{AttachedDataConnectionManager, Resender, ResenderEvent,
     SocketConnectionManager};
-use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519, EccKeyPubEd25519};
+use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
 use handler_data::Data;
 use license::Licenses;
 use packets::*;
@@ -523,7 +523,7 @@ impl DefaultPacketHandlerStream {
 
                             // Send clientek
                             let mut command = Command::new("clientek");
-                            let ek_pub: EccKeyPubEd25519 = (&ek).into();
+                            let ek_pub = ek.to_pub();
                             let ek_s = base64::encode(ek_pub.0.as_bytes());
 
                             // Proof: ECDSA signature of ek || beta
