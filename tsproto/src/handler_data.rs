@@ -5,6 +5,7 @@ use std::rc::{Rc, Weak};
 
 use {slog, slog_async, slog_term};
 use futures::{self, Sink, Stream};
+use futures::unsync::mpsc;
 use slog::Drain;
 use tokio_core::net::UdpSocket;
 use tokio_core::reactor::Handle;
@@ -60,6 +61,11 @@ pub struct Data<CM: ConnectionManager> {
     /// The sink of `UdpPacket`s.
     pub udp_packet_sink:
         Option<Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>,
+    /// The sink for `UdpPacket`s with no known connection.
+    ///
+    /// This can stay `None` so all packets without connection will be dropped.
+    pub unknown_udp_packet_sink:
+        Option<mpsc::Sender<(SocketAddr, UdpPacket)>>,
 
     /// The stream of `Packet`s.
     pub packet_stream:
@@ -116,6 +122,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             logger,
             udp_packet_stream: Some(stream),
             udp_packet_sink: Some(sink),
+            unknown_udp_packet_sink: None,
             packet_stream: None,
             packet_sink: None,
             connection_manager,

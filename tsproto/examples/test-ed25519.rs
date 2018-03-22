@@ -37,11 +37,11 @@ fn main() {
     privk[31] &= 63;
     privk[31] |= 64;*/
 
-    let priv_scal = Scalar::from_canonical_bytes(privk).unwrap();
+    let priv_scal = Scalar::from_bytes_mod_order(privk);
     //let priv_scal = Scalar::from_bytes_mod_order(privk);
     let pub_point_compr = CompressedEdwardsY(pubk);
     let pub_point = -pub_point_compr.decompress().unwrap();
-    //let pub_point = constants::ED25519_BASEPOINT_POINT;
+    //let pub_point = curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 
     let res = (pub_point * priv_scal).compress();
     println!("Result: {}", base64::encode(&res.0));

@@ -17,6 +17,9 @@ impl Version {
             if num != "?" {
                 res.push('_');
                 res.push_str(&format!("{}", num));
+            } else {
+                res.push('_');
+                res.push('X');
             }
         }
         res

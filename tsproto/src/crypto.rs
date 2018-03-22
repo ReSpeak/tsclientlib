@@ -321,8 +321,15 @@ impl EccKeyPrivEd25519 {
         Ok(EccKeyPrivEd25519(Scalar::random(&mut ::rand::OsRng::new()?)))
     }
 
-    pub fn from_bytes(data: [u8; 32]) -> Result<Self> {
-        Ok(EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data)))
+    pub fn from_base64(data: &str) -> Result<Self> {
+        let mut bs = [0; 32];
+        let decoded = base64::decode(data)?;
+        bs.copy_from_slice(&decoded);
+        Ok(Self::from_bytes(bs))
+    }
+
+    pub fn from_bytes(data: [u8; 32]) -> Self {
+        EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data))
     }
 
     pub fn to_base64(&self) -> String {

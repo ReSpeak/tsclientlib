@@ -172,20 +172,29 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
     fn on_packet_received(&mut self, addr: SocketAddr, udp_packet: UdpPacket)
         -> futures::Poll<Option<<Self as Stream>::Item>,
             <Self as Stream>::Error> {
-        // Get the connection
         let data = if let Some(data) = self.data.upgrade() {
             data
         } else {
             return Ok(futures::Async::Ready(None));
         };
+        // Get the connection
         let con_key;
         let con = {
-            let data = data.borrow();
+            let data = &mut *data.borrow_mut();
             let con = data.connection_manager.get_connection_for_udp_packet(addr, &udp_packet);
             if let Some(con) = con {
                 con_key = con.clone();
                 data.connection_manager.get_connection(con).unwrap()
             } else {
+                if let Some(sink) = data.unknown_udp_packet_sink.as_mut() {
+                    // TODO Should use try_send with futures 0.2
+                    if let Err(error) = sink.start_send((addr, udp_packet)) {
+                        warn!(data.logger, "Unknown packet dropped"; "error" =>
+                            ?error);
+                    }
+                } else {
+                    info!(data.logger, "No unknown packet handler");
+                }
                 return Ok(futures::Async::NotReady);
             }
         };
@@ -366,20 +375,20 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                 }
                 res
             } else {
-                // Try to fake decrypt the initivexpand packet
-                if header.get_type() == PacketType::Command && is_client {
-                    let udp_packet_bak = udp_packet.clone();
-                    if algs::decrypt_fake(&header, &mut udp_packet).is_ok() {
-                        // Send ack
-                        let mut ack_header = Header::default();
-                        ack_header.set_type(PacketType::Ack);
+                // Try to fake decrypt the packet
+                let udp_packet_bak = udp_packet.clone();
+                if algs::decrypt_fake(&header, &mut udp_packet).is_ok() {
+                    // Send ack
+                    let mut ack_header = Header::default();
+                    ack_header.set_type(PacketType::Ack);
+                    if header.get_type() == PacketType::Command {
                         self.ack_packet = Some((con_key.clone(), Packet::new(
                             ack_header,
                             packets::Data::Ack(header.p_id),
                         )));
-                    } else {
-                        udp_packet.copy_from_slice(&udp_packet_bak);
                     }
+                } else {
+                    udp_packet.copy_from_slice(&udp_packet_bak);
                 }
                 let p_data = packets::Data::read(
                     &header,

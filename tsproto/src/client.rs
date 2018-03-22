@@ -227,7 +227,8 @@ impl DefaultPacketHandlerStream {
         let sink2 = sink.clone();
         let logger = data.borrow().logger.clone();
         let data = Rc::downgrade(data);
-        let inner_stream = Box::new(inner_stream.and_then(move |(key, packet)| -> BoxFuture<_, _> {
+        let inner_stream = Box::new(inner_stream.and_then(move |(key, packet)|
+            -> BoxFuture<_, _> {
             // true, if the packet should not be handled further.
             let mut ignore_packet = true;
             // If the connection should be removed
@@ -413,7 +414,13 @@ impl DefaultPacketHandlerStream {
                         command.push("alpha", alpha_s);
                         command.push("omega", omega_s);
                         command.push("ot", "1");
-                        command.push("ip", "");
+                        // Set ip always except if it is a local address
+                        let ip = con.address.ip();
+                        if ::utils::is_global_ip(&ip) {
+                            command.push("ip", ip.to_string());
+                        } else {
+                            command.push("ip", "");
+                        }
 
                         let cheader = create_init_header();
                         let data = C2SInit::Init4 {
@@ -485,8 +492,10 @@ impl DefaultPacketHandlerStream {
 
                             let mut server_key = EccKeyPubP256::
                                 from_ts(cmd.args["omega"])?;
+                            let l = base64::decode(cmd.args["l"])?;
+                            let proof = base64::decode(cmd.args["proof"])?;
                             // Check signature of l (proof)
-                            // TODO
+                            server_key.clone().verify(&l, &proof)?;
 
                             let beta_vec = base64::decode(cmd.args["beta"])?;
                             if beta_vec.len() != 54 {
@@ -498,8 +507,7 @@ impl DefaultPacketHandlerStream {
                             beta.copy_from_slice(&beta_vec);
 
                             // Parse license argument
-                            let licenses = Licenses::parse(&base64::decode(
-                                cmd.args["l"])?)?;
+                            let licenses = Licenses::parse(&l)?;
                             // Ephemeral key of server
                             let server_ek = licenses.derive_public_key()?;
 
@@ -735,7 +743,7 @@ impl<
         let handler = Self::new(data, stream, sink);
         let (sink, stream) = handler.split();
         let mut data = data.borrow_mut();
-        data.packet_stream = Some(Box::new(stream));
+        data.packet_stream = Some(stream);
         data.packet_sink = Some(Box::new(sink));
     }
 }

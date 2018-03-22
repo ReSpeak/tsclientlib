@@ -102,7 +102,7 @@ pub fn connect(
         command.push("client_nickname_phonetic", "");
         command.push("client_default_token", "");
         command.push("client_badges", "Overwolf=0");
-        command.push("hwid", "923f136fb1e22ae6ce95e60244429c00,d13230b1bc33edfecfb8169cc7a63bcc");
+        command.push("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 

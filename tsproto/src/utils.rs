@@ -1,5 +1,6 @@
 use std::fmt;
 use std::io::Cursor;
+use std::net::IpAddr;
 
 use Result;
 use packets::{Header};
@@ -24,6 +25,19 @@ impl<'a> fmt::Debug for HexSlice<'a, u8> {
             }
         }
         write!(f, "]")
+    }
+}
+
+/// Try to approximate the not stabilized ip.is_global().
+pub fn is_global_ip(ip: &IpAddr) -> bool {
+    if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() {
+        match *ip {
+            IpAddr::V4(ref ip) => !ip.is_broadcast() && !ip.is_link_local()
+                && !ip.is_private(),
+            IpAddr::V6(_) => true,
+        }
+    } else {
+        false
     }
 }
 
