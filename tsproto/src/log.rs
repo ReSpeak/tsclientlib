@@ -6,7 +6,6 @@ use slog::Logger;
 
 use {Error, SinkWrapper, StreamWrapper};
 use packets::{Packet, UdpPacket};
-use utils::HexSlice;
 
 pub struct PacketLogger;
 impl PacketLogger {
@@ -29,7 +28,7 @@ impl PacketLogger {
         };
         let to_s = if is_client { "S" } else { "C" };
         let id_s = format!("{}", id);
-        logger.new(o!("dir" => in_s, "to" => to_s, "id" => id_s))
+        logger.new(o!("addr" => id_s, "dir" => in_s, "to" => to_s))
     }
 
     pub fn log_udp_packet(
@@ -40,7 +39,7 @@ impl PacketLogger {
         packet: &UdpPacket,
     ) {
         let logger = Self::prepare_logger(logger, &addr, is_client, incoming);
-        debug!(logger, "UdpPacket"; "content" => ?HexSlice(&packet.0));
+        debug!(logger, "UdpPacket"; "content" => ?packet);
     }
 
     pub fn log_packet<Id: Display>(

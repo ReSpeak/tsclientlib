@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use futures::{future, Future, Sink};
+use slog::Logger;
 use tokio_core::reactor::Handle;
 
 use {Error, Map};
@@ -29,7 +30,7 @@ pub trait ConnectionManager: Sized {
     type ConnectionsKey: ::std::hash::Hash + Clone;
 
     /// Create a new resender that will be put into a new connection.
-    fn create_resender(&self) -> Self::Resend;
+    fn create_resender(&self, logger: Logger) -> Self::Resend;
 
     /// Add a new connection to the list of connections.
     ///
@@ -202,10 +203,8 @@ impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
     type Resend = DefaultResender;
     type ConnectionsKey = SocketAddr;
 
-    fn create_resender(&self) -> Self::Resend {
-        let data = self.data.as_ref().unwrap().upgrade().unwrap();
-        let data = data.borrow();
-        DefaultResender::new(self.resend_config.clone(), data.logger.clone())
+    fn create_resender(&self, logger: Logger) -> Self::Resend {
+        DefaultResender::new(self.resend_config.clone(), logger)
     }
 
     fn add_connection(&mut self, con: Rc<RefCell<Connection<Self>>>,

@@ -124,6 +124,11 @@ impl Licenses {
         let now = Utc::now();
         let mut bounds = None;
         while !data.is_empty() {
+            if res.blocks.len() >= 8 {
+                // Accept only 8 blocks
+                return Err(format_err!("Too many license blocks").into());
+            }
+
             // Read next license
             let (license, len) = License::parse(data)?;
 
@@ -370,6 +375,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[should_panic]
     fn parse_standard_license() {
         Licenses::parse(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
             Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAACiIBip9hQaK6P3QhwOJs/BkPn0i\
@@ -377,6 +383,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
     fn parse_aal_license() {
         Licenses::parse(&base64::decode("AQCvbHFTQDY/terPeilrp/ECU9xCH5U3xC92lY\
             TNaY/0KQAJFueAazbsgAAAACVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAABhl9gwla/UJ\
@@ -387,6 +394,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
     fn derive_public_key() {
         let licenses = Licenses::parse(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==").unwrap()).unwrap();
         let derived_key = licenses.derive_public_key().unwrap();

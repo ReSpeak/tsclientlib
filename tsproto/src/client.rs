@@ -2,13 +2,11 @@ use std::cell::RefCell;
 use std::fmt::Display;
 use std::mem;
 use std::net::SocketAddr;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use base64;
 use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
-use futures::future::Either;
-use futures::task::{self, Task};
 use futures::unsync::oneshot;
 #[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
@@ -19,6 +17,7 @@ use num::ToPrimitive;
 use num::bigint::BigUint;
 use rand::{self, Rng};
 use slog::Logger;
+use tokio_core::reactor::Handle;
 
 use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
@@ -30,6 +29,7 @@ use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
 use handler_data::Data;
 use license::Licenses;
 use packets::*;
+use utils::MultiSink;
 
 /// The data of our client.
 pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
@@ -222,10 +222,9 @@ impl DefaultPacketHandlerStream {
         inner_stream: InnerStream,
         inner_sink: InnerSink,
     ) -> (Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
-        Rc<RefCell<Either<InnerSink, Option<Task>>>>) {
-        let sink = Rc::new(RefCell::new(Either::A(inner_sink)));
+        MultiSink<InnerSink>) {
+        let sink = MultiSink::new(inner_sink);
         let sink2 = sink.clone();
-        let logger = data.borrow().logger.clone();
         let data = Rc::downgrade(data);
         let inner_stream = Box::new(inner_stream.and_then(move |(key, packet)|
             -> BoxFuture<_, _> {
@@ -241,11 +240,13 @@ impl DefaultPacketHandlerStream {
                 if let Some(con) = data.connection_manager
                     .get_connection(key.clone()) {
                     let mut con = con.borrow_mut();
+                    let logger = con.logger.clone();
                     let state = data.connection_manager
                         .get_mut_data(key.clone()).unwrap();
                     let handle_res = match Self::handle_packet(state, &packet,
                         &mut ignore_packet, &mut is_end, &data.private_key,
-                        &mut con, &logger) {
+                        &mut con, key.clone(), &logger, &data.handle,
+                        sink.clone()) {
                         Ok(res) => res,
                         Err(error) => {
                             error!(logger, "Error when handling packet";
@@ -255,7 +256,8 @@ impl DefaultPacketHandlerStream {
                     };
                     if let Some((s, packet)) = handle_res {
                         state.state = s;
-                        let listeners = mem::replace(&mut state.state_change_listener, Vec::new());
+                        let listeners = mem::replace(
+                            &mut state.state_change_listener, Vec::new());
                         Some((listeners, packet))
                     } else {
                         None
@@ -274,24 +276,8 @@ impl DefaultPacketHandlerStream {
                 // ensures that the clientek packet is sent before the
                 // clientinit.
                 let res_fut: BoxFuture<(), _> = if let Some(p) = p {
-                    // Take sink
-                    let tmp_sink = mem::replace(&mut *sink.borrow_mut(), Either::B(None));
-                    let tmp_sink = if let Either::A(sink) = tmp_sink {
-                        sink
-                    } else {
-                        unreachable!("Sink is not available");
-                    };
                     // Send the packet
-                    let sink = sink.clone();
-                    Box::new(tmp_sink.send((key.clone(), p))
-                            .map(move |tmp_sink| {
-                        let s: Either<InnerSink, Option<Task>> =
-                            mem::replace(&mut *sink.borrow_mut(), Either::A(tmp_sink));
-                        if let Either::B(Some(task)) = s {
-                            // Notify the task, that the sink is available
-                            task.notify();
-                        }
-                    }))
+                    Box::new(sink.clone().send((key.clone(), p)).map(|_| ()))
                 } else {
                     Box::new(future::ok(()))
                 };
@@ -319,10 +305,12 @@ impl DefaultPacketHandlerStream {
 
     fn handle_packet<
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
+        InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
     >(state: &mut ServerConnectionData, packet: &Packet,
         ignore_packet: &mut bool, is_end: &mut bool,
         private_key: &EccKeyPrivP256, con: &mut Connection<CM>,
-        logger: &Logger)
+        con_key: CM::ConnectionsKey, logger: &Logger, handle: &Handle,
+        sink: MultiSink<InnerSink>)
         -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
         let res = match state.state {
             ServerConnectionState::Uninitialized =>
@@ -366,79 +354,96 @@ impl DefaultPacketHandlerStream {
                         None
                     } else {
                         // Create clientinitiv
-                        // TODO use another thread
-                        let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-                            "Solve RSA puzzle", logger.clone(),
-                            ::slog::Level::Info);
-                        time_reporter.start("");
-
-                        // Use gmp for faster computations if it is
-                        // available.
-                        #[cfg(feature = "rust-gmp")]
-                        let y = {
-                            let n = (n as &[u8]).into();
-                            let x: Mpz = (x as &[u8]).into();
-                            let mut e = Mpz::new();
-                            e.setbit(level as usize);
-                            let y = x.powm(&e, &n);
-                            time_reporter.finish();
-                            info!(logger, "Solve RSA puzzle";
-                                  "level" => level);
-                            let ys = y.to_str_radix(10);
-                            let yi = ys.parse().unwrap();
-                            algs::biguint_to_array(&yi)
-                        };
-
-                        #[cfg(not(feature = "rust-gmp"))]
-                        let y = {
-                            let xi = BigUint::from_bytes_be(x);
-                            let ni = BigUint::from_bytes_be(n);
-                            let mut e = BigUint::one();
-                            e <<= level as usize;
-                            let yi = xi.modpow(&e, &ni);
-                            time_reporter.finish();
-                            info!(logger, "Solve RSA puzzle";
-                                  "level" => level, "x" => %xi, "n" => %ni,
-                                  "y" => %yi);
-                            algs::biguint_to_array(&yi)
-                        };
-
-                        // Create the command string
                         let mut rng = rand::thread_rng();
                         let alpha = rng.gen::<[u8; 10]>();
                         // omega is an ASN.1-DER encoded public key from
                         // the ECDH parameters.
-                        let alpha_s = base64::encode(&alpha);
-                        let omega_s = private_key.to_pub().to_ts().unwrap();
-                        let mut command = Command::new("clientinitiv");
-                        command.push("alpha", alpha_s);
-                        command.push("omega", omega_s);
-                        command.push("ot", "1");
-                        // Set ip always except if it is a local address
-                        let ip = con.address.ip();
-                        if ::utils::is_global_ip(&ip) {
-                            command.push("ip", ip.to_string());
-                        } else {
-                            command.push("ip", "");
-                        }
 
-                        let cheader = create_init_header();
-                        let data = C2SInit::Init4 {
-                            version,
-                            x: *x,
-                            n: *n,
-                            level,
-                            random2: *random2,
-                            y,
-                            command: command.clone(),
-                        };
+                        let alpha_s = base64::encode(&alpha);
+                        let priv_pub_key = private_key.to_pub();
+                        let ip = con.address.ip();
+                        let logger = logger.clone();
+                        let random2 = *random2;
+                        let x = *x;
+                        let n = *n;
+                        // Spawn this as another future
+                        let logger2 = logger.clone();
+                        let fut = future::lazy(move || {
+                            let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
+                                "Solve RSA puzzle", logger.clone(),
+                                ::slog::Level::Info);
+                            time_reporter.start("");
+
+                            // Use gmp for faster computations if it is
+                            // available.
+                            #[cfg(feature = "rust-gmp")]
+                            let y = {
+                                let n = (&n as &[u8]).into();
+                                let x: Mpz = (&x as &[u8]).into();
+                                let mut e = Mpz::new();
+                                e.setbit(level as usize);
+                                let y = x.powm(&e, &n);
+                                time_reporter.finish();
+                                info!(logger, "Solve RSA puzzle";
+                                      "level" => level);
+                                let ys = y.to_str_radix(10);
+                                let yi = ys.parse().unwrap();
+                                algs::biguint_to_array(&yi)
+                            };
+
+                            #[cfg(not(feature = "rust-gmp"))]
+                            let y = {
+                                let xi = BigUint::from_bytes_be(x);
+                                let ni = BigUint::from_bytes_be(n);
+                                let mut e = BigUint::one();
+                                e <<= level as usize;
+                                let yi = xi.modpow(&e, &ni);
+                                time_reporter.finish();
+                                info!(logger, "Solve RSA puzzle";
+                                      "level" => level, "x" => %xi, "n" => %ni,
+                                      "y" => %yi);
+                                algs::biguint_to_array(&yi)
+                            };
+
+                            // Create the command string
+                            // omega is an ASN.1-DER encoded public key from
+                            // the ECDH parameters.
+                            let omega_s = priv_pub_key.to_ts().unwrap();
+                            let mut command = Command::new("clientinitiv");
+                            command.push("alpha", alpha_s);
+                            command.push("omega", omega_s);
+                            command.push("ot", "1");
+                            // Set ip always except if it is a local address
+                            if ::utils::is_global_ip(&ip) {
+                                command.push("ip", ip.to_string());
+                            } else {
+                                command.push("ip", "");
+                            }
+
+                            let cheader = create_init_header();
+                            let data = C2SInit::Init4 {
+                                version,
+                                x,
+                                n,
+                                level,
+                                random2,
+                                y,
+                                command: command.clone(),
+                            };
+
+                            let packet = Packet::new(cheader, packets::Data::C2SInit(data));
+                            sink.send((con_key, packet))
+                        }).map(|_| ()).map_err(move |error|
+                            error!(logger2, "Cannot send packet";
+                                "error" => ?error));
+                        handle.spawn(fut);
 
                         let state = ServerConnectionState::ClientInitIv {
                             alpha,
                         };
 
-                        Some((state, Some(Packet::new(cheader,
-                            packets::Data::C2SInit(data)))))
+                        *ignore_packet = true;
+                        Some((state, None))
                     }
                 } else {
                     None
@@ -637,8 +642,8 @@ pub struct DefaultPacketHandlerSink<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
     InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
 > {
-    inner_sink: Rc<RefCell<Either<InnerSink, Option<Task>>>>,
-    phantom: ::std::marker::PhantomData<CM>,
+    data: Weak<RefCell<Data<CM>>>,
+    inner_sink: MultiSink<InnerSink>,
 }
 
 impl<
@@ -646,9 +651,10 @@ impl<
     InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
 > DefaultPacketHandlerSink<CM, InnerSink> {
     pub fn new(
-        inner_sink: Rc<RefCell<Either<InnerSink, Option<Task>>>>,
+        data: Weak<RefCell<Data<CM>>>,
+        inner_sink: MultiSink<InnerSink>,
     ) -> Self {
-        Self { inner_sink, phantom: ::std::marker::PhantomData }
+        Self { data, inner_sink }
     }
 }
 
@@ -663,31 +669,30 @@ impl<
         &mut self,
         item: Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let mut sink = self.inner_sink.borrow_mut();
-        // TODO Send ResenderEvent::Disconnecting here
-        if let Either::A(ref mut sink) = *sink {
-            return sink.start_send(item);
+        // Check if it is a disconnect packet
+        if let Packet { data: packets::Data::Command(ref command), .. } = item.1 {
+            let cmd = command.get_commands().remove(0);
+            if cmd.command == "clientdisconnect" {
+                if let Some(data) = self.data.upgrade() {
+                    let mut data = data.borrow_mut();
+                    if let Some(con) = data.connection_manager.get_connection(
+                        item.0.clone()) {
+                        con.borrow_mut().resender.handle_event(
+                            ResenderEvent::Disconnecting);
+                    }
+                }
+            }
         }
-        *sink = Either::B(Some(task::current()));
-        Ok(futures::AsyncSink::NotReady(item))
+
+        self.inner_sink.start_send(item)
     }
 
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let mut sink = self.inner_sink.borrow_mut();
-        if let Either::A(ref mut sink) = *sink {
-            return sink.poll_complete();
-        }
-        *sink = Either::B(Some(task::current()));
-        Ok(futures::Async::NotReady)
+        self.inner_sink.poll_complete()
     }
 
     fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let mut sink = self.inner_sink.borrow_mut();
-        if let Either::A(ref mut sink) = *sink {
-            return sink.close();
-        }
-        *sink = Either::B(Some(task::current()));
-        Ok(futures::Async::NotReady)
+        self.inner_sink.close()
     }
 }
 
@@ -715,7 +720,7 @@ impl<
             inner_stream,
             inner_sink,
         );
-        let inner_sink = DefaultPacketHandlerSink::new(inner_sink);
+        let inner_sink = DefaultPacketHandlerSink::new(Rc::downgrade(data), inner_sink);
         Self {
             inner_stream,
             inner_sink,

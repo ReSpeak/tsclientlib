@@ -52,8 +52,26 @@ pub enum CodecType {
     OpusMusic,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct UdpPacket(pub Vec<u8>);
+
+impl fmt::Debug for UdpPacket {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "UdpPacket {{ header: ")?;
+
+        // Parse header
+        match Header::read(&true, &mut Cursor::new(&self.0)) {
+            Ok(h) => h.fmt(f)?,
+            Err(_) => match Header::read(&false, &mut Cursor::new(&self.0)) {
+                Ok(h) => h.fmt(f)?,
+                Err(_) => {} // Give up
+            }
+        }
+
+        write!(f, ", raw: {:?} }}", HexSlice(&self.0))?;
+        Ok(())
+    }
+}
 
 impl Packet {
     pub fn new(header: Header, data: Data) -> Packet {

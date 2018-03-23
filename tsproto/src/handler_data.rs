@@ -138,13 +138,13 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
     pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
         -> Rc<RefCell<Connection<CM>>> {
+        // Add options like ip to logger
         let (resender, logger) = {
             let data = data.borrow();
-            (data.connection_manager.create_resender(),
-                data.logger.clone())
-        };
+            let logger = data.logger.new(o!("addr" => addr.to_string()));
 
-        // TODO Add options like ip to logger
+            (data.connection_manager.create_resender(logger.clone()), logger)
+        };
 
         Connection::new(addr, resender, logger)
     }

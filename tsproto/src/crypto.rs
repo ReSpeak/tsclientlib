@@ -7,9 +7,9 @@ use num::BigUint;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use openssl::bn::BigNumContext;
+use openssl::bn::{BigNum, BigNumContext};
 use openssl::derive::Deriver;
-use openssl::ec::{self, EcGroup, EcKey, EcPoint};
+use openssl::ec::{self, EcGroup, EcKey};
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
@@ -53,8 +53,7 @@ impl fmt::Debug for EccKeyPubP256 {
 
 impl fmt::Debug for EccKeyPrivP256 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // TODO Use more minimal version
-        write!(f, "EccKeyPrivP256({})", self.to_ts().unwrap())
+        write!(f, "EccKeyPrivP256({})", base64::encode(&self.to_short()))
     }
 }
 
@@ -86,7 +85,7 @@ impl EccKeyPubP256 {
                         ::yasna::ASN1ErrorKind::Invalid));
                 }
 
-                let key_size = reader.next().read_u16()? as usize;
+                let _key_size = reader.next().read_u16()?;
                 let pubkey_x = reader.next().read_biguint()?;
                 let pubkey_y = reader.next().read_biguint()?;
 
@@ -97,29 +96,12 @@ impl EccKeyPubP256 {
                 }
 
                 let res: Result<Self> = (|| {
-                    // TODO use from_public_key_affine_coordinates
-                    // Convert public key to octet format is specified in RFC 5480 which
-                    // delegates to [SEC1] (available here atm: http://www.secg.org/sec1-v2.pdf).
-                    // Use the non-compressed form
-                    let mut octets = Vec::new();
-                    octets.push(4);
-                    let x = pubkey_x.to_bytes_be();
-                    if x.len() < key_size {
-                        let len = octets.len() + key_size - x.len();
-                        octets.resize(len, 0);
-                    }
-                    octets.extend_from_slice(&x);
-                    let y = pubkey_y.to_bytes_be();
-                    if y.len() < key_size {
-                        let len = octets.len() + key_size - y.len();
-                        octets.resize(len, 0);
-                    }
-                    octets.extend_from_slice(&y);
+                    let x = BigNum::from_slice(&pubkey_x.to_bytes_be())?;
+                    let y = BigNum::from_slice(&pubkey_y.to_bytes_be())?;
 
                     let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-                    let mut ctx = BigNumContext::new()?;
-                    let point = EcPoint::from_bytes(&group, &octets, &mut ctx)?;
-                    let k = EcKey::from_public_key(&group, &point)?;
+                    let k = EcKey::from_public_key_affine_coordinates(&group,
+                        &x, &y)?;
                     Ok(EccKeyPubP256(k))
                 })();
                 Ok(res)
@@ -177,6 +159,38 @@ impl EccKeyPrivP256 {
         Ok(EccKeyPrivP256(EcKey::generate(&group)?))
     }
 
+    /// The shortest format of a private key.
+    ///
+    /// This is just the `BigNum` of the private key.
+    pub fn from_short(data: &[u8]) -> Result<Self> {
+        let der = ::yasna::construct_der(|writer| {
+            writer.write_sequence(|writer| {
+                // version
+                writer.next().write_u8(1);
+                // privateKey
+                writer.next().write_bytes(data);
+                // parameters
+                let tag = ::yasna::Tag::context(0);
+                writer.next().write_tagged(tag, |writer| {
+                    writer.write_oid(
+                        #[cfg_attr(feature = "cargo-clippy",
+                           allow(unreadable_literal))]
+                        &::yasna::models::ObjectIdentifier::
+                        from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
+                });
+            })
+        });
+        let k = EcKey::private_key_from_der(&der)?;
+        Ok(EccKeyPrivP256(k))
+    }
+
+    /// The shortest format of a private key.
+    ///
+    /// This is just the `BigNum` of the private key.
+    pub fn to_short(&self) -> Vec<u8> {
+        self.0.private_key().to_vec()
+    }
+
     /// From base64 encoded tomcrypt key.
     pub fn from_ts(data: &str) -> Result<Self> {
         Self::from_tomcrypt(&base64::decode(data)?)
@@ -184,7 +198,7 @@ impl EccKeyPrivP256 {
 
     pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
         // Read tomcrypt DER
-        Ok(::yasna::parse_der(data, |reader| {
+        let secret = ::yasna::parse_der(data, |reader| {
             reader.read_sequence(|reader| {
                 let f = reader.next().read_bitvec()?;
                 if f.len() != 1 {
@@ -192,7 +206,7 @@ impl EccKeyPrivP256 {
                         ::yasna::ASN1ErrorKind::Invalid));
                 }
 
-                let _key_size = reader.next().read_u16()? as usize;
+                let _key_size = reader.next().read_u16()?;
                 let _pubkey_x = reader.next().read_biguint()?;
                 let _pubkey_y = reader.next().read_biguint()?;
 
@@ -201,34 +215,10 @@ impl EccKeyPrivP256 {
                     return Err(::yasna::ASN1Error::new(
                         ::yasna::ASN1ErrorKind::Invalid));
                 };
-                let secret = reader.next().read_biguint()?;
-
-                let res: Result<Self> = (|| {
-                    // Private key
-                    let der = ::yasna::construct_der(|writer| {
-                        writer.write_sequence(|writer| {
-                            // version
-                            writer.next().write_u8(1);
-                            // privateKey
-                            writer.next().write_bytes(&secret.to_bytes_be());
-                            // parameters
-                            let tag = ::yasna::Tag::context(0);
-                            writer.next().write_tagged(tag, |writer| {
-                                writer.write_oid(
-                                    #[cfg_attr(feature = "cargo-clippy",
-                                       allow(unreadable_literal))]
-                                    &::yasna::models::ObjectIdentifier::
-                                    from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
-                            });
-                            // Skipt the publicKey as it is not needed
-                        })
-                    });
-                    let k = EcKey::private_key_from_der(&der)?;
-                    Ok(EccKeyPrivP256(k))
-                })();
-                Ok(res)
+                reader.next().read_biguint()
             })
-        })??)
+        })?;
+        Self::from_short(&secret.to_bytes_be())
     }
 
     /// Convert to base64 encoded private tomcrypt key.
@@ -415,8 +405,7 @@ impl Eax {
 
         // Check mac using secure comparison
         if !::openssl::memcmp::eq(mac, &mac2) {
-            // TODO A custom error
-            return Err(format_err!("Packet has wrong mac").into());
+            return Err(Error::WrongMac);
         }
 
         // Decrypt
@@ -450,8 +439,19 @@ mod tests {
     #[test]
     fn parse_p256_priv_key() {
         EccKeyPrivP256::from_ts("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTA\
-            O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-            DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+            O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nmDB\
+            nmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+    }
+
+    #[test]
+    fn test_p256_priv_key_short() {
+        let key = EccKeyPrivP256::from_ts("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlC\
+            mH8bl+veTAO2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50\
+            CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+        let short = key.to_short();
+        let key = EccKeyPrivP256::from_short(&short).unwrap();
+        let short2 = key.to_short();
+        assert_eq!(short, short2);
     }
 
     #[test]

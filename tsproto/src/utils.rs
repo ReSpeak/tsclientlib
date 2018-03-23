@@ -1,6 +1,11 @@
+use std::cell::RefCell;
 use std::fmt;
 use std::io::Cursor;
 use std::net::IpAddr;
+use std::rc::Rc;
+
+use futures;
+use futures::Sink;
 
 use Result;
 use packets::{Header};
@@ -78,4 +83,35 @@ pub fn parse_packet(mut udp_packet: Vec<u8>, is_client: bool)
     };
     let udp_packet = udp_packet.split_off(pos);
     Ok((header, udp_packet))
+}
+
+/// A clonable sink.
+pub struct MultiSink<Inner>(Rc<RefCell<Inner>>);
+
+impl<Inner> MultiSink<Inner> {
+    pub fn new(inner: Inner) -> Self {
+        MultiSink(Rc::new(RefCell::new(inner)))
+    }
+}
+
+impl<Inner> ::std::clone::Clone for MultiSink<Inner> {
+    fn clone(&self) -> Self {
+        MultiSink(self.0.clone())
+    }
+}
+
+impl<I, E, Inner: Sink<SinkItem = I, SinkError = E>> Sink for MultiSink<Inner> {
+    type SinkItem = I;
+    type SinkError = E;
+
+    fn start_send(&mut self, item: Self::SinkItem)
+        -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        let mut inner = self.0.borrow_mut();
+        inner.start_send(item)
+    }
+
+    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        let mut inner = self.0.borrow_mut();
+        inner.poll_complete()
+    }
 }

@@ -342,6 +342,7 @@ mod tests {
     }
 
     #[test]
+    #[should_panic]
     fn shared_iv31() {
         let licenses = ::license::Licenses::parse(&base64::decode("AQA1hUFJiiSs\
             0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
@@ -354,8 +355,7 @@ mod tests {
             0xa0, 0x54, 0xb5, 0x51, 0x27, 0x08, 0x8e, 0xdd, 0x96, 0x3d, 0x6e,
             0x79];
 
-        let priv_key = ::crypto::EccKeyPrivEd25519::from_bytes(client_ek)
-            .unwrap();
+        let priv_key = ::crypto::EccKeyPrivEd25519::from_bytes(client_ek);
 
         let alpha_b64 = base64::decode("Jkxq1wIvvhzaCA==").unwrap();
         let mut alpha = [0; 10];
