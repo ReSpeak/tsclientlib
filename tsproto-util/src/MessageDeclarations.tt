@@ -171,24 +171,24 @@ fn vector_value_serializer(field: &Field, can_move: bool) -> String {
 <# for msg in self.messages.values() {#>
 #[derive(Debug, Clone)]
 pub struct <#= msg.class_name #> {
-<# if msg.is_response { #>
+<# if msg.is_response() { #>
     pub return_code: String,
 <# }
 
     // Attributes
     for p in &msg.params {
-        let field = self.fields.get(p).expect(&format!("Missing field: {}", p));
+        let field = self.fields.get(&p.mapping_name).expect(&format!("Missing field: {}", &p.mapping_name));
 #>
-    pub <#= &field.rust_name #>: <#= field.rust_type #>,
+    pub <#= &field.rust_name #>: <#= if p.optional { "Option<" } else {""} #><#= field.rust_type #><#= if p.optional { ">" } else {""} #>,
 <# } #>
 }
 <#
-    if msg.is_notify {
-        let _notify = &self.notifies[&msg.notify_name];
+    if msg.is_notify() {
+        //let _notify = &self.notifies[/*uh wrong*/&msg.notify_name];
 
         // Do stuff here if needed...
     }
-    if msg.is_response {
+    if msg.is_response() {
 #>
 
 impl Response for <#= msg.class_name #> {
@@ -207,14 +207,20 @@ impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
         Ok(<#= msg.class_name #> {
 <#
     for p in &msg.params {
-        let field = self.fields.get(p).unwrap();
+        let field = self.fields.get(&p.mapping_name).unwrap();
 #>
             <#= &field.rust_name #>: {
+                <# if !p.optional { #>
                 let val = cmd.args.get("<#= field.ts_name #>")
                     .ok_or(ParseError::ParameterNotFound {
                         arg: "<#= field.name #>",
-                    })?;
-            <#= generate_deserializer(field) #>},
+                    })?; 
+                    <#= generate_deserializer(field) #> },
+                <# } else { #>
+                if let Some(val) = cmd.args.get("<#= field.ts_name #>") {
+                    Some(<#= generate_deserializer(field) #>)
+                } else { None } },
+                <# } #>
 <# } #>
         })
     }
@@ -223,13 +229,13 @@ impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
 impl<'a> Into<Command> for &'a <#= msg.class_name #> {
     fn into(self) -> Command {
         Command {
-            command: String::from("<#= msg.notify_name #>"),
+            command: String::from("<#= msg.get_notify_name() #>"),
             static_args: vec![
 <#
                 for p in &msg.params {
-                    let field = self.fields.get(p).unwrap();
+                    let field = self.fields.get(&p.mapping_name).unwrap();
 #>
-                (String::from("<#= field.ts_name #>"), { let val = &self.<#= field.rust_name #>; <#= generate_serializer(field, false) #> } ),
+                (String::from("<#= field.ts_name #>"), { let val = &self.<#= field.rust_name #><#= /* TODO FIX ! */ if p.optional { ".unwrap()" } else {""} #>; <#= generate_serializer(field, false) #> } ),
 <# } #>
             ],
             list_args: vec![],
@@ -240,13 +246,13 @@ impl<'a> Into<Command> for &'a <#= msg.class_name #> {
 impl Into<Command> for <#= msg.class_name #> {
     fn into(self) -> Command {
         Command {
-            command: String::from("<#= msg.notify_name #>"),
+            command: String::from("<#= msg.get_notify_name() #>"),
             static_args: vec![
 <#
                 for p in &msg.params {
-                    let field = self.fields.get(p).unwrap();
+                    let field = self.fields.get(&p.mapping_name).unwrap();
 #>
-                (String::from("<#= field.ts_name #>"), { let val = self.<#= field.rust_name #>; <#= generate_serializer(field, true) #> } ),
+                (String::from("<#= field.ts_name #>"), { let val = self.<#= field.rust_name #><#= /* TODO FIX ! */ if p.optional { ".unwrap()" } else {""} #>; <#= generate_serializer(field, true) #> } ),
 <# } #>
             ],
             list_args: vec![],
@@ -260,9 +266,8 @@ impl Into<Command> for <#= msg.class_name #> {
 #[derive(Debug, Clone)]
 pub enum Notification {
 <# for notif in self.notifies.iter() {
-    let notify_n = notif.0.as_str();
-    let cn = self.messages.iter().find(|x| { &x.1.notify_name == notify_n }).unwrap().1; #>
-    <#= notif.1.enum_name #>(<#= cn.class_name #>),
+    let cn = self.messages.get(notif).unwrap(); #>
+    <#= notif #>(<#= cn.class_name #>),
 <# } #>
 }
 
@@ -270,9 +275,8 @@ impl Notification {
     pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Notification, ParseError> {
         match cmd.command {
             <# for notif in self.notifies.iter() {
-                let notify_n = notif.0.as_str();
-                let cn = self.messages.iter().find(|x| { x.1.notify_name == notify_n }).unwrap().1; #>
-            "<#= notif.0.as_str() #>" => Ok(Notification::<#= notif.1.enum_name #>(<#= cn.class_name #>::try_from(&cmd)?)),
+                let cn = self.messages.get(notif).unwrap(); #>
+            "<#= notif #>" => Ok(Notification::<#= notif #>(<#= cn.class_name #>::try_from(&cmd)?)),
             <# } #>
             _ => Err(ParseError::UnknownCommand(cmd.command.to_string()))
         }
@@ -283,7 +287,7 @@ impl Into<Command> for Notification {
     fn into(self) -> Command {
         match self {
             <# for notif in self.notifies.iter() { #>
-            Notification::<#= notif.1.enum_name #>(cmd) => cmd.into(),
+            Notification::<#= notif #>(cmd) => cmd.into(),
             <# } #>
         }
     }
@@ -293,7 +297,7 @@ impl<'a> Into<Command> for &'a Notification {
     fn into(self) -> Command {
         match *self {
             <# for notif in self.notifies.iter() { #>
-            Notification::<#= notif.1.enum_name #>(ref cmd) => cmd.into(),
+            Notification::<#= notif #>(ref cmd) => cmd.into(),
             <# } #>
         }
     }

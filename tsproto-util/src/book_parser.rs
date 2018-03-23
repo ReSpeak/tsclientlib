@@ -143,9 +143,7 @@ impl Values {
                 "get" => self.get = Some(val.parse().unwrap()),
                 "set" => self.set = Some(val.parse().unwrap()),
                 "id" => self.id = val.to_string(),
-                _ => {
-                    panic!("Invalid value '{}'", key);
-                }
+                _ => { panic!("Invalid value '{}'", key); }
             }
         }
     }
@@ -214,12 +212,4 @@ pub fn convert_type(t: &str) -> String {
     } else {
         t.into()
     }
-}
-
-pub fn unquote(s: &str) -> String {
-    if !s.starts_with('"') || !s.ends_with('"') {
-        return s.to_string();
-    }
-    let s = &s[1..(s.len() - 1)];
-    s.replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
 }

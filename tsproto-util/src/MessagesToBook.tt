@@ -4,7 +4,7 @@ impl Connection {
         // TODO Also raise events for changes, adds, removes
         match *msg {
 <# for event in &self.decls {
-    let enum_name = &self.messages.notifies[&event.msg.notify_name].enum_name;
+    let enum_name = &event.msg.class_name;
 #>
             Notification::<#= enum_name #>(ref cmd) => {
             <# if event.op == RuleOp::Remove {

@@ -139,3 +139,11 @@ pub fn join<S: AsRef<str>, S2: AsRef<str>, I: Iterator<Item = S>>(i: I, joiner: 
     }
     res
 }
+
+pub fn unquote(s: &str) -> String {
+    if !s.starts_with('"') || !s.ends_with('"') {
+        return s.to_string();
+    }
+    let s = &s[1..(s.len() - 1)];
+    s.replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+}

@@ -85,7 +85,7 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
                 let modi = &capture["mod"];
 
                 let set_msg = messages.messages.get(msg).expect(&format!("Cannot find message defined in line {}", i));
-                let msg_fields = set_msg.params.iter().map(|f| messages.fields.get(f)).map(Option::unwrap).collect::<Vec<_>>();
+                let msg_fields = set_msg.params.iter().map(|f| messages.fields.get(&f.mapping_name)).map(Option::unwrap).collect::<Vec<_>>();
                 let set_stru = book.structs.iter().find(|s| s.name == stru).expect(&format!("Cannot find struct defined in line {}", i));
                 let set_id = id
                     .split(" ")
