@@ -45,6 +45,9 @@ yasna = "0.1"
 version = "2"
 features = ["max_level_debug", "release_max_level_debug"]
 
+[build-dependencies]
+tsproto-util = { path = "../tsproto-util" }
+
 [dev-dependencies]
 cpuprofiler = "0.0.3"
 structopt = "0.2"

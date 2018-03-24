@@ -16,6 +16,7 @@ mod error_parser;
 mod facade_parser;
 mod message_parser;
 mod messages_to_book_parser;
+mod packets_parser;
 mod permission_parser;
 mod version_parser;
 
@@ -25,6 +26,7 @@ pub use error_parser::Errors;
 pub use facade_parser::FacadeDeclarations;
 pub use message_parser::MessageDeclarations;
 pub use messages_to_book_parser::MessagesToBookDeclarations;
+pub use packets_parser::Packets;
 pub use permission_parser::Permissions;
 pub use version_parser::Versions;
 
@@ -126,6 +128,14 @@ pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
         result.push('\n');
     }
     result
+}
+
+/// Unindent a string by a given count of tabs.
+fn unindent(mut s: &mut String) {
+    std::mem::swap(&mut s.replace("\n\t", "\n"), &mut s);
+    if s.get(0..1) == Some("\t") {
+        s.remove(0);
+    }
 }
 
 pub fn join<S: AsRef<str>, S2: AsRef<str>, I: Iterator<Item = S>>(i: I, joiner: S2) -> String {

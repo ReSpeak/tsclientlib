@@ -1,0 +1,17 @@
+<#@ template cleanws="true" #>
+<#
+let mut res = Vec::new();
+self.root.write_decl(&mut res).unwrap();
+let decls = String::from_utf8(res).unwrap();
+
+let mut from_client = Field::new();
+from_client.content.elem.name = String::from("from_client");
+from_client.content.element_type = ElementType::Custom(String::from("bool"));
+
+let mut res = Vec::new();
+self.root.write_impl(&mut res, Some(&from_client)).unwrap();
+let impls = String::from_utf8(res).unwrap();
+#>
+<#= decls #>
+
+<#= impls #>
