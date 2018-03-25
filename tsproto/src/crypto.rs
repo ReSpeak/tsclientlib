@@ -1,8 +1,9 @@
 //! This module contains cryptography related code.
-use std::fmt;
+use std::{cmp, fmt, str};
 
 use base64;
 use num::BigUint;
+use ring::digest;
 
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
@@ -137,6 +138,14 @@ impl EccKeyPubP256 {
         Ok(der)
     }
 
+    /// Compute the uid of this key.
+    ///
+    /// Uid = base64(sha1(ts encoded key))
+    pub fn get_uid(&self) -> Result<String> {
+        let hash = digest::digest(&digest::SHA1, self.to_ts()?.as_bytes());
+        Ok(base64::encode(&hash))
+    }
+
     pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
         let pkey = PKey::from_ec_key(self.0)?;
         let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
@@ -196,6 +205,40 @@ impl EccKeyPrivP256 {
         Self::from_tomcrypt(&base64::decode(data)?)
     }
 
+    /// From the key representation which is used to store identities in the
+    /// TeamSpeak configuration file.
+    ///
+    /// Format: Offset for identity level || 'V' || obfuscated key
+    ///
+    /// This function takes only the obfuscated key without the level.
+    ///
+    /// Thanks to landave, who put
+    /// [his deobfuscate code](https://github.com/landave/TSIdentityTool)
+    /// under the MIT license.
+    pub fn from_ts_obfuscated(data: &str) -> Result<Self> {
+        let mut data = base64::decode(data)?;
+        if data.len() < 20 {
+            return Err(format_err!("Not a known obfuscated TeamSpeak key")
+                .into());
+        }
+        // Hash everything until the first 0 byte, starting after the first 20
+        // bytes.
+        let pos = data[20..].iter().position(|b| *b == b'\0')
+            .unwrap_or(data.len() - 20);
+        let hash = digest::digest(&digest::SHA1, &data[20..20 + pos]);
+        let hash = hash.as_ref();
+        // Xor first 20 bytes of data with the hash
+        for i in 0..20 {
+            data[i] ^= hash[i];
+        }
+
+        // Xor first 100 bytes with a static value
+        for i in 0..cmp::min(data.len(), 100) {
+            data[i] ^= ::IDENTITY_OBFUSCATION[i];
+        }
+        Self::from_ts(str::from_utf8(&data)?)
+    }
+
     pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
         // Read tomcrypt DER
         let secret = ::yasna::parse_der(data, |reader| {
@@ -224,6 +267,27 @@ impl EccKeyPrivP256 {
     /// Convert to base64 encoded private tomcrypt key.
     pub fn to_ts(&self) -> Result<String> {
         Ok(base64::encode(&self.to_tomcrypt()?))
+    }
+
+    /// Store as obfuscated TeamSpeak identity.
+    pub fn to_ts_obfuscated(&self) -> Result<String> {
+        let mut data = self.to_ts()?.into_bytes();
+        // Xor first 100 bytes with a static value
+        for i in 0..cmp::min(data.len(), 100) {
+            data[i] ^= ::IDENTITY_OBFUSCATION[i];
+        }
+
+        // Hash everything until the first 0 byte, starting after the first 20
+        // bytes.
+        let pos = data[20..].iter().position(|b| *b == b'\0')
+            .unwrap_or(data.len() - 20);
+        let hash = digest::digest(&digest::SHA1, &data[20..20 + pos]);
+        let hash = hash.as_ref();
+        // Xor first 20 bytes of data with the hash
+        for i in 0..20 {
+            data[i] ^= hash[i];
+        }
+        Ok(base64::encode(&data))
     }
 
     pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
@@ -436,18 +500,35 @@ impl Eax {
 mod tests {
     use super::*;
 
+    const TEST_PRIV_KEY: &str = "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTA\
+            O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nmDB\
+            nmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI";
+
     #[test]
     fn parse_p256_priv_key() {
-        EccKeyPrivP256::from_ts("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTA\
-            O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nmDB\
-            nmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+        EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
+    }
+
+    #[test]
+    fn obfuscated_priv_key() {
+        let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
+        let obf = key.to_ts_obfuscated().unwrap();
+        let key2 = EccKeyPrivP256::from_ts_obfuscated(&obf).unwrap();
+        assert_eq!(key.to_short(), key2.to_short());
+    }
+
+    #[test]
+    fn obfuscated_identity() {
+        let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
+        let uid = key.to_pub().get_uid().unwrap();
+
+        let expected_uid = "lks7QL5OVMKo4pZ79cEOI5r5oEA=";
+        assert_eq!(expected_uid, &uid);
     }
 
     #[test]
     fn test_p256_priv_key_short() {
-        let key = EccKeyPrivP256::from_ts("MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlC\
-            mH8bl+veTAO2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50\
-            CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+        let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
         let short = key.to_short();
         let key = EccKeyPrivP256::from_short(&short).unwrap();
         let short2 = key.to_short();

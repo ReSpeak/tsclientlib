@@ -1,7 +1,6 @@
 use std::io;
 use std::mem;
 use std::str;
-use regex::{CaptureMatches, Regex};
 use ::*;
 
 type Result<T> = ::std::result::Result<T, io::Error>;

@@ -63,10 +63,6 @@ fn get_packet(packet: &mut Vec<u8>, is_client: bool) -> Result<packets::Packet> 
     let mut udp_packet = packet.split_off(pos);
 
     // Try to fake decrypt the packet
-    if (header.p_type & 0xf) > 8 {
-        // Invalid packet type
-        bail!("Unknown packet type");
-    }
     println!("Header: {:?}", header);
     if header.get_type() == PacketType::Command {
         let udp_packet_bak = udp_packet.clone();
