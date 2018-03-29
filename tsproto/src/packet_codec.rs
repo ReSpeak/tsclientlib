@@ -525,7 +525,7 @@ impl<
 
     fn start_send(
         &mut self,
-        (con_key, packet): Self::SinkItem,
+        (con_key, mut packet): Self::SinkItem,
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         // Check if there are unsent packets in the queue for this packet type
         let p_type = packet.header.get_type();
@@ -556,7 +556,12 @@ impl<
             let con = {
                 let data = self.data.upgrade().unwrap();
                 let data = data.borrow();
-                data.connection_manager.get_connection(con_key.clone()).unwrap()
+                if let Some(con) = data.connection_manager.get_connection(con_key.clone()) {
+                    con
+                } else {
+                    error!(data.logger, "Sending packet to non-existing connection");
+                    return Ok(futures::AsyncSink::Ready);
+                }
             };
 
             // Get the connection parameters
@@ -590,6 +595,18 @@ impl<
                 {
                     algs::compress_and_split(is_client, &packet)
                 } else {
+                    // Set the inner packet id for voice packets
+                    match packet.data {
+                        ::packets::Data::VoiceC2S { ref mut id, .. }           |
+                        ::packets::Data::VoiceS2C { ref mut id, .. }           |
+                        ::packets::Data::VoiceWhisperC2S { ref mut id, .. }    |
+                        ::packets::Data::VoiceWhisperNewC2S { ref mut id, .. } |
+                        ::packets::Data::VoiceWhisperS2C { ref mut id, .. } => {
+                            *id = params.outgoing_p_ids[type_i].1;
+                        }
+                        _ => {}
+                    }
+
                     let mut data = Vec::new();
                     packet.data.write(&mut data).unwrap();
                     vec![(packet.header, data)]

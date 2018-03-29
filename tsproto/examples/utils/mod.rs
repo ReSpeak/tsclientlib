@@ -12,6 +12,8 @@ use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::packets::*;
 
+pub mod voice;
+
 pub fn create_client(local_address: SocketAddr, handle: Handle, logger: slog::Logger, log: bool) -> Rc<RefCell<client::ClientData>> {
     // Get P-256 ECDH key
     let private_key = EccKeyPrivP256::from_ts(

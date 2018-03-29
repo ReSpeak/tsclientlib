@@ -51,8 +51,9 @@ tsproto-util = { path = "../tsproto-util" }
 [dev-dependencies]
 cpuprofiler = "0.0.3"
 glib = "0.5"
-gstreamer = "0.11"
+gstreamer = { version = "0.11", features = ["futures"] }
 gstreamer-app = "0.11"
 gstreamer-audio = "0.11"
 structopt = "0.2"
 structopt-derive = "0.2"
+tokio-signal = "0.1"
