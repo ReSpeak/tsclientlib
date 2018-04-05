@@ -1,12 +1,12 @@
 <#@ template cleanws="true" #>
 impl Connection {
-    fn handle_message_generated(&mut self, msg: &Notification) -> Result<()> {
+    fn handle_message_generated(&mut self, msg: &messages::Message) -> Result<()> {
         // TODO Also raise events for changes, adds, removes
         match *msg {
 <# for event in &self.decls {
-    let enum_name = &event.msg.class_name;
+    let enum_name = &event.msg.name;
 #>
-            Notification::<#= enum_name #>(ref cmd) => {
+            messages::Message::<#= enum_name #>(ref cmd) => {
             <# if event.op == RuleOp::Remove {
                 let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name)); #>
                 self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
@@ -23,7 +23,7 @@ impl Connection {
                 <#
                 for rule in &event.rules {
                     match *rule {
-                        RuleKind::Map { from, to, op } => {
+                        RuleKind::Map { ref from, ref to, op } => {
                             // Put field from packet into bookkeeping struct
                             match op {
                                 RuleOp::Update => { #>
@@ -31,11 +31,11 @@ impl Connection {
                                 <# }
                                 // The field in the struct is a vector
                                 RuleOp::Add => { #>
-                r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.rust_name #>);
+                r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
                                 <# }
                                 RuleOp::Remove => { #>
                                     // Find index and remove
-                let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.rust_name #>);
+                let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.get_rust_name() #>);
                 r.<#= to_snake_case(&to.name) #>.remove(i);
                                 <# }
                             }
@@ -43,7 +43,7 @@ impl Connection {
 
                         RuleKind::Function { ref to, .. } => { #>
             <# for p in to.iter() { #>
-                r.<#= get_prop_name(p) #> = <#= get_prop_name(p) #>;
+                r.<#= to_snake_case(&p.name) #> = <#= to_snake_case(&p.name) #>;
             <# }
                         }
                     }
@@ -58,24 +58,13 @@ impl Connection {
                 } #>
                 let r = <#= event.book_struct.name #> {
                 <# // Add ids
-                let ids: Vec<_>;
-                if !event.book_struct.values.id.is_empty() {
-                    ids = event.book_struct.values.id
-                        .trim_left_matches('[').trim_right_matches(']')
-                        .split(' ')
-                        .filter(|s| !s.is_empty())
-                        .map(|s| self.book.get_property(s.trim()))
-                        .collect();
-                } else {
-                    ids = Vec::new();
-                }
-                for (id, eid) in ids.iter().zip(event.id.iter()) {
+                for (id, eid) in event.book_struct.id.iter().zip(event.id.iter()) {
                     match *eid {
                         IdKind::Fld(fld) => { #>
-                    <#= id.get_attr_name(&event.book_struct.name) #>: cmd.<#= get_notification_field(fld) #>,
+                    <#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld) #>,
                         <# }
                         IdKind::Id => { #>
-                    <#= id.get_attr_name(&event.book_struct.name) #>: self.id,
+                    <#= PropId::from(id).get_attr_name(&event.book_struct) #>: self.id,
                         <# }
                     }
                 }
@@ -88,7 +77,7 @@ impl Connection {
                     } else {
                         &v
                     }) { #>
-                    <#= get_prop_name(p) #>,
+                    <#= to_snake_case(&p.name) #>,
                 <# }
                 for p in event.rules.iter() {
                     if let RuleKind::Map { from, to, op } = *p {

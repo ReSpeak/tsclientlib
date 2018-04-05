@@ -1,204 +1,154 @@
-use regex::{CaptureMatches, Regex};
 use ::*;
 
 #[derive(Template)]
 #[TemplatePath = "src/BookDeclarations.tt"]
-#[derive(Default, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct BookDeclarations {
+    #[serde(rename = "struct")]
     pub(crate) structs: Vec<Struct>,
-    pub(crate) properties: Vec<Property>,
-    pub(crate) nesteds: Vec<Nested>,
 }
 
 impl Declaration for BookDeclarations {
     type Dep = ();
 
-    fn get_filename() -> &'static str { "BookDeclarations.txt" }
+    fn get_filename() -> &'static str { "BookDeclarations.toml" }
 
     fn parse(s: &str, (): Self::Dep) -> Self {
-        let param_re = Regex::new(r#"\s*(?P<pname>(get|set|doc|id))\s*:\s*(?P<pval>(?:\w+|"([^"]|["\\n])*"|\[[^]]*\]))\s*,?"#).unwrap();
-        let struct_re = Regex::new(r"\s*(?P<name>\w+)\s*;?").unwrap();
-        let prop_re = Regex::new(r"\s*(?P<name>\w+)\s*,\s*(?P<type>\w+)(?P<mod>(\?|\[\])?)\s*;?").unwrap();
-
-        let mut decls = BookDeclarations::default();
-        let mut cur_struct_name = None;
-        let mut default_vals = Values::default();
-
-        for (i, l) in s.lines().enumerate() {
-            if l.trim().is_empty() {
-                continue;
-            }
-
-            let parts: Vec<_> = l.splitn(2, ':').collect();
-            if parts.len() < 2 {
-                continue;
-            }
-            let type_s = parts[0].trim().to_uppercase();
-            match type_s.as_str() {
-                "STRUCT" => {
-                    let capture = struct_re.captures(parts[1]).expect(&format!("No match found in line {}", i + 1));
-                    let end = capture[0].len();
-
-                    let captures = param_re.captures_iter(&parts[1][end..]);
-                    let mut vals = Values::default();
-                    vals.fill(captures);
-
-                    let new_struct = Struct {
-                        name: capture["name"].to_string(),
-                        values: vals,
-                    };
-                    cur_struct_name = Some(new_struct.name.clone());
-                    decls.structs.push(new_struct);
-                }
-                "NESTED" |
-                "PROP" => {
-                    let is_prop = type_s == "PROP";
-
-                    let capture = prop_re.captures(parts[1]).expect(&format!("No match found in line {}", i + 1));
-                    let end = capture[0].len();
-
-                    let captures = param_re.captures_iter(&parts[1][end..]);
-                    let mut vals = default_vals.clone();
-                    vals.fill(captures);
-
-                    let is_array = &capture["mod"] == "[]";
-                    let is_optional = &capture["mod"] == "?";
-                    let mut type_s = convert_type(&capture["type"]);
-
-                    if is_array {
-                        match type_s.as_str() {
-                            "Client" | "Channel" | "ServerGroup" =>
-                                type_s = format!("Map<{0}Id, {0}>", type_s),
-                            _ => type_s = format!("Vec<{}>", type_s),
-                        }
-                    }
-                    if is_optional {
-                        type_s = format!("Option<{}>", type_s);
-                    }
-
-                    if is_prop {
-                        let prop = Property {
-                            name: capture["name"].to_string(),
-                            type_s,
-                            values: vals,
-                            struct_name: cur_struct_name.as_ref()
-                                .expect("No struct known").clone(),
-                        };
-                        decls.properties.push(prop);
-                    } else {
-                        // NESTED
-                        let prop = Nested {
-                            name: capture["name"].to_string(),
-                            type_s,
-                            values: vals,
-                            struct_name: cur_struct_name.as_ref()
-                                .expect("No struct known").clone(),
-                        };
-                        decls.nesteds.push(prop);
-                    }
-                }
-                "DEFAULT" => {
-                    let captures = param_re.captures_iter(parts[1]);
-                    default_vals = Values::default();
-                    default_vals.fill(captures);
-                }
-                "" => {
-                    continue;
-                }
-                _ => {
-                    panic!("Invalid type '{}'", parts[0].trim());
-                }
-            }
-        }
-
-        decls
+        ::toml::from_str(s).unwrap()
     }
 }
 
 impl BookDeclarations {
-    pub(crate) fn get_property(&self, id: &str) -> &Property {
-        println!("Get {} in {:?}", id, self.properties);
-        let parts: Vec<_> = id.split('.').collect();
-        self.properties.iter()
-            .filter(|p| p.struct_name == parts[0] && p.name == parts[1])
-            .next().expect("Unknown property")
-    }
-}
-
-#[derive(Default, Clone, Debug)]
-pub struct Values {
-    pub doc: String,
-    pub get: Option<bool>,
-    pub set: Option<bool>,
-    pub id: String,
-}
-
-impl Values {
-    pub fn fill<'r, 't>(&mut self, captures: CaptureMatches<'r, 't>) {
-        for cap in captures {
-            let val = cap["pval"].trim();
-            let key = cap["pname"].to_lowercase();
-            match key.as_str() {
-                "doc" => self.doc = unquote(val),
-                "get" => self.get = Some(val.parse().unwrap()),
-                "set" => self.set = Some(val.parse().unwrap()),
-                "id" => self.id = val.to_string(),
-                _ => { panic!("Invalid value '{}'", key); }
-            }
+    pub fn get_struct(&self, name: &str) -> &Struct {
+        if let Some(s) = self.structs.iter().find(|s| s.name == name) {
+            s
+        } else {
+            panic!("Cannot find bookkeeping struct {}", name);
         }
     }
 }
 
-#[derive(Default, Clone, Debug)]
-pub struct Struct {
-    pub name: String,
-    pub values: Values,
+#[derive(Deserialize, Clone, Debug)]
+pub struct Accessors {
+    pub get: bool,
+    pub set: bool,
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Deserialize, Clone, Debug)]
+pub struct Id {
+    #[serde(rename = "struct")]
+    pub struct_name: String,
+    pub prop: String,
+}
+
+impl Id {
+    pub fn find_property<'a>(&self, structs: &'a [Struct]) -> &'a Property {
+        // Find struct
+        for s in structs {
+            if s.name == self.struct_name {
+                // Find property
+                for p in &s.properties {
+                    if p.name == self.prop {
+                        return p;
+                    }
+                }
+            }
+        }
+        panic!("Cannot find struct {} of id", self.struct_name);
+    }
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct Struct {
+    pub name: String,
+    pub id: Vec<Id>,
+    pub doc: String,
+    pub accessor: Accessors,
+    pub properties: Vec<Property>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
 pub struct Property {
     /// The name of this property (in PascalCase) which can be called from rust when generated.
     pub name: String,
     /// The rust declaration type.
+    #[serde(rename = "type")]
     pub type_s: String,
-    pub values: Values,
-    /// The name of the struct which is containing this property.
-    pub struct_name: String,
+    pub doc: Option<String>,
+    pub get: Option<bool>,
+    pub set: Option<bool>,
+    #[serde(default = "get_false")]
+    pub opt: bool,
+    #[serde(rename = "mod")]
+    pub modifier: Option<String>,
+    pub key: Option<String>,
 }
 
 impl Property {
-    pub fn get_attr_name(&self, struct_name: &str) -> String {
-        if self.struct_name == struct_name {
-            to_snake_case(&self.name)
-        } else {
-            format!("{}_{}", to_snake_case(&self.struct_name), to_snake_case(&self.name))
+    pub fn get_get(&self, struc: &Struct) -> bool {
+        self.get.unwrap_or_else(|| struc.accessor.get)
+    }
+    pub fn get_set(&self, struc: &Struct) -> bool {
+        self.set.unwrap_or_else(|| struc.accessor.set)
+    }
+    pub fn get_rust_type(&self) -> String {
+        let mut res = convert_type(&self.type_s);
+
+        if self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
+            res = format!("Vec<{}>", res);
+        } else if self.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
+            let key = self.key.as_ref().expect("Specified map without key");
+            res = format!("Map<{}, {}>", key, res);
+        }
+        if self.opt {
+            res = format!("Option<{}>", res);
+        }
+        res
+    }
+}
+
+pub enum PropId<'a> {
+    Prop(&'a Property),
+    Id(&'a Id),
+}
+
+impl<'a> PropId<'a> {
+    pub fn get_attr_name(&self, struc: &Struct) -> String {
+        match *self {
+            PropId::Prop(p) => to_snake_case(&p.name),
+            PropId::Id(id) => if struc.name == id.struct_name {
+                to_snake_case(&id.prop)
+            } else {
+                format!("{}_{}", to_snake_case(&id.struct_name),
+                    to_snake_case(&id.prop))
+            }
+        }
+    }
+
+    pub fn get_doc(&self) -> Option<&str> {
+        match *self {
+            PropId::Prop(p) => p.doc.as_ref().map(|s| s.as_str()),
+            PropId::Id(_) => None,
+        }
+    }
+
+    pub fn get_rust_type(&self, structs: &[Struct]) -> String {
+        match *self {
+            PropId::Prop(p) => p.get_rust_type(),
+            PropId::Id(id) => id.find_property(structs).get_rust_type(),
         }
     }
 }
 
-impl PartialEq for Property {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.struct_name == other.struct_name
+impl<'a> From<&'a Property> for PropId<'a> {
+    fn from(p: &'a Property) -> Self {
+        PropId::Prop(p)
     }
 }
 
-impl Eq for Property {}
-
-#[derive(Default, Clone, Debug)]
-pub struct Nested {
-    pub name: String,
-    pub type_s: String,
-    pub values: Values,
-    pub struct_name: String,
-}
-
-impl Nested {
-    pub fn get_attr_name(&self, struct_name: &str) -> String {
-        if self.struct_name == struct_name {
-            to_snake_case(&self.name)
-        } else {
-            format!("{}_{}", to_snake_case(&self.struct_name), to_snake_case(&self.name))
-        }
+impl<'a> From<&'a Id> for PropId<'a> {
+    fn from(p: &'a Id) -> Self {
+        PropId::Id(p)
     }
 }
 

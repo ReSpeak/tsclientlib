@@ -10,3 +10,4 @@ regex = "0.2"
 serde = "1"
 serde_derive = "1"
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
+toml = "0.4"

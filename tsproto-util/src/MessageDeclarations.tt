@@ -6,10 +6,11 @@ use tsproto::commands::{Command, CanonicalCommand};
 
 <#
 fn generate_deserializer(field: &Field) -> String {
-    if field.rust_type.starts_with("Vec<") {
+    let rust_type = field.get_rust_type("");
+    if rust_type.starts_with("Vec<") {
         vector_value_deserializer(field)
     } else {
-        single_value_deserializer(field, &field.rust_type)
+        single_value_deserializer(field, &rust_type)
     }
 }
 
@@ -23,23 +24,23 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
                 arg: \"{}\",
                 value: val.to_string(),
                 error: e,
-            }})?", field.name),
+            }})?", field.pretty),
         "f32" | "f64" => format!("val.parse().map_err(|e| ParseError::ParseFloat {{
                 arg: \"{}\",
                 value: val.to_string(),
                 error: e,
-            }})?", field.name),
+            }})?", field.pretty),
         "bool" => format!("match *val {{ \"0\" => false, \"1\" => true, _ => Err(ParseError::ParseBool {{
                 arg: \"{}\",
                 value: val.to_string(),
-            }})? }}", field.name),
+            }})? }}", field.pretty),
         "Uid" => "Uid(val.to_string())".into(),
         "String" => "val.to_string()".into(),
         "IconHash" => format!("IconHash(val.parse::<u64>().map_err(|e| ParseError::ParseInt {{
                 arg: \"{}\",
                 value: val.to_string(),
                 error: e,
-            }})? as i32)", field.name),
+            }})? as i32)", field.pretty),
         "ClientId" |
         "ClientDbId" |
         "ChannelId" |
@@ -48,7 +49,7 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
                 arg: \"{}\",
                 value: val.to_string(),
                 error: e,
-            }})?)", rust_type, field.name),
+            }})?)", rust_type, field.pretty),
         "TextMessageTargetMode" |
         "HostMessageMode" |
         "HostBannerMode" |
@@ -67,9 +68,9 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
             }})?).ok_or(ParseError::InvalidValue {{
                 arg: \"{1}\",
                 value: val.to_string(),
-                }})?", rust_type, field.name),
+                }})?", rust_type, field.pretty),
         "Duration" =>
-            if field.type_orig == "TimeSpanSecondsT" {
+            if field.type_s == "DurationSeconds" {
                 format!("let val = val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
                     arg: \"{}\",
                     value: val.to_string(),
@@ -79,15 +80,15 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
                 else {{ Err(ParseError::InvalidValue {{
                     arg: \"{0}\",
                     value: val.to_string(),
-                    }})? }}", field.name)
-            } else if field.type_orig == "TimeSpanMillisecT" {
+                    }})? }}", field.pretty)
+            } else if field.type_s == "DurationMilliseconds" {
                 format!("Duration::milliseconds(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
                     arg: \"{}\",
                     value: val.to_string(),
                     error: e,
-                }})?)", field.name)
+                }})?)", field.pretty)
             } else {
-                panic!("Unknown original time type found.");
+                panic!("Unknown original time type {} found.", field.type_s);
             },
         "DateTime<Utc>" => format!("DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse().map_err(|e| ParseError::ParseInt {{
                     arg: \"{}\",
@@ -96,22 +97,24 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
                 }})?, 0).ok_or(ParseError::InvalidValue {{
                     arg: \"{0}\",
                     value: val.to_string(),
-                }})?, Utc)", field.name),
-        _ => panic!("Unknown Type '{}'", rust_type),
+                }})?, Utc)", field.pretty),
+        _ => panic!("Unknown type '{}'", rust_type),
     }
 }
 
 fn vector_value_deserializer(field: &Field) -> String {
-    let inner_type = &field.rust_type[4..field.rust_type.len()-1];
+    let rust_type = field.get_rust_type("");
+    let inner_type = &rust_type[4..rust_type.len()-1];
     String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>, ParseError>>()?",
         single_value_deserializer(field, inner_type), inner_type))
 }
 
 fn generate_serializer(field: &Field, can_move: bool) -> String {
-    if field.rust_type.starts_with("Vec<") {
+    let rust_type = field.get_rust_type("");
+    if rust_type.starts_with("Vec<") {
         vector_value_serializer(field, can_move)
     } else {
-        single_value_serializer(field, &field.rust_type, can_move)
+        single_value_serializer(field, &rust_type, can_move)
     }
 }
 
@@ -145,160 +148,200 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
         "Permission" |
         "Error" => "val.to_u32().unwrap().to_string()",
         "Duration" =>
-            if field.type_orig == "TimeSpanSecondsT" {
+            if field.type_s == "DurationSeconds" {
                 "val.num_seconds().to_string()"
-            } else if field.type_orig == "TimeSpanMillisecT" {
+            } else if field.type_s == "DurationMilliseconds" {
                 "val.num_milliseconds().to_string()"
             } else {
-                panic!("Unknown original time type found.");
+                panic!("Unknown original time type {} found.", field.type_s);
             },
         "DateTime<Utc>" => "val.timestamp().to_string()",
-        _ => panic!("Unknown Type '{}'", rust_type),
+        _ => panic!("Unknown type '{}'", rust_type),
     }.to_string()
 }
 
 fn vector_value_serializer(field: &Field, can_move: bool) -> String {
-    let inner_type = &field.rust_type[4..field.rust_type.len()-1];
+    let rust_type = field.get_rust_type("");
+    let inner_type = &rust_type[4..rust_type.len()-1];
     // optimizations for special types
     match inner_type {
         "String" => String::from("let mut strb = String::new(); for val in val { if !strb.is_empty() { strb += \",\" } strb += &val; } strb"),
-        _ => String::from(format!("let mut strb = String::new(); for val in val {{ if !strb.is_empty() {{ strb += \",\" }} let add = {}; strb += &add; }} strb", single_value_serializer(field, inner_type, can_move))),
+        _ => format!("let mut strb = String::new(); for val in val {{ if !strb.is_empty() {{ strb += \",\" }} let add = {}; strb += &add; }} strb", single_value_serializer(field, inner_type, can_move)),
     }
 }
 
 #>
 
-<# for msg in self.messages.values() {#>
+<# for msg_group in &self.msg_group {
+    let defs = &msg_group.default;
+    for msg in &msg_group.msg { #>
 #[derive(Debug, Clone)]
-pub struct <#= msg.class_name #> {
-<# if msg.is_response() { #>
-    pub return_code: String,
+pub struct <#= msg.name #> {
+<# if defs.response { #>
+    pub return_code: Option<String>,
 <# }
 
     // Attributes
-    for p in &msg.params {
-        let field = self.fields.get(&p.mapping_name).expect(&format!("Missing field: {}", &p.mapping_name));
+    for a in &msg.attributes {
+        let field = self.get_field(a);
 #>
-    pub <#= &field.rust_name #>: <#= if p.optional { "Option<" } else {""} #><#= field.rust_type #><#= if p.optional { ">" } else {""} #>,
+    pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a) #>,
 <# } #>
 }
 <#
-    if msg.is_notify() {
-        //let _notify = &self.notifies[/*uh wrong*/&msg.notify_name];
-
-        // Do stuff here if needed...
-    }
-    if msg.is_response() {
+    if defs.response {
 #>
 
-impl Response for <#= msg.class_name #> {
-    fn get_return_code(&self) -> &str {
-        &self.return_code
+impl Response for <#= msg.name #> {
+    fn get_return_code(&self) -> Option<&str> {
+        self.return_code.as_ref().map(|s| s.as_str())
     }
-    fn set_return_code(&mut self, return_code: String) {
+    fn set_return_code(&mut self, return_code: Option<String>) {
         self.return_code = return_code;
     }
 }
 <# } #>
 
-impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.class_name #> {
+impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.name #> {
     type Err = ParseError;
-    fn try_from(<#= if msg.params.len() == 0 { "_cmd" } else { "cmd" } #>: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
-        Ok(<#= msg.class_name #> {
+    fn try_from(<#= if msg.attributes.len() == 0 { "_" } else { "cmd" } #>: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
+        Ok(<#= msg.name #> {
 <#
-    for p in &msg.params {
-        let field = self.fields.get(&p.mapping_name).unwrap();
+    for a in &msg.attributes {
+        let field = self.get_field(a);
 #>
-            <#= &field.rust_name #>: {
-                <# if !p.optional { #>
-                let val = cmd.args.get("<#= field.ts_name #>")
+            <#= field.get_rust_name() #>: {
+                <# if !a.ends_with('?') { /* is not optional */ #>
+                let val = cmd.args.get("<#= field.ts #>")
                     .ok_or(ParseError::ParameterNotFound {
-                        arg: "<#= field.name #>",
-                    })?; 
+                        arg: "<#= field.pretty #>",
+                    })?;
                     <#= generate_deserializer(field) #> },
                 <# } else { #>
-                if let Some(val) = cmd.args.get("<#= field.ts_name #>") {
-                    Some(<#= generate_deserializer(field) #>)
+                if let Some(val) = cmd.args.get("<#= field.ts #>") {
+                    Some({ <#= generate_deserializer(field) #> })
                 } else { None } },
                 <# } #>
-<# } #>
+<# }
+    if defs.response { #>
+            return_code: cmd.args.get("return_code").map(|s| s.to_string()),
+    <# } #>
         })
     }
 }
 
-impl<'a> Into<Command> for &'a <#= msg.class_name #> {
+impl<'a> Into<Command> for &'a <#= msg.name #> {
     fn into(self) -> Command {
-        Command {
-            command: String::from("<#= msg.get_notify_name() #>"),
-            static_args: vec![
+        let<# if msg.attributes.iter().any(|a| a.ends_with('?')) { #> mut<# } #> args = vec![
 <#
-                for p in &msg.params {
-                    let field = self.fields.get(&p.mapping_name).unwrap();
-#>
-                (String::from("<#= field.ts_name #>"), { let val = &self.<#= field.rust_name #><#= /* TODO FIX ! */ if p.optional { ".unwrap()" } else {""} #>; <#= generate_serializer(field, false) #> } ),
+        for a in &msg.attributes {
+            if a.ends_with('?') {
+                continue;
+            }
+            let field = self.get_field(a); #>
+            (String::from("<#= field.ts #>"), { let val = &self.<#= field.get_rust_name() #>; <#= generate_serializer(field, false) #> } ),
 <# } #>
-            ],
+        ];
+
+<#
+        // Add optional values
+        for a in &msg.attributes {
+            if !a.ends_with('?') {
+                continue;
+            }
+            let field = self.get_field(a); #>
+        if let Some(ref val) = self.<#= field.get_rust_name() #> {
+            args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field, false) #> }));
+        }
+<# } #>
+
+        Command {
+            command: String::from("<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>"),
+            static_args: args,
             list_args: vec![],
         }
     }
 }
 
-impl Into<Command> for <#= msg.class_name #> {
+impl Into<Command> for <#= msg.name #> {
     fn into(self) -> Command {
-        Command {
-            command: String::from("<#= msg.get_notify_name() #>"),
-            static_args: vec![
+        let<# if msg.attributes.iter().any(|a| a.ends_with('?')) { #> mut<# } #> args = vec![
 <#
-                for p in &msg.params {
-                    let field = self.fields.get(&p.mapping_name).unwrap();
-#>
-                (String::from("<#= field.ts_name #>"), { let val = self.<#= field.rust_name #><#= /* TODO FIX ! */ if p.optional { ".unwrap()" } else {""} #>; <#= generate_serializer(field, true) #> } ),
+        for a in &msg.attributes {
+            if a.ends_with('?') {
+                continue;
+            }
+            let field = self.get_field(a); #>
+            (String::from("<#= field.ts #>"), { let val = self.<#= field.get_rust_name() #>; <#= generate_serializer(field, true) #> } ),
 <# } #>
-            ],
+        ];
+
+<#
+        // Add optional values
+        for a in &msg.attributes {
+            if !a.ends_with('?') {
+                continue;
+            }
+            let field = self.get_field(a); #>
+        if let Some(val) = self.<#= field.get_rust_name() #> {
+            args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field, true) #> }));
+        }
+<# } #>
+
+        Command {
+            command: String::from("<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>"),
+            static_args: args,
             list_args: vec![],
         }
     }
 }
 
 <# }
-// Create notification types
+}
+// Create message types
 #>
 #[derive(Debug, Clone)]
-pub enum Notification {
-<# for notif in self.notifies.iter() {
-    let cn = self.messages.get(notif).unwrap(); #>
-    <#= notif #>(<#= cn.class_name #>),
-<# } #>
+pub enum Message {
+<# for msg_group in &self.msg_group {
+    for msg in &msg_group.msg { #>
+    <#= msg.name #>(<#= msg.name #>),
+<# }
+} #>
 }
 
-impl Notification {
-    pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Notification, ParseError> {
+impl Message {
+    pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Self, ParseError> {
         match cmd.command {
-            <# for notif in self.notifies.iter() {
-                let cn = self.messages.get(notif).unwrap(); #>
-            "<#= notif #>" => Ok(Notification::<#= notif #>(<#= cn.class_name #>::try_from(&cmd)?)),
-            <# } #>
+            <# for msg_group in &self.msg_group {
+                for msg in msg_group.msg.iter().filter(|m| m.notify.is_some()) { #>
+            "<#= msg.notify.as_ref().unwrap() #>" => Ok(Message::<#= msg.name #>(<#= msg.name #>::try_from(&cmd)?)),
+            <# }
+            } #>
             _ => Err(ParseError::UnknownCommand(cmd.command.to_string()))
         }
     }
 }
 
-impl Into<Command> for Notification {
+impl Into<Command> for Message {
     fn into(self) -> Command {
         match self {
-            <# for notif in self.notifies.iter() { #>
-            Notification::<#= notif #>(cmd) => cmd.into(),
-            <# } #>
+            <# for msg_group in &self.msg_group {
+                for msg in &msg_group.msg { #>
+            Message::<#= msg.name #>(cmd) => cmd.into(),
+            <# }
+            } #>
         }
     }
 }
 
-impl<'a> Into<Command> for &'a Notification {
+impl<'a> Into<Command> for &'a Message {
     fn into(self) -> Command {
         match *self {
-            <# for notif in self.notifies.iter() { #>
-            Notification::<#= notif #>(ref cmd) => cmd.into(),
-            <# } #>
+            <# for msg_group in &self.msg_group {
+                for msg in &msg_group.msg { #>
+            Message::<#= msg.name #>(ref cmd) => cmd.into(),
+            <# }
+            } #>
         }
     }
 }

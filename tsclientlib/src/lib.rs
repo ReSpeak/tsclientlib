@@ -24,15 +24,15 @@
 // NetworkWrapper contains the Connection which is the bookkeeping struct,
 // the Rc<RefCell<client::ClientData>>, which is the tsproto connection,
 // a reference to the ClientConnection of tsproto
-// and a stream of Notifications.
+// and a stream of Messages.
 //
-// The NetworkWrapper wraps the stream of Notifications and updates the
+// The NetworkWrapper wraps the stream of Messages and updates the
 // bookkeeping, raises events, etc. on new packets.
 // The ConnectionManager wraps all those streams into one stream (like a
 // select). To progress, the user of the library has to poll the
 // ConnectionManager for new notifications and sound.
 //
-// The items of the stream are either Notifications or audio data.
+// The items of the stream are either Messages or audio data.
 
 // TODO
 #![allow(dead_code)]
@@ -72,7 +72,6 @@ use tsproto::connectionmanager::{Resender, ResenderEvent};
 use tsproto::handler_data::Data;
 use tsproto::packets::{Header, Packet, PacketType};
 use tsproto_commands::*;
-use tsproto_commands::messages::*;
 
 macro_rules! copy_attrs {
     ($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
@@ -99,6 +98,8 @@ mod structs;
 pub use tsproto_commands::ConnectionId;
 pub use tsproto_commands::Reason;
 pub use tsproto_commands::versions::Version;
+use tsproto_commands::messages;
+
 
 use codec::Message;
 
@@ -118,7 +119,7 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Tsproto(#[cause] tsproto::Error),
     #[fail(display = "{}", _0)]
-    ParseNotification(#[cause] tsproto_commands::messages::ParseError),
+    ParseMessage(#[cause] tsproto_commands::messages::ParseError),
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 }
@@ -137,7 +138,7 @@ impl From<tsproto::Error> for Error {
 
 impl From<tsproto_commands::messages::ParseError> for Error {
     fn from(e: tsproto_commands::messages::ParseError) -> Self {
-        Error::ParseNotification(e)
+        Error::ParseMessage(e)
     }
 }
 
@@ -336,8 +337,8 @@ impl ConnectionManager {
                     };
 
                     let cmd = cmd.get_commands().remove(0);
-                    let notif = tryf!(Notification::parse(cmd));
-                    if let Notification::InitServer(p) = notif {
+                    let notif = tryf!(messages::Message::parse(cmd));
+                    if let messages::Message::InitServer(p) = notif {
                         // Create a connection id
                         let inner = inner.upgrade().expect(
                             "Connection manager does not exist anymore");

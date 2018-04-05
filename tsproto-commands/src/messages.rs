@@ -6,8 +6,8 @@ use errors::Error;
 use permissions::Permission;
 
 pub trait Response {
-    fn get_return_code(&self) -> &str;
-    fn set_return_code(&mut self, return_code: String);
+    fn get_return_code(&self) -> Option<&str>;
+    fn set_return_code(&mut self, return_code: Option<String>);
 }
 
 pub trait TryParse<T>: Sized {

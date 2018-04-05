@@ -25,6 +25,9 @@ struct Args {
                 default_value = "127.0.0.1:9987",
                 help = "The address of the server to connect to")]
     address: SocketAddr,
+    #[structopt(short = "v", long = "verbose",
+                help = "Print the content of all packets")]
+    verbose: bool,
 }
 
 fn main() {
@@ -37,7 +40,8 @@ fn real_main() -> Result<(), failure::Error> {
     let mut core = Core::new()?;
 
     let mut cm = ConnectionManager::new(core.handle());
-    let con_config = ConnectOptions::from_address(args.address);
+    let con_config = ConnectOptions::from_address(args.address)
+        .log_packets(args.verbose);
 
     // Optionally set the key of this client, otherwise a new key is generated.
     let con_config = con_config.private_key_ts(

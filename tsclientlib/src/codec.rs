@@ -8,15 +8,15 @@ use tsproto::connectionmanager::ConnectionManager;
 use tsproto::handler_data;
 use tsproto::packets::{Data, Header, Packet, PacketType};
 
-use tsproto_commands::messages::Notification;
+use tsproto_commands::messages;
 
 /// A "high-level" packet, which contains either a notification or audio.
 ///
-/// The content is boxed because `Notification` objects tend to be larger than
+/// The content is boxed because `Message` objects tend to be larger than
 /// `Audio` objects.
 #[derive(Debug, Clone)]
 pub enum Message {
-	Notification(Box<Notification>),
+	Message(Box<messages::Message>),
 	/// Not yet implemented
 	/// Lazily decoded/transcoded? (for sending and receiving)
 	/// So we do not decode + encode if the source format is the destination
@@ -24,7 +24,7 @@ pub enum Message {
 	Audio(),
 }
 
-/// Convert a stream/sink of `Packet`s to a stream of `Notification`s.
+/// Convert a stream/sink of `Packet`s to a stream of `Message`s.
 pub struct CommandCodec;
 
 impl CommandCodec {
@@ -39,9 +39,9 @@ impl CommandCodec {
 				Data::Command(cmd) | Data::CommandLow(cmd) => {
 					let mut cmds = cmd.get_commands();
 					let cmds: Vec<_> = cmds.drain(..).flat_map(|c|
-						match Notification::parse(c) {
+						match messages::Message::parse(c) {
 							Ok(n) => Some((con_key.clone(),
-								Message::Notification(Box::new(n)))),
+								Message::Message(Box::new(n)))),
 							Err(e) => {
 								warn!(logger, "Error parsing command";
 									"command" => %cmd.command,
@@ -52,7 +52,7 @@ impl CommandCodec {
 						}).collect();
 					Box::new(stream::iter_ok(cmds))
 				}
-				Data::Voice { .. } | Data::VoiceWhisper { .. } => {
+				Data::VoiceS2C { .. } | Data::VoiceWhisperS2C { .. } => {
 					Box::new(stream::once(Ok((con_key, Message::Audio()))))
 				}
 				// Ignore other packets

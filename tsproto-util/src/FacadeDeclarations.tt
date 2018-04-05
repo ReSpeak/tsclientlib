@@ -1,90 +1,78 @@
 <#@ template cleanws="true" #>
-<# for struc in &self.0.structs {
-    let ids: Vec<_>;
-    if !struc.values.id.is_empty() {
-        ids = struc.values.id
-            .trim_left_matches('[').trim_right_matches(']')
-            .split(' ')
-            .filter(|s| !s.is_empty())
-            .map(|s| self.0.get_property(s.trim()))
-            .collect();
-    } else {
-        ids = Vec::new();
-    }
-
-    let props: Vec<_> = self.0.properties.iter().filter(|p|
-        p.struct_name == struc.name && !ids.contains(&p)).collect();
-
-    //let nesteds: Vec<_> = self.0.nesteds.iter().filter(|p|
-    //    p.struct_name == struc.name).collect();
-
-#>
-<#= doc_comment(&struc.values.doc) #>
+<# for struc in &self.0.structs { #>
+<#= doc_comment(&struc.doc) #>
 pub struct <#= struc.name #><'a> {
     cm: &'a ConnectionManager,
-<# for p in &ids { #>
-    <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
+<# for i in &struc.id {
+	let p = i.find_property(&self.0.structs); #>
+    <#= PropId::from(i).get_attr_name(struc) #>: <#= p.get_rust_type() #>,
 <# } #>
 }
 
-<#= doc_comment(&struc.values.doc) #>
+<#= doc_comment(&struc.doc) #>
 pub struct <#= struc.name #>Mut<'a> {
     cm: &'a mut ConnectionManager,
-<# for p in &ids { #>
-    <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
+<# for i in &struc.id {
+	let p = i.find_property(&self.0.structs); #>
+    <#= PropId::from(i).get_attr_name(struc) #>: <#= p.get_rust_type() #>,
 <# } #>
 }
 <#
 
-fn create_id_getter(f: &mut ::std::fmt::Formatter, struc: &Struct, p: &Property)
-    -> ::std::fmt::Result { #>
-    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= if p.type_s == "String" { String::from("&str") } else { get_return_type(&p.type_s) } #> {
-    <# if p.type_s == "Option<String>" { #>
-        self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
-    <# } else if p.type_s.starts_with("Option<") {
-           if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
-        self.<#= p.get_attr_name(&struc.name) #>.as_ref()
+fn create_id_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
+    struc: &Struct, id: &Id) -> ::std::fmt::Result {
+    let p = id.find_property(structs);
+    let pi = PropId::from(id);
+    let name = pi.get_attr_name(struc); #>
+    pub fn get_<#= name #>(&self) -> <#= if p.get_rust_type() == "String" { String::from("&str") } else { get_return_type(&p.get_rust_type()) } #> {
+    <# if p.get_rust_type() == "Option<String>" { #>
+        self.<#= name #>.as_ref().map(|x| x.as_str())
+    <# } else if p.get_rust_type().starts_with("Option<") {
+           if is_ref_type(&p.get_rust_type()[7..p.get_rust_type().len() - 1]) { #>
+        self.<#= name #>.as_ref()
         <# } else { #>
-        self.<#= p.get_attr_name(&struc.name) #>
+        self.<#= name #>
         <# }
-       } else if is_ref_type(&p.type_s) { #>
-        &self.<#= p.get_attr_name(&struc.name) #>
+       } else if is_ref_type(&p.get_rust_type()) { #>
+        &self.<#= name #>
     <# } else { #>
-        self.<#= p.get_attr_name(&struc.name) #>
+        self.<#= name #>
     <# } #>
     }
 <#
     Ok(())
 }
 
-fn create_normal_getter(f: &mut ::std::fmt::Formatter, struc: &Struct,
-    p: &Property, ids: &[&Property]) -> ::std::fmt::Result { #>
-    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= get_return_type(&p.type_s) #> {
-        let real = self.cm.get_<#= to_snake_case(&struc.name) #>(<#= get_id_args(ids, struc) #>);
-    <# if p.type_s == "Option<String>" { #>
-        if real.<#= p.get_attr_name(&struc.name) #>.is_some() {
-            Some(Ref::map(real, |r| r.<#= p.get_attr_name(&struc.name) #>.as_ref().unwrap().as_str()))
+fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
+    struc: &Struct, p: &Property, ids: &[Id]) -> ::std::fmt::Result {
+    let pi = PropId::from(p);
+    let name = pi.get_attr_name(struc); #>
+    pub fn get_<#= name #>(&self) -> <#= get_return_type(&p.get_rust_type()) #> {
+        let real = self.cm.get_<#= to_snake_case(&struc.name) #>(<#= get_id_args(ids, structs, struc) #>);
+    <# if p.get_rust_type() == "Option<String>" { #>
+        if real.<#= name #>.is_some() {
+            Some(Ref::map(real, |r| r.<#= name #>.as_ref().unwrap().as_str()))
         } else {
             None
         }
-    <# } else if p.type_s.starts_with("Option<") {
-           if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
-        if real.<#= p.get_attr_name(&struc.name) #>.is_some() {
-            Some(Ref::map(real, |r| r.<#= p.get_attr_name(&struc.name) #>.as_ref().unwrap()))
+    <# } else if p.get_rust_type().starts_with("Option<") {
+           if is_ref_type(&p.get_rust_type()[7..p.get_rust_type().len() - 1]) { #>
+        if real.<#= name #>.is_some() {
+            Some(Ref::map(real, |r| r.<#= name #>.as_ref().unwrap()))
         } else {
             None
         }
         <# } else { #>
-        real.<#= p.get_attr_name(&struc.name) #>
+        real.<#= name #>
         <# }
-       } else if p.type_s == "String" { #>
-        Ref::map(real, |r| r.<#= p.get_attr_name(&struc.name) #>.as_str())
-    <# } else if p.type_s.starts_with("Vec<") { #>
-        Ref::map(real, |r| r.<#= p.get_attr_name(&struc.name) #>.as_slice())
-    <# } else if is_ref_type(&p.type_s) { #>
-        Ref::map(real, |r| &r.<#= p.get_attr_name(&struc.name) #>)
+       } else if p.get_rust_type() == "String" { #>
+        Ref::map(real, |r| r.<#= name #>.as_str())
+    <# } else if p.get_rust_type().starts_with("Vec<") { #>
+        Ref::map(real, |r| r.<#= name #>.as_slice())
+    <# } else if is_ref_type(&p.get_rust_type()) { #>
+        Ref::map(real, |r| &r.<#= name #>)
     <# } else { #>
-        real.<#= p.get_attr_name(&struc.name) #>
+        real.<#= name #>
     <# } #>
     }
 <#
@@ -96,14 +84,19 @@ fn create_normal_getter(f: &mut ::std::fmt::Formatter, struc: &Struct,
 impl<'a> <#= struc.name #><'a> {
 <#
     // Ids
-    for p in &ids {
-        create_id_getter(f, struc, p)?;
+    for p in &struc.id {
+        create_id_getter(f, &self.0.structs, struc, p)?;
     }
 
     // Normal properties
-    // TODO Getters with an Id have to be generated by hand
-    for p in props.iter().filter(|p| p.values.get.unwrap() && !p.type_s.ends_with("Id")) {
-        create_normal_getter(f, struc, p, ids.as_slice())?;
+    // TODO Ids do not work, nested structs also
+    for p in struc.properties.iter().filter(|p| p.get_get(struc)
+        && struc.id.iter().filter(|i| i.prop == p.name).next().is_none()
+        && !p.name.ends_with("Data")
+        && p.name != "Server"
+        && p.name != "OwnClient"
+        && p.modifier.is_none()) {
+        create_normal_getter(f, &self.0.structs, struc, p, &struc.id)?;
     }
 #>
 }
@@ -111,36 +104,20 @@ impl<'a> <#= struc.name #><'a> {
 impl<'a> <#= struc.name #>Mut<'a> {
 <#
     // Ids
-    for p in &ids {
-        create_id_getter(f, struc, p)?;
+    for p in &struc.id {
+        create_id_getter(f, &self.0.structs, struc, p)?;
     }
 
     // Normal properties
-    // TODO Getters with an Id have to be generated by hand
-    for p in props.iter().filter(|p| p.values.get.unwrap() && !p.type_s.ends_with("Id")) {
-        create_normal_getter(f, struc, p, ids.as_slice())?;
+    for p in struc.properties.iter().filter(|p| p.get_get(struc)
+        && struc.id.iter().filter(|i| i.prop == p.name).next().is_none()
+        && !p.name.ends_with("Data")
+        && p.name != "Server"
+        && p.name != "OwnClient"
+        && p.modifier.is_none()) {
+        create_normal_getter(f, &self.0.structs, struc, p, &struc.id)?;
     }
 #>
 }
-<#
-        // TODO Generating nested structs is not supported at the moment
-        // Nested structs
-        /*for p in nesteds {#>
-    pub fn get_<#= p.get_attr_name(&struc.name) #>(&self) -> <#= get_return_type(&p.type_s) #> {
-    <# if p.type_s == "Option<String>" { #>
-        self.<#= p.get_attr_name(&struc.name) #>.as_ref().map(|x| x.as_str())
-    <# } else if p.type_s.starts_with("Option<") {
-           if is_ref_type(&p.type_s[7..p.type_s.len() - 1]) { #>
-        self.<#= p.get_attr_name(&struc.name) #>.as_ref()
-        <# } else { #>
-        self.<#= p.get_attr_name(&struc.name) #>
-        <# }
-       } else if is_ref_type(&p.type_s) { #>
-        &self.<#= p.get_attr_name(&struc.name) #>
-    <# } else { #>
-        self.<#= p.get_attr_name(&struc.name) #>
-    <# } #>
-    }
-<#        }*/ #>
 
 <# } #>

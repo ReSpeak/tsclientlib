@@ -67,8 +67,8 @@ impl Connection {
     }
 
     fn handle_message(&mut self, msg: &Message) -> Result<()> {
-        if let Message::Notification(ref notification) = *msg {
-            self.handle_message_generated(notification)?;
+        if let Message::Message(ref notification) = *msg {
+            self.handle_message_generated(&*notification)?;
         }
 
         // Also raise events

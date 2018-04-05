@@ -1,41 +1,19 @@
 <#@ template cleanws="true" #>
 <# for struc in &self.structs {
-    let ids: Vec<_>;
-    if !struc.values.id.is_empty() {
-        ids = struc.values.id
-            .trim_left_matches('[').trim_right_matches(']')
-            .split(' ')
-            .filter(|s| !s.is_empty())
-            .map(|s| self.get_property(s.trim()))
-            .collect();
-    } else {
-        ids = Vec::new();
-    }
-
-    let props: Vec<_> = self.properties.iter().filter(|p|
-        p.struct_name == struc.name && !ids.contains(&p)).collect();
-
-    let nesteds: Vec<_> = self.nesteds.iter().filter(|p|
-        p.struct_name == struc.name).collect();
-
-    let all_props = ids.iter().chain(props.iter());
+	let all_props = struc.id.iter()
+		// Only foreign ids, others are also stored in the properties
+		.filter_map(|i| if i.struct_name != struc.name { Some(PropId::from(i)) }
+			else { None })
+		.chain(struc.properties.iter().map(|p| p.into()));
 
 #>
-<#= doc_comment(&struc.values.doc) #>
+<#= doc_comment(&struc.doc) #>
 pub struct <#= struc.name #> {
 <# for p in all_props {
-    if !p.values.doc.is_empty() { #>
-<#= indent(doc_comment(&p.values.doc), 1) #>
+	if let Some(ref doc) = p.get_doc() { #>
+<#= indent(doc_comment(doc), 1) #>
 <# } #>
-    pub <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
-<# }
-
-// Nested structs
-for p in &nesteds {
-    if !p.values.doc.is_empty() { #>
-<#= indent(doc_comment(&p.values.doc), 1) #>
-<# } #>
-    pub <#= p.get_attr_name(&struc.name) #>: <#= p.type_s #>,
+	pub <#= p.get_attr_name(&struc) #>: <#= p.get_rust_type(&self.structs) #>,
 <# } #>
 }
 

@@ -3,6 +3,8 @@ extern crate csv;
 extern crate regex;
 #[macro_use]
 extern crate t4rust_derive;
+extern crate toml;
+extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
@@ -29,8 +31,6 @@ pub use messages_to_book_parser::MessagesToBookDeclarations;
 pub use packets_parser::Packets;
 pub use permission_parser::Permissions;
 pub use version_parser::Versions;
-
-type Map<K, V> = std::collections::HashMap<K, V>;
 
 #[derive(Debug, Deserialize)]
 pub struct EnumValue {
@@ -156,4 +156,8 @@ pub fn unquote(s: &str) -> String {
     }
     let s = &s[1..(s.len() - 1)];
     s.replace("\\n", "\n").replace("\\\"", "\"").replace("\\\\", "\\")
+}
+
+pub fn get_false() -> bool {
+    false
 }

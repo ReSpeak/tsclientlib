@@ -1,6 +1,6 @@
 use ::*;
 use message_parser::{Message, Field};
-use book_parser::{Struct, Property, Nested};
+use book_parser::{Struct, Property, PropId};
 use regex::{Regex};
 use std::io::BufReader;
 
@@ -32,7 +32,7 @@ enum RuleKind<'a> {
     },
     Function {
         name: String,
-        to: Vec<PropKind<'a>>
+        to: Vec<&'a Property>,
     }
 }
 
@@ -47,12 +47,6 @@ enum RuleOp {
 enum IdKind<'a> {
     Fld(&'a Field),
     Id,
-}
-
-#[derive(Debug)]
-enum PropKind<'a> {
-    Prop(&'a Property),
-    Nested(&'a Nested),
 }
 
 impl<'a> Declaration for MessagesToBookDeclarations<'a> {
@@ -84,9 +78,12 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
                 let id = &capture["id"];
                 let modi = &capture["mod"];
 
-                let set_msg = messages.messages.get(msg).expect(&format!("Cannot find message defined in line {}", i));
-                let msg_fields = set_msg.params.iter().map(|f| messages.fields.get(&f.mapping_name)).map(Option::unwrap).collect::<Vec<_>>();
-                let set_stru = book.structs.iter().find(|s| s.name == stru).expect(&format!("Cannot find struct defined in line {}", i));
+                let set_msg = messages.get_message(msg);
+                let msg_fields = set_msg.attributes.iter()
+                    .map(|a| messages.get_field(a)).collect::<Vec<_>>();
+                let set_stru = book.structs.iter().find(|s| s.name == stru)
+                    .expect(&format!("Cannot find struct {} defined in line {}",
+                        stru, i));
                 let set_id = id
                     .split(" ")
                     .map(|s| s.trim())
@@ -104,18 +101,18 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
                     rules: Vec::new(),
                 }, msg_fields));
             } else if rgx_rule.is_match(&trimmed) {
-                let buildev = buildev.as_mut().expect(&format!("No event declaration found before this rule (line {})", i));
+                let buildev = buildev.as_mut()
+                    .expect(&format!("No event declaration found before this \
+                        rule (line {})", i));
 
                 let capture = rgx_rule.captures(&trimmed).unwrap();
 
-                let find_prop = |name, book_struct: &Struct| {
-                    if let Some(prop) = book.properties.iter().find(|p| p.struct_name == book_struct.name && p.name == name) {
-                        return PropKind::Prop(prop);
+                let find_prop = |name, book_struct: &'a Struct| -> &'a Property {
+                    if let Some(prop) = book_struct.properties.iter()
+                        .find(|p| p.name == name) {
+                        return prop;
                     }
-                    if let Some(nest) = book.nesteds.iter().find(|p| p.struct_name == book_struct.name && p.name == name) {
-                        return PropKind::Nested(nest);
-                    }
-                    panic!("No such (nested) property found in struct (line {})", i);
+                    panic!("No such (nested) property {} found in struct (line {})", name, i);
                 };
 
                 let fld = &capture["fld"];
@@ -127,21 +124,23 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
                 let event = if prop.starts_with("(") { // Function
                     RuleKind::Function {
                         name: fld.to_string(),
-                        to: prop.trim_left_matches('(').trim_right_matches(')').split(",").map(|x| x.trim()).map(|x| find_prop(x, buildev.0.book_struct)).collect::<Vec<_>>(),
+                        to: prop.trim_left_matches('(').trim_right_matches(')')
+                            .split(",")
+                            .map(|x| x.trim())
+                            .map(|x| find_prop(x, buildev.0.book_struct))
+                            .collect::<Vec<_>>(),
                     }
                 } else { // Map
-                    if let PropKind::Prop(prop) = find_prop(prop, buildev.0.book_struct) {
-                        let from_fld = find_field(fld, &buildev.1, i);
-                        if from_fld.name == prop.name {
-                            println!("This field assignment is already implicitly defined (line {})", i);
-                        }
-                        RuleKind::Map {
-                            from: from_fld,
-                            to: prop,
-                            op: set_modi
-                        }
+                    let prop = find_prop(prop, buildev.0.book_struct);
+                    let from_fld = find_field(fld, &buildev.1, i);
+                    if from_fld.pretty == prop.name {
+                        println!("This field assignment is already implicitly defined (line {})", i);
                     }
-                    else { panic!("Mapped values cannot be nested types.") }
+                    RuleKind::Map {
+                        from: from_fld,
+                        to: prop,
+                        op: set_modi
+                    }
                 };
                 buildev.0.rules.push(event);
             } else {
@@ -166,11 +165,8 @@ fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev:
         for rule in &ev.rules {
             match rule {
                 &RuleKind::Function{ ref to, .. } => {
-                    for propk in to {
-                        match *propk {
-                            PropKind::Prop(prop) => used_props.push(prop),
-                            _ => {}
-                        }
+                    for p in to {
+                        used_props.push(p.name.clone());
                     }
                 },
                 _ => {}
@@ -181,8 +177,9 @@ fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev:
             if used_flds.contains(&fld) {
                 continue;
             }
-            if let Some(prop) = book.properties.iter().find(|p| p.struct_name == ev.book_struct.name && p.name == fld.name) {
-                if used_props.contains(&prop) {
+            if let Some(prop) = book.get_struct(&ev.book_struct.name).properties
+                .iter().find(|p| p.name == fld.pretty) {
+                if used_props.contains(&prop.name) {
                     continue;
                 }
 
@@ -200,8 +197,8 @@ fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev:
 
 // the in rust callable name (in PascalCase) from the field
 fn find_field<'a>(name: &str, msg_fields: &Vec<&'a Field>, i: usize) -> &'a Field {
-    let name_snake = to_snake_case(name);
-    *msg_fields.iter().find(|f| f.rust_name == name_snake).expect(&format!("Cannot find field '{}' in line {}", name, i))
+    *msg_fields.iter().find(|f| f.pretty == name)
+        .expect(&format!("Cannot find field '{}' in line {}", name, i))
 }
 
 fn mod_to_enu(modi: &str, i: usize) -> RuleOp {
@@ -223,13 +220,6 @@ impl<'a> RuleKind<'a> {
     }
 }
 
-fn get_prop_name<'a>(p: &PropKind<'a>) -> String {
-    to_snake_case(match *p {
-        PropKind::Prop(ref p) => &p.name,
-        PropKind::Nested(ref p) => &p.name,
-    })
-}
-
 fn get_id_args(event: &Event) -> String {
     let mut res = String::new();
     for id in &event.id {
@@ -237,29 +227,30 @@ fn get_id_args(event: &Event) -> String {
             res.push_str(", ");
         }
         if let IdKind::Fld(f) = *id {
-            if is_ref_type(&f.rust_type) {
+            if is_ref_type(&f.get_rust_type("")) {
                 res.push('&');
             }
             res.push_str("cmd.");
-            res.push_str(&f.rust_name);
+            res.push_str(&f.get_rust_name());
         }
     }
     res
 }
 
 fn get_notification_field(from: &Field) -> String {
-    if from.rust_type == "String" || from.rust_type == "Uid" || from.rust_type.starts_with("Vec<") {
-        format!("{}.clone()", from.rust_name)
+    let rust_type = from.get_rust_type("");
+    if rust_type == "String" || rust_type == "Uid" || rust_type.starts_with("Vec<") {
+        format!("{}.clone()", from.get_rust_name())
     } else {
-        from.rust_name.clone()
+        from.get_rust_name().clone()
     }
 }
 
-fn gen_return_match(to: &[PropKind]) -> String {
+fn gen_return_match(to: &[&Property]) -> String {
     if to.len() == 1 {
-        get_prop_name(&to[0])
+        to_snake_case(&to[0].name)
     } else {
-        format!("({})", join(to.iter().map(get_prop_name), ", "))
+        format!("({})", join(to.iter().map(|p| to_snake_case(&p.name)), ", "))
     }
 }
 
