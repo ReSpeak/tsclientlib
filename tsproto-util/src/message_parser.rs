@@ -3,6 +3,7 @@ use ::*;
 #[derive(Template)]
 #[TemplatePath = "src/MessageDeclarations.tt"]
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct MessageDeclarations {
     pub(crate) fields: Vec<Field>,
     pub(crate) msg_group: Vec<MessageGroup>,
@@ -39,6 +40,7 @@ impl MessageDeclarations {
 }
 
 #[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Field {
     /// Internal name of this declarations file to map fields to messages.
     pub map: String,
@@ -53,12 +55,14 @@ pub struct Field {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct MessageGroup {
     pub default: MessageGroupDefaults,
     pub msg: Vec<Message>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct MessageGroupDefaults {
     pub s2c: bool,
     pub c2s: bool,
@@ -68,6 +72,7 @@ pub struct MessageGroupDefaults {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Message {
     /// How we call this message.
     pub name: String,
@@ -77,6 +82,7 @@ pub struct Message {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct MessageField {
     pub mapping_name: String,
     pub optional: bool,

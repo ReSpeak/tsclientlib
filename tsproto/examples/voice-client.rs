@@ -26,7 +26,7 @@ use std::sync::Mutex;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
-use futures::{Future, Sink, Stream};
+use futures::{future, Future, Sink, Stream};
 use futures::sync::mpsc;
 use gst::prelude::*;
 use gst_audio::StreamVolumeExt;
@@ -35,13 +35,14 @@ use slog::{Drain, Logger};
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Handle};
+use tokio_signal::unix::{Signal, SIGHUP};
 use tsproto::*;
 use tsproto::client::ClientData;
 use tsproto::packets::*;
 
 mod utils;
 use utils::*;
-use utils::voice::IncommingVoiceHandler;
+use utils::voice::IncommingVoiceHandler2;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings =
@@ -83,13 +84,11 @@ fn main() {
     let c = create_client(args.local_address, core.handle(), logger.clone(), false);
 
     // Setup incoming voice handler
-    let in_pipe = create_ts_to_audio_pipeline().unwrap();
+    let in_pipe = create_ts_to_audio_pipeline(logger.clone()).unwrap();
     let audio = main_loop(&in_pipe, logger.clone()).unwrap();
-    let in_handler = IncommingVoiceHandler {
-        logger: logger.clone(),
-        pipeline: in_pipe,
-    };
-    ClientData::apply_packet_stream_wrapper::<IncommingVoiceHandler>(&c, in_handler);
+    in_pipe.set_state(gst::State::Playing).into_result().unwrap();
+    let in_handler = IncommingVoiceHandler2::new(logger.clone(), in_pipe).unwrap();
+    ClientData::apply_packet_stream_wrapper::<IncommingVoiceHandler2>(&c, in_handler);
 
     // Run event handler in background
     handle.spawn(audio);
@@ -122,7 +121,39 @@ fn main() {
         //error!(logger, "Error while playing"; "error" => ?error);
     //}
     //info!(logger, "Waited");
-    handle.spawn(audio);
+
+    // FIXME
+    //handle.spawn(audio);
+
+    // Pause or unpause sending on sighup
+    let pipe = pipeline.clone();
+    let logger2 = logger.clone();
+    let logger3 = logger.clone();
+    let sighup = Signal::new(SIGHUP, &handle).flatten_stream().for_each(move |_| {
+        // Switch state from playing to paused or reverse
+        // Returns (success, current state, pending state)
+        let state = pipe.get_state(gst::ClockTime::from_mseconds(10));
+        if state.0 != gst::StateChangeReturn::Failure {
+            //debug!(logger2, "Got state"; "current" => ?state.1, "pending" => ?state.2);
+            if state.1 == gst::State::Playing {
+                debug!(logger2, "Change to paused");
+                if let Err(error) = pipe.set_state(gst::State::Paused).into_result() {
+                    error!(logger2, "Failed to pause pipeline"; "error" => ?error);
+                }
+            } else if state.1 == gst::State::Paused {
+                debug!(logger2, "Change to playing");
+                if let Err(error) = pipe.set_state(gst::State::Playing).into_result() {
+                    error!(logger2, "Failed to start pipeline"; "error" => ?error);
+                }
+            }
+        } else {
+            error!(logger2, "Failed to get current state"; "result" => ?state);
+        }
+        future::ok(())
+    }).map_err(move |error| {
+        error!(logger3, "Error waiting for signal"; "error" => ?error);
+    });
+    handle.spawn(sighup);
 
     // Stop with ctrl + c
     let ctrl_c = tokio_signal::ctrl_c(&handle).flatten_stream();
@@ -166,8 +197,13 @@ fn packet_sender(data: Weak<RefCell<ClientData>>,
     }))
 }
 
-fn create_ts_to_audio_pipeline() -> Result<gst::Pipeline, failure::Error> {
+fn create_ts_to_audio_pipeline(logger: Logger) -> Result<gst::Pipeline, failure::Error> {
     let pipeline = gst::Pipeline::new("ts-to-audio-pipeline");
+
+    let appsrc = gst::ElementFactory::make("appsrc", "appsrc").ok_or_else(||
+        format_err!("Missing appsrc"))?;
+    let demuxer = gst::ElementFactory::make("ts3audiodemux", "demuxer").ok_or_else(||
+        format_err!("Missing ts3audiodemux"))?;
 
     let mixer = gst::ElementFactory::make("audiomixer", "mixer").ok_or_else(||
         format_err!("Missing audiomixer"))?;
@@ -181,8 +217,147 @@ fn create_ts_to_audio_pipeline() -> Result<gst::Pipeline, failure::Error> {
     let autosink = gst::ElementFactory::make("autoaudiosink", None).ok_or_else(||
         format_err!("Missing autoaudiosink"))?;
 
-    pipeline.add_many(&[&mixer, &audioconvert, &autosink])?;
+    let src = appsrc.clone().dynamic_cast::<gst_app::AppSrc>().unwrap();
+    src.set_caps(&gst::Caps::new_simple("audio/x-ts3audio", &[]));
+    src.set_property_format(gst::Format::Time);
+    //src.set_property("blocksize", &::glib::Value::from(&500u32))?;
+    //src.set_max_bytes(1500);
+    //src.set_property_min_latency((gst::SECOND_VAL / 50) as i64); // 20 ms in ns
+    src.set_property_min_latency(0); // in ns
+    // Important to reduce the playback latency
+    src.set_property("do-timestamp", &::glib::Value::from(&true))?;
+    // Set as live source, which means it does not produce data when paused
+    src.set_property("is-live", &::glib::Value::from(&true))?;
+
+    let fakesrc = gst::ElementFactory::make("audiotestsrc", "fake").ok_or_else(||
+        format_err!("Missing audiotestsrc"))?;
+    fakesrc.set_property("volume", &::glib::Value::from(&0f64))?;
+    fakesrc.set_property("do-timestamp", &::glib::Value::from(&true))?;
+    fakesrc.set_property("is-live", &::glib::Value::from(&true))?;
+
+    // TODO Use clock from sink when it gets available
+    let clock = gst::SystemClock::obtain();
+    pipeline.use_clock(&clock);
+    pipeline.add_many(&[&appsrc, &demuxer, &mixer, &audioconvert, &autosink, &fakesrc])?;
     gst::Element::link_many(&[&mixer, &audioconvert, &autosink])?;
+    gst::Element::link_many(&[&appsrc, &demuxer])?;
+    fakesrc.link_filtered(&mixer, &gst::Caps::new_simple(
+        "audio/x-raw", &[("rate", &48000i32)]))?;
+
+    let base_time = clock.get_time();
+    appsrc.set_base_time(base_time);
+    fakesrc.set_base_time(base_time);
+    appsrc.set_start_time(base_time);
+    fakesrc.set_start_time(base_time);
+
+
+    let pipe = pipeline.clone();
+    let mix = mixer.clone();
+    // Link demuxer to mixer when a new client speaks
+    demuxer.connect_pad_added(move |demuxer, src_pad| {
+        debug!(logger, "Got new client pad"; "name" => src_pad.get_name());
+        // Create decoder
+        // TODO Create fitting decoder and not decodebin
+        //let decode = gst::ElementFactory::make("opusdec",
+        let decode = gst::ElementFactory::make("decodebin",
+            format!("decoder_{}", src_pad.get_name()).as_str())
+            .expect("Missing decodebin");
+        //pipe.set_state(gst::State::Paused).into_result().unwrap();
+        if let Err(e) = pipe.add(&decode) {
+            error!(logger, "Cannot add decoder to pipeline"; "error" => ?e);
+            return;
+        }
+
+        // Link to sink pad decoder
+        let sink_pad = decode.get_static_pad("sink")
+            .expect("Next element has no sink pad");
+        if let Err(error) = src_pad.link(&sink_pad).into_result() {
+            error!(logger, "Cannot link pads"; "error" => ?error);
+            gst_element_error!(
+                demuxer,
+                gst::ResourceError::Failed,
+                ("Failed to link decoder")
+            );
+        }
+
+        decode.sync_state_with_parent().unwrap();
+        let logger = logger.clone();
+        let mixer = mix.clone();
+        let decoder = decode.clone();
+        let demuxer = demuxer.clone();
+        let pipe = pipe.clone();
+        decode.connect_pad_added(move |dbin, src_pad| {
+            debug!(logger, "Got new client decoder pad"; "name" => src_pad.get_name());
+
+            // Link to sink pad of next element
+            let sink_pad = mixer.get_request_pad("sink_%u")
+                .expect("Next element has no sink pad");
+            if let Err(error) = src_pad.link(&sink_pad).into_result() {
+                error!(logger, "Cannot link pads"; "error" => ?error);
+                gst_element_error!(
+                    dbin,
+                    gst::ResourceError::Failed,
+                    ("Failed to link decoder")
+                );
+            }
+
+            // Add eos probe
+            let decode = decoder.clone();
+            let logger = logger.clone();
+            let mixer = mixer.clone();
+            let demuxer = demuxer.clone();
+            let pipe = pipe.clone();
+            sink_pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, move |_pad, info| {
+                let eos = info.data.as_ref()
+                    .and_then(|d| if let gst::PadProbeData::Event(e) = d {
+                        Some(e.get_type() == gst::EventType::Eos)
+                    } else {
+                        None
+                    })
+                    .unwrap_or(false);
+
+                if eos {
+                    // Unlink and remove decoder
+                    debug!(logger, "Remove client decoder");
+
+                    let decode_src_pad = decode.iterate_src_pads().next();
+                    let mixer_pad = decode_src_pad.and_then(|p| p.ok())
+                        .and_then(|p| p.get_peer());
+                    let decode_sink_pad = decode.iterate_sink_pads().next();
+                    let demuxer_pad = decode_sink_pad.and_then(|p| p.ok())
+                        .and_then(|p| p.get_peer());
+
+                    gst::Element::unlink_many(&[&demuxer, &decode, &mixer]);
+
+                    // Remove pad from mixer
+                    if let Some(pad) = mixer_pad {
+                        if let Err(e) = mixer.remove_pad(&pad) {
+                            error!(logger, "Cannot remove mixer pad"; "error" => ?e);
+                        }
+                    } else {
+                        error!(logger, "Cannot find mixer pad";);
+                    }
+
+                    // Remove pad from demuxer
+                    if let Some(pad) = demuxer_pad {
+                        if let Err(e) = demuxer.remove_pad(&pad) {
+                            error!(logger, "Cannot remove demuxer pad"; "error" => ?e);
+                        }
+                    } else {
+                        error!(logger, "Cannot find demuxer pad";);
+                    }
+
+                    if let Err(e) = pipe.remove(&decode) {
+                        error!(logger, "Cannot remove decoder from pipeline"; "error" => ?e);
+                    }
+                    // Cleanup
+                    decode.set_state(gst::State::Null).into_result().unwrap();
+                }
+
+                gst::PadProbeReturn::Ok
+            });
+        });
+    });
 
     Ok(pipeline)
 }
@@ -191,19 +366,14 @@ fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args:
     logger: Logger) -> Result<gst::Pipeline, failure::Error> {
     let pipeline = gst::Pipeline::new("audio-to-ts-pipeline");
 
-    let src;
     let decode;
     if args.uri.is_empty() {
-        src = Some(gst::ElementFactory::make("autoaudiosrc", "audiosrc").ok_or_else(||
-            format_err!("Missing autoaudiosrc"))?);
-        // TODO We don't need a decoder here I think
-        decode = gst::ElementFactory::make("decodebin", "decode").ok_or_else(||
-            format_err!("Missing decodebin"))?;
+        decode = gst::ElementFactory::make("autoaudiosrc", "audiosrc").ok_or_else(||
+            format_err!("Missing autoaudiosrc"))?;
     } else {
         decode = gst::ElementFactory::make("uridecodebin", "decode").ok_or_else(||
             format_err!("Missing uridecodebin"))?;
         decode.set_property("uri", &glib::Value::from(&args.uri))?;
-        src = None;
     }
 
     let resampler = gst::ElementFactory::make("audioresample", "resample").ok_or_else(||
@@ -229,11 +399,10 @@ fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args:
     opusenc.set_property("packet-loss-percentage", &glib::Value::from(&0))?;
 
     pipeline.add_many(&[&decode, &resampler, &volume, &opusenc, &sink])?;
-    if let Some(src) = src {
-        pipeline.add(&src)?;
-        src.link(&decode)?;
-    }
     gst::Element::link_many(&[&resampler, &volume, &opusenc, &sink])?;
+    if args.uri.is_empty() {
+        decode.link(&resampler)?;
+    }
 
     // Link decode to next element if a pad gets available
     let next = resampler;
@@ -359,13 +528,17 @@ fn main_loop(pipeline: &gst::Pipeline, logger: Logger)
                 true
             }
             MessageView::Error(err) => {
-                println!(
-                    "Error from {:?}: {} ({:?})",
-                    err.get_src().map(|s| s.get_path_string()),
-                    err.get_error(),
-                    err.get_debug()
+                error!(logger,
+                    "gstreamer audio-to-ts pipeline error";
+                    "src" => ?err.get_src().map(|s| s.get_path_string()),
+                    "error" => %err.get_error(),
+                    "debug" => ?err.get_debug()
                 );
                 true
+            }
+            MessageView::Qos(_) => {
+                debug!(logger, "GOT QOS");
+                false
             }
             _ => false,
         };

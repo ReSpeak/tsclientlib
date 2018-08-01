@@ -3,6 +3,7 @@ use ::*;
 #[derive(Template)]
 #[TemplatePath = "src/BookDeclarations.tt"]
 #[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct BookDeclarations {
     #[serde(rename = "struct")]
     pub(crate) structs: Vec<Struct>,
@@ -29,12 +30,14 @@ impl BookDeclarations {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Accessors {
     pub get: bool,
     pub set: bool,
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Id {
     #[serde(rename = "struct")]
     pub struct_name: String,
@@ -59,6 +62,7 @@ impl Id {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Struct {
     pub name: String,
     pub id: Vec<Id>,
@@ -68,6 +72,7 @@ pub struct Struct {
 }
 
 #[derive(Deserialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Property {
     /// The name of this property (in PascalCase) which can be called from rust when generated.
     pub name: String,

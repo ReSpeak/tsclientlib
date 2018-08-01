@@ -441,6 +441,7 @@ impl Eax {
         let h = Self::cmac_with_iv(key, 1, header)?;
 
         // 3. enc ← CTR(M) using n as iv
+        // TODO Try to encrypt/decrypt in place and check if it is faster
         let enc = symm::encrypt(Cipher::aes_128_ctr(), key, Some(&n), data)?;
 
         // 4. c ← OMAC(2 || enc)

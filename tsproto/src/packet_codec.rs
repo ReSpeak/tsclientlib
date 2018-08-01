@@ -231,6 +231,8 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                     || in_recv_win
                 {
                     let gen_id = params.incoming_p_ids[type_i].0;
+                    // TODO Use next gen id if this packet is already from the
+                    // next generation
 
                     if !header.get_unencrypted() {
                         // If it is the first ack packet of a
