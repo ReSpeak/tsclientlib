@@ -169,6 +169,59 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
         }
     }
 
+    /// Handle `Voice` and `VoiceLow` packets.
+    ///
+    /// The first 3 packets for each audio transmission have the compressed flag
+    /// set, which means they are fragmented and should be concatenated.
+    fn handle_voice_packet(
+        logger: &slog::Logger,
+        params: &mut ConnectedParams,
+        header: &Header,
+        packet: packets::Data,
+    ) -> Vec<Packet> {
+        let cmd_i = if header.get_type() == PacketType::Voice {
+            0
+        } else {
+            1
+        };
+        let frag_queue = &mut params.voice_fragmented_queue[cmd_i];
+
+        let (id, from_id, codec_type, voice_data) = match packet {
+            packets::Data::VoiceS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
+            packets::Data::VoiceWhisperS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
+            _ => unreachable!("handle_voice_packet did get an unknown voice packet"),
+        };
+
+        if header.get_compressed() {
+            let queue = frag_queue.entry(from_id).or_insert_with(Vec::new);
+            // Append to fragments
+            if queue.len() < MAX_FRAGMENTS_LENGTH {
+                queue.extend_from_slice(&voice_data);
+                return Vec::new();
+            }
+            warn!(logger, "Length of voice fragment queue exceeded"; "len" => queue.len());
+        }
+
+        let mut res = Vec::new();
+        if let Some(frags) = frag_queue.remove(&from_id) {
+            // We got two packets
+            let packet_data = if header.get_type() == PacketType::Voice {
+                packets::Data::VoiceS2C { id, from_id, codec_type, voice_data: frags }
+            } else {
+                packets::Data::VoiceWhisperS2C { id, from_id, codec_type, voice_data: frags }
+            };
+            res.push(Packet::new(header.clone(), packet_data));
+        }
+
+        let packet_data = if header.get_type() == PacketType::Voice {
+            packets::Data::VoiceS2C { id, from_id, codec_type, voice_data }
+        } else {
+            packets::Data::VoiceWhisperS2C { id, from_id, codec_type, voice_data }
+        };
+        res.push(Packet::new(header.clone(), packet_data));
+        res
+    }
+
     fn on_packet_received(&mut self, addr: SocketAddr, udp_packet: UdpPacket)
         -> futures::Poll<Option<<Self as Stream>::Item>,
             <Self as Stream>::Error> {
@@ -322,11 +375,10 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                                 &mut Cursor::new(udp_packet.as_slice()),
                             ) {
                                 Ok(p_data) => {
-                                    // Remove command packet from send queue if the fitting ack is received.
                                     match p_data {
                                         packets::Data::Ack(p_id) |
                                         packets::Data::AckLow(p_id) => {
-                                            // Remove from send queue
+                                            // Remove command packet from send queue if the fitting ack is received.
                                             let p_type = if header.get_type()
                                                 == PacketType::Ack {
                                                 PacketType::Command
@@ -334,11 +386,20 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                                                 PacketType::CommandLow
                                             };
                                             con.resender.ack_packet(p_type, p_id);
+                                            Ok(vec![(con_key.clone(),
+                                                Packet::new(header, p_data))])
                                         }
-                                        _ => {}
+                                        packets::Data::VoiceS2C { .. } |
+                                        packets::Data::VoiceWhisperS2C { .. } => {
+                                            // Use handle_voice_packet to assemble fragmented voice packets
+                                            let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
+                                            let res = res.drain(..).map(|p|
+                                                (con_key.clone(), p)).collect();
+                                            Ok(res)
+                                        }
+                                        _ => Ok(vec![(con_key.clone(),
+                                            Packet::new(header, p_data))]),
                                     }
-                                    Ok(vec![(con_key.clone(),
-                                        Packet::new(header, p_data))])
                                 }
                                 Err(error) => Err(error),
                             }

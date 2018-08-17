@@ -213,6 +213,11 @@ impl IncommingVoiceHandler2 {
             {
                 let buffer = buffer.get_mut().unwrap();
 
+                // TODO Set presentation time and duration
+                //let clock = self.fake.get_clock().unwrap();
+                //buffer.set_pts(clock.get_time() - self.fake.get_base_time());
+                //println!("Time: {}", buffer.get_pts());
+
                 let mut data = buffer.map_writable().unwrap();
                 packet.data.write(&mut Cursor::new(&mut *data))?;
             }

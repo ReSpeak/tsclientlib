@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::rc::Rc;
@@ -72,6 +73,13 @@ pub struct ConnectedParams {
     ///
     /// Only used for `Command` and `CommandLow` packets.
     pub fragmented_queue: [Option<(Header, Vec<u8>)>; 2],
+    /// Used for incoming fragmented packets.
+    ///
+    /// Contains the audio initialization buffer for each client. These packets
+    /// are marked with the `compressed` flag. Usually 3 of them are sent at the
+    /// beginning of each transmission.
+    /// Only used for `Voice` and `VoiceWhisper` packets.
+    pub voice_fragmented_queue: [BTreeMap<u16, Vec<u8>>; 2],
     /// The next packet id that is expected.
     ///
     /// Works like the `outgoing_p_ids`.
@@ -99,6 +107,7 @@ impl ConnectedParams {
             outgoing_p_ids: Default::default(),
             receive_queue: Default::default(),
             fragmented_queue: Default::default(),
+            voice_fragmented_queue: Default::default(),
             incoming_p_ids: Default::default(),
             c_id: 0,
             voice_encryption: true,

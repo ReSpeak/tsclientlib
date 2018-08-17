@@ -122,8 +122,7 @@ fn main() {
     //}
     //info!(logger, "Waited");
 
-    // FIXME
-    //handle.spawn(audio);
+    handle.spawn(audio);
 
     // Pause or unpause sending on sighup
     let pipe = pipeline.clone();
@@ -223,11 +222,13 @@ fn create_ts_to_audio_pipeline(logger: Logger) -> Result<gst::Pipeline, failure:
     //src.set_property("blocksize", &::glib::Value::from(&500u32))?;
     //src.set_max_bytes(1500);
     //src.set_property_min_latency((gst::SECOND_VAL / 50) as i64); // 20 ms in ns
+    //src.set_property_min_latency((gst::SECOND_VAL / 30) as i64); // 20 ms in ns
     src.set_property_min_latency(0); // in ns
     // Important to reduce the playback latency
     src.set_property("do-timestamp", &::glib::Value::from(&true))?;
     // Set as live source, which means it does not produce data when paused
     src.set_property("is-live", &::glib::Value::from(&true))?;
+    // TODO There is latency again for some reason
 
     let fakesrc = gst::ElementFactory::make("audiotestsrc", "fake").ok_or_else(||
         format_err!("Missing audiotestsrc"))?;
@@ -235,20 +236,11 @@ fn create_ts_to_audio_pipeline(logger: Logger) -> Result<gst::Pipeline, failure:
     fakesrc.set_property("do-timestamp", &::glib::Value::from(&true))?;
     fakesrc.set_property("is-live", &::glib::Value::from(&true))?;
 
-    // TODO Use clock from sink when it gets available
-    let clock = gst::SystemClock::obtain();
-    pipeline.use_clock(&clock);
     pipeline.add_many(&[&appsrc, &demuxer, &mixer, &audioconvert, &autosink, &fakesrc])?;
     gst::Element::link_many(&[&mixer, &audioconvert, &autosink])?;
     gst::Element::link_many(&[&appsrc, &demuxer])?;
     fakesrc.link_filtered(&mixer, &gst::Caps::new_simple(
-        "audio/x-raw", &[("rate", &48000i32)]))?;
-
-    let base_time = clock.get_time();
-    appsrc.set_base_time(base_time);
-    fakesrc.set_base_time(base_time);
-    appsrc.set_start_time(base_time);
-    fakesrc.set_start_time(base_time);
+        "audio/x-raw", &[("rate", &48000i32), ("channels", &2i32)]))?;
 
 
     let pipe = pipeline.clone();
