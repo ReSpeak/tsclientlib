@@ -207,16 +207,17 @@ impl IncommingVoiceHandler2 {
     fn handle_packet(&mut self, _addr: SocketAddr, packet: &Packet)
         -> Result<(), ::failure::Error> {
         // Check if we got a voice packet
-        if let packets::Data::VoiceS2C { ref voice_data, .. } = packet.data {
+        if let packets::Data::VoiceS2C { ref voice_data, id, .. } = packet.data {
             let mut buffer = gst::Buffer::with_size(voice_data.len() + 5).unwrap();
 
             {
                 let buffer = buffer.get_mut().unwrap();
 
                 // TODO Set presentation time and duration
-                //let clock = self.fake.get_clock().unwrap();
+                let clock = self.appsrc.get_clock().unwrap();
                 //buffer.set_pts(clock.get_time() - self.fake.get_base_time());
                 //println!("Time: {}", buffer.get_pts());
+                println!("Push buffer {} at {}", id, clock.get_time() - self.appsrc.get_base_time());
 
                 let mut data = buffer.map_writable().unwrap();
                 packet.data.write(&mut Cursor::new(&mut *data))?;
