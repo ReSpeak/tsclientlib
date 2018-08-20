@@ -393,8 +393,8 @@ impl DefaultPacketHandlerStream {
 
                             #[cfg(not(feature = "rust-gmp"))]
                             let y = {
-                                let xi = BigUint::from_bytes_be(x);
-                                let ni = BigUint::from_bytes_be(n);
+                                let xi = BigUint::from_bytes_be(&x);
+                                let ni = BigUint::from_bytes_be(&n);
                                 let mut e = BigUint::one();
                                 e <<= level as usize;
                                 let yi = xi.modpow(&e, &ni);

@@ -391,11 +391,14 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                                         }
                                         packets::Data::VoiceS2C { .. } |
                                         packets::Data::VoiceWhisperS2C { .. } => {
+                                            // TODO Not yet completely working, seems to cut of the beginning
                                             // Use handle_voice_packet to assemble fragmented voice packets
-                                            let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
+                                            /*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
                                             let res = res.drain(..).map(|p|
                                                 (con_key.clone(), p)).collect();
-                                            Ok(res)
+                                            Ok(res)*/
+                                            Ok(vec![(con_key.clone(),
+                                                Packet::new(header, p_data))])
                                         }
                                         _ => Ok(vec![(con_key.clone(),
                                             Packet::new(header, p_data))]),
