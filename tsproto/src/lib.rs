@@ -78,25 +78,26 @@ const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
 #[derive(Fail, Debug)]
 pub enum Error {
     #[fail(display = "{}", _0)]
-    Io(#[cause] std::io::Error),
-    #[fail(display = "{}", _0)]
-    Ring(#[cause] ring::error::Unspecified),
-    #[fail(display = "{}", _0)]
     Base64(#[cause] base64::DecodeError),
-    #[fail(display = "{}", _0)]
-    Utf8(#[cause] std::str::Utf8Error),
-    #[fail(display = "{}", _0)]
-    ParseInt(#[cause] std::num::ParseIntError),
     #[fail(display = "{}", _0)]
     FutureCanceled(#[cause] futures::Canceled),
     #[fail(display = "{}", _0)]
-    Openssl(#[cause] openssl::error::ErrorStack),
+    Io(#[cause] std::io::Error),
     #[fail(display = "{}", _0)]
-    Yasna(#[cause] yasna::ASN1Error),
+    ParseInt(#[cause] std::num::ParseIntError),
+    #[fail(display = "{}", _0)]
+    Openssl(#[cause] openssl::error::ErrorStack),
     #[fail(display = "{}", _0)]
     Quicklz(#[cause] quicklz::Error),
     #[fail(display = "{}", _0)]
-    ParsePacket(String),
+    Rand(#[cause] rand::Error),
+    #[fail(display = "{}", _0)]
+    Ring(#[cause] ring::error::Unspecified),
+    #[fail(display = "{}", _0)]
+    Utf8(#[cause] std::str::Utf8Error),
+    #[fail(display = "{}", _0)]
+    Yasna(#[cause] yasna::ASN1Error),
+
     #[fail(display = "Packet {} not in receive window [{};{}) for type {:?}",
         id, next, limit, p_type)]
     NotInReceiveWindow {
@@ -105,6 +106,8 @@ pub enum Error {
         limit: u16,
         p_type: packets::PacketType,
     },
+    #[fail(display = "{}", _0)]
+    ParsePacket(String),
     #[fail(display = "Got unallowed unencrypted packet")]
     UnallowedUnencryptedPacket,
     #[fail(display = "Got unexpected init packet")]
@@ -123,33 +126,9 @@ pub enum Error {
     Other(#[cause] failure::Compat<failure::Error>),
 }
 
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Error::Io(e)
-    }
-}
-
-impl From<ring::error::Unspecified> for Error {
-    fn from(e: ring::error::Unspecified) -> Self {
-        Error::Ring(e)
-    }
-}
-
 impl From<base64::DecodeError> for Error {
     fn from(e: base64::DecodeError) -> Self {
         Error::Base64(e)
-    }
-}
-
-impl From<std::str::Utf8Error> for Error {
-    fn from(e: std::str::Utf8Error) -> Self {
-        Error::Utf8(e)
-    }
-}
-
-impl From<std::num::ParseIntError> for Error {
-    fn from(e: std::num::ParseIntError) -> Self {
-        Error::ParseInt(e)
     }
 }
 
@@ -159,21 +138,51 @@ impl From<futures::Canceled> for Error {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
+    }
+}
+
+impl From<std::num::ParseIntError> for Error {
+    fn from(e: std::num::ParseIntError) -> Self {
+        Error::ParseInt(e)
+    }
+}
+
 impl From<openssl::error::ErrorStack> for Error {
     fn from(e: openssl::error::ErrorStack) -> Self {
         Error::Openssl(e)
     }
 }
 
-impl From<yasna::ASN1Error> for Error {
-    fn from(e: yasna::ASN1Error) -> Self {
-        Error::Yasna(e)
-    }
-}
-
 impl From<quicklz::Error> for Error {
     fn from(e: quicklz::Error) -> Self {
         Error::Quicklz(e)
+    }
+}
+
+impl From<rand::Error> for Error {
+    fn from(e: rand::Error) -> Self {
+        Error::Rand(e)
+    }
+}
+
+impl From<ring::error::Unspecified> for Error {
+    fn from(e: ring::error::Unspecified) -> Self {
+        Error::Ring(e)
+    }
+}
+
+impl From<std::str::Utf8Error> for Error {
+    fn from(e: std::str::Utf8Error) -> Self {
+        Error::Utf8(e)
+    }
+}
+
+impl From<yasna::ASN1Error> for Error {
+    fn from(e: yasna::ASN1Error) -> Self {
+        Error::Yasna(e)
     }
 }
 
