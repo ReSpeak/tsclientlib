@@ -35,6 +35,7 @@ use slog::{Drain, Logger};
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio_core::reactor::{Core, Handle, Remote};
+#[cfg(target_family = "unix")]
 use tokio_signal::unix::{Signal, SIGHUP};
 use tsproto::*;
 use tsproto::client::ClientData;
@@ -146,6 +147,7 @@ fn main() {
         let pipe = pipeline.clone();
         let logger2 = logger.clone();
         let logger3 = logger.clone();
+        #[cfg(target_family = "unix")]
         let sighup = Signal::new(SIGHUP, &handle).flatten_stream().for_each(move |_| {
             // Switch state from playing to paused or reverse
             // Returns (success, current state, pending state)
@@ -232,24 +234,57 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
     // Maybe force to resample to 48 kHz before and to hardware now.
     // This would make all resamplers before just pass-through for opus which
     // already uses 48 kHz.
+    // TODO Add resampler when necessary
     //let resampler = gst::ElementFactory::make("audioresample", None).ok_or_else(||
         //format_err!("Missing audioresample"))?;
-    //let audioconvert = gst::ElementFactory::make("audioconvert", None).ok_or_else(||
-        //format_err!("Missing audioconvert"))?;
-    // Use either pulsesink, alsasink or directsoundsink
+
     // The latency with autoaudiosink is high
-    let autosink = gst::ElementFactory::make("pulsesink", "autosink").ok_or_else(||
-        format_err!("Missing autoaudiosink"))?;
-    autosink.set_property("buffer-time", &::glib::Value::from(&20_000i64))?;
-    autosink.set_property("blocksize", &::glib::Value::from(&960u32))?;
+    // Linux: Try pulsesink, alsasink
+    // Windows: Try directsoundsink
+    // Else use autoaudiosink
+    let mut autosink = None;
+    #[cfg(target_os = "linux")] {
+    if autosink.is_none() {
+        if let Some(sink) = gst::ElementFactory::make("pulsesink", "autosink") {
+            autosink = Some(sink);
+        }
+    }
+    }
+    #[cfg(target_os = "linux")] {
+    if autosink.is_none() {
+        if let Some(sink) = gst::ElementFactory::make("alsasink", "autosink") {
+            autosink = Some(sink);
+        }
+    }
+    }
+
+    #[cfg(target_os = "windows")] {
+    if autosink.is_none() {
+        if let Some(sink) = gst::ElementFactory::make("directsoundsink", "autosink") {
+            autosink = Some(sink);
+        }
+    }
+    }
+
+    let autosink = if let Some(sink) = autosink {
+        sink
+    } else {
+        gst::ElementFactory::make("pulsesink", "autosink").ok_or_else(||
+            format_err!("Missing autoaudiosink"))?
+    };
+    if autosink.has_property("buffer-time", None).is_ok() {
+        autosink.set_property("buffer-time", &::glib::Value::from(&20_000i64))?;
+    }
+    if autosink.has_property("blocksize", None).is_ok() {
+        autosink.set_property("blocksize", &::glib::Value::from(&960u32))?;
+    }
 
     let src = appsrc.clone().dynamic_cast::<gst_app::AppSrc>().unwrap();
     src.set_caps(&gst::Caps::new_simple("audio/x-ts3audio", &[]));
     src.set_property_format(gst::Format::Time);
     //src.set_property("blocksize", &::glib::Value::from(&500u32))?;
     //src.set_max_bytes(1500);
-    //src.set_property_min_latency((gst::SECOND_VAL / 50) as i64); // 20 ms in ns
-    //src.set_property_min_latency((gst::SECOND_VAL / 30) as i64); // 20 ms in ns
+    src.set_property_min_latency((gst::SECOND_VAL / 50) as i64); // 20 ms in ns
     src.set_property_min_latency(0); // in ns
     // Important to reduce the playback latency
     src.set_property("do-timestamp", &::glib::Value::from(&true))?;
@@ -264,15 +299,12 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
     fakesrc.set_property("do-timestamp", &::glib::Value::from(&true))?;
     fakesrc.set_property("is-live", &::glib::Value::from(&true))?;
     fakesrc.set_property("samplesperbuffer", &::glib::Value::from(&960i32))?; // 20ms at 48 000 kHz
-    let typ = glib::Type::from_name("GstAudioTestSrcWave").expect("Type GstAudioTestSrcWave not found");
-    let class = glib::EnumClass::new(typ).expect("Cannot convert GstAudioTestSrcWave into EnumClass");
-    let val = class.get_value_by_name("Silence").expect("Cannot find audiotestsrc wave type 'silence'");
-    fakesrc.set_property("wave", &val.to_value())?;
+    fakesrc.set_property_from_str("wave", "Silence");
 
-    // TODO Force stereo and 48000 kHz
     pipeline.add_many(&[&appsrc, &demuxer, &fakesrc, &mixer, &queue, &autosink])?;
     gst::Element::link_many(&[&appsrc, &demuxer])?;
     gst::Element::link_many(&[&mixer, &queue, &autosink])?;
+    // Force stereo and 48000 kHz
     fakesrc.link_filtered(&mixer, &gst::Caps::new_simple(
         "audio/x-raw", &[("rate", &48000i32), ("channels", &2i32)]))?;
 
@@ -466,12 +498,11 @@ fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args:
     let sink = gst::ElementFactory::make("appsink", "appsink").ok_or_else(||
         format_err!("Missing appsink"))?;
 
-    // TODO On the receiving side: rtpjitterbuffer do-lost=true,
-
     opusenc.set_property_from_str("bitrate-type", "vbr");
     opusenc.set_property_from_str("audio-type", "voice"); // or generic
     // Discontinuous transmission: Reduce bandwidth of silence
-    opusenc.set_property("dtx", &glib::Value::from(&true))?;
+    // Unfortunately creates artifacts
+    //opusenc.set_property("dtx", &glib::Value::from(&true))?;
     // Inband forward error correction
     opusenc.set_property("inband-fec", &glib::Value::from(&true))?;
     // Packetloss between 0 - 100

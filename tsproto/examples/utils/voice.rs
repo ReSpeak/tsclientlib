@@ -42,7 +42,7 @@ impl IncommingVoiceHandler {
                 let buffer = buffer.get_mut().unwrap();
 
                 let clock = self.appsrc.get_clock().unwrap();
-                println!("Push buffer {} at {}", id, clock.get_time() - self.appsrc.get_base_time());
+                //println!("Push buffer {} at {}", id, clock.get_time() - self.appsrc.get_base_time());
 
                 let mut data = buffer.map_writable().unwrap();
                 packet.data.write(&mut Cursor::new(&mut *data))?;
