@@ -22,9 +22,10 @@ extern crate tokio_signal;
 extern crate tsproto;
 
 use std::cell::RefCell;
-use std::sync::Mutex;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use futures::{future, Future, Sink, Stream};
 use futures::sync::mpsc;
@@ -34,7 +35,7 @@ use num_traits::cast::ToPrimitive;
 use slog::{Drain, Logger};
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Handle, Remote};
+use tokio_core::reactor::{Core, Handle, Remote, Timeout};
 #[cfg(target_family = "unix")]
 use tokio_signal::unix::{Signal, SIGHUP};
 use tsproto::*;
@@ -44,6 +45,8 @@ use tsproto::packets::*;
 mod utils;
 use utils::*;
 use utils::voice::IncommingVoiceHandler;
+
+const VOICE_TIMEOUT_SECS: u64 = 1;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings =
@@ -148,7 +151,7 @@ fn main() {
         let logger2 = logger.clone();
         let logger3 = logger.clone();
         #[cfg(target_family = "unix")]
-        let sighup = Signal::new(SIGHUP, &handle).flatten_stream().for_each(move |_| {
+        let sighup = Signal::new(SIGHUP).flatten_stream().for_each(move |_| {
             // Switch state from playing to paused or reverse
             // Returns (success, current state, pending state)
             let state = pipe.get_state(gst::ClockTime::from_mseconds(10));
@@ -176,7 +179,7 @@ fn main() {
     }
 
     // Stop with ctrl + c
-    let ctrl_c = tokio_signal::ctrl_c(&handle).flatten_stream();
+    let ctrl_c = tokio_signal::ctrl_c().flatten_stream();
     core.run(ctrl_c.into_future().map(move |_| ()).map_err(move |_| ())).unwrap();
 
     // Disconnect
@@ -219,6 +222,20 @@ fn packet_sender(data: Weak<RefCell<ClientData>>,
     }))
 }
 
+fn voice_timeout<F: FnOnce() + 'static>(f: F, last_sent: Arc<Mutex<Instant>>, handle: Handle) {
+    let timeout = Timeout::new(Duration::from_secs(VOICE_TIMEOUT_SECS), &handle).unwrap();
+    let h = handle.clone();
+    handle.spawn(timeout.then(move |_| {
+        let last = *last_sent.lock().unwrap();
+        if Instant::now().duration_since(last).as_secs() >= VOICE_TIMEOUT_SECS {
+            f();
+        } else {
+            voice_timeout(f, last_sent, h);
+        }
+        Ok(())
+    }));
+}
+
 fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pipeline, failure::Error> {
     let pipeline = gst::Pipeline::new("ts-to-audio-pipeline");
 
@@ -231,12 +248,6 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
         format_err!("Missing audiomixer"))?;
     let queue = gst::ElementFactory::make("queue", "queue").ok_or_else(||
         format_err!("Missing queue"))?;
-    // Maybe force to resample to 48 kHz before and to hardware now.
-    // This would make all resamplers before just pass-through for opus which
-    // already uses 48 kHz.
-    // TODO Add resampler when necessary
-    //let resampler = gst::ElementFactory::make("audioresample", None).ok_or_else(||
-        //format_err!("Missing audioresample"))?;
 
     // The latency with autoaudiosink is high
     // Linux: Try pulsesink, alsasink
@@ -282,8 +293,6 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
     let src = appsrc.clone().dynamic_cast::<gst_app::AppSrc>().unwrap();
     src.set_caps(&gst::Caps::new_simple("audio/x-ts3audio", &[]));
     src.set_property_format(gst::Format::Time);
-    //src.set_property("blocksize", &::glib::Value::from(&500u32))?;
-    //src.set_max_bytes(1500);
     src.set_property_min_latency((gst::SECOND_VAL / 50) as i64); // 20 ms in ns
     src.set_property_min_latency(0); // in ns
     // Important to reduce the playback latency
@@ -304,7 +313,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
     pipeline.add_many(&[&appsrc, &demuxer, &fakesrc, &mixer, &queue, &autosink])?;
     gst::Element::link_many(&[&appsrc, &demuxer])?;
     gst::Element::link_many(&[&mixer, &queue, &autosink])?;
-    // Force stereo and 48000 kHz
+    // Additionally, we use the audiotestsrc to force the output to stereo and 48000 kHz
     fakesrc.link_filtered(&mixer, &gst::Caps::new_simple(
         "audio/x-raw", &[("rate", &48000i32), ("channels", &2i32)]))?;
 
@@ -320,8 +329,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
     demuxer.connect_pad_added(move |demuxer, src_pad| {
         debug!(logger, "Got new client pad"; "name" => src_pad.get_name());
         // Create decoder
-        // TODO Create fitting decoder and not decodebin
-        //let decode = gst::ElementFactory::make("opusdec",
+        // TODO Create fitting decoder and maybe audioresample to 48 kHz
         let decode = gst::ElementFactory::make("decodebin",
             format!("decoder_{}", src_pad.get_name()).as_str())
             .expect("Missing decodebin");
@@ -366,9 +374,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
                     ("Failed to link decoder")
                 );
             }
-            // TODO Link after adding eos probe
 
-            // Add eos probe
             let decode = decoder.clone();
             let logger = logger.clone();
             let mix = mixer.clone();
@@ -377,88 +383,83 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
             let autosink = sink.clone();
             let queue2 = queue.clone();
             let src_pad2 = src_pad.clone();
-            let handle = handle.clone();
-            let mut probe_type = gst::PadProbeType::EVENT_DOWNSTREAM;
-            probe_type.insert(gst::PadProbeType::BLOCK);
-            src_pad.add_probe(probe_type, move |_pad, info| {
-                let eos = info.data.as_ref()
-                    .and_then(|d| if let gst::PadProbeData::Event(e) = d {
-                        Some(e.get_type() == gst::EventType::Eos)
-                    } else {
-                        None
-                    })
-                    .unwrap_or(false);
+            let last_sent = Arc::new(Mutex::new(Instant::now()));
+            let last = last_sent.clone();
+            // Set as active if a buffer was sent
+            src_pad.add_probe(gst::PadProbeType::DATA_DOWNSTREAM, move |_pad, info| {
+                let mut last_sent = last.lock().unwrap();
+                *last_sent = Instant::now();
+                gst::PadProbeReturn::Ok
+            });
 
-                if eos {
-                    // Get latency
-                    // Mixer has 30 ms
-                    // autosink 220 ms
-                    let mut query = gst::Query::new_latency();
-                    if pipeline.get_by_name("autosink").unwrap().query(&mut query) {
-                        match query.view() {
-                            gst::QueryView::Latency(l) => println!("Latency: {:?}", l.get_result()),
-                            _ => {}
-                        }
+            // Check every second if the stream timed out
+            let func = move || {
+                // Get latency
+                // Mixer has 30 ms
+                // autosink 220 ms
+                let mut query = gst::Query::new_latency();
+                if pipeline.get_by_name("autosink").unwrap().query(&mut query) {
+                    match query.view() {
+                        gst::QueryView::Latency(l) => println!("Latency: {:?}", l.get_result()),
+                        _ => {}
                     }
-
-                    let decode = decode.clone();
-                    let logger = logger.clone();
-                    let mix = mix.clone();
-                    let demuxer = demuxer.clone();
-                    let pipeline = pipeline.clone();
-                    let autosink = autosink.clone();
-                    let queue2 = queue2.clone();
-                    let src_pad2 = src_pad2.clone();
-
-                    let last_pad = mix.iterate_sink_pads().skip(2).next().is_none();
-                    if last_pad {
-                        // Pause pipeline
-                        // TODO Only after all data is flushed
-                        mix.set_state(gst::State::Paused).into_result().unwrap();
-                        queue2.set_state(gst::State::Paused).into_result().unwrap();
-                        autosink.set_state(gst::State::Paused).into_result().unwrap();
-                    }
-
-                    handle.spawn(move |_| {
-                        // Unlink and remove decoder
-                        debug!(logger, "Remove client decoder");
-
-                        let mixer_pad = src_pad2.get_peer();
-                        let decode_sink_pad = decode.iterate_sink_pads().next();
-                        let demuxer_pad = decode_sink_pad.and_then(|p| p.ok())
-                            .and_then(|p| p.get_peer());
-
-                        gst::Element::unlink_many(&[&demuxer, &decode, &mix]);
-
-                        // Remove pad from mixer
-                        if let Some(pad) = mixer_pad {
-                            if let Err(e) = mix.remove_pad(&pad) {
-                                error!(logger, "Cannot remove mixer pad"; "error" => ?e);
-                            }
-                        } else {
-                            error!(logger, "Cannot find mixer pad";);
-                        }
-
-                        // Remove pad from demuxer
-                        if let Some(pad) = demuxer_pad {
-                            if let Err(e) = demuxer.remove_pad(&pad) {
-                                error!(logger, "Cannot remove demuxer pad"; "error" => ?e);
-                            }
-                        } else {
-                            error!(logger, "Cannot find demuxer pad";);
-                        }
-
-                        if let Err(e) = pipeline.remove(&decode) {
-                            error!(logger, "Cannot remove decoder from pipeline"; "error" => ?e);
-                        }
-                        // Cleanup
-                        decode.set_state(gst::State::Null).into_result().unwrap();
-                        Ok(())
-                    });
-                    return gst::PadProbeReturn::Drop;
                 }
 
-                gst::PadProbeReturn::Pass
+                let decode = decode.clone();
+                let logger = logger.clone();
+                let mix = mix.clone();
+                let demuxer = demuxer.clone();
+                let pipeline = pipeline.clone();
+                let autosink = autosink.clone();
+                let queue2 = queue2.clone();
+                let src_pad2 = src_pad2.clone();
+
+                let last_pad = mix.iterate_sink_pads().skip(2).next().is_none();
+                if last_pad {
+                    // Pause pipeline
+                    mix.set_state(gst::State::Paused).into_result().unwrap();
+                    queue2.set_state(gst::State::Paused).into_result().unwrap();
+                    autosink.set_state(gst::State::Paused).into_result().unwrap();
+                }
+
+                // Unlink and remove decoder
+                debug!(logger, "Remove client decoder");
+
+                let mixer_pad = src_pad2.get_peer();
+                let decode_sink_pad = decode.iterate_sink_pads().next();
+                let demuxer_pad = decode_sink_pad.and_then(|p| p.ok())
+                    .and_then(|p| p.get_peer());
+
+                gst::Element::unlink_many(&[&demuxer, &decode, &mix]);
+
+                // Remove pad from mixer
+                if let Some(pad) = mixer_pad {
+                    if let Err(e) = mix.remove_pad(&pad) {
+                        error!(logger, "Cannot remove mixer pad"; "error" => ?e);
+                    }
+                } else {
+                    error!(logger, "Cannot find mixer pad";);
+                }
+
+                // Remove pad from demuxer
+                if let Some(pad) = demuxer_pad {
+                    if let Err(e) = demuxer.remove_pad(&pad) {
+                        error!(logger, "Cannot remove demuxer pad"; "error" => ?e);
+                    }
+                } else {
+                    error!(logger, "Cannot find demuxer pad";);
+                }
+
+                if let Err(e) = pipeline.remove(&decode) {
+                    error!(logger, "Cannot remove decoder from pipeline"; "error" => ?e);
+                }
+                // Cleanup
+                decode.set_state(gst::State::Null).into_result().unwrap();
+            };
+
+            handle.spawn(move |h| {
+                voice_timeout(func, last_sent, h.clone());
+                Ok(())
             });
 
             if first_pad {
