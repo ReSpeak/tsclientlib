@@ -169,7 +169,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
         }
     }
 
-    /// Handle `Voice` and `VoiceLow` packets.
+    /*/// Handle `Voice` and `VoiceLow` packets.
     ///
     /// The first 3 packets for each audio transmission have the compressed flag
     /// set, which means they are fragmented and should be concatenated.
@@ -220,7 +220,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
         };
         res.push(Packet::new(header.clone(), packet_data));
         res
-    }
+    }*/
 
     fn on_packet_received(&mut self, addr: SocketAddr, udp_packet: UdpPacket)
         -> futures::Poll<Option<<Self as Stream>::Item>,
@@ -391,7 +391,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                                         }
                                         packets::Data::VoiceS2C { .. } |
                                         packets::Data::VoiceWhisperS2C { .. } => {
-                                            // TODO Not yet completely working, seems to cut of the beginning
+                                            // Seems to work better without assembling the first 3 voice packets
                                             // Use handle_voice_packet to assemble fragmented voice packets
                                             /*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
                                             let res = res.drain(..).map(|p|
