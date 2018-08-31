@@ -13,4 +13,5 @@ use std::net::SocketAddr;
 use Result;
 
 pub fn resolve() -> Result<SocketAddr> {
+	unimplemented!()
 }

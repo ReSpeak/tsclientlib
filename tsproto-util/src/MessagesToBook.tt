@@ -15,7 +15,7 @@ impl Connection {
                 // Functions first
                 for rule in &event.rules {
                     if let RuleKind::Function { ref name, ref to } = *rule { #>
-                let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
+                self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd);
                     <# }
                 }
                 let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name)); #>
@@ -41,11 +41,7 @@ impl Connection {
                             }
                         }
 
-                        RuleKind::Function { ref to, .. } => { #>
-            <# for p in to.iter() { #>
-                r.<#= to_snake_case(&p.name) #> = <#= to_snake_case(&p.name) #>;
-            <# }
-                        }
+                        RuleKind::Function { ref to, .. } => {}
                     }
                 }
             } else if event.op == RuleOp::Add {

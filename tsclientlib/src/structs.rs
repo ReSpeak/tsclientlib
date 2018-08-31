@@ -3,6 +3,7 @@ use std::mem;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::rc::{Rc, Weak};
+use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
 use futures::{self, Stream};
@@ -16,6 +17,26 @@ use codec::Message;
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
+
+macro_rules! max_clients {
+    ($cmd:ident) => {{
+        let ch = if $cmd.is_max_clients_unlimited { None }
+            else if $cmd.max_clients >= 0 && $cmd.max_clients <= u16::MAX as i32 { Some($cmd.max_clients as u16) }
+            else {
+                // TODO Warning
+                None
+            };
+        let ch_fam =
+            if $cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
+            else if $cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
+            else if $cmd.max_family_clients >= 0 && $cmd.max_family_clients <= u16::MAX as i32 { MaxFamilyClients::Limited($cmd.max_family_clients as u16) }
+            else {
+                // TODO Warning
+                MaxFamilyClients::Unlimited
+            };
+        (ch, ch_fam)
+    }};
+}
 
 impl Connection {
     fn new(id: ConnectionId, server_uid: Uid, packet: &InitServer)
@@ -53,7 +74,7 @@ impl Connection {
                 version: packet.server_version.clone(),
                 created: packet.server_created,
                 ip: packet.server_ip.clone(),
-                // TODO ask_for_privilegekey: packet.ask_for_privilege,
+                ask_for_privilegekey: packet.ask_for_privilegekey,
                 // TODO license: packet.license_type,
                 license: LicenseType::NoLicense,
 
@@ -106,30 +127,20 @@ impl Connection {
 
     fn return_false<T>(&self, _: T) -> bool { false }
     fn return_none<T, O>(&self, _: T) -> Option<O> { None }
+    fn void_fun<T, U>(&self, _: T, _: U) {}
 
     fn max_clients_cc_fun(&self, cmd: &ChannelCreated) -> (Option<u16>, MaxFamilyClients) {
-        let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
-        let ch_fam =
-            if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
-            else if cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
-            else { MaxFamilyClients::Limited(cmd.max_family_clients) };
-        (ch, ch_fam)
+        max_clients!(cmd)
     }
-    fn max_clients_ce_fun(&self, cmd: &ChannelEdited) -> (Option<u16>, MaxFamilyClients) {
-        let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
-        let ch_fam =
-            if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
-            else if cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
-            else { MaxFamilyClients::Limited(cmd.max_family_clients) };
-        (ch, ch_fam)
+    fn max_clients_ce_fun(&mut self, channel_id: ChannelId, cmd: &ChannelEdited) {
+        if let Ok(channel) = self.get_mut_channel(channel_id) {
+            let (ch, ch_fam) = max_clients!(cmd);
+            channel.max_clients = ch;
+            channel.max_family_clients = ch_fam;
+        }
     }
     fn max_clients_cl_fun(&self, cmd: &ChannelList) -> (Option<u16>, MaxFamilyClients) {
-        let ch = if cmd.is_max_clients_unlimited { None } else { Some(cmd.max_clients) };
-        let ch_fam =
-            if cmd.is_max_family_clients_unlimited { MaxFamilyClients::Unlimited }
-            else if cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
-            else { MaxFamilyClients::Limited(cmd.max_family_clients) };
-        (ch, ch_fam)
+        max_clients!(cmd)
     }
 
     fn channel_type_cc_fun(&self, cmd: &ChannelCreated) -> ChannelType {
@@ -138,10 +149,13 @@ impl Connection {
         else { ChannelType::Temporary }
     }
 
-    fn channel_type_ce_fun(&self, cmd: &ChannelEdited) -> ChannelType {
-        if cmd.is_permanent { ChannelType::Permanent }
-        else if cmd.is_semi_permanent { ChannelType::SemiPermanent }
-        else { ChannelType::Temporary }
+    fn channel_type_ce_fun(&mut self, channel_id: ChannelId, cmd: &ChannelEdited) {
+        if let Ok(channel) = self.get_mut_channel(channel_id) {
+            let typ = if cmd.is_permanent { ChannelType::Permanent }
+            else if cmd.is_semi_permanent { ChannelType::SemiPermanent }
+            else { ChannelType::Temporary };
+            channel.channel_type = typ;
+        }
     }
 
     fn channel_type_cl_fun(&self, cmd: &ChannelList) -> ChannelType {
