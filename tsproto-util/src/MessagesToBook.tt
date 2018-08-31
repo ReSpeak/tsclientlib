@@ -57,17 +57,13 @@ impl Connection {
                     <# }
                 } #>
                 let r = <#= event.book_struct.name #> {
-                <# // Add ids
-                for (id, eid) in event.book_struct.id.iter().zip(event.id.iter()) {
-                    match *eid {
-                        IdKind::Fld(fld) => { #>
-                    <#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld) #>,
-                        <# }
-                        IdKind::Id => { #>
+                <# if let Some(id) = event.book_struct.id.first() { #>
                     <#= PropId::from(id).get_attr_name(&event.book_struct) #>: self.id,
-                        <# }
-                    }
-                }
+                <# }
+                // Add ids
+                for (id, fld) in event.book_struct.id.iter().skip(1).zip(event.id.iter()) { #>
+                    <#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld) #>,
+                <# }
 
                 let v = vec![];
                 // Function return values

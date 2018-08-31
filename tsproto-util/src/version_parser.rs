@@ -1,11 +1,16 @@
-use csv;
 use ::*;
 
-#[derive(Debug, Deserialize)]
+use std::collections::HashMap;
+use csv;
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Version {
+    pub channel: String,
     pub version: String,
     pub platform: String,
     pub hash: String,
+    #[serde(default)]
+    count: u32,
 }
 
 impl Version {
@@ -22,6 +27,14 @@ impl Version {
                 res.push('X');
             }
         }
+        if self.channel != "Stable" {
+            res.push('_');
+            res.push_str(&self.channel);
+        }
+        if self.count != 0 {
+            res.push_str("__");
+            res.push_str(&self.count.to_string());
+        }
         res
     }
 
@@ -37,6 +50,23 @@ impl Version {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct VersionKey {
+    pub channel: String,
+    pub version: String,
+    pub platform: String,
+}
+
+impl VersionKey {
+    fn new(v: &Version) -> Self {
+        Self {
+            channel: v.channel.clone(),
+            version: v.version.split(' ').next().unwrap().to_string(),
+            platform: v.platform.clone(),
+        }
+    }
+}
+
 #[derive(Template)]
 #[TemplatePath = "src/VersionDeclarations.tt"]
 #[derive(Default, Debug)]
@@ -49,6 +79,25 @@ impl Declaration for Versions {
 
     fn parse_from_read(read: &mut Read, (): Self::Dep) -> Self {
         let mut table = csv::Reader::from_reader(read);
-        Versions(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap())
+        let mut vs = Versions(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap());
+
+        // Add count if necessary
+        let mut counts: HashMap<_, u32> = HashMap::new();
+        for v in &vs.0 {
+            let key = VersionKey::new(v);
+            *counts.entry(key).or_default() += 1;
+        }
+        counts.retain(|_, c| *c > 1);
+
+        for v in vs.0.iter_mut().rev() {
+            let key = VersionKey::new(v);
+            if let Some(count) = counts.get_mut(&key) {
+                v.count = *count;
+                *count -= 1;
+            }
+
+        }
+
+        vs
     }
 }

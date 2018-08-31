@@ -93,6 +93,7 @@ macro_rules! tryf {
 
 pub mod codec;
 mod structs;
+mod resolver;
 
 // Reexports
 pub use tsproto_commands::ConnectionId;

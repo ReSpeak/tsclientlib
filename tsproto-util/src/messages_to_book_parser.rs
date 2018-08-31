@@ -1,8 +1,8 @@
 use ::*;
 use message_parser::{Message, Field};
 use book_parser::{Struct, Property, PropId};
-use regex::{Regex};
-use std::io::BufReader;
+
+use std::str::FromStr;
 
 #[derive(Template)]
 #[TemplatePath = "src/MessagesToBook.tt"]
@@ -17,7 +17,7 @@ pub struct MessagesToBookDeclarations<'a> {
 struct Event<'a> {
     op: RuleOp,
     /// Unique access tuple to get the property
-    id: Vec<IdKind<'a>>,
+    id: Vec<&'a Field>,
     msg: &'a Message,
     book_struct: &'a Struct,
     rules: Vec<RuleKind<'a>>,
@@ -43,17 +43,63 @@ enum RuleOp {
     Update,
 }
 
-#[derive(Debug)]
-enum IdKind<'a> {
-    Fld(&'a Field),
-    Id,
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+struct TomlStruct { rule: Vec<Rule> }
+
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+struct Rule {
+    id: Vec<String>,
+    from: String,
+    to: String,
+    operation: String,
+    properties: Option<Vec<RuleProperty>>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+struct RuleProperty {
+    from: Option<String>,
+    to: Option<String>,
+    operation: Option<String>,
+
+    function: Option<String>,
+    tolist: Option<Vec<String>>,
+}
+
+impl RuleProperty {
+    fn is_valid(&self) -> bool {
+        if self.from.is_some() {
+            self.to.is_some() && self.function.is_none() && self.tolist.is_none()
+        } else {
+            self.from.is_none() && self.to.is_none() && self.operation.is_none()
+                && self.function.is_some() && self.tolist.is_some()
+        }
+    }
+}
+
+impl FromStr for RuleOp {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "add" {
+            Ok(RuleOp::Add)
+        } else if s == "remove" {
+            Ok(RuleOp::Remove)
+        } else if s == "update" {
+            Ok(RuleOp::Update)
+        } else {
+            Err("Cannot parse operation, needs to be add, remove or update".to_string())
+        }
+    }
 }
 
 impl<'a> Declaration for MessagesToBookDeclarations<'a> {
     type Dep = (&'a BookDeclarations, &'a MessageDeclarations);
 
-    fn get_filename() -> &'static str { "MessagesToBook.txt" }
+    fn get_filename() -> &'static str { "MessagesToBook.toml" }
 
+    #[cfg(TODO)]
     fn parse_from_read(read: &mut Read, (book, messages): Self::Dep) -> Self {
         let rgx_event = Regex::new(r##"^\s*(?P<msg>\w+)\s*->\s*(?P<stru>\w+)\[(?P<id>(\s*(@|\w+))*)\](?P<mod>(\+|-)?)$"##).unwrap();
         let rgx_rule = Regex::new(r##"^\s*(?P<fld>\w+)\s*->\s*(?P<prop>(\w+|\(((\s*\w+\s*)(,(\s*\w+\s*))*)\)))(?P<mod>(\+|-)?)$"##).unwrap();
@@ -152,8 +198,107 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
 
         MessagesToBookDeclarations{ book, messages, decls }
     }
+
+    fn parse(s: &str, (book, messages): Self::Dep) -> Self {
+        let mut rules: TomlStruct = ::toml::from_str(s).unwrap();
+
+        let mut decls: Vec<_> = rules.rule.drain(..).map(|r| {
+            // TODO Rename fields to toml names
+            let set_msg = messages.get_message(&r.from);
+            let msg_fields = set_msg.attributes.iter()
+                .map(|a| messages.get_field(a)).collect::<Vec<_>>();
+            let book_struct = book.structs.iter().find(|s| s.name == r.to)
+                .unwrap_or_else(|| panic!("Cannot find struct {}", r.to));
+
+            let mut properties = r.properties.unwrap_or_else(|| Vec::new());
+
+            let mut ev = Event {
+                op: r.operation.parse().expect("Failed to parse operation"),
+                id: r.id.iter().map(|s| find_field(s, &msg_fields)).collect(),
+                msg: set_msg,
+                book_struct: book_struct,
+                rules: properties.drain(..).map(|p| {
+                    assert!(p.is_valid());
+
+                    let find_prop = |name, book_struct: &'a Struct| -> &'a Property {
+                        if let Some(prop) = book_struct.properties.iter()
+                            .find(|p| p.name == name) {
+                            return prop;
+                        }
+                        panic!("No such (nested) property {} found in struct", name);
+                    };
+
+                    if p.function.is_some() {
+                        let mut list = p.tolist.unwrap();
+                        let rule = RuleKind::Function {
+                            name: p.function.unwrap(),
+                            to: list.drain(..).map(|p|
+                                find_prop(p, book_struct)).collect(),
+                        };
+                        rule
+                    } else {
+                        RuleKind::Map {
+                            from: find_field(&p.from.unwrap(), &msg_fields),
+                            to: find_prop(p.to.unwrap(), book_struct),
+                            op: p.operation.map(|s| s.parse().expect(
+                                "Invalid operation for property"))
+                                .unwrap_or(RuleOp::Update),
+                        }
+                    }
+                }).collect(),
+            };
+
+            // Add attributes with the same name automatically (if they are not
+            // yet there).
+            let used_flds = ev.rules
+                .iter()
+                .filter_map(|f| match *f {
+                    RuleKind::Map{ from, .. } => Some(from),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+
+            let mut used_props = vec![];
+            for rule in &ev.rules {
+                match rule {
+                    &RuleKind::Function{ ref to, .. } => {
+                        for p in to {
+                            used_props.push(p.name.clone());
+                        }
+                    },
+                    _ => {}
+                }
+            }
+
+            for fld in &msg_fields {
+                if used_flds.contains(&fld) {
+                    continue;
+                }
+                if let Some(prop) = book.get_struct(&ev.book_struct.name).properties
+                    .iter().find(|p| p.name == fld.pretty) {
+                    if used_props.contains(&prop.name) {
+                        continue;
+                    }
+
+                    ev.rules.push(RuleKind::Map {
+                        from: fld,
+                        to: prop,
+                        op: RuleOp::Update,
+                    });
+                }
+            }
+
+            ev
+        }).collect();
+
+        // InitServer is done manually
+        decls.retain(|ev| ev.msg.name != "InitServer");
+
+        Self { book, messages, decls }
+    }
 }
 
+#[cfg(TODO)]
 fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev: Option<(Event<'a>, Vec<&'a Field>)>) {
     if let Some((mut ev, flds)) = buildev {
         let used_flds = ev.rules
@@ -196,18 +341,9 @@ fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev:
 }
 
 // the in rust callable name (in PascalCase) from the field
-fn find_field<'a>(name: &str, msg_fields: &Vec<&'a Field>, i: usize) -> &'a Field {
+fn find_field<'a>(name: &str, msg_fields: &Vec<&'a Field>) -> &'a Field {
     *msg_fields.iter().find(|f| f.pretty == name)
-        .expect(&format!("Cannot find field '{}' in line {}", name, i))
-}
-
-fn mod_to_enu(modi: &str, i: usize) -> RuleOp {
-    match modi {
-        "+" => RuleOp::Add,
-        "-" => RuleOp::Remove,
-        "" => RuleOp::Update,
-        _ => panic!("Unknown modifier in line {}", i)
-    }
+        .expect(&format!("Cannot find field '{}'", name))
 }
 
 impl<'a> RuleKind<'a> {
@@ -222,17 +358,15 @@ impl<'a> RuleKind<'a> {
 
 fn get_id_args(event: &Event) -> String {
     let mut res = String::new();
-    for id in &event.id {
+    for f in &event.id {
         if !res.is_empty() {
             res.push_str(", ");
         }
-        if let IdKind::Fld(f) = *id {
-            if is_ref_type(&f.get_rust_type("")) {
-                res.push('&');
-            }
-            res.push_str("cmd.");
-            res.push_str(&f.get_rust_name());
+        if is_ref_type(&f.get_rust_type("")) {
+            res.push('&');
         }
+        res.push_str("cmd.");
+        res.push_str(&f.get_rust_name());
     }
     res
 }

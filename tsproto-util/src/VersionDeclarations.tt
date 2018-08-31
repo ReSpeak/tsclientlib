@@ -1,34 +1,55 @@
 <#@ template cleanws="true" #>
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
+pub enum VersionChannel {
+	Stable,
+	Beta,
+	Alpha,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(non_camel_case_types)]
 pub enum Version {
 <# for v in &self.0 { #>
 	<#= v.get_enum_name() #>,
 <# } #>
+	Custom { platform: String, version: String, signature: Vec<u8>, channel: VersionChannel },
 }
 
 impl Version {
-	pub fn get_platform(&self) -> &'static str {
+	pub fn get_platform(&self) -> &str {
 		match *self {
 		<# for v in &self.0 { #>
 			Version::<#= v.get_enum_name() #> => "<#= v.platform #>",
 		<# } #>
+			Version::Custom { ref platform, .. } => platform,
 		}
 	}
 
-	pub fn get_version_string(&self) -> &'static str {
+	pub fn get_version_string(&self) -> &str {
 		match *self {
 		<# for v in &self.0 { #>
 			Version::<#= v.get_enum_name() #> => "<#= v.version #>",
 		<# } #>
+			Version::Custom { ref version, .. } => version,
 		}
 	}
 
-	pub fn get_signature(&self) -> &'static [u8] {
+	pub fn get_signature(&self) -> &[u8] {
 		match *self {
 		<# for v in &self.0 { #>
 			Version::<#= v.get_enum_name() #> => &[<#= v.get_sign_array() #>],
 		<# } #>
+			Version::Custom { ref signature, .. } => signature,
+		}
+	}
+
+	pub fn get_channel(&self) -> VersionChannel {
+		match *self {
+		<# for v in &self.0 { #>
+			Version::<#= v.get_enum_name() #> => VersionChannel::<#= v.channel #>,
+		<# } #>
+			Version::Custom { channel, .. } => channel,
 		}
 	}
 }

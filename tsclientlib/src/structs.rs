@@ -53,7 +53,7 @@ impl Connection {
                 version: packet.server_version.clone(),
                 created: packet.server_created,
                 ip: packet.server_ip.clone(),
-                ask_for_privilegekey: packet.ask_for_privilege,
+                // TODO ask_for_privilegekey: packet.ask_for_privilege,
                 // TODO license: packet.license_type,
                 license: LicenseType::NoLicense,
 
