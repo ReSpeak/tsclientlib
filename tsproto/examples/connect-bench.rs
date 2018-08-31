@@ -9,8 +9,6 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate structopt;
-#[macro_use]
-extern crate structopt_derive;
 extern crate tokio_core;
 extern crate tsproto;
 

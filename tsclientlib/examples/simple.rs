@@ -1,8 +1,6 @@
 extern crate failure;
 extern crate futures;
 extern crate structopt;
-#[macro_use]
-extern crate structopt_derive;
 extern crate tokio_core;
 extern crate tsclientlib;
 

@@ -36,7 +36,7 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
             }})? }}", field.pretty),
         "Uid" => "Uid(val.to_string())".into(),
         "String" => "val.to_string()".into(),
-        "IconHash" => format!("IconHash(val.parse::<u64>().map_err(|e| ParseError::ParseInt {{
+        "IconHash" => format!("IconHash(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
                 arg: \"{}\",
                 value: val.to_string(),
                 error: e,
@@ -105,7 +105,7 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 fn vector_value_deserializer(field: &Field) -> String {
     let rust_type = field.get_rust_type("");
     let inner_type = &rust_type[4..rust_type.len()-1];
-    String::from(format!("val.split(' ').map(|val|Ok({})).collect::<Result<Vec<{}>, ParseError>>()?",
+    String::from(format!("val.split(',').map(|val|Ok({})).collect::<Result<Vec<{}>, ParseError>>()?",
         single_value_deserializer(field, inner_type), inner_type))
 }
 

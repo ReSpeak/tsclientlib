@@ -22,4 +22,3 @@ tsproto-util = { path = "../tsproto-util" }
 
 [dev-dependencies]
 structopt = "0.2"
-structopt-derive = "0.2"

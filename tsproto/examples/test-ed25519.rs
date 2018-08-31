@@ -2,8 +2,6 @@ extern crate base64;
 extern crate curve25519_dalek;
 extern crate openssl;
 extern crate structopt;
-#[macro_use]
-extern crate structopt_derive;
 extern crate tsproto;
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
