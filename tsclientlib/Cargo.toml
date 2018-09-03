@@ -9,11 +9,15 @@ base64 = "0.9"
 chrono = "0.4"
 failure = "0.1"
 futures = "0.1"
+rand = "0.5"
+reqwest = "0.8"
 slog = "2"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 tokio-core = "0.1"
+trust-dns-proto = "0.5.0-alpha.1"
+trust-dns-resolver = "0.10.0-alpha.2"
 tsproto = { path = "../tsproto" }
 tsproto-commands = { path = "../tsproto-commands" }
 

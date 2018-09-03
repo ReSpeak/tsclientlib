@@ -42,12 +42,16 @@ extern crate chrono;
 #[macro_use]
 extern crate failure;
 extern crate futures;
+extern crate rand;
+extern crate reqwest;
 #[macro_use]
 extern crate slog;
 extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio_core;
+extern crate trust_dns_proto;
+extern crate trust_dns_resolver;
 extern crate tsproto;
 extern crate tsproto_commands;
 
@@ -113,16 +117,27 @@ include!(concat!(env!("OUT_DIR"), "/getters.rs"));
 
 #[derive(Fail, Debug)]
 pub enum Error {
-    #[fail(display = "Connection failed ({})", _0)]
-    ConnectionFailed(String),
     #[fail(display = "{}", _0)]
     Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
-    Tsproto(#[cause] tsproto::Error),
+    DnsProto(#[cause] trust_dns_proto::error::ProtoError),
+    #[fail(display = "{}", _0)]
+    Io(#[cause] std::io::Error),
     #[fail(display = "{}", _0)]
     ParseMessage(#[cause] tsproto_commands::messages::ParseError),
     #[fail(display = "{}", _0)]
+    Resolve(#[cause] trust_dns_resolver::error::ResolveError),
+    #[fail(display = "{}", _0)]
+    Tsproto(#[cause] tsproto::Error),
+    #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
+
+    #[fail(display = "Connection failed ({})", _0)]
+    ConnectionFailed(String),
+
+    #[doc(hidden)]
+    #[fail(display = "Nonexhaustive enum – not an error")]
+    __Nonexhaustive,
 }
 
 impl From<base64::DecodeError> for Error {
@@ -131,15 +146,33 @@ impl From<base64::DecodeError> for Error {
     }
 }
 
-impl From<tsproto::Error> for Error {
-    fn from(e: tsproto::Error) -> Self {
-        Error::Tsproto(e)
+impl From<trust_dns_proto::error::ProtoError> for Error {
+    fn from(e: trust_dns_proto::error::ProtoError) -> Self {
+        Error::DnsProto(e)
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e)
     }
 }
 
 impl From<tsproto_commands::messages::ParseError> for Error {
     fn from(e: tsproto_commands::messages::ParseError) -> Self {
         Error::ParseMessage(e)
+    }
+}
+
+impl From<trust_dns_resolver::error::ResolveError> for Error {
+    fn from(e: trust_dns_resolver::error::ResolveError) -> Self {
+        Error::Resolve(e)
+    }
+}
+
+impl From<tsproto::Error> for Error {
+    fn from(e: tsproto::Error) -> Self {
+        Error::Tsproto(e)
     }
 }
 
@@ -779,7 +812,7 @@ impl ConnectOptions {
     /// A private method to create a config with only default values.
     ///
     /// This is not in the public interface because the created configuration
-    /// is invalid.
+    /// is invalid without an address.
     #[inline]
     fn default() -> Self {
         Self {
@@ -787,7 +820,7 @@ impl ConnectOptions {
             local_address: "0.0.0.0:0".parse().unwrap(),
             private_key: None,
             name: String::from("TeamSpeakUser"),
-            version: Version::Linux_3_1_8,
+            version: Version::Linux_3_2_1,
             log_packets: false,
         }
     }
@@ -858,7 +891,7 @@ impl ConnectOptions {
     ///
     /// # Default
     ///
-    /// 3.1.8 on Linux
+    /// 3.2.1 on Linux
     #[inline]
     pub fn version(mut self, version: Version) -> Self {
         self.version = version;
