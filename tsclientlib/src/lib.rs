@@ -120,6 +120,8 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Base64(#[cause] base64::DecodeError),
     #[fail(display = "{}", _0)]
+    Canceled(#[cause] futures::Canceled),
+    #[fail(display = "{}", _0)]
     DnsProto(#[cause] trust_dns_proto::error::ProtoError),
     #[fail(display = "{}", _0)]
     Io(#[cause] std::io::Error),
@@ -143,6 +145,12 @@ pub enum Error {
 impl From<base64::DecodeError> for Error {
     fn from(e: base64::DecodeError) -> Self {
         Error::Base64(e)
+    }
+}
+
+impl From<futures::Canceled> for Error {
+    fn from(e: futures::Canceled) -> Self {
+        Error::Canceled(e)
     }
 }
 
