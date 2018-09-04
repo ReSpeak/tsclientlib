@@ -1,33 +1,26 @@
 //! Resolve TeamSpeak server addresses of any kind.
-//!
-//! Using
-//! 1. Server nicknames
-//! 1. TSDNS (SRV records)
-//! 1. Normal DNS (A and AAAA records)
-//! 1. The address directly if it is an ip
-//!
-//! A port is determined automatically, if it is not specified.
 
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::thread;
 use std::time::Duration;
 
-use futures::{future, Future, stream, Stream};
-use futures::future::Either;
+use futures::{Async, future, Future, Poll, stream, Stream};
 use futures::sync::oneshot;
 use rand::{thread_rng, Rng};
 use slog::Logger;
-use tokio_core::reactor::{Handle, Timeout};
+use tokio_core::reactor::Handle;
 use trust_dns_resolver::{AsyncResolver, Name};
 
 use {Error, Result};
 
 const RESOLVER_ADDR: ([u8; 4], u16) = ([8,8,8,8], 53);
 const DEFAULT_PORT: u16 = 9987;
+const TSDNS_DEFAULT_PORT: u16 = 41144;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
 const DNS_PREFIX_UDP: &str = "_ts3._udp.";
 const NICKNAME_LOOKUP_ADDRESS: &str = "https://named.myteamspeak.com/lookup?name=";
+// TODO Dynamic timeout with exponential backoff starting at 1s
 /// Wait this amount of seconds before giving up.
 const TIMEOUT_SECONDS: u64 = 10;
 // TODO global resolve timeout of 30s
@@ -37,7 +30,71 @@ enum ParseIpResult<'a> {
 	Other(&'a str, Option<u16>),
 }
 
+/// Pick the first stream which does not return an error or is empty.
+///
+/// # Panic
+///
+/// Panicks when polled without child streams.
+struct StreamCombiner<S: Stream> {
+	streams: Vec<S>,
+}
+
+impl<S: Stream> StreamCombiner<S> {
+	fn new(streams: Vec<S>) -> Self {
+		Self { streams }
+	}
+}
+
+impl<S: Stream> Stream for StreamCombiner<S> {
+	type Item = S::Item;
+	type Error = S::Error;
+
+	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
+		if self.streams.is_empty() {
+			panic!("StreamCombiner has no children");
+		}
+		loop {
+			let res = self.streams[0].poll();
+			match res {
+				Ok(Async::NotReady) => return res,
+				Ok(Async::Ready(Some(_))) => {
+					if self.streams.len() > 1 {
+						// Remove all other self.streams
+						self.streams = vec![self.streams.remove(0)];
+					}
+					return res;
+				}
+				_ => {
+					if self.streams.len() > 1 {
+						self.streams.remove(0);
+					} else {
+						return res;
+					}
+				}
+			}
+		}
+	}
+}
+
 /// Beware that this may be slow because it tries all available methods.
+///
+/// The following methods are tried:
+/// 1. If the address is an ip, the ip is returned
+/// 1. Server nickname
+/// 1. The SRV record at `_ts3._udp.address`
+/// 1. The SRV record at `_tsdns._tcp.address` to get the address of a tsdns
+///    server
+/// 1. Connect directly to a tsdns server at `address`
+/// 1. Directly resolve the address to an ip address
+///
+/// To get the address of the tsdns server, all subdomains are tried.
+/// E.g. for my.cool.subdomain.from.de:
+/// - from.de
+/// - subdomain.from.de
+/// - cool.subdomain.from.de
+///
+/// If a port is given with `:port`, it overwrites the automatically determined
+/// port.
 pub fn resolve(logger: Logger, handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
 	let addr;
 	let port;
@@ -68,85 +125,111 @@ pub fn resolve(logger: Logger, handle: Handle, address: &str) -> impl Stream<Ite
 		}
 	})();
 
-	Box::new(stream::futures_ordered(Some(nickname_res.into_future()
-		.select2(Timeout::new(Duration::from_secs(TIMEOUT_SECONDS), &handle)
-			.expect("Failed to create Timeout"))
-		.then(move |r| -> Result<Box<Stream<Item=_, Error=_>>> { match r {
-			Ok(Either::A(((Some(addr), stream), _))) =>
-				Ok(Box::new(stream::once(Ok(addr)).chain(stream))),
-			_ => {
-				// Nickname resolution failed
-				let (resolver, background) = AsyncResolver::from_system_conf()?;
-				handle.spawn(background);
-
-				// Try to get the address by an SRV record
-				let prefix = Name::from_str(DNS_PREFIX_UDP).map_err(|e| format_err!("Canot parse udp domain prefix ({:?})", e))?;
-				let mut name = Name::from_str(&addr).map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
-				name.set_fqdn(true);
-
-				let srv_res = resolve_srv(resolver.clone(), &prefix.append_name(&name));
-				Ok(Box::new(stream::futures_ordered(Some(srv_res.into_future()
-					.select2(Timeout::new(Duration::from_secs(TIMEOUT_SECONDS), &handle)
-						.expect("Failed to create Timeout"))
-					.then(move |r| -> Result<Box<Stream<Item=_, Error=_>>> { match r {
-						Ok(Either::A(((Some(addr), stream), _))) =>
-							Ok(Box::new(stream::once(Ok(addr)).chain(stream))),
-						_ => {
-							// Udp SRV resolution failed
-							Ok(Box::new(resolve_for_tsdns(logger, handle, addr, port)))
-						}
-					}})
-				)).flatten()))
-			}
-		}}))).flatten())
-}
-
-fn resolve_for_tsdns(logger: Logger, handle: Handle, addr: String, port: Option<u16>)
-	-> impl Stream<Item = SocketAddr, Error = Error> {
-	// Try to get the address of a tsdns server by an SRV record
-	let mut name = match Name::from_str(&addr) {
+	let (resolver, background) = match AsyncResolver::from_system_conf() {
 		Ok(r) => r,
-		Err(e) => {
-			let res: Box<Stream<Item=_, Error=_>> = Box::new(stream::once(Err(format_err!("Cannot parse domain ({:?})", e).into())));
-			return res;
-		}
+		Err(e) => return Box::new(stream::once(Err(e.into()))),
 	};
-	name.set_fqdn(true);
-	// split domain to get a list of subdomains, for e.g.:
-	// my.cool.subdomain.from.de
-	// => from.de
-	// => subdomain.from.de
-	// => cool.subdomain.from.de
-	(2..name.num_labels()).map(|i| {
-		let name = name.trim_to(i as usize);
-		//if let Ok(res) = resolve_srv(resolver.clone(), &format!("{}{}.", DNS_PREFIX_TCP, name)) {
-			// Got tsdns server
-			return resolve_tsdns(&addr).map(|mut addr| {
-				if let Some(port) = port {
-					// Overwrite port if it was specified
-					addr.set_port(port);
-				}
-				addr
-			});
-		//}
-	});
-	unreachable!()
+	handle.spawn(background);
+	let resolve = resolver.clone();
+	let address = addr.clone();
+	let srv_res = stream::futures_ordered(Some(future::lazy(move || -> Result<_> {
+		let resolver = resolve.clone();
+		let addr = address;
+		// Try to get the address by an SRV record
+		let prefix = Name::from_str(DNS_PREFIX_UDP).map_err(|e| format_err!("Canot parse udp domain prefix ({:?})", e))?;
+		let mut name = Name::from_str(&addr).map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
+		name.set_fqdn(true);
 
-	/*// Try connecting to the tsdns service directly
-	for i in 2..name.num_labels() {
-		let name = name.trim_to(i as usize);
-		return Box::new(resolve_tsdns(&addr).map(|mut addr| {
-			if let Some(port) = port {
-				addr.set_port(port);
+		Ok(resolve_srv(resolver.clone(), &prefix.append_name(&name)))
+	}))).flatten();
+
+	let address = addr.clone();
+	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(move || {
+		let addr = address;
+		// Try to get the address of a tsdns server by an SRV record
+		let prefix = Name::from_str(DNS_PREFIX_TCP).map_err(|e| format_err!("Canot parse tcp domain prefix ({:?})", e))?;
+		let mut name = match Name::from_str(&addr) {
+			Ok(r) => r,
+			Err(e) => {
+				bail!("Cannot parse domain ({:?})", e);
 			}
-			addr
-		}));
-	}
+		};
+		name.set_fqdn(true);
 
-	// Interpret as normal address and resolve with system resolver
-	Ok((addr.as_str(), port.unwrap_or(DEFAULT_PORT)).to_socket_addrs()?
-	   .next()
-	   .ok_or_else(|| format_err!("Unable to resolve address"))?)*/
+		// Split domain to a list of subdomains
+		let streams = (2..name.num_labels()).map(|i| {
+			let name = name.trim_to(i as usize);
+			let addr = addr.clone();
+			let prefix = prefix.clone();
+			stream::futures_ordered(Some(resolve_srv(resolver.clone(), &prefix.append_name(&name)).into_future()
+				.map_err(|(e, _)| Error::from(e))
+				.and_then(move |(srv, _)| {
+				if let Some(srv) = srv {
+					// Got tsdns server
+					let port = port.clone();
+					Ok(resolve_tsdns(srv, &addr).map(move |mut addr| {
+						if let Some(port) = port {
+							// Overwrite port if it was specified
+							addr.set_port(port);
+						}
+						addr
+					}))
+				} else {
+					Err(format_err!("Got no tsdns SRV record").into())
+				}
+			}))).flatten()
+		}).collect();
+
+		// Pick the first srv record of the first server that answers
+		Ok(StreamCombiner::new(streams))
+	}))).flatten();
+
+	let address = addr.clone();
+	let tsdns_direct_res = stream::futures_ordered(Some(future::lazy(move || {
+		let addr = address;
+		let mut name = match Name::from_str(&addr) {
+			Ok(r) => r,
+			Err(e) => bail!("Cannot parse domain ({:?})", e),
+		};
+		name.set_fqdn(true);
+
+		// Try connecting to the tsdns service directly
+		let streams = (2..name.num_labels()).map(|i| {
+			let name = name.trim_to(i as usize);
+			let addr = addr.clone();
+			let port = port.clone();
+			stream::futures_ordered(Some(resolve_hostname(name.to_string(), TSDNS_DEFAULT_PORT).map(move |srv| {
+				let port = port.clone();
+				Box::new(resolve_tsdns(srv, &addr).map(move |mut addr| {
+					if let Some(port) = port {
+						addr.set_port(port);
+					}
+					addr
+				}))
+			}).collect().map(StreamCombiner::new))).flatten()
+		}).collect();
+
+		// Pick the first answering server
+		Ok(StreamCombiner::new(streams))
+	}))).flatten();
+
+	let last_res = stream::futures_ordered(Some(
+		// Interpret as normal address and resolve with system resolver
+		Ok(resolve_hostname(addr, port.unwrap_or(DEFAULT_PORT))) as Result<_>
+	)).flatten();
+
+	let streams = vec![
+		nickname_res,
+		Box::new(srv_res),
+		Box::new(tsdns_srv_res),
+		Box::new(tsdns_direct_res),
+		Box::new(last_res),
+	];
+
+	Box::new(StreamCombiner::new(streams))
+	// TODO timeout returns error on stream
+		//.select2(Timeout::new(Duration::from_secs(TIMEOUT_SECONDS), &handle)
+			//.expect("Failed to create Timeout"))
 }
 
 fn parse_ip(address: &str) -> Result<ParseIpResult> {
@@ -196,7 +279,7 @@ pub fn resolve_nickname(nickname: &str) -> impl Stream<Item = SocketAddr, Error 
 	stream::once(unimplemented!())
 }
 
-pub fn resolve_tsdns(addr: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
+pub fn resolve_tsdns(server: SocketAddr, addr: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
 	stream::once(unimplemented!())
 }
 
