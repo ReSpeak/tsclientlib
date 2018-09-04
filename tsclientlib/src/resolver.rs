@@ -25,6 +25,7 @@ const NICKNAME_LOOKUP_ADDRESS: &str = "https://named.myteamspeak.com/lookup?name
 const TIMEOUT_SECONDS: u64 = 10;
 // TODO global resolve timeout of 30s
 
+#[derive(Debug, PartialEq, Eq)]
 enum ParseIpResult<'a> {
 	Addr(SocketAddr),
 	Other(&'a str, Option<u16>),
@@ -240,10 +241,10 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 		if address.find(':').unwrap() == pos {
 			// Port is appended
 			addr = &address[..pos];
-			port = Some(&address[pos..]);
+			port = Some(&address[pos + 1..]);
 			if addr.chars().all(|c| c.is_digit(10) || c == '.') {
 				// IPv4 address
-				return Ok(ParseIpResult::Addr((addr, DEFAULT_PORT).to_socket_addrs()?.next()
+				return Ok(ParseIpResult::Addr(address.to_socket_addrs()?.next()
 					.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?));
 			}
 		} else if let Some(pos_bracket) = address.rfind(']') {
@@ -251,10 +252,12 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 				// IPv6 address and port
 				return Ok(ParseIpResult::Addr(address.to_socket_addrs()?.next()
 					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?));
-			} else {
+			} else if pos_bracket == address.len() - 1 && address.chars().next() == Some('[') {
 				// IPv6 address
-				return Ok(ParseIpResult::Addr((address, DEFAULT_PORT).to_socket_addrs()?.next()
+				return Ok(ParseIpResult::Addr((&address[1..pos_bracket], DEFAULT_PORT).to_socket_addrs()?.next()
 					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?));
+			} else {
+				return Err(format_err!("Invalid ip address").into());
 			}
 		} else {
 			// IPv6 address
@@ -354,4 +357,65 @@ fn blocking_to_future<R: 'static + Send, F: FnOnce() -> R + 'static + Send>(f: F
 		});
 		recv
 	})
+}
+
+#[cfg(test)]
+mod test {
+	use super::*;
+
+	#[test]
+	fn parse_ip_without_port() {
+		let res = parse_ip("127.0.0.1");
+		assert_eq!(res.unwrap(), ParseIpResult::Addr(format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+	}
+
+	#[test]
+	fn parse_ip_with_port() {
+		let res = parse_ip("127.0.0.1:1");
+		assert_eq!(res.unwrap(), ParseIpResult::Addr("127.0.0.1:1".parse().unwrap()));
+	}
+
+	#[test]
+	fn parse_ip6_without_port() {
+		let res = parse_ip("::");
+		assert_eq!(res.unwrap(), ParseIpResult::Addr(format!("[::]:{}", DEFAULT_PORT).parse().unwrap()));
+	}
+
+	#[test]
+	fn parse_ip6_without_port2() {
+		let res = parse_ip("[::]");
+		assert_eq!(res.unwrap(), ParseIpResult::Addr(format!("[::]:{}", DEFAULT_PORT).parse().unwrap()));
+	}
+
+	#[test]
+	fn parse_ip6_with_port() {
+		let res = parse_ip("[::]:1");
+		assert_eq!(res.unwrap(), ParseIpResult::Addr("[::]:1".parse().unwrap()));
+	}
+
+	#[test]
+	fn parse_ip_address_without_port() {
+		let res = parse_ip("localhost");
+		assert_eq!(res.unwrap(), ParseIpResult::Other("localhost", None));
+	}
+
+	#[test]
+	fn parse_ip_address_with_port() {
+		let res = parse_ip("localhost:1");
+		assert_eq!(res.unwrap(), ParseIpResult::Other("localhost", Some(1)));
+	}
+
+	#[test]
+	fn parse_ip_with_large_port() {
+		let res = parse_ip("127.0.0.1:65536");
+		assert!(res.is_err());
+	}
+
+	#[test]
+	fn parse_ip_bad() {
+		assert!(parse_ip("").is_err());
+		assert!(parse_ip(":1").is_err());
+		assert!(parse_ip(":").is_err());
+		assert!(parse_ip("127.0.0.1:").is_err());
+	}
 }
