@@ -4,7 +4,6 @@ extern crate structopt;
 extern crate tokio_core;
 extern crate tsclientlib;
 
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use futures::Future;
@@ -20,9 +19,9 @@ use tsclientlib::{ConnectOptions, ConnectionManager, DisconnectOptions,
     "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]"))]
 struct Args {
     #[structopt(short = "a", long = "address",
-                default_value = "127.0.0.1:9987",
+                default_value = "localhost",
                 help = "The address of the server to connect to")]
-    address: SocketAddr,
+    address: String,
     #[structopt(short = "v", long = "verbose",
                 help = "Print the content of all packets")]
     verbose: bool,
@@ -38,7 +37,7 @@ fn real_main() -> Result<(), failure::Error> {
     let mut core = Core::new()?;
 
     let mut cm = ConnectionManager::new(core.handle());
-    let con_config = ConnectOptions::from_address(args.address)
+    let con_config = ConnectOptions::new(args.address)
         .log_packets(args.verbose);
 
     // Optionally set the key of this client, otherwise a new key is generated.

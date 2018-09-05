@@ -339,7 +339,7 @@ impl ConnectionManager {
             let inner = self.inner.borrow();
             // TODO Try all addresses
             let addr = config.address.resolve(inner.handle.clone());
-            let addr = panic!();
+            let addr = "127.0.0.1:9987".parse().unwrap();
             let private_key = match config.private_key.take().map(Ok)
                 .unwrap_or_else(|| {
                     // Create new ECDH key
@@ -816,6 +816,12 @@ impl From<SocketAddr> for ServerAddress {
 impl From<String> for ServerAddress {
     fn from(addr: String) -> Self {
         ServerAddress::Other(addr)
+    }
+}
+
+impl<'a> From<&'a str> for ServerAddress {
+    fn from(addr: &'a str) -> Self {
+        ServerAddress::Other(addr.to_string())
     }
 }
 
