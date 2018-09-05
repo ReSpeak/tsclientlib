@@ -183,37 +183,6 @@ pub fn resolve(handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, 
 			}).collect())))
 	}))).flatten();
 
-	// Deprecated: TODO Remove
-	let address = addr.clone();
-	let tsdns_direct_res = stream::futures_ordered(Some(future::lazy(move || {
-		let addr = address;
-		let mut name = match Name::from_str(&addr) {
-			Ok(r) => r,
-			Err(e) => bail!("Cannot parse domain ({:?})", e),
-		};
-		name.set_fqdn(true);
-
-		// Try connecting to the tsdns service directly
-		let streams = (2..name.num_labels() + 1).map(|i| {
-			let name = name.trim_to(i as usize);
-			let addr = addr.clone();
-			let port = port.clone();
-			stream::futures_ordered(Some(resolve_hostname(name.to_string(), TSDNS_DEFAULT_PORT).map(move |srv| {
-				let addr = addr.clone();
-				let port = port.clone();
-				Box::new(resolve_tsdns(srv, addr).map(move |mut addr| {
-					if let Some(port) = port {
-						addr.set_port(port);
-					}
-					addr
-				}))
-			}).collect().map(StreamCombiner::new))).flatten()
-		}).collect();
-
-		// Pick the first answering server
-		Ok(StreamCombiner::new(streams))
-	}))).flatten();
-
 	let last_res = stream::futures_ordered(Some(
 		// Interpret as normal address and resolve with system resolver
 		Ok(resolve_hostname(addr, port.unwrap_or(DEFAULT_PORT))) as Result<_>
@@ -223,7 +192,6 @@ pub fn resolve(handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, 
 		nickname_res,
 		Box::new(srv_res),
 		Box::new(tsdns_srv_res),
-		Box::new(tsdns_direct_res),
 		Box::new(last_res),
 	];
 
