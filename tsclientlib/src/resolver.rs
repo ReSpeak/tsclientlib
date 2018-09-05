@@ -1,15 +1,19 @@
 //! Resolve TeamSpeak server addresses of any kind.
+// Changes with TeamSpeak client 3.1:
+// https://support.teamspeakusa.com/index.php?/Knowledgebase/Article/View/332
 
 use std::net::{SocketAddr, ToSocketAddrs};
-use std::str::FromStr;
+use std::str::{self, FromStr};
 use std::thread;
 use std::time::Duration;
 
 use futures::{Async, future, Future, Poll, stream, Stream};
 use futures::sync::oneshot;
 use rand::{thread_rng, Rng};
-use slog::Logger;
+use reqwest;
+use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle;
+use tokio_io::io;
 use trust_dns_resolver::{AsyncResolver, Name};
 
 use {Error, Result};
@@ -19,11 +23,10 @@ const DEFAULT_PORT: u16 = 9987;
 const TSDNS_DEFAULT_PORT: u16 = 41144;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
 const DNS_PREFIX_UDP: &str = "_ts3._udp.";
-const NICKNAME_LOOKUP_ADDRESS: &str = "https://named.myteamspeak.com/lookup?name=";
+const NICKNAME_LOOKUP_ADDRESS: &str = "https://named.myteamspeak.com/lookup";
 // TODO Dynamic timeout with exponential backoff starting at 1s
 /// Wait this amount of seconds before giving up.
 const TIMEOUT_SECONDS: u64 = 10;
-// TODO global resolve timeout of 30s
 
 #[derive(Debug, PartialEq, Eq)]
 enum ParseIpResult<'a> {
@@ -52,7 +55,7 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
 		if self.streams.is_empty() {
-			panic!("StreamCombiner has no children");
+			return Ok(Async::Ready(None));
 		}
 		loop {
 			let res = self.streams[0].poll();
@@ -81,22 +84,17 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 ///
 /// The following methods are tried:
 /// 1. If the address is an ip, the ip is returned
-/// 1. Server nickname
-/// 1. The SRV record at `_ts3._udp.address`
-/// 1. The SRV record at `_tsdns._tcp.address` to get the address of a tsdns
-///    server
-/// 1. Connect directly to a tsdns server at `address`
+/// 1. Server nicknames are resolved by a http request to TeamSpeak
+/// 1. The SRV record at `_ts3._udp.<address>`
+/// 1. The SRV record at `_tsdns._tcp.address.tld` to get the address of a tsdns
+///    server, e.g. when the address is `ts3.subdomain.from.com`, the SRV record
+///    at `_tsdns._tcp.from.com` is requested
 /// 1. Directly resolve the address to an ip address
 ///
-/// To get the address of the tsdns server, all subdomains are tried.
-/// E.g. for my.cool.subdomain.from.de:
-/// - from.de
-/// - subdomain.from.de
-/// - cool.subdomain.from.de
-///
 /// If a port is given with `:port`, it overwrites the automatically determined
-/// port.
-pub fn resolve(logger: Logger, handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
+/// port. IPv6 addresses are put in square brackets when a port is present:
+/// `[::1]:9987`
+pub fn resolve(handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
 	let addr;
 	let port;
 	match parse_ip(address) {
@@ -112,10 +110,12 @@ pub fn resolve(logger: Logger, handle: Handle, address: &str) -> impl Stream<Ite
 	}
 
 	let p = port.clone();
-	let nickname_res = (|| -> Box<Stream<Item=_, Error=_>> {
+	let address = addr.clone();
+	let nickname_res = (move || -> Box<Stream<Item=_, Error=_>> {
+		let addr = address;
 		if !addr.contains('.') && addr != "localhost" {
 			// Could be a server nickname
-			Box::new(resolve_nickname(&addr).map(move |mut addr| {
+			Box::new(resolve_nickname(addr).map(move |mut addr| {
 				if let Some(port) = p {
 					addr.set_port(port);
 				}
@@ -145,46 +145,45 @@ pub fn resolve(logger: Logger, handle: Handle, address: &str) -> impl Stream<Ite
 	}))).flatten();
 
 	let address = addr.clone();
-	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(move || {
+	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(move ||
+		-> Box<Future<Item=_, Error=Error>> {
 		let addr = address;
 		// Try to get the address of a tsdns server by an SRV record
-		let prefix = Name::from_str(DNS_PREFIX_TCP).map_err(|e| format_err!("Canot parse tcp domain prefix ({:?})", e))?;
+		let prefix = match Name::from_str(DNS_PREFIX_TCP) {
+			Ok(r) => r,
+			Err(e) => {
+				return Box::new(future::err(format_err!("Cannot parse tcp domain prefix ({:?})", e).into()));
+			}
+		};
 		let mut name = match Name::from_str(&addr) {
 			Ok(r) => r,
 			Err(e) => {
-				bail!("Cannot parse domain ({:?})", e);
+				return Box::new(future::err(format_err!("Cannot parse domain ({:?})", e).into()));
 			}
 		};
 		name.set_fqdn(true);
 
-		// Split domain to a list of subdomains
-		let streams = (2..name.num_labels()).map(|i| {
-			let name = name.trim_to(i as usize);
-			let addr = addr.clone();
-			let prefix = prefix.clone();
-			stream::futures_ordered(Some(resolve_srv(resolver.clone(), &prefix.append_name(&name)).into_future()
-				.map_err(|(e, _)| Error::from(e))
-				.and_then(move |(srv, _)| {
-				if let Some(srv) = srv {
-					// Got tsdns server
+		let name = name.trim_to(2);
+		// Pick the first srv record of the first server that answers
+		Box::new(resolve_srv_raw(resolver.clone(), &prefix.append_name(&name))
+			.map(move |mut srvs| StreamCombiner::new(srvs.drain(..).map(|addrs| {
+				// Got tsdns server
+				let addr = addr.clone();
+				let port = port.clone();
+				addrs.map(move |srv| {
 					let port = port.clone();
-					Ok(resolve_tsdns(srv, &addr).map(move |mut addr| {
+					resolve_tsdns(srv, addr.clone()).map(move |mut addr| {
 						if let Some(port) = port {
 							// Overwrite port if it was specified
 							addr.set_port(port);
 						}
 						addr
-					}))
-				} else {
-					Err(format_err!("Got no tsdns SRV record").into())
-				}
-			}))).flatten()
-		}).collect();
-
-		// Pick the first srv record of the first server that answers
-		Ok(StreamCombiner::new(streams))
+					})
+				}).flatten()
+			}).collect())))
 	}))).flatten();
 
+	// Deprecated: TODO Remove
 	let address = addr.clone();
 	let tsdns_direct_res = stream::futures_ordered(Some(future::lazy(move || {
 		let addr = address;
@@ -195,13 +194,14 @@ pub fn resolve(logger: Logger, handle: Handle, address: &str) -> impl Stream<Ite
 		name.set_fqdn(true);
 
 		// Try connecting to the tsdns service directly
-		let streams = (2..name.num_labels()).map(|i| {
+		let streams = (2..name.num_labels() + 1).map(|i| {
 			let name = name.trim_to(i as usize);
 			let addr = addr.clone();
 			let port = port.clone();
 			stream::futures_ordered(Some(resolve_hostname(name.to_string(), TSDNS_DEFAULT_PORT).map(move |srv| {
+				let addr = addr.clone();
 				let port = port.clone();
-				Box::new(resolve_tsdns(srv, &addr).map(move |mut addr| {
+				Box::new(resolve_tsdns(srv, addr).map(move |mut addr| {
 					if let Some(port) = port {
 						addr.set_port(port);
 					}
@@ -278,66 +278,101 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 	Ok(ParseIpResult::Other(addr, port))
 }
 
-pub fn resolve_nickname(nickname: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
-	stream::once(unimplemented!())
+pub fn resolve_nickname(nickname: String) -> impl Stream<Item = SocketAddr, Error = Error> {
+	stream::futures_ordered(Some(blocking_to_future(move || {
+		let url = reqwest::Url::parse_with_params(NICKNAME_LOOKUP_ADDRESS, Some(("name", nickname)))
+			.map_err(|e| format_err!("Cannot parse nickname lookup address ({:?})", e))?;
+		let res = reqwest::get(url)?.text()?
+			.split(&['\r', '\n'][..])
+			.filter(|s| !s.is_empty())
+			.map(|s| s.to_string()).collect::<Vec<_>>();
+		Ok(res)
+	}).from_err().and_then(|r: Result<_>| r)
+		.map(|addrs| {
+			stream::futures_ordered(addrs.iter().map(|addr|
+				-> Result<Box<Stream<Item=_, Error=_>>> { match parse_ip(addr) {
+				Err(e) => Ok(Box::new(stream::once(Err(e)))),
+				Ok(ParseIpResult::Addr(a)) => Ok(Box::new(stream::once(Ok(a)))),
+				Ok(ParseIpResult::Other(a, p)) =>
+					Ok(Box::new(resolve_hostname(a.to_string(), p.unwrap_or(DEFAULT_PORT)))),
+			}})).flatten()
+		}))).flatten()
 }
 
-pub fn resolve_tsdns(server: SocketAddr, addr: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
-	stream::once(unimplemented!())
+pub fn resolve_tsdns(server: SocketAddr, addr: String) -> impl Stream<Item = SocketAddr, Error = Error> {
+	stream::futures_ordered(Some(TcpStream::connect2(&server)
+		.and_then(move |tcp| io::write_all(tcp, addr))
+		.and_then(|(tcp, _)| io::read_to_end(tcp, Vec::new()))
+		.from_err::<Error>()
+		.and_then(|(_, data)| {
+			let addr = str::from_utf8(&data)?;
+			if addr.starts_with("404") {
+				return Err(format_err!("tsdns server does not know the address").into());
+			}
+			match parse_ip(addr)? {
+				ParseIpResult::Addr(a) => Ok(a),
+				_ => Err(format_err!("tsdns did not return an ip address").into()),
+			}
+		})))
+}
+
+fn resolve_srv_raw(resolver: AsyncResolver, addr: &Name)
+	-> impl Future<Item = Vec<impl Stream<Item = SocketAddr, Error = Error>>, Error = Error> {
+	resolver.lookup_srv(addr).from_err::<Error>().and_then(|lookup| -> Result<_> {
+		let mut entries = Vec::new();
+		let mut max_prio = if let Some(e) = lookup.iter().next() {
+			e.priority()
+		} else {
+			return Err(format_err!("Found no SRV entry").into());
+		};
+
+		// Move all SRV records into entries and only retain the ones with the
+		// lowest priority.
+		for srv in lookup.iter() {
+			if srv.priority() > max_prio {
+				max_prio = srv.priority();
+				entries.clear();
+				entries.push(srv);
+			} else if srv.priority() == max_prio {
+				entries.push(srv);
+			}
+		}
+
+		// Select by weight
+		let mut sorted_entries = Vec::new();
+		while !entries.is_empty() {
+			let weight: u32 = entries.iter().map(|e| e.weight() as u32).sum();
+			let mut rng = thread_rng();
+			let mut w = rng.gen_range(0, weight + 1);
+			if w == 0 {
+				// Pick the first entry with weight 0
+				if let Some(i) = entries.iter().position(|e| e.weight() == 0) {
+					sorted_entries.push(entries.remove(i));
+				}
+			}
+			for i in 0..entries.len() {
+				let weight = entries[i].weight() as u32;
+				if w <= weight {
+					sorted_entries.push(entries.remove(i));
+				}
+				w -= weight;
+			}
+		}
+
+		let entries: Vec<_> = sorted_entries.drain(..).map(|e| {
+			let addr = e.target().to_string();
+			let port = e.port();
+			resolve_hostname(addr, port)
+		}).collect();
+		Ok(entries)
+	})
 }
 
 fn resolve_srv(resolver: AsyncResolver, addr: &Name)
 	-> impl Stream<Item = SocketAddr, Error = Error> {
 	stream::futures_ordered(Some(
-		resolver.lookup_srv(addr).from_err::<Error>().map(|lookup| -> Box<Stream<Item = _, Error = Error>> {
-			let mut entries = Vec::new();
-			let mut max_prio = if let Some(e) = lookup.iter().next() {
-				e.priority()
-			} else {
-				return Box::new(stream::once(Err(format_err!("Found no SRV entry").into())));
-			};
-
-			// Move all SRV records into entries and only retain the ones with the
-			// lowest priority.
-			for srv in lookup.iter() {
-				if srv.priority() > max_prio {
-					max_prio = srv.priority();
-					entries.clear();
-					entries.push(srv);
-				} else if srv.priority() == max_prio {
-					entries.push(srv);
-				}
-			}
-
-			// Select by weight
-			let mut sorted_entries = Vec::new();
-			while !entries.is_empty() {
-				let weight: u32 = entries.iter().map(|e| e.weight() as u32).sum();
-				let mut rng = thread_rng();
-				let mut w = rng.gen_range(0, weight + 1);
-				if w == 0 {
-					// Pick the first entry with weight 0
-					if let Some(i) = entries.iter().position(|e| e.weight() == 0) {
-						sorted_entries.push(entries.remove(i));
-					}
-				}
-				for i in 0..entries.len() {
-					let weight = entries[i].weight() as u32;
-					if w <= weight {
-						sorted_entries.push(entries.remove(i));
-					}
-					w -= weight;
-				}
-			}
-
-			let entries: Vec<_> = sorted_entries.drain(..).map(|e| {
-				let addr = e.target().to_string();
-				let port = e.port();
-				resolve_hostname(addr, port)
-			}).collect();
-			Box::new(stream::iter_ok::<_, Error>(entries).flatten())
-		})
-	)).flatten()
+		resolve_srv_raw(resolver, addr)
+		.map(StreamCombiner::new))).flatten()
 }
 
 fn resolve_hostname(name: String, port: u16) -> impl Stream<Item = SocketAddr, Error = Error> {
@@ -362,6 +397,7 @@ fn blocking_to_future<R: 'static + Send, F: FnOnce() -> R + 'static + Send>(f: F
 #[cfg(test)]
 mod test {
 	use super::*;
+	use tokio_core::reactor::Core;
 
 	#[test]
 	fn parse_ip_without_port() {
@@ -417,5 +453,37 @@ mod test {
 		assert!(parse_ip(":1").is_err());
 		assert!(parse_ip(":").is_err());
 		assert!(parse_ip("127.0.0.1:").is_err());
+	}
+
+	#[test]
+	fn resolve_localhost() {
+		let mut core = Core::new().unwrap();
+		let res = resolve(core.handle(), "127.0.0.1");
+		let res = core.run(res.collect());
+		assert_eq!(res.unwrap().as_slice(), &[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]);
+	}
+
+	#[test]
+	fn resolve_localhost2() {
+		let mut core = Core::new().unwrap();
+		let res = resolve(core.handle(), "localhost");
+		let res = core.run(res.collect());
+		assert!(res.unwrap().contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+	}
+
+	#[test]
+	fn resolve_example() {
+		let mut core = Core::new().unwrap();
+		let res = resolve(core.handle(), "example.com");
+		let res = core.run(res.collect());
+		assert!(res.unwrap().contains(&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()));
+	}
+
+	#[test]
+	fn resolve_loc() {
+		let mut core = Core::new().unwrap();
+		let res = resolve(core.handle(), "loc");
+		let res = core.run(res.collect());
+		assert!(res.unwrap().contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 }

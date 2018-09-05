@@ -50,6 +50,7 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio_core;
+extern crate tokio_io;
 extern crate trust_dns_proto;
 extern crate trust_dns_resolver;
 extern crate tsproto;
@@ -64,7 +65,7 @@ use std::rc::Rc;
 
 use chrono::{DateTime, Duration, Utc};
 use failure::ResultExt;
-use futures::{future, Future, Sink, Stream};
+use futures::{future, Future, Sink, stream, Stream};
 use futures::task::{self, Task};
 use futures::future::Either;
 use slog::{Drain, Logger};
@@ -130,7 +131,11 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Resolve(#[cause] trust_dns_resolver::error::ResolveError),
     #[fail(display = "{}", _0)]
+    Reqwest(#[cause] reqwest::Error),
+    #[fail(display = "{}", _0)]
     Tsproto(#[cause] tsproto::Error),
+    #[fail(display = "{}", _0)]
+    Utf8(#[cause] std::str::Utf8Error),
     #[fail(display = "{}", _0)]
     Other(#[cause] failure::Compat<failure::Error>),
 
@@ -178,9 +183,21 @@ impl From<trust_dns_resolver::error::ResolveError> for Error {
     }
 }
 
+impl From<reqwest::Error> for Error {
+    fn from(e: reqwest::Error) -> Self {
+        Error::Reqwest(e)
+    }
+}
+
 impl From<tsproto::Error> for Error {
     fn from(e: tsproto::Error) -> Self {
         Error::Tsproto(e)
+    }
+}
+
+impl From<std::str::Utf8Error> for Error {
+    fn from(e: std::str::Utf8Error) -> Self {
+        Error::Utf8(e)
     }
 }
 
@@ -320,8 +337,9 @@ impl ConnectionManager {
         let res: BoxFuture<_>;
         {
             let inner = self.inner.borrow();
-            let addr = config.address.expect(
-                "Invalid ConnectOptions, this should not happen");
+            // TODO Try all addresses
+            let addr = config.address.resolve(inner.handle.clone());
+            let addr = panic!();
             let private_key = match config.private_key.take().map(Ok)
                 .unwrap_or_else(|| {
                     // Create new ECDH key
@@ -783,6 +801,36 @@ impl<'a> ConnectionMut<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ServerAddress {
+    SocketAddr(SocketAddr),
+    Other(String),
+}
+
+impl From<SocketAddr> for ServerAddress {
+    fn from(addr: SocketAddr) -> Self {
+        ServerAddress::SocketAddr(addr)
+    }
+}
+
+impl From<String> for ServerAddress {
+    fn from(addr: String) -> Self {
+        ServerAddress::Other(addr)
+    }
+}
+
+impl ServerAddress {
+    pub fn resolve(&self, handle: Handle) -> impl Stream<Item=SocketAddr, Error=Error> {
+        match self {
+            ServerAddress::SocketAddr(a) => {
+                let res: Box<Stream<Item=_, Error=_>> = Box::new(stream::once(Ok(*a)));
+                res
+            }
+            ServerAddress::Other(s) => Box::new(resolver::resolve(handle, s)),
+        }
+    }
+}
+
 /// The configuration used to create a new connection.
 ///
 /// This is a builder for a connection.
@@ -792,15 +840,13 @@ impl<'a> ConnectionMut<'a> {
 /// ```rust,no_run
 /// # extern crate tokio_core;
 /// # extern crate tsclientlib;
-/// # use std::boxed::Box;
 /// #
 /// # use tsclientlib::{ConnectionManager, ConnectOptions};
 /// # fn main() {
 /// #
 /// let mut core = tokio_core::reactor::Core::new().unwrap();
 ///
-/// let addr: std::net::SocketAddr = "127.0.0.1:9987".parse().unwrap();
-/// let con_config = ConnectOptions::from_address(addr);
+/// let con_config = ConnectOptions::new("localhost");
 ///
 /// let mut cm = ConnectionManager::new(core.handle());
 /// let con = core.run(cm.add_connection(con_config)).unwrap();
@@ -808,7 +854,7 @@ impl<'a> ConnectionMut<'a> {
 /// ```
 #[derive(Debug)]
 pub struct ConnectOptions {
-    address: Option<SocketAddr>,
+    address: ServerAddress,
     local_address: SocketAddr,
     private_key: Option<crypto::EccKeyPrivP256>,
     name: String,
@@ -817,30 +863,27 @@ pub struct ConnectOptions {
 }
 
 impl ConnectOptions {
-    /// A private method to create a config with only default values.
+    /// Start creating the configuration of a new connection.
     ///
-    /// This is not in the public interface because the created configuration
-    /// is invalid without an address.
+    /// # Arguments
+    /// The address of the server has to be supplied. The address can be a
+    /// [`SocketAddr`], a [`String`] or directly a [`ServerAddress`]. A string
+    /// will automatically be resolved from all formats supported by TeamSpeak.
+    /// For details, see [`resolver::resolve`].
+    ///
+    /// [`SocketAddr`]: https://doc.rust-lang.org/std/net/enum.SocketAddr.html
+    /// [`String`]: https://doc.rust-lang.org/std/string/struct.String.html
+    /// [`ServerAddress`]: enum.ServerAddress.html
+    /// [`resolver::resolve`]: resolver/method.resolve.html
     #[inline]
-    fn default() -> Self {
+    pub fn new<A: Into<ServerAddress>>(address: A) -> Self {
         Self {
-            address: None,
+            address: address.into(),
             local_address: "0.0.0.0:0".parse().unwrap(),
             private_key: None,
             name: String::from("TeamSpeakUser"),
             version: Version::Linux_3_2_1,
             log_packets: false,
-        }
-    }
-
-    /// Start creating the configuration of a new connection.
-    ///
-    /// The address of the server has to be supplied.
-    #[inline]
-    pub fn from_address(address: SocketAddr) -> Self {
-        Self {
-            address: Some(address),
-            .. Self::default()
         }
     }
 
