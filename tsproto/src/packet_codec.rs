@@ -243,10 +243,12 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                     // TODO Should use try_send with futures 0.2
                     if let Err(error) = sink.start_send((addr, udp_packet)) {
                         warn!(data.logger, "Unknown packet dropped"; "error" =>
-                            ?error);
+                            ?error, "from" => addr);
                     }
                 } else {
                     info!(data.logger, "No unknown packet handler");
+                    warn!(data.logger, "Unknown packet dropped"; "from" =>
+                        addr);
                 }
                 return Ok(futures::Async::NotReady);
             }

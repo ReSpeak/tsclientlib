@@ -334,12 +334,10 @@ impl ConnectionManager {
 
     /// Connect to a server.
     pub fn add_connection(&mut self, mut config: ConnectOptions) -> Connect {
-        let res: BoxFuture<_>;
-        {
+        let res: BoxFuture<ConnectionId> = {
             let inner = self.inner.borrow();
-            // TODO Try all addresses
-            let addr = config.address.resolve(inner.handle.clone());
-            let addr = "127.0.0.1:9987".parse().unwrap();
+            // Try all addresses
+            let addr = config.address.resolve(&inner.logger, inner.handle.clone());
             let private_key = match config.private_key.take().map(Ok)
                 .unwrap_or_else(|| {
                     // Create new ECDH key
@@ -349,132 +347,158 @@ impl ConnectionManager {
                 Err(error) => return Connect::new_from_error(error.into()),
             };
 
-            let client = match client::ClientData::new(
-                config.local_address,
-                private_key,
-                inner.handle.clone(),
-                true,
-                tsproto::connectionmanager::SocketConnectionManager::new(),
-                None,
-            ) {
-                Ok(client) => client,
-                Err(error) => return Connect::new_from_error(error.into()),
-            };
-
-            // Set the data reference
-            {
-                let c2 = client.clone();
-                let mut client = client.borrow_mut();
-                client.connection_manager.set_data_ref(Rc::downgrade(&c2));
-            }
-            client::default_setup(&client, config.log_packets);
-
-            // Create a connection
-            let connect_fut = client::connect(&client, addr);
-
             let logger = inner.logger.clone();
+            let handle = inner.handle.clone();
             let inner = Rc::downgrade(&self.inner);
-            let client2 = client.clone();
 
-            // Poll the connection for packets
-            let initserver_poll = client::ClientData::get_packets(
-                Rc::downgrade(&client))
-                .filter_map(|(_, p)| {
-                    // Filter commands
-                    if let Packet { data: packets::Data::Command(cmd), .. } = p {
-                        Some(cmd)
+            let logger2 = logger.clone();
+
+            Box::new(addr.and_then(move |addr| -> Box<Future<Item=_, Error=_>> {
+                let client = match client::ClientData::new(
+                    config.local_address.unwrap_or_else(|| if addr.is_ipv4() {
+                        "0.0.0.0:0".parse().unwrap()
                     } else {
-                        None
-                    }
-                })
-                .into_future().map_err(|(e, _)| e.into())
-                .and_then(move |(cmd, _)| -> BoxFuture<_> {
-                    let cmd = if let Some(cmd) = cmd {
-                        cmd
-                    } else {
-                        return Box::new(future::err(Error::ConnectionFailed(
-                            String::from("Connection ended"))));
-                    };
-
-                    let cmd = cmd.get_commands().remove(0);
-                    let notif = tryf!(messages::Message::parse(cmd));
-                    if let messages::Message::InitServer(p) = notif {
-                        // Create a connection id
-                        let inner = inner.upgrade().expect(
-                            "Connection manager does not exist anymore");
-                        let mut inner = inner.borrow_mut();
-                        let id = inner.find_connection_id();
-
-                        let con;
-                        {
-                            let mut client = client2.borrow_mut();
-                            con = client.connection_manager
-                                .get_connection(addr).unwrap();
-                        }
-
-                        // Create the connection
-                        let con = structs::NetworkWrapper::new(id, client2,
-                            Rc::downgrade(&con), &p);
-
-                        // Add the connection
-                        inner.connections.insert(id, con);
-
-                        Box::new(future::ok(id))
-                    } else {
-                        Box::new(future::err(Error::ConnectionFailed(
-                            String::from("Got no initserver"))))
-                    }
-                });
-
-            res = Box::new(connect_fut.and_then(move |()| {
-                // TODO Add possibility to specify offset and level in ConnectOptions
-                // Compute hash cash
-                let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-                    "Compute public key hash cash level", logger.clone(),
-                    slog::Level::Info);
-                time_reporter.start("Compute public key hash cash level");
-                let (offset, omega) = {
-                    let mut c = client.borrow_mut();
-                    let pub_k = c.private_key.to_pub();
-                    (algs::hash_cash(&pub_k, 8).unwrap(),
-                    pub_k.to_ts().unwrap())
+                        "[::]:0".parse().unwrap()
+                    }),
+                    private_key.clone(),
+                    handle.clone(),
+                    true,
+                    tsproto::connectionmanager::SocketConnectionManager::new(),
+                    logger.clone(),
+                ) {
+                    Ok(client) => client,
+                    Err(error) => return Box::new(future::err(error.into())),
                 };
-                time_reporter.finish();
-                info!(logger, "Computed hash cash level";
-                    "level" => algs::get_hash_cash_level(&omega, offset),
-                    "offset" => offset);
 
-                // Create clientinit packet
-                let header = Header::new(PacketType::Command);
-                let mut command = commands::Command::new("clientinit");
-                command.push("client_nickname", config.name);
-                command.push("client_version", config.version.get_version_string());
-                command.push("client_platform", config.version.get_platform());
-                command.push("client_input_hardware", "1");
-                command.push("client_output_hardware", "1");
-                command.push("client_default_channel", "");
-                command.push("client_default_channel_password", "");
-                command.push("client_server_password", "");
-                command.push("client_meta_data", "");
-                command.push("client_version_sign", base64::encode(
-                    config.version.get_signature()));
-                command.push("client_key_offset", offset.to_string());
-                command.push("client_nickname_phonetic", "");
-                command.push("client_default_token", "");
-                command.push("hwid", "123,456");
-                let p_data = packets::Data::Command(command);
-                let clientinit_packet = Packet::new(header, p_data);
+                // Set the data reference
+                {
+                    let c2 = client.clone();
+                    let mut client = client.borrow_mut();
+                    client.connection_manager.set_data_ref(Rc::downgrade(&c2));
+                }
+                client::default_setup(&client, config.log_packets);
 
-                let sink = Data::get_packets(Rc::downgrade(&client));
+                let logger = logger.clone();
+                let inner = inner.clone();
+                let client = client.clone();
+                let client2 = client.clone();
+                let config = config.clone();
 
-                sink.send((addr, clientinit_packet))
+                // Create a connection
+                debug!(logger, "Connecting"; "addr" => %addr);
+                let connect_fut = client::connect(&client, addr);
+
+                // Poll the connection for packets
+                let initserver_poll = client::ClientData::get_packets(
+                    Rc::downgrade(&client))
+                    .filter_map(|(_, p)| {
+                        // Filter commands
+                        if let Packet { data: packets::Data::Command(cmd), .. } = p {
+                            Some(cmd)
+                        } else {
+                            None
+                        }
+                    })
+                    .into_future().map_err(|(e, _)| e.into())
+                    .and_then(move |(cmd, _)| -> BoxFuture<_> {
+                        let cmd = if let Some(cmd) = cmd {
+                            cmd
+                        } else {
+                            return Box::new(future::err(Error::ConnectionFailed(
+                                String::from("Connection ended"))));
+                        };
+
+                        let cmd = cmd.get_commands().remove(0);
+                        let notif = tryf!(messages::Message::parse(cmd));
+                        if let messages::Message::InitServer(p) = notif {
+                            // Create a connection id
+                            let inner = inner.upgrade().expect(
+                                "Connection manager does not exist anymore");
+                            let mut inner = inner.borrow_mut();
+                            let id = inner.find_connection_id();
+
+                            let con;
+                            {
+                                let mut client = client2.borrow_mut();
+                                con = client.connection_manager
+                                    .get_connection(addr).unwrap();
+                            }
+
+                            // Create the connection
+                            let con = structs::NetworkWrapper::new(id, client2,
+                                Rc::downgrade(&con), &p);
+
+                            // Add the connection
+                            inner.connections.insert(id, con);
+
+                            Box::new(future::ok(id))
+                        } else {
+                            Box::new(future::err(Error::ConnectionFailed(
+                                String::from("Got no initserver"))))
+                        }
+                    });
+
+                Box::new(connect_fut.and_then(move |()| {
+                    // TODO Add possibility to specify offset and level in ConnectOptions
+                    // Compute hash cash
+                    let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+                        "Compute public key hash cash level", logger.clone(),
+                        slog::Level::Info);
+                    time_reporter.start("Compute public key hash cash level");
+                    let (offset, omega) = {
+                        let mut c = client.borrow_mut();
+                        let pub_k = c.private_key.to_pub();
+                        (algs::hash_cash(&pub_k, 8).unwrap(),
+                        pub_k.to_ts().unwrap())
+                    };
+                    time_reporter.finish();
+                    info!(logger, "Computed hash cash level";
+                        "level" => algs::get_hash_cash_level(&omega, offset),
+                        "offset" => offset);
+
+                    // Create clientinit packet
+                    let header = Header::new(PacketType::Command);
+                    let mut command = commands::Command::new("clientinit");
+                    command.push("client_nickname", config.name);
+                    command.push("client_version", config.version.get_version_string());
+                    command.push("client_platform", config.version.get_platform());
+                    command.push("client_input_hardware", "1");
+                    command.push("client_output_hardware", "1");
+                    command.push("client_default_channel", "");
+                    command.push("client_default_channel_password", "");
+                    command.push("client_server_password", "");
+                    command.push("client_meta_data", "");
+                    command.push("client_version_sign", base64::encode(
+                        config.version.get_signature()));
+                    command.push("client_key_offset", offset.to_string());
+                    command.push("client_nickname_phonetic", "");
+                    command.push("client_default_token", "");
+                    command.push("hwid", "123,456");
+                    let p_data = packets::Data::Command(command);
+                    let clientinit_packet = Packet::new(header, p_data);
+
+                    let sink = Data::get_packets(Rc::downgrade(&client));
+
+                    sink.send((addr, clientinit_packet))
+                })
+                .from_err()
+                // Wait until we sent the clientinit packet and afterwards received
+                // the initserver packet.
+                .join(initserver_poll)
+                .map(|(_, id)| id))
             })
-            .map_err(|e| e.into())
-            // Wait until we sent the clientinit packet and afterwards received
-            // the initserver packet.
-            .join(initserver_poll)
-            .map(|(_, id)| id));
-        }
+            .then(move |r| -> Result<_> {
+                if let Err(e) = &r {
+                    debug!(logger2, "Connecting failed, trying next address"; "error" => ?e);
+                }
+                Ok(r.ok())
+            })
+            .filter_map(|r: Option<ConnectionId>| r)
+            .into_future()
+            .map_err(|_| Error::from(format_err!("Failed to connect to server")))
+            .and_then(|(r, _)| r.ok_or_else(|| format_err!("Failed to connect to server").into()))
+            )
+        };
         Connect::new_from_future(self.run().select2(res))
     }
 
@@ -578,7 +602,7 @@ impl ConnectionManager {
         });
         let fut: BoxFuture<_> = Box::new(sink.send((addr, packet))
             .and_then(move |_| wait_for_state)
-            .map_err(|e| e.into()));
+            .from_err());
         Disconnect::new_from_future(self.run().select(fut))
     }
 
@@ -801,7 +825,7 @@ impl<'a> ConnectionMut<'a> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerAddress {
     SocketAddr(SocketAddr),
     Other(String),
@@ -826,13 +850,13 @@ impl<'a> From<&'a str> for ServerAddress {
 }
 
 impl ServerAddress {
-    pub fn resolve(&self, handle: Handle) -> impl Stream<Item=SocketAddr, Error=Error> {
+    pub fn resolve(&self, logger: &Logger, handle: Handle) -> impl Stream<Item=SocketAddr, Error=Error> {
         match self {
             ServerAddress::SocketAddr(a) => {
                 let res: Box<Stream<Item=_, Error=_>> = Box::new(stream::once(Ok(*a)));
                 res
             }
-            ServerAddress::Other(s) => Box::new(resolver::resolve(handle, s)),
+            ServerAddress::Other(s) => Box::new(resolver::resolve(logger, handle, s)),
         }
     }
 }
@@ -858,10 +882,10 @@ impl ServerAddress {
 /// let con = core.run(cm.add_connection(con_config)).unwrap();
 /// # }
 /// ```
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ConnectOptions {
     address: ServerAddress,
-    local_address: SocketAddr,
+    local_address: Option<SocketAddr>,
     private_key: Option<crypto::EccKeyPrivP256>,
     name: String,
     version: Version,
@@ -877,15 +901,15 @@ impl ConnectOptions {
     /// will automatically be resolved from all formats supported by TeamSpeak.
     /// For details, see [`resolver::resolve`].
     ///
-    /// [`SocketAddr`]: https://doc.rust-lang.org/std/net/enum.SocketAddr.html
-    /// [`String`]: https://doc.rust-lang.org/std/string/struct.String.html
+    /// [`SocketAddr`]: ../../std/net/enum.SocketAddr.html
+    /// [`String`]: ../../std/string/struct.String.html
     /// [`ServerAddress`]: enum.ServerAddress.html
     /// [`resolver::resolve`]: resolver/method.resolve.html
     #[inline]
     pub fn new<A: Into<ServerAddress>>(address: A) -> Self {
         Self {
             address: address.into(),
-            local_address: "0.0.0.0:0".parse().unwrap(),
+            local_address: None,
             private_key: None,
             name: String::from("TeamSpeakUser"),
             version: Version::Linux_3_2_1,
@@ -896,18 +920,17 @@ impl ConnectOptions {
     /// The address for the socket of our client
     ///
     /// # Default
-    ///
-    /// 0.0.0.0:0
+    /// The default is `0.0.0:0` when connecting to an IPv4 address and `[::]:0`
+    /// when connecting to an IPv6 address.
     #[inline]
     pub fn local_address(mut self, local_address: SocketAddr) -> Self {
-        self.local_address = local_address;
+        self.local_address = Some(local_address);
         self
     }
 
     /// Set the private key of the user.
     ///
     /// # Default
-    ///
     /// A new identity is generated when connecting.
     #[inline]
     pub fn private_key(mut self, private_key: crypto::EccKeyPrivP256)
@@ -920,11 +943,9 @@ impl ConnectOptions {
     /// base64 encoded).
     ///
     /// # Default
-    ///
     /// A new identity is generated when connecting.
     ///
     /// # Error
-    ///
     /// An error is returned if either the string is not encoded in valid base64
     /// or libtomcrypt cannot import the key.
     #[inline]
@@ -936,8 +957,7 @@ impl ConnectOptions {
     /// The name of the user.
     ///
     /// # Default
-    ///
-    /// TeamSpeakUser
+    /// `TeamSpeakUser`
     #[inline]
     pub fn name(mut self, name: String) -> Self {
         self.name = name;
@@ -947,8 +967,7 @@ impl ConnectOptions {
     /// The displayed version of the client.
     ///
     /// # Default
-    ///
-    /// 3.2.1 on Linux
+    /// `3.2.1 on Linux`
     #[inline]
     pub fn version(mut self, version: Version) -> Self {
         self.version = version;
@@ -959,8 +978,7 @@ impl ConnectOptions {
     /// be written to the logger.
     ///
     /// # Default
-    ///
-    /// false
+    /// `false`
     #[inline]
     pub fn log_packets(mut self, log_packets: bool) -> Self {
         self.log_packets = log_packets;

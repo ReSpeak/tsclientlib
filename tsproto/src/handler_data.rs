@@ -111,8 +111,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         let socket = UdpSocket::bind(&local_addr, &handle)?;
         let local_addr = socket.local_addr().unwrap_or(local_addr);
         let (sink, stream) = socket.framed(TsCodec::default()).split();
-        let sink = Box::new(sink.sink_map_err(|e| e.into()));
-        let stream = Box::new(stream.map_err(|e| e.into()));
+        let sink = Box::new(sink.sink_from_err());
+        let stream = Box::new(stream.from_err());
 
         let data = Rc::new(RefCell::new(Self {
             is_client,

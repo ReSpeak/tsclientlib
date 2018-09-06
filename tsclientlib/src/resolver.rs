@@ -11,6 +11,7 @@ use futures::{Async, future, Future, Poll, stream, Stream};
 use futures::sync::oneshot;
 use rand::{thread_rng, Rng};
 use reqwest;
+use slog::Logger;
 use tokio_core::net::TcpStream;
 use tokio_core::reactor::Handle;
 use tokio_io::io;
@@ -94,7 +95,9 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 /// If a port is given with `:port`, it overwrites the automatically determined
 /// port. IPv6 addresses are put in square brackets when a port is present:
 /// `[::1]:9987`
-pub fn resolve(handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
+pub fn resolve(logger: &Logger, handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
+	let logger = logger.new(o!("module" => "resolver"));
+	debug!(logger, "Starting resolve"; "address" => address);
 	let addr;
 	let port;
 	match parse_ip(address) {
@@ -105,15 +108,20 @@ pub fn resolve(handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, 
 		Ok(ParseIpResult::Other(a, p)) => {
 			addr = a.to_string();
 			port = p;
+			if let Some(port) = port {
+				debug!(logger2, "Found port"; "port" => port);
+			}
 		}
 		Err(res) => return Box::new(stream::once(Err(res))),
 	}
 
 	let p = port.clone();
 	let address = addr.clone();
+	let logger2 = logger.clone();
 	let nickname_res = (move || -> Box<Stream<Item=_, Error=_>> {
 		let addr = address;
 		if !addr.contains('.') && addr != "localhost" {
+			debug!(logger2, "Resolving nickname"; "address" => addr);
 			// Could be a server nickname
 			Box::new(resolve_nickname(addr).map(move |mut addr| {
 				if let Some(port) = p {

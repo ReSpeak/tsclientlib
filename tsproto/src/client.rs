@@ -130,7 +130,7 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
             Box::new(future::ok(()))
         }));
         Box::new(
-            recv.map_err(|e| e.into())
+            recv.from_err()
                 .and_then(move |_| wait_for_state(&data2, server_addr, f)),
         )
     } else {

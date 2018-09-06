@@ -27,11 +27,7 @@ struct Args {
     verbose: bool,
 }
 
-fn main() {
-    real_main().unwrap();
-}
-
-fn real_main() -> Result<(), failure::Error> {
+fn main() -> Result<(), failure::Error> {
     // Parse command line options
     let args = Args::from_args();
     let mut core = Core::new()?;
@@ -70,6 +66,6 @@ fn real_main() -> Result<(), failure::Error> {
 /// Only retain a certain set of characters.
 fn sanitize(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()
-        || [' ', '\t', '-', '_', '"', '\'', '/', '(', ')', '[', ']', '{', '}']
+        || [' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')', '[', ']', '{', '}']
         .contains(c)).collect()
 }
