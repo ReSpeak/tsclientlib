@@ -4,10 +4,10 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
-use base64;
+use {base64, tokio};
 use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
-use futures::unsync::oneshot;
+use futures::sync::oneshot;
 #[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
 #[cfg(not(feature = "rust-gmp"))]
@@ -17,7 +17,6 @@ use num::ToPrimitive;
 use num::bigint::BigUint;
 use rand::{self, Rng};
 use slog::Logger;
-use tokio_core::reactor::Handle;
 
 use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
@@ -34,11 +33,11 @@ use utils::MultiSink;
 /// The data of our client.
 pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
 /// Connections from a client to a server.
-pub type ClientConnection = Connection<SocketConnectionManager<ServerConnectionData>>;
+pub type ClientConnection = Connection;
 
 #[derive(Default)]
 pub struct ServerConnectionData {
-    pub state_change_listener: Vec<Box<FnMut() -> BoxFuture<(), Error>>>,
+    pub state_change_listener: Vec<Box<FnOnce() -> BoxFuture<(), Error> + Send>>,
     pub state: ServerConnectionState,
 }
 
@@ -85,7 +84,7 @@ fn create_init_header() -> Header {
 /// of packets.
 pub fn default_setup<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
->(data: &Rc<RefCell<Data<CM>>>, log: bool) where CM::ConnectionsKey: Display {
+>(data: &Rc<RefCell<Data<CM>>>, log: bool) where CM::Key: Display {
     if log {
         // Logging
         let a = {
@@ -98,9 +97,9 @@ pub fn default_setup<
             ::log::UdpPacketSinkLogger>(data, a.clone());
 
         Data::apply_packet_stream_wrapper::<
-            ::log::PacketStreamLogger<CM::ConnectionsKey>>(data, a.clone());
+            ::log::PacketStreamLogger<CM::Key>>(data, a.clone());
         Data::apply_packet_sink_wrapper::<
-            ::log::PacketSinkLogger<CM::ConnectionsKey>>(data, a);
+            ::log::PacketSinkLogger<CM::Key>>(data, a);
     }
 
     DefaultPacketHandler::apply(data);
@@ -110,7 +109,7 @@ pub fn default_setup<
 ///
 /// `is_state` should return `true`, if the state is reached and `false` if this
 /// function should continue waiting.
-pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
+pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
     data: &Rc<RefCell<ClientData>>,
     server_addr: SocketAddr,
     f: F,
@@ -215,13 +214,13 @@ struct DefaultPacketHandlerStream;
 impl DefaultPacketHandlerStream {
     pub fn new<
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-        InnerStream: Stream<Item = (CM::ConnectionsKey, Packet), Error = Error> + 'static,
-        InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+        InnerStream: Stream<Item = (CM::Key, Packet), Error = Error> + 'static,
+        InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
     >(
         data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
-    ) -> (Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
+    ) -> (Box<Stream<Item = (CM::Key, Packet), Error = Error>>,
         MultiSink<InnerSink>) {
         let sink = MultiSink::new(inner_sink);
         let sink2 = sink.clone();
@@ -245,7 +244,7 @@ impl DefaultPacketHandlerStream {
                         .get_mut_data(key.clone()).unwrap();
                     let handle_res = match Self::handle_packet(state, &packet,
                         &mut ignore_packet, &mut is_end, &data.private_key,
-                        &mut con, key.clone(), &logger, &data.handle,
+                        &mut con, key.clone(), &logger,
                         sink.clone()) {
                         Ok(res) => res,
                         Err(error) => {
@@ -305,11 +304,11 @@ impl DefaultPacketHandlerStream {
 
     fn handle_packet<
         CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-        InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+        InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
     >(state: &mut ServerConnectionData, packet: &Packet,
         ignore_packet: &mut bool, is_end: &mut bool,
-        private_key: &EccKeyPrivP256, con: &mut Connection<CM>,
-        con_key: CM::ConnectionsKey, logger: &Logger, handle: &Handle,
+        private_key: &EccKeyPrivP256, con: &mut Connection,
+        con_key: CM::Key, logger: &Logger,
         sink: MultiSink<InnerSink>)
         -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
         let res = match state.state {
@@ -436,7 +435,7 @@ impl DefaultPacketHandlerStream {
                         }).map(|_| ()).map_err(move |error|
                             error!(logger2, "Cannot send packet";
                                 "error" => ?error));
-                        handle.spawn(fut);
+                        tokio::spawn(fut);
 
                         let state = ServerConnectionState::ClientInitIv {
                             alpha,
@@ -640,7 +639,7 @@ impl DefaultPacketHandlerStream {
 
 pub struct DefaultPacketHandlerSink<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
 > {
     data: Weak<RefCell<Data<CM>>>,
     inner_sink: MultiSink<InnerSink>,
@@ -648,7 +647,7 @@ pub struct DefaultPacketHandlerSink<
 
 impl<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
 > DefaultPacketHandlerSink<CM, InnerSink> {
     pub fn new(
         data: Weak<RefCell<Data<CM>>>,
@@ -660,7 +659,7 @@ impl<
 
 impl<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
 > Sink for DefaultPacketHandlerSink<CM, InnerSink> {
     type SinkItem = InnerSink::SinkItem;
     type SinkError = InnerSink::SinkError;
@@ -698,18 +697,18 @@ impl<
 
 pub struct DefaultPacketHandler<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
 > {
-    inner_stream: Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
+    inner_stream: Box<Stream<Item = (CM::Key, Packet), Error = Error>>,
     inner_sink: DefaultPacketHandlerSink<CM, InnerSink>,
 }
 
 impl<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
 > DefaultPacketHandler<CM, InnerSink> {
     pub fn new<
-        InnerStream: Stream<Item = (CM::ConnectionsKey, Packet), Error = Error> + 'static,
+        InnerStream: Stream<Item = (CM::Key, Packet), Error = Error> + 'static,
     >(
         data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
@@ -729,7 +728,7 @@ impl<
 
     pub fn split(self) -> (
         DefaultPacketHandlerSink<CM, InnerSink>,
-        Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
+        Box<Stream<Item = (CM::Key, Packet), Error = Error>>,
     ) {
         (self.inner_sink, self.inner_stream)
     }
@@ -737,7 +736,7 @@ impl<
 
 impl<
     CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-> DefaultPacketHandler<CM, Box<Sink<SinkItem = (CM::ConnectionsKey, Packet),
+> DefaultPacketHandler<CM, Box<Sink<SinkItem = (CM::Key, Packet),
     SinkError = Error>>> {
     pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
         let (stream, sink) = {

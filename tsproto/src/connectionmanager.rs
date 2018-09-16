@@ -1,36 +1,28 @@
 use std::cell::RefCell;
+use std::hash::Hash;
 use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use futures::{future, Future, Sink};
-use slog::Logger;
-use tokio_core::reactor::Handle;
+use tokio;
 
 use {Error, Map};
 use connection::Connection;
 use handler_data::Data;
 use packets::{PacketType, UdpPacket};
-use resend::{DefaultResender, ResendConfig, ResendFuture};
+use resend::{ResendConfig, ResendFuture};
 
 /// Implementers of this trait store all connections for a specific socket.
 ///
 /// The unique identification of a connection is handled by the implementation.
 pub trait ConnectionManager: Sized {
-    /// The type that is used to send and resend command packets.
-    ///
-    /// A default implementation is provided as [`resend::DefaultResender`].
-    ///
-    /// [`resend::DefaultResender`]:
-    type Resend: Resender;
+    /// The key wihch identifies a connection.
+    type Key: Eq + Hash + Clone;
 
-    /// A unique identifier for each connection.
-    ///
-    /// It should be lightweight enough to be cloned.
-    type ConnectionsKey: ::std::hash::Hash + Clone;
-
-    /// Create a new resender that will be put into a new connection.
-    fn create_resender(&self, logger: Logger) -> Self::Resend;
+    /// Data which is associated with each connection. This can be used to store
+    /// additional connection information.
+    type AssociatedData: Send;
 
     /// Add a new connection to the list of connections.
     ///
@@ -39,22 +31,22 @@ pub trait ConnectionManager: Sized {
     ///
     /// [`DefaultResenderFuture`]:
     /// [`DefaultResender`]:
-    fn add_connection(&mut self, con: Rc<RefCell<Connection<Self>>>,
-        handle: &Handle) -> Self::ConnectionsKey;
+    fn add_connection(&mut self, con: Rc<RefCell<Connection>>)
+        -> Self::Key;
     /// Remove a connection.
     ///
     /// Returns the removed connection or `None` if there was no such
     /// connection.
-    fn remove_connection(&mut self, key: Self::ConnectionsKey)
-        -> Option<Rc<RefCell<Connection<Self>>>>;
+    fn remove_connection(&mut self, key: Self::Key)
+        -> Option<Rc<RefCell<Connection>>>;
 
     /// Get the connection object for a given key.
-    fn get_connection(&self, key: Self::ConnectionsKey)
-        -> Option<Rc<RefCell<Connection<Self>>>>;
+    fn get_connection(&self, key: Self::Key)
+        -> Option<Rc<RefCell<Connection>>>;
 
-    /// Find the connection for an incoming udp packet.
-    fn get_connection_for_udp_packet(&self, src_addr: SocketAddr,
-        udp_packet: &UdpPacket) -> Option<Self::ConnectionsKey>;
+    /// Compute the connection key for an incoming udp packet.
+    fn get_connection_key(src_addr: SocketAddr,
+        udp_packet: &::packets::Header) -> Self::Key;
 }
 
 /// A connection manager, that allows to attach a custom data object to each
@@ -63,13 +55,13 @@ pub trait AttachedDataConnectionManager<T: Default>: ConnectionManager {
     /// Sets the associated data for a connection.
     ///
     /// Returns the old data if the connection exists.
-    fn set_data(&mut self, key: Self::ConnectionsKey, t: T) -> Option<T>;
+    fn set_data(&mut self, key: Self::Key, t: T) -> Option<T>;
 
     /// Get the associated data for a connection.
-    fn get_data(&mut self, key: Self::ConnectionsKey) -> Option<&T>;
+    fn get_data(&mut self, key: Self::Key) -> Option<&T>;
 
     /// Get the associated data for a connection.
-    fn get_mut_data(&mut self, key: Self::ConnectionsKey) -> Option<&mut T>;
+    fn get_mut_data(&mut self, key: Self::Key) -> Option<&mut T>;
 }
 
 /// Events to inform a resender of the current state of a connection.
@@ -124,7 +116,7 @@ pub trait Resender: Sink<SinkItem = (PacketType, u16, UdpPacket),
 /// socket.
 ///
 /// `T` contains associated data that will be saved for each connection.
-pub struct SocketConnectionManager<T: Default + 'static> {
+pub struct SocketConnectionManager<T: Default + Send + 'static> {
     /// We need the data for the resender, so that he can remove connections
     /// which time out.
     ///
@@ -133,10 +125,10 @@ pub struct SocketConnectionManager<T: Default + 'static> {
     data: Option<Weak<RefCell<Data<SocketConnectionManager<T>>>>>,
     resend_config: ResendConfig,
     connections: Map<SocketAddr,
-        (T, Rc<RefCell<Connection<SocketConnectionManager<T>>>>)>
+        (T, Rc<RefCell<Connection>>)>
 }
 
-impl<T: Default + 'static> Default for SocketConnectionManager<T> {
+impl<T: Default + Send + 'static> Default for SocketConnectionManager<T> {
     fn default() -> Self {
         Self {
             data: None,
@@ -146,7 +138,7 @@ impl<T: Default + 'static> Default for SocketConnectionManager<T> {
     }
 }
 
-impl<T: Default + 'static> SocketConnectionManager<T> {
+impl<T: Default + Send + 'static> SocketConnectionManager<T> {
     /// Create a new connection manager.
     ///
     /// Remember to set the data object afterwards using [`set_data_ref`].
@@ -175,7 +167,7 @@ impl<T: Default + 'static> SocketConnectionManager<T> {
     }
 }
 
-impl<T: Default + 'static> AttachedDataConnectionManager<T> for
+impl<T: Default + Send + 'static> AttachedDataConnectionManager<T> for
     SocketConnectionManager<T> {
     /// Sets the associated data for a connection.
     ///
@@ -199,21 +191,17 @@ impl<T: Default + 'static> AttachedDataConnectionManager<T> for
     }
 }
 
-impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
-    type Resend = DefaultResender;
-    type ConnectionsKey = SocketAddr;
+impl<T: Default + Send + 'static> ConnectionManager for SocketConnectionManager<T> {
+    type Key = SocketAddr;
+    type AssociatedData = T;
 
-    fn create_resender(&self, logger: Logger) -> Self::Resend {
-        DefaultResender::new(self.resend_config.clone(), logger)
-    }
-
-    fn add_connection(&mut self, con: Rc<RefCell<Connection<Self>>>,
-        handle: &Handle) -> Self::ConnectionsKey {
+    fn add_connection(&mut self, con: Rc<RefCell<Connection>>)
+        -> Self::Key {
         let key = con.borrow().address;
         self.connections.insert(key, (Default::default(), con));
 
         let data = self.data.as_ref().unwrap().clone();
-        handle.spawn(future::lazy(move || {
+        tokio::spawn(future::lazy(move || {
             let data_tmp = data.upgrade().unwrap();
             let resend = ResendFuture::new(&data_tmp, key);
 
@@ -233,22 +221,17 @@ impl<T: Default + 'static> ConnectionManager for SocketConnectionManager<T> {
         key
     }
 
-    fn remove_connection(&mut self, key: Self::ConnectionsKey)
-        -> Option<Rc<RefCell<Connection<Self>>>> {
+    fn remove_connection(&mut self, key: Self::Key)
+        -> Option<Rc<RefCell<Connection>>> {
         self.connections.remove(&key).map(|(_, c)| c)
     }
 
-    fn get_connection(&self, key: Self::ConnectionsKey)
-        -> Option<Rc<RefCell<Connection<Self>>>> {
+    fn get_connection(&self, key: Self::Key)
+        -> Option<Rc<RefCell<Connection>>> {
         self.connections.get(&key).map(|&(_, ref c)| c.clone())
     }
 
-    fn get_connection_for_udp_packet(&self, src_addr: SocketAddr,
-        _: &UdpPacket) -> Option<Self::ConnectionsKey> {
-        if self.connections.contains_key(&src_addr) {
-            Some(src_addr)
-        } else {
-            None
-        }
+    fn get_connection_key(addr: SocketAddr, _: &::packets::Header) -> Self::Key {
+        addr
     }
 }

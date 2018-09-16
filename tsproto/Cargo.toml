@@ -21,10 +21,13 @@ default = ["rust-gmp"]
 [dependencies]
 base64 = "0.9"
 byteorder = "1"
+bytes = "0.4"
 chrono = "0.4"
 curve25519-dalek = "0.19"
+evmap = "4"
 failure = "0.1"
 futures = "0.1"
+futures-locks = "0.3"
 nom = "3.2"
 num = "0.1"
 num-derive = "0.2"
@@ -36,7 +39,7 @@ rust-gmp = { version = "0.5", optional = true }
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
-tokio-core = "0.1"
+tokio = "0.1"
 #quicklz = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
 yasna = "0.1"

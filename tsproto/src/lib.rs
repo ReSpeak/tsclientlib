@@ -1,14 +1,18 @@
+// TODO remove?
 #![cfg_attr(feature = "cargo-clippy",
     allow(redundant_closure_call, clone_on_ref_ptr, let_and_return,
     useless_format))]
 
 extern crate base64;
 extern crate byteorder;
+extern crate bytes;
 extern crate chrono;
 extern crate curve25519_dalek;
+extern crate evmap;
 #[macro_use]
 extern crate failure;
 extern crate futures;
+extern crate futures_locks;
 #[cfg(feature = "rust-gmp")]
 extern crate gmp;
 #[macro_use]
@@ -25,17 +29,13 @@ extern crate slog;
 extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
-extern crate tokio_core;
+extern crate tokio;
 extern crate yasna;
 
-use std::io;
 use std::net::SocketAddr;
 
 use failure::ResultExt;
 use futures::{Future, Sink, Stream};
-use tokio_core::net::UdpCodec;
-
-use packets::UdpPacket;
 
 pub mod algorithms;
 pub mod client;
@@ -74,6 +74,7 @@ const ROOT_KEY: [u8; 32] = [0xcd, 0x0d, 0xe2, 0xae, 0xd4, 0x63, 0x45, 0x50,
 const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
     e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
     62a4a017bb394833aa0983e6e";
+const UDP_SINK_CAPACITY: usize = 20;
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -93,6 +94,8 @@ pub enum Error {
     Rand(#[cause] rand::Error),
     #[fail(display = "{}", _0)]
     Ring(#[cause] ring::error::Unspecified),
+    #[fail(display = "{}", _0)]
+    Timer(#[cause] tokio::timer::Error),
     #[fail(display = "{}", _0)]
     Utf8(#[cause] std::str::Utf8Error),
     #[fail(display = "{}", _0)]
@@ -174,6 +177,12 @@ impl From<ring::error::Unspecified> for Error {
     }
 }
 
+impl From<tokio::timer::Error> for Error {
+    fn from(e: tokio::timer::Error) -> Self {
+        Error::Timer(e)
+    }
+}
+
 impl From<std::str::Utf8Error> for Error {
     fn from(e: std::str::Utf8Error) -> Self {
         Error::Utf8(e)
@@ -198,9 +207,6 @@ pub struct ClientId(pub SocketAddr);
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct ServerId(pub SocketAddr);
 
-#[derive(Default)]
-struct TsCodec;
-
 impl Into<SocketAddr> for ClientId {
     fn into(self) -> SocketAddr {
         self.0
@@ -209,25 +215,6 @@ impl Into<SocketAddr> for ClientId {
 impl Into<SocketAddr> for ServerId {
     fn into(self) -> SocketAddr {
         self.0
-    }
-}
-
-impl UdpCodec for TsCodec {
-    type In = (SocketAddr, UdpPacket);
-    type Out = (SocketAddr, UdpPacket);
-
-    fn decode(&mut self, src: &SocketAddr, buf: &[u8]) -> io::Result<Self::In> {
-        Ok((*src, UdpPacket(buf.to_vec())))
-    }
-
-    /// The input packet has to be compressed, encrypted and fragmented already.
-    fn encode(
-        &mut self,
-        (addr, UdpPacket(mut packet)): Self::Out,
-        buf: &mut Vec<u8>,
-    ) -> SocketAddr {
-        buf.append(&mut packet);
-        addr
     }
 }
 

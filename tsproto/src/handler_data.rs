@@ -3,14 +3,14 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
-use {slog, slog_async, slog_term};
-use futures::{self, Sink, Stream};
-use futures::unsync::mpsc;
+use {evmap, futures_locks, slog, slog_async, slog_term, tokio};
+use futures::{self, Future, Sink, Stream};
+use futures::sync::mpsc;
 use slog::Drain;
-use tokio_core::net::UdpSocket;
-use tokio_core::reactor::Handle;
+use tokio::codec::BytesCodec;
+use tokio::net::{UdpFramed, UdpSocket};
 
-use {Error, Result, TsCodec, StreamWrapper, SinkWrapper};
+use {Error, Result, StreamWrapper, SinkWrapper};
 use connection::*;
 use connectionmanager::ConnectionManager;
 use crypto::EccKeyPrivP256;
@@ -23,7 +23,7 @@ pub trait ConnectionListener<CM: ConnectionManager> {
     /// Return `false` to remain in the list of listeners.
     /// If `true` is returned, this listener will be removed.
     fn on_connection_created(&mut self, _data: Rc<RefCell<Data<CM>>>,
-        _key: CM::ConnectionsKey) -> bool {
+        _key: CM::Key) -> bool {
         false
     }
 
@@ -32,53 +32,69 @@ pub trait ConnectionListener<CM: ConnectionManager> {
     /// Return `false` to remain in the list of listeners.
     /// If `true` is returned, this listener will be removed.
     fn on_connection_removed(&mut self, _data: Rc<RefCell<Data<CM>>>,
-        _key: CM::ConnectionsKey) -> bool {
+        _key: CM::Key) -> bool {
         false
+    }
+}
+
+pub struct ConnectionValue<CM: ConnectionManager + 'static> {
+    pub mutex: futures_locks::Mutex<(CM::AssociatedData, Connection)>,
+}
+
+impl<CM: ConnectionManager + 'static> PartialEq for ConnectionValue<CM> {
+    fn eq(&self, other: &Self) -> bool {
+        self as *const ConnectionValue<_> == other as *const _
+    }
+}
+
+impl<CM: ConnectionManager + 'static> Eq for ConnectionValue<CM> {}
+
+impl<CM: ConnectionManager + 'static> evmap::ShallowCopy for ConnectionValue<CM> {
+    unsafe fn shallow_copy(&mut self) -> Self {
+        // Try to copy without generating memory leaks
+        let r: Self = mem::uninitialized();
+        panic!()
     }
 }
 
 /// The stored data for our server or client.
 ///
-/// This data is stored for one socket.
+/// This handles a single socket.
 ///
 /// The list of connections is not managed by this struct, but it is passed to
 /// an instance of [`ConnectionManager`] that is stored here.
 ///
 /// [`ConnectionManager`]:
-pub struct Data<CM: ConnectionManager> {
+pub struct Data<CM: ConnectionManager + 'static> {
     /// If this structure is owned by a client or a server.
     pub is_client: bool,
     /// The address of the socket.
     pub local_addr: SocketAddr,
     /// The private key of this instance.
     pub private_key: EccKeyPrivP256,
-    pub handle: Handle,
     pub logger: slog::Logger,
 
-    /// The stream of `UdpPacket`s.
-    pub udp_packet_stream:
-        Option<Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>,
     /// The sink of `UdpPacket`s.
-    pub udp_packet_sink:
-        Option<Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>,
-    /// The sink for `UdpPacket`s with no known connection.
-    ///
-    /// This can stay `None` so all packets without connection will be dropped.
-    pub unknown_udp_packet_sink:
-        Option<mpsc::Sender<(SocketAddr, UdpPacket)>>,
+    pub udp_packet_sink: mpsc::Sender<(SocketAddr, UdpPacket)>,
 
     /// The stream of `Packet`s.
     pub packet_stream:
-        Option<Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>>,
+        Option<Box<Stream<Item = (CM::Key, Packet), Error = Error>>>,
     /// The sink of `Packet`s.
     pub packet_sink:
-        Option<Box<Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error>>>,
+        Option<Box<Sink<SinkItem = (CM::Key, Packet), SinkError = Error>>>,
+
+    /// The default resend config. It gets copied for each new connection.
+    resend_config: ::resend::ResendConfig,
+
+    connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
+    connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM>>,
 
     /// A list of all connected clients or servers
     ///
     /// You should not add or remove connections directly using the manager,
-    /// unless you know what you are doing (e.g. connection listeners are not
-    /// called).
+    /// unless you know what you are doing. E.g. connection listeners are not
+    /// called if you do so.
     /// Instead, use the [`add_connection`] und [`remove_connection`] function.
     ///
     /// [`add_connection`]:
@@ -94,7 +110,6 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     pub fn new<L: Into<Option<slog::Logger>>>(
         local_addr: SocketAddr,
         private_key: EccKeyPrivP256,
-        handle: Handle,
         is_client: bool,
         connection_manager: CM,
         logger: L,
@@ -108,26 +123,33 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         });
 
         // Create the socket
-        let socket = UdpSocket::bind(&local_addr, &handle)?;
+        let socket = UdpSocket::bind(&local_addr)?;
         let local_addr = socket.local_addr().unwrap_or(local_addr);
-        let (sink, stream) = socket.framed(TsCodec::default()).split();
-        let sink = Box::new(sink.sink_from_err());
-        let stream = Box::new(stream.from_err());
+        debug!(logger, "Listening"; "local_addr" => %local_addr);
+        let (sink, stream) = UdpFramed::new(socket, BytesCodec::new()).split();
+
+        let (udp_packet_sink, udp_packet_sink_sender) = mpsc::channel(::UDP_SINK_CAPACITY);
+        let logger2 = logger.clone();
 
         let data = Rc::new(RefCell::new(Self {
             is_client,
             local_addr,
             private_key,
-            handle,
             logger,
-            udp_packet_stream: Some(stream),
-            udp_packet_sink: Some(sink),
-            unknown_udp_packet_sink: None,
+            udp_packet_sink,
             packet_stream: None,
             packet_sink: None,
             connection_manager,
             connection_listeners: Vec::new(),
         }));
+
+        tokio::spawn(udp_packet_sink_sender.map(|(addr, UdpPacket(p))|
+            (p.freeze(), addr))
+            .forward(sink.sink_map_err(move |e|
+                error!(logger2, "Failed to send udp packet"; "error" => ?e))
+            ).map(|_| ()));
+
+
 
         // Apply packet codec to set packet stream and sink
         ::packet_codec::PacketCodecSink::apply(&data);
@@ -137,7 +159,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     }
 
     pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
-        -> Rc<RefCell<Connection<CM>>> {
+        -> Rc<RefCell<Connection>> {
         // Add options like ip to logger
         let (resender, logger) = {
             let data = data.borrow();
@@ -156,13 +178,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     ///
     /// [`create_connection`]:
     pub fn add_connection(data: &Rc<RefCell<Self>>,
-        connection: Rc<RefCell<Connection<CM>>>) -> CM::ConnectionsKey {
+        connection: Rc<RefCell<Connection>>) -> CM::Key {
         let mut tmp;
         // Add connection and take listeners
         let key = {
             let data = &mut *data.borrow_mut();
-            let key = data.connection_manager.add_connection(connection,
-                &data.handle);
+            let key = data.connection_manager.add_connection(connection);
             tmp = mem::replace(&mut data.connection_listeners, Vec::new());
             key
         };
@@ -184,7 +205,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         key
     }
 
-    pub fn remove_connection(data: &Rc<RefCell<Self>>, key: CM::ConnectionsKey) {
+    pub fn remove_connection(data: &Rc<RefCell<Self>>, key: CM::Key) {
         let mut tmp;
         // Take listeners
         {
@@ -230,8 +251,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     }
 
     pub fn apply_packet_stream_wrapper<
-        W: StreamWrapper<(CM::ConnectionsKey, Packet), Error,
-            Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>>
+        W: StreamWrapper<(CM::Key, Packet), Error,
+            Box<Stream<Item = (CM::Key, Packet), Error = Error>>>
             + 'static,
     >(data: &Rc<RefCell<Self>>, a: W::A) {
         let mut data = data.borrow_mut();
@@ -240,8 +261,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     }
 
     pub fn apply_packet_sink_wrapper<
-        W: SinkWrapper<(CM::ConnectionsKey, Packet), Error,
-            Box<Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error>>>
+        W: SinkWrapper<(CM::Key, Packet), Error,
+            Box<Sink<SinkItem = (CM::Key, Packet), SinkError = Error>>>
             + 'static,
     >(data: &Rc<RefCell<Self>>, a: W::A) {
         let mut data = data.borrow_mut();
@@ -267,11 +288,11 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 ///
 /// [`UdpPacket`]: ../packets/struct.UdpPacket.html
 /// [`Data`]: struct.Data.html
-pub struct DataUdpPackets<CM: ConnectionManager> {
+pub struct DataUdpPackets<CM: ConnectionManager + 'static> {
     data: Weak<RefCell<Data<CM>>>,
 }
 
-impl<CM: ConnectionManager> Stream for DataUdpPackets<CM> {
+impl<CM: ConnectionManager + 'static> Stream for DataUdpPackets<CM> {
     type Item = (SocketAddr, UdpPacket);
     type Error = Error;
 
@@ -294,7 +315,7 @@ impl<CM: ConnectionManager> Stream for DataUdpPackets<CM> {
     }
 }
 
-impl<CM: ConnectionManager> Sink for DataUdpPackets<CM> {
+impl<CM: ConnectionManager + 'static> Sink for DataUdpPackets<CM> {
     type SinkItem = (SocketAddr, UdpPacket);
     type SinkError = Error;
 
@@ -349,12 +370,12 @@ impl<CM: ConnectionManager> Sink for DataUdpPackets<CM> {
 ///
 /// [`Packet`]: ../packets/struct.Packet.html
 /// [`Data`]: struct.Data.html
-pub struct DataPackets<CM: ConnectionManager> {
+pub struct DataPackets<CM: ConnectionManager + 'static> {
     data: Weak<RefCell<Data<CM>>>,
 }
 
-impl<CM: ConnectionManager> Stream for DataPackets<CM> {
-    type Item = (CM::ConnectionsKey, Packet);
+impl<CM: ConnectionManager + 'static> Stream for DataPackets<CM> {
+    type Item = (CM::Key, Packet);
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
@@ -376,8 +397,8 @@ impl<CM: ConnectionManager> Stream for DataPackets<CM> {
     }
 }
 
-impl<CM: ConnectionManager> Sink for DataPackets<CM> {
-    type SinkItem = (CM::ConnectionsKey, Packet);
+impl<CM: ConnectionManager + 'static> Sink for DataPackets<CM> {
+    type SinkItem = (CM::Key, Packet);
     type SinkError = Error;
 
     fn start_send(

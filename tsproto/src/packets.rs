@@ -4,6 +4,7 @@ use std::io::prelude::*;
 use std::io::Cursor;
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
+use bytes::BytesMut;
 use num::{FromPrimitive, ToPrimitive};
 
 use {Error, Result};
@@ -53,7 +54,7 @@ pub enum CodecType {
 }
 
 #[derive(PartialEq, Eq, Clone)]
-pub struct UdpPacket(pub Vec<u8>);
+pub struct UdpPacket(pub BytesMut);
 
 impl fmt::Debug for UdpPacket {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

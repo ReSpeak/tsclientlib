@@ -8,9 +8,9 @@ use std::u16;
 use slog;
 use num::ToPrimitive;
 
-use connectionmanager::ConnectionManager;
 use crypto::EccKeyPubP256;
 use packets::*;
+use resend::DefaultResender;
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -139,7 +139,7 @@ impl ConnectedParams {
 }
 
 /// Represents a currently alive connection.
-pub struct Connection<CM: ConnectionManager + 'static> {
+pub struct Connection {
     /// A logger for this connection.
     pub logger: slog::Logger,
     /// The parameters of this connection, if it is already established.
@@ -148,12 +148,12 @@ pub struct Connection<CM: ConnectionManager + 'static> {
     /// to.
     pub address: SocketAddr,
 
-    pub resender: CM::Resend,
+    pub resender: DefaultResender,
 }
 
-impl<CM: ConnectionManager + 'static> Connection<CM> {
+impl Connection {
     /// Creates a new connection struct.
-    pub fn new(address: SocketAddr, resender: CM::Resend, logger: slog::Logger)
+    pub fn new(address: SocketAddr, resender: DefaultResender, logger: slog::Logger)
         -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             logger,
