@@ -18,7 +18,7 @@ use resend::{ResendConfig, ResendFuture};
 /// The unique identification of a connection is handled by the implementation.
 pub trait ConnectionManager: Sized {
     /// The key wihch identifies a connection.
-    type Key: Eq + Hash + Clone;
+    type Key: Clone + Eq + Hash + Send;
 
     /// Data which is associated with each connection. This can be used to store
     /// additional connection information.

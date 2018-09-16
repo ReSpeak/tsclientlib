@@ -156,60 +156,56 @@ fn create_key_nonce(
 
 pub fn encrypt_key_nonce(
     header: &mut Header,
-    data: &mut [u8],
+    data: &[u8],
     key: &[u8; 16],
     nonce: &[u8; 16],
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let mut meta = Vec::with_capacity(5);
     header.write_meta(&mut meta)?;
 
     let (mac, enc) = crypto::Eax::encrypt(key, nonce, &meta, data)?;
     header.mac.copy_from_slice(&mac[..8]);
-    data.copy_from_slice(&enc);
-
-    Ok(())
+    Ok(enc)
 }
 
-pub fn encrypt_fake(header: &mut Header, data: &mut [u8]) -> Result<()> {
+pub fn encrypt_fake(header: &mut Header, data: &[u8]) -> Result<Vec<u8>> {
     encrypt_key_nonce(header, data, &::FAKE_KEY, &::FAKE_NONCE)
 }
 
 pub fn encrypt(
     header: &mut Header,
-    data: &mut [u8],
+    data: &[u8],
     generation_id: u32,
     iv: &SharedIv,
     cache: &mut [CachedKey; 8],
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let (key, nonce) = create_key_nonce(header, generation_id, iv, cache);
     encrypt_key_nonce(header, data, &key, &nonce)
 }
 
 pub fn decrypt_key_nonce(
     header: &Header,
-    data: &mut [u8],
+    data: &[u8],
     key: &[u8; 16],
     nonce: &[u8; 16],
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let mut meta = Vec::with_capacity(5);
     header.write_meta(&mut meta)?;
 
-    let dec = crypto::Eax::decrypt(key, nonce, &meta, data, &header.mac)?;
-    data.copy_from_slice(&dec);
-    Ok(())
+    Ok(crypto::Eax::decrypt(key, nonce, &meta, data, &header.mac)?)
 }
 
-pub fn decrypt_fake(header: &Header, data: &mut [u8]) -> Result<()> {
+pub fn decrypt_fake(header: &Header, data: &[u8]) -> Result<Vec<u8>> {
     decrypt_key_nonce(header, data, &::FAKE_KEY, &::FAKE_NONCE)
 }
 
 pub fn decrypt(
     header: &Header,
-    data: &mut [u8],
+    data: &[u8],
     generation_id: u32,
     iv: &SharedIv,
     cache: &mut [CachedKey; 8],
-) -> Result<()> {
+) -> Result<Vec<u8>> {
     let (key, nonce) = create_key_nonce(header, generation_id, iv, cache);
     decrypt_key_nonce(header, data, &key, &nonce)
 }
@@ -316,10 +312,8 @@ mod tests {
         ::init().unwrap();
         let data = (0..100).into_iter().collect::<Vec<_>>();
         let mut header = Header::default();
-        let mut enc_data = data.clone();
-        encrypt_fake(&mut header, &mut enc_data).unwrap();
-        let mut dec_data = enc_data.clone();
-        decrypt_fake(&header, &mut dec_data).unwrap();
+        let enc_data = encrypt_fake(&mut header, &mut enc_data).unwrap();
+        let dec_data = decrypt_fake(&header, &enc_data).unwrap();
         assert_eq!(&data, &dec_data);
     }
 
@@ -331,11 +325,11 @@ mod tests {
         let mut header = Header::default();
         header.c_id = Some(0);
         header.set_type(PacketType::Ack);
-        encrypt_fake(&mut header, &mut p_data).unwrap();
+        let mut enc_data = encrypt_fake(&mut header, &p_data).unwrap();
 
         let mut buf = Vec::new();
         header.write(&mut buf).unwrap();
-        buf.append(&mut p_data);
+        buf.append(&mut enc_data);
         let real_res: &[u8] = &[0xa4, 0x7b, 0x47, 0x94, 0xdb, 0xa9, 0x6a, 0xc5,
             0, 0, 0, 0, 0x6, 0xfe, 0x18];
         assert_eq!(real_res, buf.as_slice());

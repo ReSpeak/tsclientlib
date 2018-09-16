@@ -242,7 +242,7 @@ impl DefaultPacketHandlerStream {
                     let logger = con.logger.clone();
                     let state = data.connection_manager
                         .get_mut_data(key.clone()).unwrap();
-                    let handle_res = match Self::handle_packet(state, &packet,
+                    let handle_res = match Self::handle_packet::<CM, _>(state, &packet,
                         &mut ignore_packet, &mut is_end, &data.private_key,
                         &mut con, key.clone(), &logger,
                         sink.clone()) {

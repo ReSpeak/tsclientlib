@@ -131,6 +131,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         let (udp_packet_sink, udp_packet_sink_sender) = mpsc::channel(::UDP_SINK_CAPACITY);
         let logger2 = logger.clone();
 
+        let (connections, connections_writer) = evmap::new();
+
         let data = Rc::new(RefCell::new(Self {
             is_client,
             local_addr,
@@ -139,6 +141,9 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             udp_packet_sink,
             packet_stream: None,
             packet_sink: None,
+            resend_config: Default::default(),
+            connections,
+            connections_writer,
             connection_manager,
             connection_listeners: Vec::new(),
         }));
@@ -149,11 +154,11 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
                 error!(logger2, "Failed to send udp packet"; "error" => ?e))
             ).map(|_| ()));
 
+        // TODO Use PacketCodecReceiver::handle_udp_packet with stream
 
 
         // Apply packet codec to set packet stream and sink
         ::packet_codec::PacketCodecSink::apply(&data);
-        ::packet_codec::PacketCodecStream::apply(&data, true);
 
         Ok(data)
     }
@@ -165,7 +170,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             let data = data.borrow();
             let logger = data.logger.new(o!("addr" => addr.to_string()));
 
-            (data.connection_manager.create_resender(logger.clone()), logger)
+            (::resend::DefaultResender::new(data.resend_config.clone(),
+                logger.clone()), logger)
         };
 
         Connection::new(addr, resender, logger)
@@ -230,26 +236,6 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         }
     }
 
-    pub fn apply_udp_packet_stream_wrapper<
-        W: StreamWrapper<(SocketAddr, UdpPacket), Error,
-            Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.udp_packet_stream.take().unwrap();
-        data.udp_packet_stream = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    pub fn apply_udp_packet_sink_wrapper<
-        W: SinkWrapper<(SocketAddr, UdpPacket), Error,
-            Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.udp_packet_sink.take().unwrap();
-        data.udp_packet_sink = Some(Box::new(W::wrap(inner, a)));
-    }
-
     pub fn apply_packet_stream_wrapper<
         W: StreamWrapper<(CM::Key, Packet), Error,
             Box<Stream<Item = (CM::Key, Packet), Error = Error>>>
@@ -270,98 +256,10 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         data.packet_sink = Some(Box::new(W::wrap(inner, a)));
     }
 
-    /// Gives a `Stream` and `Sink` of `UdpPacket`s, which always references the
-    /// current stream in the `Data` struct.
-    pub fn get_udp_packets(data: Weak<RefCell<Self>>) -> DataUdpPackets<CM> {
-        DataUdpPackets { data }
-    }
-
     /// Gives a `Stream` and `Sink` of `Packet`s, which always references the
     /// current stream in the `Data` struct.
     pub fn get_packets(data: Weak<RefCell<Self>>) -> DataPackets<CM> {
         DataPackets { data }
-    }
-}
-
-/// A `Stream` and `Sink` of [`UdpPacket`]s, which always references the current
-/// stream in the [`Data`] struct.
-///
-/// [`UdpPacket`]: ../packets/struct.UdpPacket.html
-/// [`Data`]: struct.Data.html
-pub struct DataUdpPackets<CM: ConnectionManager + 'static> {
-    data: Weak<RefCell<Data<CM>>>,
-}
-
-impl<CM: ConnectionManager + 'static> Stream for DataUdpPackets<CM> {
-    type Item = (SocketAddr, UdpPacket);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::Ready(None));
-        };
-        let mut stream = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_stream
-                .take()
-                .unwrap()
-        };
-        let res = stream.poll();
-        let mut data = data.borrow_mut();
-        data.udp_packet_stream = Some(stream);
-        res
-    }
-}
-
-impl<CM: ConnectionManager + 'static> Sink for DataUdpPackets<CM> {
-    type SinkItem = (SocketAddr, UdpPacket);
-    type SinkError = Error;
-
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.start_send(item);
-        let mut data = data.borrow_mut();
-        data.udp_packet_sink = Some(sink);
-        res
-    }
-
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.poll_complete();
-        let mut data = data.borrow_mut();
-        data.udp_packet_sink = Some(sink);
-        res
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.close();
-        let mut data = data.borrow_mut();
-        data.udp_packet_sink = Some(sink);
-        res
     }
 }
 

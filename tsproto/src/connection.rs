@@ -5,9 +5,11 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::u16;
 
-use slog;
+use futures::Future;
 use num::ToPrimitive;
+use slog;
 
+use Error;
 use crypto::EccKeyPubP256;
 use packets::*;
 use resend::DefaultResender;
@@ -119,19 +121,27 @@ impl ConnectedParams {
     }
 
     /// Check if a given id is in the receive window.
+    ///
+    /// Returns
+    /// 1. If the packet id is inside the receive window
+    /// 1. The generation of the packet
+    /// 1. The minimum accepted packet id
+    /// 1. The maximum accepted packet id
     pub(crate) fn in_receive_window(
         &self,
         p_type: PacketType,
         p_id: u16,
-    ) -> (bool, u16, u16) {
+    ) -> (bool, u32, u16, u16) {
         let type_i = p_type.to_usize().unwrap();
         // Receive window is the next half of ids
         let cur_next = self.incoming_p_ids[type_i].1;
         let limit = ((u32::from(cur_next) + u32::from(u16::MAX) / 2)
             % u32::from(u16::MAX)) as u16;
+        let gen = self.incoming_p_ids[type_i].0;
         (
             (cur_next < limit && p_id >= cur_next && p_id < limit)
                 || (cur_next > limit && (p_id >= cur_next || p_id < limit)),
+            if p_id >= cur_next { gen } else { gen + 1 },
             cur_next,
             limit,
         )
@@ -161,5 +171,9 @@ impl Connection {
             address,
             resender,
         }))
+    }
+
+    pub fn send_packet(&mut self, packet: Packet) -> impl Future<Item=(), Error=Error> {
+        panic!()
     }
 }

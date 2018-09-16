@@ -5,7 +5,6 @@ use std::rc::{Rc, Weak};
 use std::u16;
 
 use {evmap, futures_locks, tokio};
-use bytes::{BufMut, BytesMut};
 use futures::{self, future, Future, Sink, Stream, task};
 use futures::sync::mpsc;
 use num::ToPrimitive;
@@ -64,11 +63,21 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
             |vs| vs[0].mutex.clone()) {
             // If we are a client and have only a single connection, we will do the
             // work inside this future and not spawn a new one.
+            let logger = self.logger.clone();
             if self.is_client && self.connections.len() == 1 {
-                Box::new(Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos))
+                Box::new(Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos)
+                    .then(|r| {
+                        if let Err(e) = r {
+                            error!(logger, "Error handling udp packed"; "error" => ?e);
+                        }
+                        Ok(())
+                    }))
             } else {
                 tokio::spawn(move ||
-                    Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos));
+                    Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos)
+                    .map_err(|e| {
+                        error!(logger, "Error handling udp packed"; "error" => ?e);
+                    }));
                 Box::new(future::ok(()))
             }
         } else {
@@ -98,47 +107,197 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
         header: packets::Header,
         pos: usize,
     ) -> impl Future<Item=(), Error=Error> {
-        connection.with(|con| {
-            let udp_packet = &udp_packet.0[pos..];
+        connection.with(move |con| {
+            let mut udp_packet = &udp_packet.0[pos..];
+            let packets = if let Some(ref mut params) = con.1.params {
+                if header.get_type() == PacketType::Init {
+                    return Err(Error::UnexpectedInitPacket);
+                }
+                let p_type = header.get_type();
+                let type_i = p_type.to_usize().unwrap();
+                let id = header.p_id;
+
+                let mut ack = None;
+                let (in_recv_win, gen_id, cur_next, limit) =
+                    params.in_receive_window(p_type, id);
+                // Ignore range for acks
+                let res = if p_type == PacketType::Ack
+                    || p_type == PacketType::AckLow
+                    || in_recv_win
+                {
+                    let mut dec_data;
+                    if !header.get_unencrypted() {
+                        // If it is the first ack packet of a
+                        // client, try to fake decrypt it.
+                        let decrypted = if header.get_type() == PacketType::Ack
+                            && header.p_id == 0
+                        {
+                            if let Ok(dec) = algs::decrypt_fake(
+                                &header,
+                                udp_packet,
+                            ) {
+                                dec_data = dec;
+                                udp_packet = &dec_data;
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if !decrypted {
+                            // Decrypt the packet
+                            dec_data = algs::decrypt(
+                                &header,
+                                udp_packet,
+                                gen_id,
+                                &params.shared_iv,
+                                &mut params.key_cache,
+                            )?;
+                            udp_packet = &dec_data;
+                        }
+                    } else if algs::must_encrypt(header.get_type()) {
+                        // Check if it is ok for the packet to be unencrypted
+                        return Err(Error::UnallowedUnencryptedPacket);
+                    }
+                    match header.get_type() {
+                        PacketType::Command |
+                        PacketType::CommandLow => {
+                            if header.get_type()
+                                == PacketType::Command
+                            {
+                                ack = Some((
+                                    PacketType::Ack,
+                                    packets::Data::Ack(header.p_id),
+                                ));
+                            } else if header.get_type()
+                                == PacketType::CommandLow
+                            {
+                                ack = Some((
+                                    PacketType::AckLow,
+                                    packets::Data::AckLow(
+                                        header.p_id,
+                                    ),
+                                ));
+                            }
+                            Self::handle_command_packet(
+                                &logger,
+                                params,
+                                header,
+                                udp_packet,
+                            )?
+                        }
+                        _ => {
+                            if header.get_type() == PacketType::Ping {
+                                ack = Some((
+                                    PacketType::Pong,
+                                    packets::Data::Pong(
+                                        header.p_id,
+                                    ),
+                                ));
+                            }
+                            // Update packet ids
+                            let id = id.wrapping_add(1);
+                            params.incoming_p_ids[type_i] = (gen_id, id);
+
+                            let p_data = packets::Data::read(
+                                &header,
+                                &mut Cursor::new(&udp_packet),
+                            )?;
+                            match p_data {
+                                packets::Data::Ack(p_id) |
+                                packets::Data::AckLow(p_id) => {
+                                    // Remove command packet from send queue if the fitting ack is received.
+                                    let p_type = if header.get_type()
+                                        == PacketType::Ack {
+                                        PacketType::Command
+                                    } else {
+                                        PacketType::CommandLow
+                                    };
+                                    con.1.resender.ack_packet(p_type, p_id);
+                                    vec![Packet::new(header, p_data)]
+                                }
+                                packets::Data::VoiceS2C { .. } |
+                                packets::Data::VoiceWhisperS2C { .. } => {
+                                    // Seems to work better without assembling the first 3 voice packets
+                                    // Use handle_voice_packet to assemble fragmented voice packets
+                                    /*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
+                                    let res = res.drain(..).map(|p|
+                                        (con_key.clone(), p)).collect();
+                                    Ok(res)*/
+                                    vec![Packet::new(header, p_data)]
+                                }
+                                _ => vec![Packet::new(header, p_data)],
+                            }
+                        }
+                    }
+                } else {
+                    // Send an ack for the case when it was lost
+                    if header.get_type() == PacketType::Command {
+                        ack = Some((
+                            PacketType::Ack,
+                            packets::Data::Ack(header.p_id),
+                        ));
+                    } else if header.get_type() == PacketType::CommandLow {
+                        ack = Some((
+                            PacketType::AckLow,
+                            packets::Data::AckLow(header.p_id),
+                        ));
+                    }
+                    return Err(Error::NotInReceiveWindow {
+                        id,
+                        next: cur_next,
+                        limit,
+                        p_type: header.get_type(),
+                    });
+                };
+                if let Some((ack_type, ack_packet)) = ack {
+                    let mut ack_header = Header::default();
+                    ack_header.set_type(ack_type);
+                    tokio::spawn(con.1.send_packet(Packet::new(ack_header, ack_packet))
+                        .map_err(move |e| {
+                            error!(logger, "Failed to send ack packet"; "error" => ?e);
+                        }));
+                }
+                res
+            } else {
+                // Try to fake decrypt the packet
+                let udp_packet_bak = udp_packet.clone();
+                if algs::decrypt_fake(&header, &mut udp_packet).is_ok() {
+                    // Send ack
+                    if header.get_type() == PacketType::Command {
+                        let mut ack_header = Header::default();
+                        ack_header.set_type(PacketType::Ack);
+                        tokio::spawn(con.1.send_packet(Packet::new(ack_header,
+                            packets::Data::Ack(header.p_id)))
+                            .map_err(move |e| {
+                                error!(logger, "Failed to send ack packet"; "error" => ?e);
+                            }));
+                    }
+                } else {
+                    udp_packet.copy_from_slice(&udp_packet_bak);
+                }
+                let p_data = packets::Data::read(
+                    &header,
+                    &mut Cursor::new(&*udp_packet),
+                )?;
+                vec![Packet::new(header, p_data)]
+            };
+
+            // TODO Do something with packets
             Ok(())
         }).unwrap()
-    }
-}
-
-pub struct PacketCodecStream<
-    CM: ConnectionManager + 'static,
-    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-> {
-    data: Weak<RefCell<Data<CM>>>,
-    is_client: bool,
-    inner: Inner,
-    receive_buffer: Vec<(CM::Key, Packet)>,
-    ack_packet: Option<(CM::Key, Packet)>,
-}
-
-impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
-    Error = Error>> PacketCodecStream<CM, Inner> {
-    pub fn new(data: &Rc<RefCell<Data<CM>>>, inner: Inner) -> Self {
-        let is_client = data.borrow().is_client;
-        Self {
-            data: Rc::downgrade(data),
-            is_client,
-            inner,
-            receive_buffer: Vec::new(),
-            ack_packet: None,
-        }
     }
 
     /// Handle `Command` and `CommandLow` packets.
     ///
     /// They have to be handled in the right order.
     fn handle_command_packet(
-        con_key: CM::Key,
         logger: &Logger,
         params: &mut ConnectedParams,
         mut header: Header,
-        mut packet: UdpPacket,
-    ) -> Result<Vec<(CM::Key, Packet)>> {
+        udp_packet: &[u8],
+    ) -> Result<Vec<Packet>> {
         let mut id = header.p_id;
         let type_i = header.get_type().to_usize().unwrap();
         let cmd_i = if header.get_type() == PacketType::Command {
@@ -165,7 +324,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                 let res_packet = if header.get_fragmented() {
                     if let Some((header, mut frag_queue)) = frag_queue.take() {
                         // Last fragmented packet
-                        frag_queue.extend_from_slice(&packet.0);
+                        frag_queue.extend_from_slice(udp_packet);
                         // Decompress
                         let decompressed = if header.get_compressed() {
                             //debug!(logger, "Compressed"; "data" => ?::HexSlice(&frag_queue));
@@ -189,13 +348,13 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                         Some(Packet::new(header, p_data))
                     } else {
                         // Enqueue
-                        *frag_queue = Some((header, packet.0.to_vec()));
+                        *frag_queue = Some((header, udp_packet.to_vec()));
                         None
                     }
                 } else if let Some((_, ref mut frag_queue)) = *frag_queue {
                     // The packet is fragmented
                     if frag_queue.len() < MAX_FRAGMENTS_LENGTH {
-                        frag_queue.extend_from_slice(&packet.0);
+                        frag_queue.extend_from_slice(udp_packet);
                         None
                     } else {
                         return Err(Error::MaxLengthExceeded(String::from(
@@ -206,11 +365,11 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                     let decompressed = if header.get_compressed() {
                         //debug!(logger, "Compressed"; "data" => ?::HexSlice(&packet.0));
                         ::quicklz::decompress(
-                            &mut Cursor::new(packet.0),
+                            &mut Cursor::new(udp_packet),
                             ::MAX_DECOMPRESSED_SIZE,
                         )?
                     } else {
-                        packet.0.to_vec()
+                        udp_packet.to_vec()
                     };
                     /*if header.get_compressed() {
                         debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
@@ -222,7 +381,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                     Some(Packet::new(header, p_data))
                 };
                 if let Some(p) = res_packet {
-                    packets.push((con_key.clone(), p));
+                    packets.push(p);
                 }
 
                 // Check if there are following packets in the receive queue.
@@ -233,9 +392,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
                 {
                     let (h, p) = r_queue.remove(pos);
                     header = h;
-                    let bytes = BytesMut::with_capacity(p.len());
-                    bytes.put(&p);
-                    packet = UdpPacket(bytes);
+                    udp_packet = &p;
                 } else {
                     break;
                 }
@@ -252,7 +409,7 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
             if (cur_next < limit && id >= cur_next && id < limit)
                 || (cur_next > limit && (id >= cur_next || id < limit))
             {
-                r_queue.push((header, packet.0.to_vec()));
+                r_queue.push((header, udp_packet.to_vec()));
                 Ok(vec![])
             } else {
                 Err(Error::MaxLengthExceeded(String::from("command queue")))
@@ -312,326 +469,6 @@ impl<CM: ConnectionManager, Inner: Stream<Item = (SocketAddr, UdpPacket),
         res.push(Packet::new(header.clone(), packet_data));
         res
     }*/
-
-    fn on_packet_received(&mut self, addr: SocketAddr, udp_packet: UdpPacket)
-        -> futures::Poll<Option<<Self as Stream>::Item>,
-            <Self as Stream>::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::Ready(None));
-        };
-        // Get the connection
-        let con_key;
-        let con = {
-            let data = &mut *data.borrow_mut();
-            let con = data.connection_manager.get_connection_for_udp_packet(addr, &udp_packet);
-            if let Some(con) = con {
-                con_key = con.clone();
-                data.connection_manager.get_connection(con).unwrap()
-            } else {
-                if let Some(sink) = data.unknown_udp_packet_sink.as_mut() {
-                    // TODO Should use try_send with futures 0.2
-                    if let Err(error) = sink.start_send((addr, udp_packet)) {
-                        warn!(data.logger, "Unknown packet dropped"; "error" =>
-                            ?error, "from" => addr);
-                    }
-                } else {
-                    info!(data.logger, "No unknown packet handler");
-                    warn!(data.logger, "Unknown packet dropped"; "from" =>
-                        addr);
-                }
-                return Ok(futures::Async::NotReady);
-            }
-        };
-
-        let UdpPacket(mut udp_packet) = udp_packet;
-        let con = &mut *con.borrow_mut();
-        let is_client = self.is_client;
-        let (header, pos) = {
-            let mut r = Cursor::new(&*udp_packet);
-            (
-                packets::Header::read(&!is_client, &mut r)?,
-                r.position() as usize,
-            )
-        };
-
-        let mut udp_packet = udp_packet.split_off(pos);
-
-        let packets: Vec<(CM::Key, Packet)> = {
-            let logger = con.logger.clone();
-            if let Some(ref mut params) = con.params {
-                if header.get_type() == PacketType::Init {
-                    return Err(Error::UnexpectedInitPacket);
-                }
-                let p_type = header.get_type();
-                let type_i = p_type.to_usize().unwrap();
-                let id = header.p_id;
-
-                let mut ack = None;
-                let (in_recv_win, cur_next, limit) =
-                    params.in_receive_window(p_type, id);
-                // Ignore range for acks
-                let res = if p_type == PacketType::Ack
-                    || p_type == PacketType::AckLow
-                    || in_recv_win
-                {
-                    let gen_id = params.incoming_p_ids[type_i].0;
-                    // TODO Use next gen id if this packet is already from the
-                    // next generation
-
-                    if !header.get_unencrypted() {
-                        // If it is the first ack packet of a
-                        // client, try to fake decrypt it.
-                        let decrypted = if header.get_type() == PacketType::Ack
-                            && header.p_id == 0
-                        {
-                            let udp_packet_bak = udp_packet.clone();
-                            if algs::decrypt_fake(
-                                &header,
-                                &mut udp_packet,
-                            ).is_ok() {
-                                true
-                            } else {
-                                udp_packet.copy_from_slice(&udp_packet_bak);
-                                false
-                            }
-                        } else {
-                            false
-                        };
-                        if !decrypted {
-                            // Decrypt the packet
-                            algs::decrypt(
-                                &header,
-                                &mut udp_packet,
-                                gen_id,
-                                &params.shared_iv,
-                                &mut params.key_cache,
-                            )?
-                        }
-                    } else if algs::must_encrypt(header.get_type()) {
-                        // Check if it is ok for the packet to be unencrypted
-                        return Err(Error::UnallowedUnencryptedPacket);
-                    }
-                    match header.get_type() {
-                        PacketType::Command |
-                        PacketType::CommandLow => {
-                            if header.get_type()
-                                == PacketType::Command
-                            {
-                                ack = Some((
-                                    PacketType::Ack,
-                                    packets::Data::Ack(header.p_id),
-                                ));
-                            } else if header.get_type()
-                                == PacketType::CommandLow
-                            {
-                                ack = Some((
-                                    PacketType::AckLow,
-                                    packets::Data::AckLow(
-                                        header.p_id,
-                                    ),
-                                ));
-                            }
-                            let res = Self::handle_command_packet(
-                                con_key.clone(),
-                                &logger,
-                                params,
-                                header,
-                                UdpPacket(udp_packet),
-                            );
-                            // Don't send an ack if an error is returned
-                            if res.is_err() {
-                                ack = None;
-                            }
-                            res
-                        }
-                        _ => {
-                            if header.get_type() == PacketType::Ping {
-                                ack = Some((
-                                    PacketType::Pong,
-                                    packets::Data::Pong(
-                                        header.p_id,
-                                    ),
-                                ));
-                            }
-                            // Update packet ids
-                            let id = id.wrapping_add(1);
-                            if id < params.incoming_p_ids[type_i].1 {
-                                params.incoming_p_ids[type_i].0 =
-                                    gen_id.wrapping_add(1);
-                            }
-                            params.incoming_p_ids[type_i].1 = id;
-
-                            match packets::Data::read(
-                                &header,
-                                &mut Cursor::new(&udp_packet),
-                            ) {
-                                Ok(p_data) => {
-                                    match p_data {
-                                        packets::Data::Ack(p_id) |
-                                        packets::Data::AckLow(p_id) => {
-                                            // Remove command packet from send queue if the fitting ack is received.
-                                            let p_type = if header.get_type()
-                                                == PacketType::Ack {
-                                                PacketType::Command
-                                            } else {
-                                                PacketType::CommandLow
-                                            };
-                                            con.resender.ack_packet(p_type, p_id);
-                                            Ok(vec![(con_key.clone(),
-                                                Packet::new(header, p_data))])
-                                        }
-                                        packets::Data::VoiceS2C { .. } |
-                                        packets::Data::VoiceWhisperS2C { .. } => {
-                                            // Seems to work better without assembling the first 3 voice packets
-                                            // Use handle_voice_packet to assemble fragmented voice packets
-                                            /*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
-                                            let res = res.drain(..).map(|p|
-                                                (con_key.clone(), p)).collect();
-                                            Ok(res)*/
-                                            Ok(vec![(con_key.clone(),
-                                                Packet::new(header, p_data))])
-                                        }
-                                        _ => Ok(vec![(con_key.clone(),
-                                            Packet::new(header, p_data))]),
-                                    }
-                                }
-                                Err(error) => Err(error),
-                            }
-                        }
-                    }
-                } else {
-                    // Send an ack for the case when it was lost
-                    if header.get_type() == PacketType::Command {
-                        ack = Some((
-                            PacketType::Ack,
-                            packets::Data::Ack(header.p_id),
-                        ));
-                    } else if header.get_type() == PacketType::CommandLow {
-                        ack = Some((
-                            PacketType::AckLow,
-                            packets::Data::AckLow(header.p_id),
-                        ));
-                    }
-                    Err(Error::NotInReceiveWindow {
-                        id,
-                        next: cur_next,
-                        limit,
-                        p_type: header.get_type(),
-                    })
-                };
-                if let Some((ack_type, ack_packet)) = ack {
-                    let mut ack_header = Header::default();
-                    ack_header.set_type(ack_type);
-                    self.ack_packet = Some((con_key,
-                        Packet::new(ack_header, ack_packet)));
-                }
-                res
-            } else {
-                // Try to fake decrypt the packet
-                let udp_packet_bak = udp_packet.clone();
-                if algs::decrypt_fake(&header, &mut udp_packet).is_ok() {
-                    // Send ack
-                    let mut ack_header = Header::default();
-                    ack_header.set_type(PacketType::Ack);
-                    if header.get_type() == PacketType::Command {
-                        self.ack_packet = Some((con_key.clone(), Packet::new(
-                            ack_header,
-                            packets::Data::Ack(header.p_id),
-                        )));
-                    }
-                } else {
-                    udp_packet.copy_from_slice(&udp_packet_bak);
-                }
-                let p_data = packets::Data::read(
-                    &header,
-                    &mut Cursor::new(&*udp_packet),
-                )?;
-                Ok(vec![(con_key, Packet::new(header, p_data))])
-            }
-        }?;
-
-        self.receive_buffer = packets;
-        if !self.receive_buffer.is_empty() || self.ack_packet.is_some() {
-            if self.receive_buffer.len() > 1 {
-                futures::task::current().notify();
-            }
-            Ok(futures::Async::Ready(Some((
-                self.receive_buffer
-                    .pop(),
-                self.ack_packet.take(),
-            ))))
-        } else {
-            // Wait for more packets
-            task::current().notify();
-            Ok(futures::Async::NotReady)
-        }
-    }
-}
-
-impl<CM: ConnectionManager + 'static> PacketCodecStream<CM,
-    ::handler_data::DataUdpPackets<CM>> {
-    /// Add a packet codec stream to the connection.
-    ///
-    /// `Ack`, `AckLow` and `Pong` packets can be suppressed by setting
-    /// `send_acks` to `false`.
-    pub fn apply(data: &Rc<RefCell<Data<CM>>>, send_acks: bool) {
-        let stream = Self::new(data,
-            Data::get_udp_packets(Rc::downgrade(data)));
-        let data2 = data.clone();
-        let mut data = data.borrow_mut();
-        let stream: Box<Stream<Item=_, Error=_>> = if send_acks {
-            Box::new(AckHandler::new(stream,
-                Data::get_packets(Rc::downgrade(&data2))))
-        } else {
-            Box::new(stream.filter_map(|(p, _)| p))
-        };
-
-        data.packet_stream = Some(stream);
-    }
-}
-
-impl<
-    CM: ConnectionManager,
-    Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error>,
-> Stream for PacketCodecStream<CM, Inner> {
-    /// Source packet, optional ack packet if one should be sent.
-    type Item = (Option<(CM::Key, Packet)>,
-        Option<(CM::Key, Packet)>);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        // Check if there are packets in the queue
-        if !self.receive_buffer.is_empty() || self.ack_packet.is_some() {
-            return Ok(futures::Async::Ready(Some((
-                self.receive_buffer.pop(),
-                self.ack_packet.take(),
-            ))));
-        }
-        // Don't return an error, that will terminate the stream (log them only)
-        let res: Result<_> = match self.inner.poll()? {
-            futures::Async::Ready(Some((addr, udp_packet))) =>
-                self.on_packet_received(addr, udp_packet),
-            futures::Async::Ready(None) => Ok(futures::Async::Ready(None)),
-            futures::Async::NotReady => Ok(futures::Async::NotReady),
-        };
-
-        if let Err(error) = res {
-            // Log error
-            let logger = if let Some(data) = self.data.upgrade() {
-                data.borrow().logger.clone()
-            } else {
-                return Ok(futures::Async::Ready(None));
-            };
-            error!(logger, "Receiving packet"; "error" => %error);
-            // Wait for more packets
-            task::current().notify();
-            Ok(futures::Async::NotReady)
-        } else {
-            res
-        }
-    }
 }
 
 
