@@ -54,39 +54,6 @@ impl PacketLogger {
     }
 }
 
-pub struct UdpPacketStreamLogger;
-
-impl<Inner: Stream<Item = (SocketAddr, UdpPacket), Error = Error> + 'static>
-    StreamWrapper<(SocketAddr, UdpPacket), Error, Inner> for
-    UdpPacketStreamLogger {
-    /// (logger, is_client)
-    type A = (Logger, bool);
-    type Result = Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>;
-
-    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self::Result {
-        Box::new(inner.inspect(move |&(addr, ref packet)|
-            PacketLogger::log_udp_packet(&logger, addr, is_client, true, packet)
-        ))
-    }
-}
-
-pub struct UdpPacketSinkLogger;
-
-impl<Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error> + 'static>
-    SinkWrapper<(SocketAddr, UdpPacket), Error, Inner> for UdpPacketSinkLogger {
-    /// (logger, is_client)
-    type A = (Logger, bool);
-    type Result = Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>;
-
-    fn wrap(inner: Inner, (logger, is_client): Self::A) -> Self::Result {
-        Box::new(inner.with(move |(addr, packet)| {
-            PacketLogger::log_udp_packet(&logger, addr, is_client, false,
-                &packet);
-            future::ok((addr, packet))
-        }))
-    }
-}
-
 pub struct PacketStreamLogger<Id> {
     phantom: ::std::marker::PhantomData<Id>,
 }

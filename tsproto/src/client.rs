@@ -91,10 +91,7 @@ pub fn default_setup<
             let data = data.borrow();
             (data.logger.clone(), data.is_client)
         };
-        Data::apply_udp_packet_stream_wrapper::<
-            ::log::UdpPacketStreamLogger>(data, a.clone());
-        Data::apply_udp_packet_sink_wrapper::<
-            ::log::UdpPacketSinkLogger>(data, a.clone());
+        // TODO Udp packet logging
 
         Data::apply_packet_stream_wrapper::<
             ::log::PacketStreamLogger<CM::Key>>(data, a.clone());

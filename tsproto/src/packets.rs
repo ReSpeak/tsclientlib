@@ -4,7 +4,6 @@ use std::io::prelude::*;
 use std::io::Cursor;
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-use bytes::BytesMut;
 use num::{FromPrimitive, ToPrimitive};
 
 use {Error, Result};
@@ -53,23 +52,22 @@ pub enum CodecType {
     OpusMusic,
 }
 
-#[derive(PartialEq, Eq, Clone)]
-pub struct UdpPacket(pub BytesMut);
+pub struct UdpPacket<'a>(&'a [u8]);
 
-impl fmt::Debug for UdpPacket {
+impl<'a> fmt::Debug for UdpPacket<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "UdpPacket {{ header: ")?;
 
         // Parse header
-        match Header::read(&true, &mut Cursor::new(&self.0)) {
+        match Header::read(&true, &mut Cursor::new(self.0)) {
             Ok(h) => h.fmt(f)?,
-            Err(_) => match Header::read(&false, &mut Cursor::new(&self.0)) {
+            Err(_) => match Header::read(&false, &mut Cursor::new(self.0)) {
                 Ok(h) => h.fmt(f)?,
                 Err(_) => {} // Give up
             }
         }
 
-        write!(f, ", raw: {:?} }}", HexSlice(&self.0))?;
+        write!(f, ", raw: {:?} }}", HexSlice(self.0))?;
         Ok(())
     }
 }

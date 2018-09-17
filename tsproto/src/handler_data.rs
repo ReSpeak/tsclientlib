@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use {evmap, futures_locks, slog, slog_async, slog_term, tokio};
+use bytes::Bytes;
 use futures::{self, Future, Sink, Stream};
 use futures::sync::mpsc;
 use slog::Drain;
@@ -74,8 +75,8 @@ pub struct Data<CM: ConnectionManager + 'static> {
     pub private_key: EccKeyPrivP256,
     pub logger: slog::Logger,
 
-    /// The sink of `UdpPacket`s.
-    pub udp_packet_sink: mpsc::Sender<(SocketAddr, UdpPacket)>,
+    /// The sink of udp packets.
+    pub udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
 
     /// The stream of `Packet`s.
     pub packet_stream:
@@ -87,8 +88,8 @@ pub struct Data<CM: ConnectionManager + 'static> {
     /// The default resend config. It gets copied for each new connection.
     resend_config: ::resend::ResendConfig,
 
-    connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
-    connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM>>,
+    pub connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
+    pub connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM>>,
 
     /// A list of all connected clients or servers
     ///
@@ -148,8 +149,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             connection_listeners: Vec::new(),
         }));
 
-        tokio::spawn(udp_packet_sink_sender.map(|(addr, UdpPacket(p))|
-            (p.freeze(), addr))
+        tokio::spawn(udp_packet_sink_sender.map(|(addr, p)|
+            (p, addr))
             .forward(sink.sink_map_err(move |e|
                 error!(logger2, "Failed to send udp packet"; "error" => ?e))
             ).map(|_| ()));
@@ -166,15 +167,15 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
         -> Rc<RefCell<Connection>> {
         // Add options like ip to logger
-        let (resender, logger) = {
+        let (resender, logger, sink) = {
             let data = data.borrow();
             let logger = data.logger.new(o!("addr" => addr.to_string()));
 
             (::resend::DefaultResender::new(data.resend_config.clone(),
-                logger.clone()), logger)
+                logger.clone()), logger, data.udp_packet_sink.clone())
         };
 
-        Connection::new(addr, resender, logger)
+        Connection::new(addr, resender, logger, sink)
     }
 
     /// Add a new connection to this socket.

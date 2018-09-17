@@ -4,11 +4,14 @@ use std::collections::HashMap;
 use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::mem;
+use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 use std::time::{self, Instant};
 
+use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
 use futures::{self, Async, Future, Sink, Stream};
+use futures::sync::mpsc;
 use futures::task::{self, Task};
 use slog::Logger;
 use tokio::timer::{delay_queue, DelayQueue, Delay};
@@ -34,7 +37,7 @@ struct SendRecord {
     pub tries: usize,
     pub id: PacketId,
     /// The packet of this record.
-    pub packet: UdpPacket,
+    pub packet: Bytes,
 }
 
 impl PartialEq for SendRecord {
@@ -301,7 +304,7 @@ impl Resender for DefaultResender {
         }
     }
 
-    fn udp_packet_received(&mut self, _: &UdpPacket) {
+    fn udp_packet_received(&mut self, _: &Bytes) {
         // Restart sending packets if we got a new packet
         let next_state = match self.state {
             ResendStates::Dead     { ref mut to_send, .. } => {
@@ -327,7 +330,7 @@ impl Resender for DefaultResender {
 }
 
 impl Sink for DefaultResender {
-    type SinkItem = (PacketType, u16, UdpPacket);
+    type SinkItem = (PacketType, u16, Bytes);
     type SinkError = Error;
 
     fn start_send(&mut self, (p_type, p_id, packet): Self::SinkItem)
@@ -549,7 +552,7 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
     data: Weak<RefCell<Data<CM>>>,
     connection_key: CM::Key,
     connection: Weak<RefCell<Connection>>,
-    sink: ::handler_data::DataUdpPackets<CM>,
+    sink: mpsc::Sender<(SocketAddr, Bytes)>,
     /// The future to wake us up when the next packet should be resent.
     ///
     /// This is only used in stalling and dead state.
@@ -565,16 +568,19 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
         data: &Rc<RefCell<Data<CM>>>,
         connection_key: CM::Key,
     ) -> Self {
-        let connection = {
+        let (connection, sink) = {
             let data = data.borrow();
-            data.connection_manager.get_connection(connection_key.clone())
-                .unwrap()
+            (
+                data.connection_manager.get_connection(connection_key.clone())
+                    .unwrap(),
+                data.udp_packet_sink.clone(),
+            )
         };
         Self {
             data: Rc::downgrade(data),
             connection_key,
             connection: Rc::downgrade(&connection),
-            sink: Data::get_udp_packets(Rc::downgrade(data)),
+            sink,
             timeout: Delay::new(Instant::now()),
             state_timeout: Delay::new(Instant::now()),
             is_sending: false,
@@ -607,7 +613,8 @@ impl<CM: ConnectionManager + 'static> Future for
         }
 
         if self.is_sending {
-            if let futures::Async::Ready(()) = self.sink.poll_complete()? {
+            if let futures::Async::Ready(()) = self.sink.poll_complete()
+                .map_err(|e| format_err!("Failed to poll_complete udp packet sink ({:?})", e))? {
                 self.is_sending = false;
             } else {
                 return Ok(futures::Async::NotReady);
@@ -775,14 +782,16 @@ impl<CM: ConnectionManager + 'static> Future for
         } {
             // Try to send this packet
             if let futures::AsyncSink::NotReady(_) =
-                self.sink.start_send((addr, rec.packet.clone()))?
+                self.sink.start_send((addr, rec.packet.clone()))
+                    .map_err(|e| format_err!("Failed to poll_complete udp packet sink ({:?})", e))?
             {
                 // The sink should notify us if it is ready
                 break;
             } else {
                 // Successfully started sending the packet, now schedule the
                 // next send time for this packet and enqueue it.
-                if let futures::Async::Ready(()) = self.sink.poll_complete()? {
+                if let futures::Async::Ready(()) = self.sink.poll_complete()
+                    .map_err(|e| format_err!("Failed to poll_complete udp packet sink ({:?})", e))? {
                     self.is_sending = false;
                 } else {
                     self.is_sending = true;

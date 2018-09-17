@@ -4,13 +4,14 @@ use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
+use bytes::Bytes;
 use futures::{future, Future, Sink};
 use tokio;
 
 use {Error, Map};
 use connection::Connection;
 use handler_data::Data;
-use packets::{PacketType, UdpPacket};
+use packets::PacketType;
 use resend::{ResendConfig, ResendFuture};
 
 /// Implementers of this trait store all connections for a specific socket.
@@ -87,7 +88,7 @@ pub enum ResenderEvent {
 ///
 /// [`Command`]:
 /// [`CommandLow`]:
-pub trait Resender: Sink<SinkItem = (PacketType, u16, UdpPacket),
+pub trait Resender: Sink<SinkItem = (PacketType, u16, Bytes),
     SinkError = Error> {
     /// Called for a received ack packet.
     ///
@@ -109,7 +110,7 @@ pub trait Resender: Sink<SinkItem = (PacketType, u16, UdpPacket),
     fn handle_event(&mut self, event: ResenderEvent);
 
     /// Called for received udp packets.
-    fn udp_packet_received(&mut self, packet: &UdpPacket);
+    fn udp_packet_received(&mut self, packet: &Bytes);
 }
 
 /// An implementation of a connectionmanager, that identifies a connection its

@@ -5,6 +5,7 @@ use std::rc::{Rc, Weak};
 use std::u16;
 
 use {evmap, futures_locks, tokio};
+use bytes::{Bytes, BytesMut};
 use futures::{self, future, Future, Sink, Stream, task};
 use futures::sync::mpsc;
 use num::ToPrimitive;
@@ -29,7 +30,7 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
     ///
     /// This can stay `None` so all packets without connection will be dropped.
     pub unknown_udp_packet_sink:
-        Option<mpsc::Sender<(SocketAddr, UdpPacket)>>,
+        Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
@@ -38,17 +39,17 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
             connections: data.connections.clone(),
             is_client: data.is_client,
             logger: data.logger.clone(),
-            receive_buffer: Vec::new(),
+            unknown_udp_packet_sink: None,
         }
     }
 
     pub fn handle_udp_packet(
         &mut self,
-        (addr, udp_packet): (SocketAddr, UdpPacket),
+        (addr, udp_packet): (SocketAddr, BytesMut),
     ) -> Box<Future<Item=(), Error=Error>> {
         // Parse header
         let (header, pos) = {
-            let mut r = Cursor::new(&udp_packet.0);
+            let mut r = Cursor::new(&*udp_packet);
             (
                 match packets::Header::read(&!self.is_client, &mut r) {
                     Ok(r) => r,
@@ -103,12 +104,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
         logger: Logger,
         connection: futures_locks::Mutex<(CM::AssociatedData, Connection)>,
         addr: SocketAddr,
-        udp_packet: UdpPacket,
+        udp_packet: BytesMut,
         header: packets::Header,
         pos: usize,
     ) -> impl Future<Item=(), Error=Error> {
         connection.with(move |con| {
-            let mut udp_packet = &udp_packet.0[pos..];
+            let mut udp_packet = &udp_packet[pos..];
             let packets = if let Some(ref mut params) = con.1.params {
                 if header.get_type() == PacketType::Init {
                     return Err(Error::UnexpectedInitPacket);
@@ -474,7 +475,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 
 pub struct PacketCodecSink<
     CM: ConnectionManager + 'static,
-    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
+    Inner: Sink<SinkItem = (SocketAddr, Bytes), SinkError = Error>,
 > {
     data: Weak<RefCell<Data<CM>>>,
     is_client: bool,
@@ -484,9 +485,9 @@ pub struct PacketCodecSink<
     connection_key: Option<CM::Key>,
     addr: Option<SocketAddr>,
     /// Currently buffered id and packet.
-    command_send_buffer: Vec<(u16, UdpPacket)>,
+    command_send_buffer: Vec<(u16, Bytes)>,
     /// Send buffer for other packets
-    other_send_buffer: Vec<(u16, UdpPacket)>,
+    other_send_buffer: Vec<(u16, Bytes)>,
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
@@ -514,7 +515,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
 
 impl<
     CM: ConnectionManager,
-    Inner: Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>,
+    Inner: Sink<SinkItem = (SocketAddr, Bytes), SinkError = Error>,
 > Sink for PacketCodecSink<CM, Inner> {
     type SinkItem = (CM::Key, Packet);
     type SinkError = Error;
@@ -658,7 +659,7 @@ impl<
                         let mut buf = Vec::new();
                         header.write(&mut buf)?;
                         buf.append(&mut p_data);
-                        Ok((header.p_id, UdpPacket(buf.into())))
+                        Ok((header.p_id, buf.into()))
                     })
                     .collect::<Result<Vec<_>>>()?;
                 packets
@@ -682,7 +683,7 @@ impl<
                 let mut buf = Vec::new();
                 header.write(&mut buf)?;
                 buf.append(&mut p_data);
-                vec![(header.p_id, UdpPacket(buf.into()))]
+                vec![(header.p_id, buf.into())]
             }
         };
         // Add the packets to the queue

@@ -5,7 +5,9 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::u16;
 
-use futures::Future;
+use bytes::Bytes;
+use futures::{future, Future, Sink};
+use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog;
 
@@ -159,21 +161,38 @@ pub struct Connection {
     pub address: SocketAddr,
 
     pub resender: DefaultResender,
+    udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
 }
 
 impl Connection {
     /// Creates a new connection struct.
-    pub fn new(address: SocketAddr, resender: DefaultResender, logger: slog::Logger)
+    pub fn new(address: SocketAddr, resender: DefaultResender,
+        logger: slog::Logger, udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>)
         -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
             logger,
             params: None,
             address,
             resender,
+            udp_packet_sink,
         }))
     }
 
+    pub fn send_udp_packet(&mut self, p_type: PacketType, p_id: u16, packet: Bytes) -> impl Future<Item=(), Error=Error> {
+        // Use the resender for important packets
+        match p_type {
+            PacketType::Init | PacketType::Command | PacketType::CommandLow => {
+            }
+            _ => {
+            }
+        }
+        self.udp_packet_sink.clone()
+            .send((self.address, packet))
+            .map(|_| ())
+            .map_err(|e| format_err!("Failed to send udp packet ({:?})", e).into())
+    }
+
     pub fn send_packet(&mut self, packet: Packet) -> impl Future<Item=(), Error=Error> {
-        panic!()
+        future::ok(panic!())
     }
 }
