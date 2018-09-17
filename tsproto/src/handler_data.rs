@@ -156,11 +156,6 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             ).map(|_| ()));
 
         // TODO Use PacketCodecReceiver::handle_udp_packet with stream
-
-
-        // Apply packet codec to set packet stream and sink
-        ::packet_codec::PacketCodecSink::apply(&data);
-
         Ok(data)
     }
 

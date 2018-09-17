@@ -1,12 +1,10 @@
-use std::cell::RefCell;
 use std::io::Cursor;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
 use std::u16;
 
 use {evmap, futures_locks, tokio};
 use bytes::{Bytes, BytesMut};
-use futures::{self, future, Future, Sink, Stream, task};
+use futures::{future, Future, Sink, Stream};
 use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog::Logger;
@@ -74,11 +72,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                         Ok(())
                     }))
             } else {
-                tokio::spawn(move ||
-                    Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos)
-                    .map_err(|e| {
+                tokio::spawn(future::lazy(move ||
+                    Self::connection_handle_udp_packet(logger.clone(), con, addr, udp_packet, header, pos)
+                    .map_err(move |e| {
                         error!(logger, "Error handling udp packed"; "error" => ?e);
-                    }));
+                    })));
                 Box::new(future::ok(()))
             }
         } else {
@@ -110,6 +108,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
     ) -> impl Future<Item=(), Error=Error> {
         connection.with(move |con| {
             let mut udp_packet = &udp_packet[pos..];
+            let mut ack = None;
             let packets = if let Some(ref mut params) = con.1.params {
                 if header.get_type() == PacketType::Init {
                     return Err(Error::UnexpectedInitPacket);
@@ -118,7 +117,6 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                 let type_i = p_type.to_usize().unwrap();
                 let id = header.p_id;
 
-                let mut ack = None;
                 let (in_recv_win, gen_id, cur_next, limit) =
                     params.in_receive_window(p_type, id);
                 // Ignore range for acks
@@ -161,7 +159,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                         // Check if it is ok for the packet to be unencrypted
                         return Err(Error::UnallowedUnencryptedPacket);
                     }
-                    match header.get_type() {
+                    Ok(match header.get_type() {
                         PacketType::Command |
                         PacketType::CommandLow => {
                             if header.get_type()
@@ -231,7 +229,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                                 _ => vec![Packet::new(header, p_data)],
                             }
                         }
-                    }
+                    })
                 } else {
                     // Send an ack for the case when it was lost
                     if header.get_type() == PacketType::Command {
@@ -245,21 +243,13 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                             packets::Data::AckLow(header.p_id),
                         ));
                     }
-                    return Err(Error::NotInReceiveWindow {
+                    Err(Error::NotInReceiveWindow {
                         id,
                         next: cur_next,
                         limit,
                         p_type: header.get_type(),
-                    });
+                    })
                 };
-                if let Some((ack_type, ack_packet)) = ack {
-                    let mut ack_header = Header::default();
-                    ack_header.set_type(ack_type);
-                    tokio::spawn(con.1.send_packet(Packet::new(ack_header, ack_packet))
-                        .map_err(move |e| {
-                            error!(logger, "Failed to send ack packet"; "error" => ?e);
-                        }));
-                }
                 res
             } else {
                 // Try to fake decrypt the packet
@@ -267,13 +257,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                 if algs::decrypt_fake(&header, &mut udp_packet).is_ok() {
                     // Send ack
                     if header.get_type() == PacketType::Command {
-                        let mut ack_header = Header::default();
-                        ack_header.set_type(PacketType::Ack);
-                        tokio::spawn(con.1.send_packet(Packet::new(ack_header,
-                            packets::Data::Ack(header.p_id)))
-                            .map_err(move |e| {
-                                error!(logger, "Failed to send ack packet"; "error" => ?e);
-                            }));
+                        ack = Some((
+                            PacketType::Ack,
+                            packets::Data::Ack(header.p_id),
+                        ));
                     }
                 } else {
                     udp_packet.copy_from_slice(&udp_packet_bak);
@@ -282,8 +269,19 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                     &header,
                     &mut Cursor::new(&*udp_packet),
                 )?;
-                vec![Packet::new(header, p_data)]
+                Ok(vec![Packet::new(header, p_data)])
             };
+
+            // Send ack
+            if let Some((ack_type, ack_packet)) = ack {
+                let mut ack_header = Header::default();
+                ack_header.set_type(ack_type);
+                tokio::spawn(con.1.send_packet(Packet::new(ack_header, ack_packet))
+                    .map_err(move |e| {
+                        error!(logger, "Failed to send ack packet"; "error" => ?e);
+                    }));
+            }
+            let packets = packets?;
 
             // TODO Do something with packets
             Ok(())
@@ -472,375 +470,143 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
     }*/
 }
 
-
-pub struct PacketCodecSink<
-    CM: ConnectionManager + 'static,
-    Inner: Sink<SinkItem = (SocketAddr, Bytes), SinkError = Error>,
-> {
-    data: Weak<RefCell<Data<CM>>>,
+/// Encodes outgoing packets.
+///
+/// This part does the compression, encryption and fragmentation.
+pub struct PacketCodecSender {
     is_client: bool,
-    inner: Inner,
-    /// The type of the packets in the current send buffer.
-    command_p_type: PacketType,
-    connection_key: Option<CM::Key>,
-    addr: Option<SocketAddr>,
-    /// Currently buffered id and packet.
-    command_send_buffer: Vec<(u16, Bytes)>,
-    /// Send buffer for other packets
-    other_send_buffer: Vec<(u16, Bytes)>,
+    logger: Logger,
 }
 
-impl<CM: ConnectionManager + 'static> PacketCodecSink<CM,
-    ::handler_data::DataUdpPackets<CM>> {
-    fn new(data: &Rc<RefCell<Data<CM>>>) -> Self {
-        let is_client = data.borrow().is_client;
-        Self {
-            data: Rc::downgrade(data),
-            is_client,
-            inner: Data::get_udp_packets(Rc::downgrade(data)),
-            command_p_type: PacketType::Command,
-            connection_key: None,
-            addr: None,
-            command_send_buffer: Vec::new(),
-            other_send_buffer: Vec::new(),
-        }
-    }
+impl PacketCodecSender {
+    pub fn encode_packet(&mut self, con: &mut Connection, packet: &mut Packet)
+        -> Result<Vec<(u16, Bytes)>> {
+        let use_newprotocol =
+            (packet.header.get_type() == PacketType::Command
+            || packet.header.get_type() == PacketType::CommandLow)
+            && self.is_client;
 
-    /// Add a packet codec sink to the connection.
-    pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
-        let sink = Self::new(data);
-        data.borrow_mut().packet_sink = Some(Box::new(sink));
-    }
-}
+        // Get the connection parameters
+        if let Some(params) = con.params.as_mut() {
+            let p_type = packet.header.get_type();
+            let type_i = p_type.to_usize().unwrap();
 
-impl<
-    CM: ConnectionManager,
-    Inner: Sink<SinkItem = (SocketAddr, Bytes), SinkError = Error>,
-> Sink for PacketCodecSink<CM, Inner> {
-    type SinkItem = (CM::Key, Packet);
-    type SinkError = Error;
+            let (gen, p_id) = params.outgoing_p_ids[type_i];
+            // We fake encrypt the first command packet of the
+            // server (id 0) and the first command packet of the
+            // client (id 1) if the client uses the new protocol
+            // (the packet is a clientek).
+            let fake_encrypt =
+                p_type == PacketType::Command && gen == 0
+                && ((!self.is_client && p_id == 0)
+                    || (self.is_client && p_id == 1 && {
+                        // Test if it is a clientek packet
+                        if let ::packets::Data::Command(ref cmd) =
+                            packet.data {
+                            cmd.command == "clientek"
+                        } else {
+                            false
+                        }
+                    }));
 
-    fn start_send(
-        &mut self,
-        (con_key, mut packet): Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        // Check if there are unsent packets in the queue for this packet type
-        let p_type = packet.header.get_type();
-        if p_type == PacketType::Command || p_type == PacketType::CommandLow {
-            if !self.command_send_buffer.is_empty() {
-                self.poll_complete()?;
-                if !self.command_send_buffer.is_empty() {
-                    return Ok(futures::AsyncSink::NotReady((con_key, packet)));
+            // Compress and split packet
+            let mut packets = if p_type == PacketType::Command
+                || p_type == PacketType::CommandLow
+            {
+                algs::compress_and_split(self.is_client, packet)
+            } else {
+                // Set the inner packet id for voice packets
+                match packet.data {
+                    ::packets::Data::VoiceC2S { ref mut id, .. }           |
+                    ::packets::Data::VoiceS2C { ref mut id, .. }           |
+                    ::packets::Data::VoiceWhisperC2S { ref mut id, .. }    |
+                    ::packets::Data::VoiceWhisperNewC2S { ref mut id, .. } |
+                    ::packets::Data::VoiceWhisperS2C { ref mut id, .. } => {
+                        *id = params.outgoing_p_ids[type_i].1;
+                    }
+                    _ => {}
                 }
-            }
-        } else if !self.other_send_buffer.is_empty() {
-            self.poll_complete()?;
-            if !self.other_send_buffer.is_empty() {
-                return Ok(futures::AsyncSink::NotReady((con_key, packet)));
-            }
-        }
 
-        // The resulting list of udp packets
-        let addr;
-        let mut packets = {
-            let is_client = self.is_client;
-            let use_newprotocol =
-                (packet.header.get_type() == PacketType::Command
-                || packet.header.get_type() == PacketType::CommandLow)
-                && is_client;
-
-            // Get connection
-            let con = {
-                let data = self.data.upgrade().unwrap();
-                let data = data.borrow();
-                if let Some(con) = data.connection_manager.get_connection(con_key.clone()) {
-                    con
-                } else {
-                    error!(data.logger, "Sending packet to non-existing connection");
-                    return Ok(futures::AsyncSink::Ready);
-                }
+                let mut data = Vec::new();
+                packet.data.write(&mut data).unwrap();
+                vec![(packet.header, data)]
             };
+            let packets = packets
+                .drain(..)
+                .map(|(mut header, mut p_data)| -> Result<_> {
+                    // Packet data (without header)
+                    // Get packet id
+                    let (mut gen, mut p_id) = params.outgoing_p_ids[type_i];
+                    header.p_id = p_id;
 
-            // Get the connection parameters
-            let mut con = con.borrow_mut();
-            addr = con.address;
-            if let Some(params) = con.params.as_mut() {
-                let p_type = packet.header.get_type();
-                let type_i = p_type.to_usize().unwrap();
-
-                let (gen, p_id) = params.outgoing_p_ids[type_i];
-                // We fake encrypt the first command packet of the
-                // server (id 0) and the first command packet of the
-                // client (id 1) if the client uses the new protocol
-                // (the packet is a clientek).
-                let fake_encrypt =
-                    p_type == PacketType::Command && gen == 0
-                    && ((!is_client && p_id == 0)
-                        || (is_client && p_id == 1 && {
-                            // Test if it is a clientek packet
-                            if let ::packets::Data::Command(ref cmd) =
-                                packet.data {
-                                cmd.command == "clientek"
-                            } else {
-                                false
-                            }
-                        }));
-
-                // Compress and split packet
-                let mut packets = if p_type == PacketType::Command
-                    || p_type == PacketType::CommandLow
-                {
-                    algs::compress_and_split(is_client, &packet)
-                } else {
-                    // Set the inner packet id for voice packets
-                    match packet.data {
-                        ::packets::Data::VoiceC2S { ref mut id, .. }           |
-                        ::packets::Data::VoiceS2C { ref mut id, .. }           |
-                        ::packets::Data::VoiceWhisperC2S { ref mut id, .. }    |
-                        ::packets::Data::VoiceWhisperNewC2S { ref mut id, .. } |
-                        ::packets::Data::VoiceWhisperS2C { ref mut id, .. } => {
-                            *id = params.outgoing_p_ids[type_i].1;
-                        }
-                        _ => {}
-                    }
-
-                    let mut data = Vec::new();
-                    packet.data.write(&mut data).unwrap();
-                    vec![(packet.header, data)]
-                };
-                let packets = packets
-                    .drain(..)
-                    .map(|(mut header, mut p_data)| -> Result<_> {
-                        // Packet data (without header)
-                        // Get packet id
-                        let (mut gen, mut p_id) = params.outgoing_p_ids[type_i];
-                        header.p_id = p_id;
-
-                        // Client id for clients
-                        if is_client {
-                            header.c_id = Some(params.c_id);
-                        } else {
-                            header.c_id = None;
-                        }
-
-                        // Set newprotocol flag if needed
-                        if use_newprotocol {
-                            header.set_newprotocol(true);
-                        }
-
-                        // Encrypt if necessary, fake encrypt the initivexpand packet
-                        if algs::should_encrypt(
-                            header.get_type(),
-                            params.voice_encryption,
-                        ) {
-                            header.set_unencrypted(false);
-                            if fake_encrypt {
-                                algs::encrypt_fake(&mut header, &mut p_data)?;
-                            } else {
-                                algs::encrypt(
-                                    &mut header,
-                                    &mut p_data,
-                                    gen,
-                                    &params.shared_iv,
-                                    &mut params.key_cache,
-                                )?;
-                            }
-                        } else {
-                            header.set_unencrypted(true);
-                            header.mac.copy_from_slice(&params.shared_mac);
-                        };
-
-                        // Increment outgoing_p_ids
-                        p_id = p_id.wrapping_add(1);
-                        if p_id == 0 {
-                            gen = gen.wrapping_add(1);
-                        }
-                        params.outgoing_p_ids[type_i] = (gen, p_id);
-                        let mut buf = Vec::new();
-                        header.write(&mut buf)?;
-                        buf.append(&mut p_data);
-                        Ok((header.p_id, buf.into()))
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                packets
-            } else {
-                // No connection params available
-                let mut p_data = Vec::new();
-                packet.data.write(&mut p_data).unwrap();
-                let mut header = packet.header;
-                // Client id for clients
-                if is_client {
-                    header.c_id = Some(0);
-                } else {
-                    header.c_id = None;
-                }
-                // Fake encrypt if needed
-                if algs::should_encrypt(header.get_type(), false) {
-                    header.set_unencrypted(false);
-                    algs::encrypt_fake(&mut header, &mut p_data)?;
-                }
-
-                let mut buf = Vec::new();
-                header.write(&mut buf)?;
-                buf.append(&mut p_data);
-                vec![(header.p_id, buf.into())]
-            }
-        };
-        // Add the packets to the queue
-        packets.reverse();
-        // TODO Send init packets using the resender
-        // TODO The following init packet has to be handled as an ack packet.
-        if p_type == PacketType::Command || p_type == PacketType::CommandLow {
-            self.connection_key = Some(con_key);
-            self.command_send_buffer = packets;
-            self.command_p_type = p_type;
-        } else {
-            self.addr = Some(addr);
-            self.other_send_buffer = packets;
-        }
-        Ok(futures::AsyncSink::Ready)
-    }
-
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        // Check if there are unsent command packets in the queue
-        let command_res = {
-            if let Some((p_id, packet)) = self.command_send_buffer.pop() {
-                // Get the connection
-                let data = if let Some(data) = self.data.upgrade() {
-                    data
-                } else {
-                    return Err(format_err!("Data does not exist").into());
-                };
-                let data = data.borrow();
-                if let Some(con) = data.connection_manager
-                    .get_connection(self.connection_key.as_ref()
-                        .expect("Forgot to set the connection key").clone()) {
-                    let mut con = con.borrow_mut();
-                    if let futures::AsyncSink::NotReady((_, p_id, packet)) =
-                        con.resender.start_send((self.command_p_type, p_id, packet))?
-                    {
-                        self.command_send_buffer.push((p_id, packet));
+                    // Client id for clients
+                    if self.is_client {
+                        header.c_id = Some(params.c_id);
                     } else {
-                        futures::task::current().notify();
+                        header.c_id = None;
                     }
-                    futures::Async::NotReady
-                } else {
-                    warn!(data.logger, "Cannot send packet for missing connection");
-                    futures::Async::Ready(())
-                }
-            } else {
-                futures::Async::Ready(())
-            }
-        };
 
-        // Check if there are other unsent packets in the queue
-        let other_res = {
-            if let Some((p_id, packet)) = self.other_send_buffer.pop() {
-                if let futures::AsyncSink::NotReady((_, packet)) =
-                    self.inner.start_send((self.addr
-                        .expect("Forgot to set the address"), packet))?
-                {
-                    self.other_send_buffer.push((p_id, packet));
-                } else {
-                    futures::task::current().notify();
-                }
-                futures::Async::NotReady
-            } else {
-                self.inner.poll_complete()?
-            }
-        };
+                    // Set newprotocol flag if needed
+                    if use_newprotocol {
+                        header.set_newprotocol(true);
+                    }
 
-        if command_res.is_not_ready() || other_res.is_not_ready() {
-            Ok(futures::Async::NotReady)
+                    // Encrypt if necessary, fake encrypt the initivexpand packet
+                    if algs::should_encrypt(
+                        header.get_type(),
+                        params.voice_encryption,
+                    ) {
+                        header.set_unencrypted(false);
+                        if fake_encrypt {
+                            algs::encrypt_fake(&mut header, &mut p_data)?;
+                        } else {
+                            algs::encrypt(
+                                &mut header,
+                                &mut p_data,
+                                gen,
+                                &params.shared_iv,
+                                &mut params.key_cache,
+                            )?;
+                        }
+                    } else {
+                        header.set_unencrypted(true);
+                        header.mac.copy_from_slice(&params.shared_mac);
+                    };
+
+                    // Increment outgoing_p_ids
+                    p_id = p_id.wrapping_add(1);
+                    if p_id == 0 {
+                        gen = gen.wrapping_add(1);
+                    }
+                    params.outgoing_p_ids[type_i] = (gen, p_id);
+                    let mut buf = Vec::new();
+                    header.write(&mut buf)?;
+                    buf.append(&mut p_data);
+                    Ok((header.p_id, buf.into()))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(packets)
         } else {
-            Ok(futures::Async::Ready(()))
-        }
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        self.inner.close()
-    }
-}
-
-pub struct AckHandler<
-    T,
-    UsedSink: Sink<SinkItem = (T, Packet), SinkError = Error> + 'static,
-    InnerStream: Stream<Item = (Option<(T, Packet)>, Option<(T, Packet)>),
-        Error = Error> + 'static,
-> {
-    used_sink: UsedSink,
-    inner_stream: InnerStream,
-    /// A buffer for an ack packet.
-    ack_buffer: Option<(T, Packet)>,
-    /// If we have put a packet into the sink and should poll for completion.
-    should_poll_complete: bool,
-}
-
-impl<
-    T,
-    UsedSink: Sink<SinkItem = (T, Packet), SinkError = Error> + 'static,
-    InnerStream: Stream<Item = (Option<(T, Packet)>, Option<(T, Packet)>),
-        Error = Error> + 'static,
-> AckHandler<T, UsedSink, InnerStream> {
-    pub fn new(inner_stream: InnerStream, used_sink: UsedSink) -> Self {
-        Self {
-            used_sink,
-            inner_stream,
-            ack_buffer: None,
-            should_poll_complete: false,
-        }
-    }
-}
-
-impl<
-    T,
-    UsedSink: Sink<SinkItem = (T, Packet), SinkError = Error> + 'static,
-    InnerStream: Stream<Item = (Option<(T, Packet)>, Option<(T, Packet)>),
-        Error = Error> + 'static,
-> Stream for AckHandler<T, UsedSink, InnerStream> {
-    type Item = (T, Packet);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        // Try to send the ack buffer
-        if let Some(p) = self.ack_buffer.take() {
-            if let futures::AsyncSink::NotReady(p) =
-                self.used_sink.start_send(p)? {
-                self.ack_buffer = Some(p);
-                return Ok(futures::Async::NotReady);
+            // No connection params available
+            let mut p_data = Vec::new();
+            packet.data.write(&mut p_data).unwrap();
+            let mut header = packet.header;
+            // Client id for clients
+            if self.is_client {
+                header.c_id = Some(0);
             } else {
-                self.should_poll_complete = true;
+                header.c_id = None;
             }
-        }
-
-        if self.should_poll_complete {
-            if let futures::Async::Ready(()) = self.used_sink.poll_complete()? {
-                self.should_poll_complete = false;
+            // Fake encrypt if needed
+            if algs::should_encrypt(header.get_type(), false) {
+                header.set_unencrypted(false);
+                algs::encrypt_fake(&mut header, &mut p_data)?;
             }
-        }
 
-        match self.inner_stream.poll()? {
-            futures::Async::Ready(Some((packet, ack))) => {
-                if let Some(p) = ack {
-                    // Try to send the ack
-                    if let futures::AsyncSink::NotReady(p) =
-                        self.used_sink.start_send(p)? {
-                        self.ack_buffer = Some(p);
-                    } else if let futures::Async::NotReady =
-                        self.used_sink.poll_complete()? {
-                        self.should_poll_complete = true;
-                    }
-                }
-
-                if let Some(packet) = packet {
-                    Ok(futures::Async::Ready(Some(packet)))
-                } else {
-                    task::current().notify();
-                    Ok(futures::Async::NotReady)
-                }
-            }
-            futures::Async::Ready(None) => Ok(futures::Async::Ready(None)),
-            futures::Async::NotReady => Ok(futures::Async::NotReady),
+            let mut buf = Vec::new();
+            header.write(&mut buf)?;
+            buf.append(&mut p_data);
+            Ok(vec![(header.p_id, buf.into())])
         }
     }
 }
