@@ -162,15 +162,16 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
         -> Rc<RefCell<Connection>> {
         // Add options like ip to logger
-        let (resender, logger, sink) = {
+        let (resender, logger, sink, is_client) = {
             let data = data.borrow();
             let logger = data.logger.new(o!("addr" => addr.to_string()));
 
             (::resend::DefaultResender::new(data.resend_config.clone(),
-                logger.clone()), logger, data.udp_packet_sink.clone())
+                logger.clone()), logger, data.udp_packet_sink.clone(),
+                data.is_client)
         };
 
-        Connection::new(addr, resender, logger, sink)
+        Connection::new(addr, resender, logger, sink, is_client)
     }
 
     /// Add a new connection to this socket.

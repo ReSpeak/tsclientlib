@@ -37,7 +37,7 @@ pub type ClientConnection = Connection;
 
 #[derive(Default)]
 pub struct ServerConnectionData {
-    pub state_change_listener: Vec<Box<FnOnce() -> BoxFuture<(), Error> + Send>>,
+    pub state_change_listener: Vec<Box<FnMut() -> BoxFuture<(), Error> + Send>>,
     pub state: ServerConnectionState,
 }
 

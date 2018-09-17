@@ -1,4 +1,6 @@
+use std::borrow::Cow;
 use std::io::Cursor;
+use std::mem;
 use std::net::SocketAddr;
 use std::u16;
 
@@ -65,7 +67,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
             let logger = self.logger.clone();
             if self.is_client && self.connections.len() == 1 {
                 Box::new(Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos)
-                    .then(|r| {
+                    .then(move |r| {
                         if let Err(e) = r {
                             error!(logger, "Error handling udp packed"; "error" => ?e);
                         }
@@ -81,7 +83,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
             }
         } else {
             // Unknown connection
-            if let Some(sink) = self.unknown_udp_packet_sink {
+            if let Some(sink) = &mut self.unknown_udp_packet_sink {
                 // Don't block if the queue is full
                 if sink.try_send((addr, udp_packet)).is_err() {
                     warn!(self.logger, "Unknown connection handler overloaded \
@@ -106,7 +108,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
         header: packets::Header,
         pos: usize,
     ) -> impl Future<Item=(), Error=Error> {
-        connection.with(move |con| {
+        connection.with(move |mut con| {
+            let con = &mut *con;
+            let dec_data;
+            let dec_data1;
             let mut udp_packet = &udp_packet[pos..];
             let mut ack = None;
             let packets = if let Some(ref mut params) = con.1.params {
@@ -124,7 +129,6 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                     || p_type == PacketType::AckLow
                     || in_recv_win
                 {
-                    let mut dec_data;
                     if !header.get_unencrypted() {
                         // If it is the first ack packet of a
                         // client, try to fake decrypt it.
@@ -146,14 +150,14 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                         };
                         if !decrypted {
                             // Decrypt the packet
-                            dec_data = algs::decrypt(
+                            dec_data1 = algs::decrypt(
                                 &header,
                                 udp_packet,
                                 gen_id,
                                 &params.shared_iv,
                                 &mut params.key_cache,
                             )?;
-                            udp_packet = &dec_data;
+                            udp_packet = &dec_data1;
                         }
                     } else if algs::must_encrypt(header.get_type()) {
                         // Check if it is ok for the packet to be unencrypted
@@ -253,8 +257,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                 res
             } else {
                 // Try to fake decrypt the packet
-                let udp_packet_bak = udp_packet.clone();
-                if algs::decrypt_fake(&header, &mut udp_packet).is_ok() {
+                if let Ok(dec) = algs::decrypt_fake(&header, &mut udp_packet) {
+                    dec_data = dec;
+                    udp_packet = &dec_data;
                     // Send ack
                     if header.get_type() == PacketType::Command {
                         ack = Some((
@@ -262,8 +267,6 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                             packets::Data::Ack(header.p_id),
                         ));
                     }
-                } else {
-                    udp_packet.copy_from_slice(&udp_packet_bak);
                 }
                 let p_data = packets::Data::read(
                     &header,
@@ -297,6 +300,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
         mut header: Header,
         udp_packet: &[u8],
     ) -> Result<Vec<Packet>> {
+        let mut udp_packet = Cow::Borrowed(udp_packet);
         let mut id = header.p_id;
         let type_i = header.get_type().to_usize().unwrap();
         let cmd_i = if header.get_type() == PacketType::Command {
@@ -323,7 +327,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                 let res_packet = if header.get_fragmented() {
                     if let Some((header, mut frag_queue)) = frag_queue.take() {
                         // Last fragmented packet
-                        frag_queue.extend_from_slice(udp_packet);
+                        frag_queue.extend_from_slice(&udp_packet);
                         // Decompress
                         let decompressed = if header.get_compressed() {
                             //debug!(logger, "Compressed"; "data" => ?::HexSlice(&frag_queue));
@@ -347,13 +351,15 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                         Some(Packet::new(header, p_data))
                     } else {
                         // Enqueue
-                        *frag_queue = Some((header, udp_packet.to_vec()));
+                        *frag_queue = Some((header,
+                            mem::replace(&mut udp_packet, Cow::Borrowed(&[]))
+                            .into_owned()));
                         None
                     }
                 } else if let Some((_, ref mut frag_queue)) = *frag_queue {
                     // The packet is fragmented
                     if frag_queue.len() < MAX_FRAGMENTS_LENGTH {
-                        frag_queue.extend_from_slice(udp_packet);
+                        frag_queue.extend_from_slice(&udp_packet);
                         None
                     } else {
                         return Err(Error::MaxLengthExceeded(String::from(
@@ -368,7 +374,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                             ::MAX_DECOMPRESSED_SIZE,
                         )?
                     } else {
-                        udp_packet.to_vec()
+                        mem::replace(&mut udp_packet, Cow::Borrowed(&[]))
+                            .into_owned()
                     };
                     /*if header.get_compressed() {
                         debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
@@ -391,7 +398,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                 {
                     let (h, p) = r_queue.remove(pos);
                     header = h;
-                    udp_packet = &p;
+                    udp_packet = Cow::Owned(p);
                 } else {
                     break;
                 }
@@ -479,7 +486,11 @@ pub struct PacketCodecSender {
 }
 
 impl PacketCodecSender {
-    pub fn encode_packet(&mut self, con: &mut Connection, packet: &mut Packet)
+    pub fn new(is_client: bool, logger: Logger) -> Self {
+        Self { is_client, logger }
+    }
+
+    pub fn encode_packet(&self, con: &mut Connection, mut packet: Packet)
         -> Result<Vec<(u16, Bytes)>> {
         let use_newprotocol =
             (packet.header.get_type() == PacketType::Command
@@ -513,7 +524,7 @@ impl PacketCodecSender {
             let mut packets = if p_type == PacketType::Command
                 || p_type == PacketType::CommandLow
             {
-                algs::compress_and_split(self.is_client, packet)
+                algs::compress_and_split(self.is_client, &packet)
             } else {
                 // Set the inner packet id for voice packets
                 match packet.data {
@@ -558,11 +569,11 @@ impl PacketCodecSender {
                     ) {
                         header.set_unencrypted(false);
                         if fake_encrypt {
-                            algs::encrypt_fake(&mut header, &mut p_data)?;
+                            p_data = algs::encrypt_fake(&mut header, &p_data)?;
                         } else {
-                            algs::encrypt(
+                            p_data = algs::encrypt(
                                 &mut header,
-                                &mut p_data,
+                                &p_data,
                                 gen,
                                 &params.shared_iv,
                                 &mut params.key_cache,
@@ -600,7 +611,7 @@ impl PacketCodecSender {
             // Fake encrypt if needed
             if algs::should_encrypt(header.get_type(), false) {
                 header.set_unencrypted(false);
-                algs::encrypt_fake(&mut header, &mut p_data)?;
+                p_data = algs::encrypt_fake(&mut header, &p_data)?;
             }
 
             let mut buf = Vec::new();

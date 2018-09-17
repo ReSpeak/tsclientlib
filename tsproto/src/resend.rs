@@ -206,9 +206,12 @@ impl Resender for DefaultResender {
                     // Reset tries
                     rec.tries = 0;
                 }
-                let new_to_send = DelayQueue::new();
-                let packets = res.drain(..).map(|rec| (rec.id, (rec,
-                    new_to_send.insert(rec.id, time::Duration::from_secs(0))))).collect();
+                let mut new_to_send = DelayQueue::new();
+                let packets = res.drain(..).map(|rec| {
+                    let id = rec.id;
+                    (id, (rec,
+                    new_to_send.insert(id, time::Duration::from_secs(0))))
+                }).collect();
 
                 // Reset srtt, this will reset to stalling mode after 3 packets
                 // are lost again.
@@ -263,8 +266,11 @@ impl Resender for DefaultResender {
             ResendStates::Stalling { to_send, .. } |
             ResendStates::Dead     { to_send, .. } => {
                 let mut res = mem::replace(to_send, Vec::new());
-                let res = res.drain(..).map(|rec| (rec.id, (rec,
-                    new_to_send.insert(rec.id, time::Duration::from_secs(0))))).collect();
+                let res = res.drain(..).map(|rec| {
+                    let id = rec.id;
+                    (id, (rec,
+                    new_to_send.insert(id, time::Duration::from_secs(0))))
+                }).collect();
                 res
             }
             ResendStates::Connecting    { packets, to_send, .. } |
@@ -352,7 +358,8 @@ impl Sink for DefaultResender {
                 if packets.len() >= self.config.max_send_queue_len {
                     rec_res = Some(rec);
                 } else {
-                    packets.insert(rec.id, (rec, to_send.insert(rec.id, time::Duration::from_secs(0))));
+                    let id = rec.id;
+                    packets.insert(id, (rec, to_send.insert(id, time::Duration::from_secs(0))));
                     // Update start time
                     *start_time = Utc::now();
                 }
@@ -369,7 +376,8 @@ impl Sink for DefaultResender {
                 if packets.len() >= self.config.max_send_queue_len {
                     rec_res = Some(rec);
                 } else {
-                    packets.insert(rec.id, (rec, to_send.insert(rec.id, time::Duration::from_secs(0))));
+                    let id = rec.id;
+                    packets.insert(id, (rec, to_send.insert(id, time::Duration::from_secs(0))));
                 }
             }
         }
@@ -466,7 +474,8 @@ impl ResendStates {
             ResendStates::Connecting    { packets, to_send, .. } |
             ResendStates::Normal        { packets, to_send, .. } |
             ResendStates::Disconnecting { packets, to_send, .. } => {
-                packets.insert(rec.id, (rec, to_send.insert(rec.id, next)));
+                let id = rec.id;
+                packets.insert(id, (rec, to_send.insert(id, next)));
             }
             ResendStates::Dead { .. } => {}
         }
@@ -753,7 +762,7 @@ impl<CM: ConnectionManager + 'static> Future for
 
         while let Some(mut rec) = {
             let con = &mut *con.borrow_mut();
-            if let Some(mut rec) = con.resender.state.get_next_record()? {
+            if let Some(rec) = con.resender.state.get_next_record()? {
                 // Check if we should resend this packet or not
                 if rec.tries != 0 && rec.last > last_threshold {
                     // Schedule next send
@@ -834,11 +843,12 @@ impl<CM: ConnectionManager + 'static> Future for
                 let dur = next.naive_utc().signed_duration_since(
                     now.naive_utc());
 
+                let p_id = rec.id.1;
                 con.resender.state.insert_record(rec, dur.to_std().unwrap());
 
                 if is_normal_state && dur > con.resender.config.normal_timeout {
                     warn!(con.logger, "Max resend timeout exceeded";
-                          "p_id" => rec.id.1);
+                          "p_id" => p_id);
                     // Switch connection to stalling state
                     switch_to_stalling = true;
                     break;
@@ -850,7 +860,7 @@ impl<CM: ConnectionManager + 'static> Future for
             let mut con = con.borrow_mut();
             let mut to_send: Vec<_> = if let ResendStates::Normal { ref mut packets, .. } =
                 con.resender.state {
-                let res = mem::replace(packets, Default::default());
+                let mut res = mem::replace(packets, Default::default());
                 let res = res.drain().map(|(_, (rec, _))| rec).collect();
                 res
             } else {

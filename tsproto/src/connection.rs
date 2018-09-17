@@ -6,13 +6,14 @@ use std::rc::Rc;
 use std::u16;
 
 use bytes::Bytes;
-use futures::{future, Future, Sink};
+use futures::{future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog;
 
 use Error;
 use crypto::EccKeyPubP256;
+use packet_codec::PacketCodecSender;
 use packets::*;
 use resend::DefaultResender;
 
@@ -152,6 +153,7 @@ impl ConnectedParams {
 
 /// Represents a currently alive connection.
 pub struct Connection {
+    pub is_client: bool,
     /// A logger for this connection.
     pub logger: slog::Logger,
     /// The parameters of this connection, if it is already established.
@@ -166,10 +168,15 @@ pub struct Connection {
 
 impl Connection {
     /// Creates a new connection struct.
-    pub fn new(address: SocketAddr, resender: DefaultResender,
-        logger: slog::Logger, udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>)
-        -> Rc<RefCell<Self>> {
+    pub fn new(
+        address: SocketAddr,
+        resender: DefaultResender,
+        logger: slog::Logger,
+        udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
+        is_client: bool,
+    ) -> Rc<RefCell<Self>> {
         Rc::new(RefCell::new(Self {
+            is_client,
             logger,
             params: None,
             address,
@@ -192,7 +199,19 @@ impl Connection {
             .map_err(|e| format_err!("Failed to send udp packet ({:?})", e).into())
     }
 
-    pub fn send_packet(&mut self, packet: Packet) -> impl Future<Item=(), Error=Error> {
-        future::ok(panic!())
+    pub fn send_packet(&mut self, packet: Packet) -> Box<Future<Item=(), Error=Error> + Send> {
+        let p_type = packet.header.get_type();
+
+        let codec = PacketCodecSender::new(self.is_client, self.logger.clone());
+        let mut udp_packets = match codec.encode_packet(self, packet) {
+            Ok(r) => r,
+            Err(e) => return Box::new(future::err(e)),
+        };
+        let udp_packets = udp_packets.drain(..).map(|(p_id, p)| self.send_udp_packet(
+            p_type,
+            p_id,
+            p,
+        )).collect::<Vec<_>>();
+        Box::new(stream::futures_ordered(udp_packets).for_each(|_| Ok(())))
     }
 }
