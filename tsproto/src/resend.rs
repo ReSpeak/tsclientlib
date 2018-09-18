@@ -1,11 +1,9 @@
-use std::cell::RefCell;
 use std::cmp::{Ord, Ordering};
 use std::collections::HashMap;
 use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
 use std::time::{self, Instant};
 
 use bytes::Bytes;
@@ -13,14 +11,16 @@ use chrono::{DateTime, Duration, Utc};
 use futures::{self, Async, Future, Sink, Stream};
 use futures::sync::mpsc;
 use futures::task::{self, Task};
+use futures_locks;
 use slog::Logger;
+use tokio;
 use tokio::timer::{delay_queue, DelayQueue, Delay};
 use tokio::util::FutureExt;
 
 use {Error, Result};
 use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender, ResenderEvent};
-use handler_data::Data;
+use handler_data::{ConnectionValue, Data, DataM};
 use packets::*;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -84,6 +84,7 @@ impl Hash for SendRecord {
 /// An implementation of a [`Resender`] that is provided by this library.
 ///
 /// [`Resender`]:
+#[derive(Debug)]
 pub struct DefaultResender {
     logger: Logger,
 
@@ -405,6 +406,7 @@ impl Sink for DefaultResender {
 ///
 /// In `Vec`s, the first element is the element that should be sent first, new
 /// packets are appended at the end.
+#[derive(Debug)]
 enum ResendStates {
     /// Important for clients: The first packet is sent, but we got no response
     /// yet, so we don't know if the server exists.
@@ -444,20 +446,16 @@ enum ResendStates {
 
 impl ResendStates {
     /// Returns the next record which should be sent, if there is one.
-    fn get_next_record(&mut self) -> Result<Option<SendRecord>> {
+    fn peek_next_record(&mut self) -> Result<Option<&mut SendRecord>> {
         match self {
             ResendStates::Stalling { to_send, .. } => {
-                if to_send.is_empty() {
-                    Ok(None)
-                } else {
-                    Ok(Some(to_send.remove(0)))
-                }
+                Ok(to_send.first_mut())
             }
             ResendStates::Connecting    { packets, to_send, .. } |
             ResendStates::Normal        { packets, to_send, .. } |
             ResendStates::Disconnecting { packets, to_send, .. } => {
                 match to_send.poll()? {
-                    Async::Ready(Some(id)) => Ok(packets.remove(&id.into_inner()).map(|(p, _)| p)),
+                    Async::Ready(Some(id)) => Ok(packets.get_mut(&id.into_inner()).map(|(p, _)| p)),
                     _ => Ok(None),
                 }
             }
@@ -465,18 +463,15 @@ impl ResendStates {
         }
     }
 
-    /// Reinsert a record that was fetched with `get_next_record`.
-    fn insert_record(&mut self, rec: SendRecord, next: time::Duration) {
+    /// Reinsert a record that was fetched with `peek_next_record`.
+    fn insert_peeked_record(&mut self, id: PacketId, next: time::Duration) {
         match self {
-            ResendStates::Stalling { to_send, .. } => {
-                to_send.insert(0, rec);
-            }
             ResendStates::Connecting    { packets, to_send, .. } |
             ResendStates::Normal        { packets, to_send, .. } |
             ResendStates::Disconnecting { packets, to_send, .. } => {
-                let id = rec.id;
-                packets.insert(id, (rec, to_send.insert(id, next)));
+                to_send.insert(id, next);
             }
+            ResendStates::Stalling { .. } |
             ResendStates::Dead { .. } => {}
         }
     }
@@ -558,13 +553,17 @@ impl Default for ResendConfig {
 /// This future is running in parallel to the rest and is responsible for
 /// sending all command packets.
 pub struct ResendFuture<CM: ConnectionManager + 'static> {
-    data: Weak<RefCell<Data<CM>>>,
+    data: DataM<CM>,
+    is_client: bool,
+    logger: Logger,
+    connections: ::evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
     connection_key: CM::Key,
-    connection: Weak<RefCell<Connection>>,
+    connection: ConnectionValue<CM>,
+    lock: Option<futures_locks::MutexFut<(CM::AssociatedData, Connection)>>,
     sink: mpsc::Sender<(SocketAddr, Bytes)>,
     /// The future to wake us up when the next packet should be resent.
     ///
-    /// This is only used in stalling and dead state.
+    /// This is only used while stalling.
     timeout: Delay,
     /// The future to wake us up when the current state times out.
     state_timeout: Delay,
@@ -574,22 +573,20 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
 
 impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
     pub fn new(
-        data: &Rc<RefCell<Data<CM>>>,
+        data: &Data<CM>,
+        datam: DataM<CM>,
         connection_key: CM::Key,
     ) -> Self {
-        let (connection, sink) = {
-            let data = data.borrow();
-            (
-                data.connection_manager.get_connection(connection_key.clone())
-                    .unwrap(),
-                data.udp_packet_sink.clone(),
-            )
-        };
         Self {
-            data: Rc::downgrade(data),
+            data: datam,
+            logger: data.logger.clone(),
+            is_client: data.is_client,
+            connections: data.connections.clone(),
             connection_key,
-            connection: Rc::downgrade(&connection),
-            sink,
+            connection: data.get_connection(&connection_key)
+                .expect("Connection for resender not found"),
+            lock: None,
+            sink: data.udp_packet_sink.clone(),
             timeout: Delay::new(Instant::now()),
             state_timeout: Delay::new(Instant::now()),
             is_sending: false,
@@ -597,28 +594,14 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
     }
 }
 
-impl<CM: ConnectionManager + 'static> Future for
-    ResendFuture<CM> {
+impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
     type Item = ();
     type Error = Error;
 
     fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        // Get connection
-        let con = if let Some(con) = self.connection.upgrade() {
-            con
-        } else {
+        if !self.connections.contains_key(&self.connection_key) {
             // Quit if the connection does not exist anymore
             return Ok(futures::Async::Ready(()));
-        };
-        let addr;
-        {
-            // Set task
-            let mut con = con.borrow_mut();
-            if !con.resender.resender_future_task.as_ref()
-                .map(|t| t.will_notify_current()).unwrap_or(false) {
-                con.resender.resender_future_task = Some(task::current());
-            }
-            addr = con.address;
         }
 
         if self.is_sending {
@@ -628,6 +611,20 @@ impl<CM: ConnectionManager + 'static> Future for
             } else {
                 return Ok(futures::Async::NotReady);
             }
+        }
+
+        // Get connection
+        if self.lock.is_none() {
+            self.lock = Some(self.connection.mutex.lock());
+        }
+        let con = try_ready!(self.lock.unwrap().poll().map_err(|()|
+            format_err!("Failed to lock connection")));
+        let con = &mut con.1;
+        self.lock = None;
+        // Set task
+        if !con.resender.resender_future_task.as_ref()
+            .map(|t| t.will_notify_current()).unwrap_or(false) {
+            con.resender.resender_future_task = Some(task::current());
         }
 
         let now = Utc::now();
@@ -641,18 +638,16 @@ impl<CM: ConnectionManager + 'static> Future for
         }
 
         let next_state = {
-            let mut con = con.borrow_mut();
             let resender = &mut con.resender;
             match resender.state {
                 ResendStates::Connecting { ref start_time, .. } =>
                     if now_naive.signed_duration_since(start_time.naive_utc())
-                        >= resender.config
-                            .connecting_timeout {
+                        >= resender.config.connecting_timeout {
                         StateChange::EndConnection
                     } else {
                         // Schedule timeout
-                        let dur = (*start_time + resender.config
-                                .connecting_timeout)
+                        let dur = (*start_time
+                            + resender.config.connecting_timeout)
                             .naive_utc()
                             .signed_duration_since(now_naive);
                         let next = Instant::now() + dur.to_std().unwrap();
@@ -725,44 +720,40 @@ impl<CM: ConnectionManager + 'static> Future for
         };
 
         if let StateChange::NewState(next_state) = next_state {
-            let mut con = con.borrow_mut();
             con.resender.set_state(next_state);
             // Queue the next immideate update
             task::current().notify();
             return Ok(futures::Async::NotReady);
         } else if let StateChange::EndConnection = next_state {
             // End connection
-            let data = self.data.upgrade().unwrap();
-            let con = con.borrow();
-            info!(con.logger, "Exiting connection because it is not responding";
-                "current state" => con.resender.state.get_name());
-            Data::remove_connection(&data, self.connection_key.clone());
+            let key = self.connection_key.clone();
+            let logger = self.logger.clone();
+            let state = con.resender.state.get_name();
+            tokio::spawn(self.data.with(move |data| {
+                info!(logger, "Exiting connection because it is not responding";
+                    "current state" => state);
+                data.remove_connection(&key);
+                Ok(())
+            }).unwrap());
             return Ok(futures::Async::NotReady);
         }
 
         // Check if there are packets to send.
         // If there is no record, we will be notified by the sink.
         let mut switch_to_stalling = false;
-        let packet_interval = {
-            let con = &*con.borrow();
-            con.resender.state
-                .get_packet_interval(&con.resender.config)
-        };
+        let packet_interval = con.resender.state
+            .get_packet_interval(&con.resender.config);
 
         // Retransmission timeout
-        let rto = {
-            let con = con.borrow();
-            if let Some(interval) = packet_interval {
-                interval
-            } else {
-                con.resender.srtt + con.resender.srtt_dev * 4
-            }
+        let rto = if let Some(interval) = packet_interval {
+            interval
+        } else {
+            con.resender.srtt + con.resender.srtt_dev * 4
         };
         let last_threshold = now - rto;
 
         while let Some(mut rec) = {
-            let con = &mut *con.borrow_mut();
-            if let Some(rec) = con.resender.state.get_next_record()? {
+            if let Some(rec) = con.resender.state.peek_next_record()? {
                 // Check if we should resend this packet or not
                 if rec.tries != 0 && rec.last > last_threshold {
                     // Schedule next send
@@ -770,7 +761,7 @@ impl<CM: ConnectionManager + 'static> Future for
                         .naive_utc()
                         .signed_duration_since(last_threshold.naive_utc());
                     let next = dur.to_std().unwrap();
-                    con.resender.state.insert_record(rec, next);
+                    con.resender.state.insert_peeked_record(rec.id, next);
                     if let ResendStates::Stalling { .. } = con.resender.state {
                         self.timeout.reset(Instant::now() + next);
                         if let futures::Async::Ready(()) = self.timeout.poll()? {
@@ -791,10 +782,11 @@ impl<CM: ConnectionManager + 'static> Future for
         } {
             // Try to send this packet
             if let futures::AsyncSink::NotReady(_) =
-                self.sink.start_send((addr, rec.packet.clone()))
+                self.sink.start_send((con.address, rec.packet.clone()))
                     .map_err(|e| format_err!("Failed to poll_complete udp packet sink ({:?})", e))?
             {
                 // The sink should notify us if it is ready
+                con.resender.state.insert_peeked_record(rec.id, time::Duration::from_secs(0));
                 break;
             } else {
                 // Successfully started sending the packet, now schedule the
@@ -805,8 +797,6 @@ impl<CM: ConnectionManager + 'static> Future for
                 } else {
                     self.is_sending = true;
                 }
-
-                let con = &mut *con.borrow_mut();
 
                 // Double srtt on packet loss
                 if rec.tries != 0 && con.resender.srtt
@@ -826,16 +816,15 @@ impl<CM: ConnectionManager + 'static> Future for
                 rec.tries += 1;
 
                 if rec.tries != 1 {
-                    let data = self.data.upgrade().unwrap();
-                    let to_s = if data.borrow().is_client { "S" } else { "C" };
-                    warn!(con.logger, "Resend";
+                    let to_s = if self.is_client { "S" } else { "C" };
+                    warn!(self.logger, "Resend";
                         "p_id" => rec.id.1,
                         "tries" => rec.tries,
                         "last" => %rec.last,
                         "to" => to_s,
-                        //"srtt" => ?con.resender.srtt,
-                        //"srtt_dev" => ?con.resender.srtt_dev,
-                        //"rto" => %rto,
+                        "srtt" => ?con.resender.srtt,
+                        "srtt_dev" => ?con.resender.srtt_dev,
+                        "rto" => %rto,
                     );
                 }
 
@@ -844,10 +833,10 @@ impl<CM: ConnectionManager + 'static> Future for
                     now.naive_utc());
 
                 let p_id = rec.id.1;
-                con.resender.state.insert_record(rec, dur.to_std().unwrap());
+                con.resender.state.insert_peeked_record(rec.id, dur.to_std().unwrap());
 
                 if is_normal_state && dur > con.resender.config.normal_timeout {
-                    warn!(con.logger, "Max resend timeout exceeded";
+                    warn!(self.logger, "Max resend timeout exceeded";
                           "p_id" => p_id);
                     // Switch connection to stalling state
                     switch_to_stalling = true;
@@ -857,7 +846,6 @@ impl<CM: ConnectionManager + 'static> Future for
         }
 
         if switch_to_stalling {
-            let mut con = con.borrow_mut();
             let mut to_send: Vec<_> = if let ResendStates::Normal { ref mut packets, .. } =
                 con.resender.state {
                 let mut res = mem::replace(packets, Default::default());

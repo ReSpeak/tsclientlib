@@ -1,12 +1,10 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::u16;
 
 use bytes::Bytes;
-use futures::{future, Future, Sink, stream, Stream};
+use futures::{self, AsyncSink, future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog;
@@ -152,6 +150,7 @@ impl ConnectedParams {
 }
 
 /// Represents a currently alive connection.
+#[derive(Debug)]
 pub struct Connection {
     pub is_client: bool,
     /// A logger for this connection.
@@ -174,32 +173,18 @@ impl Connection {
         logger: slog::Logger,
         udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
         is_client: bool,
-    ) -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
+    ) -> Self {
+        Self {
             is_client,
             logger,
             params: None,
             address,
             resender,
             udp_packet_sink,
-        }))
-    }
-
-    pub fn send_udp_packet(&mut self, p_type: PacketType, p_id: u16, packet: Bytes) -> impl Future<Item=(), Error=Error> {
-        // Use the resender for important packets
-        match p_type {
-            PacketType::Init | PacketType::Command | PacketType::CommandLow => {
-            }
-            _ => {
-            }
         }
-        self.udp_packet_sink.clone()
-            .send((self.address, packet))
-            .map(|_| ())
-            .map_err(|e| format_err!("Failed to send udp packet ({:?})", e).into())
     }
 
-    pub fn send_packet(&mut self, packet: Packet) -> Box<Future<Item=(), Error=Error> + Send> {
+    pub fn send_packet<'a>(&'a mut self, packet: Packet) -> Box<Future<Item=(), Error=Error> + Send + 'a> {
         let p_type = packet.header.get_type();
 
         let codec = PacketCodecSender::new(self.is_client, self.logger.clone());
@@ -207,11 +192,49 @@ impl Connection {
             Ok(r) => r,
             Err(e) => return Box::new(future::err(e)),
         };
-        let udp_packets = udp_packets.drain(..).map(|(p_id, p)| self.send_udp_packet(
-            p_type,
-            p_id,
-            p,
-        )).collect::<Vec<_>>();
-        Box::new(stream::futures_ordered(udp_packets).for_each(|_| Ok(())))
+        let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
+            (p_type, p_id, p)).collect::<Vec<_>>();
+        Box::new(stream::iter_ok(udp_packets).forward(self.as_udp_packet_sink()).map(|_| ()))
+    }
+
+    pub fn as_udp_packet_sink(&self) -> ConnectionUdpPacketSink {
+        ConnectionUdpPacketSink { con: self }
+    }
+}
+
+pub struct ConnectionUdpPacketSink<'a> { con: &'a Connection }
+
+impl<'a> Sink for ConnectionUdpPacketSink<'a> {
+    type SinkItem = (PacketType, u16, Bytes);
+    type SinkError = Error;
+
+    fn start_send(
+        &mut self,
+        (p_type, p_id, udp_packet): Self::SinkItem
+    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        match p_type {
+            PacketType::Init | PacketType::Command | PacketType::CommandLow => {
+                self.con.resender.start_send((p_type, p_id, udp_packet))
+            }
+            _ => {
+                let addr = self.con.address;
+                Ok(match self.con.udp_packet_sink.start_send((addr, udp_packet))
+                    .map_err(|e| format_err!("Failed to send udp packet ({:?})", e))? {
+                    AsyncSink::Ready => AsyncSink::Ready,
+                    AsyncSink::NotReady((_, p)) =>
+                        AsyncSink::NotReady((p_type, p_id, p)),
+                })
+            }
+        }
+    }
+
+    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        if self.con.resender.poll_complete()?.is_ready() {
+            self.con.udp_packet_sink.poll_complete()
+                .map_err(|e| format_err!("Failed to complete sending udp \
+                    packet ({:?})", e).into())
+        } else {
+            Ok(futures::Async::NotReady)
+        }
     }
 }

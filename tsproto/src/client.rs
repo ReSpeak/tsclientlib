@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::fmt::Display;
 use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
@@ -22,22 +21,29 @@ use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
 use commands::Command;
 use connection::*;
-use connectionmanager::{AttachedDataConnectionManager, Resender, ResenderEvent,
+use connectionmanager::{ConnectionManager, Resender, ResenderEvent,
     SocketConnectionManager};
 use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
-use handler_data::Data;
+use handler_data::{ConnectionValue, Data, DataM};
 use license::Licenses;
 use packets::*;
 use utils::MultiSink;
 
 /// The data of our client.
 pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
+pub type ClientDataM = DataM<SocketConnectionManager<ServerConnectionData>>;
 /// Connections from a client to a server.
 pub type ClientConnection = Connection;
+pub type CM = SocketConnectionManager<ServerConnectionData>;
 
 #[derive(Default)]
 pub struct ServerConnectionData {
-    pub state_change_listener: Vec<Box<FnMut() -> BoxFuture<(), Error> + Send>>,
+    /// Every function in this list is called when the state of the connection
+    /// changes.
+    ///
+    /// Return `false` to remain in the list of listeners.
+    /// If `true` is returned, this listener will be removed.
+    pub state_change_listener: Vec<Box<FnMut(&ServerConnectionState) -> bool + Send>>,
     pub state: ServerConnectionState,
 }
 
@@ -82,21 +88,14 @@ fn create_init_header() -> Header {
 
 /// Configures the default setup chain, including logging and decoding
 /// of packets.
-pub fn default_setup<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
->(data: &Rc<RefCell<Data<CM>>>, log: bool) where CM::Key: Display {
+pub fn default_setup(data: &Rc<RefCell<Data<CM>>>, log: bool) {
     if log {
         // Logging
         let a = {
             let data = data.borrow();
             (data.logger.clone(), data.is_client)
         };
-        // TODO Udp packet logging
-
-        Data::apply_packet_stream_wrapper::<
-            ::log::PacketStreamLogger<CM::Key>>(data, a.clone());
-        Data::apply_packet_sink_wrapper::<
-            ::log::PacketSinkLogger<CM::Key>>(data, a);
+        // TODO Packet logging
     }
 
     DefaultPacketHandler::apply(data);
@@ -107,38 +106,28 @@ pub fn default_setup<
 /// `is_state` should return `true`, if the state is reached and `false` if this
 /// function should continue waiting.
 pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
-    data: &Rc<RefCell<ClientData>>,
-    server_addr: SocketAddr,
+    connection: &ConnectionValue<SocketConnectionManager<ServerConnectionData>>,
     f: F,
-) -> BoxFuture<(), Error> {
-    // Return a future that resolves when the function succeeds
-    let data2 = data.clone();
-    if let Some(state) = data.borrow_mut().connection_manager
-        .get_mut_data(server_addr) {
-        if f(&state.state) {
-            return Box::new(future::ok(()));
-        }
-        // Wait for the next state change
-        let (send, recv) = oneshot::channel();
-        let mut send = Some(send);
-        state.state_change_listener.push(Box::new(move || {
-            send.take().unwrap().send(()).unwrap();
-            Box::new(future::ok(()))
+) -> impl Future<Item=(), Error=Error> {
+    let (send, recv) = oneshot::channel();
+    connection.mutex.with(|c| -> Result<()> {
+        c.0.state_change_listener.push(Box::new(move |s| {
+            // Check if it is the right state
+            if f(s) {
+                send.send(()).unwrap();
+                true
+            } else {
+                false
+            }
         }));
-        Box::new(
-            recv.from_err()
-                .and_then(move |_| wait_for_state(&data2, server_addr, f)),
-        )
-    } else {
-        Box::new(future::ok(()))
-    }
+        Ok(())
+    }).unwrap().from_err().and_then(move |_| recv.from_err())
 }
 
 pub fn wait_until_connected(
-    data: &Rc<RefCell<ClientData>>,
-    server_addr: SocketAddr,
-) -> BoxFuture<(), Error> {
-    wait_for_state(data, server_addr, |state| {
+    connection: &ConnectionValue<SocketConnectionManager<ServerConnectionData>>,
+) -> impl Future<Item=(), Error=Error> {
+    wait_for_state(connection, |state| {
         if let ServerConnectionState::Connected = *state {
             true
         } else {
@@ -156,9 +145,9 @@ pub fn wait_until_connected(
 /// [`ServerConnectionState::Connecting`]:
 /// [`wait_until_connected`]:
 pub fn connect(
-    data: &Rc<RefCell<ClientData>>,
+    data: &mut ClientData,
     server_addr: SocketAddr,
-) -> BoxFuture<(), Error> {
+) -> impl Future<Item=(), Error=Error> {
     // Send the first init packet
     // Get the current timestamp
     let now = Utc::now();
@@ -172,52 +161,41 @@ pub fn connect(
         timestamp,
         random0,
     };
-
     let cheader = create_init_header();
+
+    let mut state: ServerConnectionData = Default::default();
+    state.state = ServerConnectionState::Init0 {
+        version: timestamp,
+        random0,
+    };
     // Add the connection to the connection list
-    Data::add_connection(data, Data::create_connection(data, server_addr));
-
-    // Change the state
-    let data2 = data.clone();
-    let mut data = data.borrow_mut();
-    {
-        let con_data = data.connection_manager.get_mut_data(server_addr)
-            .unwrap();
-        con_data.state = ServerConnectionState::Init0 {
-            version: timestamp,
-            random0,
-        };
-    }
-
-    let packets = Data::get_packets(Rc::downgrade(&data2));
+    let key = data.add_connection(state, data.create_connection(server_addr));
+    let con = data.get_connection(&key).unwrap();
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
-    Box::new(
-        packets.send((server_addr, packet))
-            .and_then(move |_| {
-                wait_for_state(&data2, server_addr, |state| {
-                    if let ServerConnectionState::Connecting = *state {
-                        true
-                    } else {
-                        false
-                    }
-                })
-            }),
-    )
+    let con2 = con.clone();
+    con.mutex.with(|c| c.1.send_packet(packet)).unwrap().and_then(move |_| {
+        wait_for_state(&con2, |state| {
+            if let ServerConnectionState::Connecting = *state {
+                true
+            } else {
+                false
+            }
+        })
+    })
 }
 
 struct DefaultPacketHandlerStream;
 
 impl DefaultPacketHandlerStream {
     pub fn new<
-        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-        InnerStream: Stream<Item = (CM::Key, Packet), Error = Error> + 'static,
-        InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
+        InnerStream: Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error> + 'static,
+        InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
     >(
         data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
         inner_sink: InnerSink,
-    ) -> (Box<Stream<Item = (CM::Key, Packet), Error = Error>>,
+    ) -> (Box<Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error>>,
         MultiSink<InnerSink>) {
         let sink = MultiSink::new(inner_sink);
         let sink2 = sink.clone();
@@ -239,7 +217,7 @@ impl DefaultPacketHandlerStream {
                     let logger = con.logger.clone();
                     let state = data.connection_manager
                         .get_mut_data(key.clone()).unwrap();
-                    let handle_res = match Self::handle_packet::<CM, _>(state, &packet,
+                    let handle_res = match Self::handle_packet::<_>(state, &packet,
                         &mut ignore_packet, &mut is_end, &data.private_key,
                         &mut con, key.clone(), &logger,
                         sink.clone()) {
@@ -252,9 +230,7 @@ impl DefaultPacketHandlerStream {
                     };
                     if let Some((s, packet)) = handle_res {
                         state.state = s;
-                        let listeners = mem::replace(
-                            &mut state.state_change_listener, Vec::new());
-                        Some((listeners, packet))
+                        Some(packet)
                     } else {
                         None
                     }
@@ -264,10 +240,10 @@ impl DefaultPacketHandlerStream {
             };
 
             if is_end {
-                Data::remove_connection(&data.upgrade().unwrap(), key.clone());
+                Data::remove_connection(&data.upgrade().unwrap(), &key);
             }
 
-            if let Some((mut listeners, p)) = packet_res {
+            if let Some(p) = packet_res {
                 // First send the packet, then notify the listeners, this
                 // ensures that the clientek packet is sent before the
                 // clientinit.
@@ -279,10 +255,19 @@ impl DefaultPacketHandlerStream {
                 };
 
                 Box::new(res_fut.and_then(move |_| {
+                    // TODO Lock connection
+                    Ok(panic!())
+                }).and_then(move |con| {
+                    let state = &mut con.0;
                     // Notify state changed listeners
-                    let listeners = listeners.drain(..).map(|mut l| l())
-                        .collect::<Vec<_>>();
-                    future::join_all(listeners)
+                    let mut i = 0;
+                    while i < state.state_change_listener.len() {
+                        if state.state_change_listener[i](&state.state) {
+                            state.state_change_listener.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
                 }).and_then(move |_|
                     if ignore_packet {
                         future::ok(None)
@@ -300,12 +285,11 @@ impl DefaultPacketHandlerStream {
     }
 
     fn handle_packet<
-        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-        InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
+        InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
     >(state: &mut ServerConnectionData, packet: &Packet,
         ignore_packet: &mut bool, is_end: &mut bool,
         private_key: &EccKeyPrivP256, con: &mut Connection,
-        con_key: CM::Key, logger: &Logger,
+        con_key: <CM as ConnectionManager>::Key, logger: &Logger,
         sink: MultiSink<InnerSink>)
         -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
         let res = match state.state {
@@ -635,17 +619,15 @@ impl DefaultPacketHandlerStream {
 }
 
 pub struct DefaultPacketHandlerSink<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
 > {
     data: Weak<RefCell<Data<CM>>>,
     inner_sink: MultiSink<InnerSink>,
 }
 
 impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
-> DefaultPacketHandlerSink<CM, InnerSink> {
+    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
+> DefaultPacketHandlerSink<InnerSink> {
     pub fn new(
         data: Weak<RefCell<Data<CM>>>,
         inner_sink: MultiSink<InnerSink>,
@@ -655,9 +637,8 @@ impl<
 }
 
 impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
-> Sink for DefaultPacketHandlerSink<CM, InnerSink> {
+    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
+> Sink for DefaultPacketHandlerSink<InnerSink> {
     type SinkItem = InnerSink::SinkItem;
     type SinkError = InnerSink::SinkError;
 
@@ -693,19 +674,17 @@ impl<
 }
 
 pub struct DefaultPacketHandler<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
+    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
 > {
-    inner_stream: Box<Stream<Item = (CM::Key, Packet), Error = Error>>,
-    inner_sink: DefaultPacketHandlerSink<CM, InnerSink>,
+    inner_stream: Box<Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error>>,
+    inner_sink: DefaultPacketHandlerSink<InnerSink>,
 }
 
 impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::Key, Packet), SinkError = Error> + 'static,
-> DefaultPacketHandler<CM, InnerSink> {
+    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
+> DefaultPacketHandler<InnerSink> {
     pub fn new<
-        InnerStream: Stream<Item = (CM::Key, Packet), Error = Error> + 'static,
+        InnerStream: Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error> + 'static,
     >(
         data: &Rc<RefCell<Data<CM>>>,
         inner_stream: InnerStream,
@@ -724,16 +703,14 @@ impl<
     }
 
     pub fn split(self) -> (
-        DefaultPacketHandlerSink<CM, InnerSink>,
-        Box<Stream<Item = (CM::Key, Packet), Error = Error>>,
+        DefaultPacketHandlerSink<InnerSink>,
+        Box<Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error>>,
     ) {
         (self.inner_sink, self.inner_stream)
     }
 }
 
-impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-> DefaultPacketHandler<CM, Box<Sink<SinkItem = (CM::Key, Packet),
+impl DefaultPacketHandler<Box<Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet),
     SinkError = Error>>> {
     pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
         let (stream, sink) = {

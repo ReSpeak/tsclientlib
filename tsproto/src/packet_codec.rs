@@ -46,7 +46,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
     pub fn handle_udp_packet(
         &mut self,
         (addr, udp_packet): (SocketAddr, BytesMut),
-    ) -> Box<Future<Item=(), Error=Error>> {
+    ) -> Box<Future<Item=(), Error=Error> + Send> {
         // Parse header
         let (header, pos) = {
             let mut r = Cursor::new(&*udp_packet);

@@ -11,6 +11,7 @@ extern crate curve25519_dalek;
 extern crate evmap;
 #[macro_use]
 extern crate failure;
+#[macro_use]
 extern crate futures;
 extern crate futures_locks;
 #[cfg(feature = "rust-gmp")]
@@ -35,7 +36,7 @@ extern crate yasna;
 use std::net::SocketAddr;
 
 use failure::ResultExt;
-use futures::{Future, Sink, Stream};
+use futures::Future;
 
 pub mod algorithms;
 pub mod client;
@@ -52,7 +53,6 @@ pub mod resend;
 pub mod utils;
 
 type BoxFuture<T, E> = Box<Future<Item = T, Error = E>>;
-type Map<K, V> = std::collections::HashMap<K, V>;
 type Result<T> = std::result::Result<T, Error>;
 
 /// The maximum number of bytes for a fragmented packet.
@@ -216,34 +216,6 @@ impl Into<SocketAddr> for ServerId {
     fn into(self) -> SocketAddr {
         self.0
     }
-}
-
-/// A trait for a `Stream` wrapper.
-///
-/// Implementors of this trait supply just one method `wrap`, that takes a
-/// stream as an argument and returns a wrapped stream of the same type.
-pub trait StreamWrapper<I, E, T: Stream<Item = I, Error = E>> {
-    /// The type of additional arguments for the `wrap` function.
-    type A;
-    /// The resulting stream type.
-    type Result: Stream<Item = I, Error = E>;
-
-    /// `A` holds additional arguments.
-    fn wrap(inner: T, a: Self::A) -> Self::Result;
-}
-
-/// A trait for a `Sink` wrapper.
-///
-/// Implementors of this trait supply just one method `wrap`, that takes a
-/// sink as an argument and returns a wrapped sink of the same type.
-pub trait SinkWrapper<I, E, T: Sink<SinkItem = I, SinkError = E>> {
-    /// The type of additional arguments for the `wrap` function.
-    type A;
-    /// The resulting sink type.
-    type Result: Sink<SinkItem = I, SinkError = E>;
-
-    /// `A` holds additional arguments.
-    fn wrap(inner: T, a: Self::A) -> Self::Result;
 }
 
 pub fn init() -> Result<()> {

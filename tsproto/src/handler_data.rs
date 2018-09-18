@@ -1,7 +1,5 @@
-use std::cell::RefCell;
-use std::mem;
+use std::{mem, ptr};
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
 
 use {evmap, futures_locks, slog, slog_async, slog_term, tokio};
 use bytes::Bytes;
@@ -11,20 +9,25 @@ use slog::Drain;
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
 
-use {Error, Result, StreamWrapper, SinkWrapper};
+use {Error, Result};
 use connection::*;
 use connectionmanager::ConnectionManager;
 use crypto::EccKeyPrivP256;
-use packets::*;
+use packet_codec::PacketCodecReceiver;
+use resend::DefaultResender;
+
+pub type DataM<CM> = futures_locks::Mutex<Data<CM>>;
 
 /// A listener for added and removed connections.
-pub trait ConnectionListener<CM: ConnectionManager> {
+pub trait ConnectionListener<CM: ConnectionManager>: Send {
     /// Called when a new connection is created.
     ///
     /// Return `false` to remain in the list of listeners.
     /// If `true` is returned, this listener will be removed.
-    fn on_connection_created(&mut self, _data: Rc<RefCell<Data<CM>>>,
-        _key: CM::Key) -> bool {
+    ///
+    /// Per default, `false` is returned.
+    fn on_connection_created(&mut self, _data: &mut Data<CM>, _key: &mut CM::Key,
+        _adata: &mut CM::AssociatedData, _con: &mut Connection) -> bool {
         false
     }
 
@@ -32,14 +35,23 @@ pub trait ConnectionListener<CM: ConnectionManager> {
     ///
     /// Return `false` to remain in the list of listeners.
     /// If `true` is returned, this listener will be removed.
-    fn on_connection_removed(&mut self, _data: Rc<RefCell<Data<CM>>>,
-        _key: CM::Key) -> bool {
+    ///
+    /// Per default, `false` is returned.
+    fn on_connection_removed(&mut self, _data: &mut Data<CM>, _key: &CM::Key,
+        _con: &mut ConnectionValue<CM>) -> bool {
         false
     }
 }
 
+#[derive(Debug)]
 pub struct ConnectionValue<CM: ConnectionManager + 'static> {
     pub mutex: futures_locks::Mutex<(CM::AssociatedData, Connection)>,
+}
+
+impl<CM: ConnectionManager + 'static> ConnectionValue<CM> {
+    pub fn new(data: CM::AssociatedData, con: Connection) -> Self {
+        Self { mutex: futures_locks::Mutex::new((data, con)) }
+    }
 }
 
 impl<CM: ConnectionManager + 'static> PartialEq for ConnectionValue<CM> {
@@ -50,11 +62,18 @@ impl<CM: ConnectionManager + 'static> PartialEq for ConnectionValue<CM> {
 
 impl<CM: ConnectionManager + 'static> Eq for ConnectionValue<CM> {}
 
+impl<CM: ConnectionManager + 'static> Clone for ConnectionValue<CM> {
+    fn clone(&self) -> Self {
+        Self { mutex: self.mutex.clone() }
+    }
+}
+
 impl<CM: ConnectionManager + 'static> evmap::ShallowCopy for ConnectionValue<CM> {
     unsafe fn shallow_copy(&mut self) -> Self {
         // Try to copy without generating memory leaks
-        let r: Self = mem::uninitialized();
-        panic!()
+        let mut r: Self = mem::uninitialized();
+        ptr::copy_nonoverlapping(self, &mut r, 1);
+        r
     }
 }
 
@@ -65,7 +84,7 @@ impl<CM: ConnectionManager + 'static> evmap::ShallowCopy for ConnectionValue<CM>
 /// The list of connections is not managed by this struct, but it is passed to
 /// an instance of [`ConnectionManager`] that is stored here.
 ///
-/// [`ConnectionManager`]:
+/// [`ConnectionManager`]: trait.ConnectionManager.html
 pub struct Data<CM: ConnectionManager + 'static> {
     /// If this structure is owned by a client or a server.
     pub is_client: bool,
@@ -77,13 +96,6 @@ pub struct Data<CM: ConnectionManager + 'static> {
 
     /// The sink of udp packets.
     pub udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-
-    /// The stream of `Packet`s.
-    pub packet_stream:
-        Option<Box<Stream<Item = (CM::Key, Packet), Error = Error>>>,
-    /// The sink of `Packet`s.
-    pub packet_sink:
-        Option<Box<Sink<SinkItem = (CM::Key, Packet), SinkError = Error>>>,
 
     /// The default resend config. It gets copied for each new connection.
     resend_config: ::resend::ResendConfig,
@@ -98,8 +110,8 @@ pub struct Data<CM: ConnectionManager + 'static> {
     /// called if you do so.
     /// Instead, use the [`add_connection`] und [`remove_connection`] function.
     ///
-    /// [`add_connection`]:
-    /// [`remove_connection`]:
+    /// [`add_connection`]: #method.add_connection
+    /// [`remove_connection`]: #method.remove_connection
     pub connection_manager: CM,
     /// Listen for new or removed connections.
     pub connection_listeners: Vec<Box<ConnectionListener<CM>>>,
@@ -114,7 +126,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         is_client: bool,
         connection_manager: CM,
         logger: L,
-    ) -> Result<Rc<RefCell<Self>>> {
+    ) -> Result<futures_locks::Mutex<Self>> {
         let logger = logger.into().unwrap_or_else(|| {
             let decorator = slog_term::TermDecorator::new().build();
             let drain = slog_term::FullFormat::new(decorator).build().fuse();
@@ -134,20 +146,18 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
         let (connections, connections_writer) = evmap::new();
 
-        let data = Rc::new(RefCell::new(Self {
+        let data = Self {
             is_client,
             local_addr,
             private_key,
             logger,
             udp_packet_sink,
-            packet_stream: None,
-            packet_sink: None,
             resend_config: Default::default(),
             connections,
             connections_writer,
             connection_manager,
             connection_listeners: Vec::new(),
-        }));
+        };
 
         tokio::spawn(udp_packet_sink_sender.map(|(addr, p)|
             (p, addr))
@@ -155,23 +165,23 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
                 error!(logger2, "Failed to send udp packet"; "error" => ?e))
             ).map(|_| ()));
 
-        // TODO Use PacketCodecReceiver::handle_udp_packet with stream
-        Ok(data)
+        // Handle incoming packets
+        let logger = data.logger.clone();
+        let codec = PacketCodecReceiver::new(&data);
+        tokio::spawn(stream.from_err()
+            .for_each(move |(p, a)| codec.handle_udp_packet((a, p)))
+            .map_err(move |e| error!(logger, "Packet receiver failed";
+                "error" => ?e)));
+        Ok(futures_locks::Mutex::new(data))
     }
 
-    pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
-        -> Rc<RefCell<Connection>> {
+    pub fn create_connection(&self, addr: SocketAddr) -> Connection {
         // Add options like ip to logger
-        let (resender, logger, sink, is_client) = {
-            let data = data.borrow();
-            let logger = data.logger.new(o!("addr" => addr.to_string()));
-
-            (::resend::DefaultResender::new(data.resend_config.clone(),
-                logger.clone()), logger, data.udp_packet_sink.clone(),
-                data.is_client)
-        };
-
-        Connection::new(addr, resender, logger, sink, is_client)
+        let logger = self.logger.new(o!("addr" => addr.to_string()));
+        let resender = DefaultResender::new(self.resend_config.clone(),
+            logger.clone());
+        Connection::new(addr, resender, logger, self.udp_packet_sink.clone(),
+            self.is_client)
     }
 
     /// Add a new connection to this socket.
@@ -179,165 +189,52 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     /// The connection object can be created e. g. by the [`create_connection`]
     /// function.
     ///
-    /// [`create_connection`]:
-    pub fn add_connection(data: &Rc<RefCell<Self>>,
-        connection: Rc<RefCell<Connection>>) -> CM::Key {
-        let mut tmp;
-        // Add connection and take listeners
-        let key = {
-            let data = &mut *data.borrow_mut();
-            let key = data.connection_manager.add_connection(connection);
-            tmp = mem::replace(&mut data.connection_listeners, Vec::new());
-            key
-        };
-        let key2 = key.clone();
-        let mut tmp = tmp.drain(..)
-            .filter_map(|mut l| if l.on_connection_created(data.clone(),
-                key2.clone()) {
-                None
+    /// [`create_connection`]: #method.create_connection
+    pub fn add_connection(&mut self, mut data: CM::AssociatedData,
+        mut con: Connection) -> CM::Key {
+        let mut key = self.connection_manager.new_connection_key(&mut data,
+            &mut con);
+        // Call listeners
+        let mut i = 0;
+        while i < self.connection_listeners.len() {
+            if self.connection_listeners[i].on_connection_created(
+                self, &mut key, &mut data, &mut con) {
+                self.connection_listeners.remove(i);
             } else {
-                Some(l)
-            })
-            .collect::<Vec<_>>();
-        // Put listeners back
-        {
-            let mut data = data.borrow_mut();
-            tmp.append(&mut data.connection_listeners);
-            data.connection_listeners = tmp;
+                i += 1;
+            }
         }
+
+        // Add connection
+        self.connections_writer.insert(key.clone(), ConnectionValue::new(data, con));
+        self.connections_writer.refresh();
         key
     }
 
-    pub fn remove_connection(data: &Rc<RefCell<Self>>, key: CM::Key) {
-        let mut tmp;
-        // Take listeners
-        {
-            let mut data = data.borrow_mut();
-            tmp = mem::replace(&mut data.connection_listeners, Vec::new());
+    pub fn remove_connection(&mut self, key: &CM::Key)
+        -> Option<ConnectionValue<CM>> {
+        // Get connection
+        let mut res = self.get_connection(key);
+        if let Some(con) = &mut res {
+            // Remove connection
+            self.connections_writer.clear(key.clone());
+            self.connections_writer.refresh();
+
+            // Call listeners
+            let mut i = 0;
+            while i < self.connection_listeners.len() {
+                if self.connection_listeners[i].on_connection_removed(
+                    self, &key, con) {
+                    self.connection_listeners.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
         }
-        let key2 = key.clone();
-        let mut tmp = tmp.drain(..)
-            .filter_map(|mut l| if l.on_connection_removed(data.clone(),
-                key2.clone()) {
-                None
-            } else {
-                Some(l)
-            })
-            .collect::<Vec<_>>();
-        // Put listeners back and remove connection
-        {
-            let mut data = data.borrow_mut();
-            tmp.append(&mut data.connection_listeners);
-            data.connection_listeners = tmp;
-            data.connection_manager.remove_connection(key);
-        }
-    }
-
-    pub fn apply_packet_stream_wrapper<
-        W: StreamWrapper<(CM::Key, Packet), Error,
-            Box<Stream<Item = (CM::Key, Packet), Error = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.packet_stream.take().unwrap();
-        data.packet_stream = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    pub fn apply_packet_sink_wrapper<
-        W: SinkWrapper<(CM::Key, Packet), Error,
-            Box<Sink<SinkItem = (CM::Key, Packet), SinkError = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.packet_sink.take().unwrap();
-        data.packet_sink = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    /// Gives a `Stream` and `Sink` of `Packet`s, which always references the
-    /// current stream in the `Data` struct.
-    pub fn get_packets(data: Weak<RefCell<Self>>) -> DataPackets<CM> {
-        DataPackets { data }
-    }
-}
-
-/// A `Stream` and `Sink` of [`Packet`]s, which always references the current
-/// stream in the [`Data`] struct.
-///
-/// [`Packet`]: ../packets/struct.Packet.html
-/// [`Data`]: struct.Data.html
-pub struct DataPackets<CM: ConnectionManager + 'static> {
-    data: Weak<RefCell<Data<CM>>>,
-}
-
-impl<CM: ConnectionManager + 'static> Stream for DataPackets<CM> {
-    type Item = (CM::Key, Packet);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::Ready(None));
-        };
-        let mut stream = {
-            let mut data = data.borrow_mut();
-            data.packet_stream
-                .take()
-                .unwrap()
-        };
-        let res = stream.poll();
-        let mut data = data.borrow_mut();
-        data.packet_stream = Some(stream);
-        res
-    }
-}
-
-impl<CM: ConnectionManager + 'static> Sink for DataPackets<CM> {
-    type SinkItem = (CM::Key, Packet);
-    type SinkError = Error;
-
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.start_send(item);
-        let mut data = data.borrow_mut();
-        data.packet_sink = Some(sink);
         res
     }
 
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.poll_complete();
-        let mut data = data.borrow_mut();
-        data.packet_sink = Some(sink);
-        res
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.close();
-        let mut data = data.borrow_mut();
-        data.packet_sink = Some(sink);
-        res
+    pub fn get_connection(&self, key: &CM::Key) -> Option<ConnectionValue<CM>> {
+        self.connections.get_and(&key, |v| v[0].clone())
     }
 }
