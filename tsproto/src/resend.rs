@@ -463,6 +463,21 @@ impl ResendStates {
         }
     }
 
+    /// The id has to be from the last call to `peek_next_record`.
+    fn peek_id(&mut self, id: PacketId) -> Option<&mut SendRecord> {
+        match self {
+            ResendStates::Stalling { to_send, .. } => {
+                to_send.first_mut()
+            }
+            ResendStates::Connecting    { packets, to_send, .. } |
+            ResendStates::Normal        { packets, to_send, .. } |
+            ResendStates::Disconnecting { packets, to_send, .. } => {
+                packets.get_mut(&id).map(|(p, _)| p)
+            }
+            ResendStates::Dead { .. } => None,
+        }
+    }
+
     /// Reinsert a record that was fetched with `peek_next_record`.
     fn insert_peeked_record(&mut self, id: PacketId, next: time::Duration) {
         match self {
@@ -577,14 +592,15 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
         datam: DataM<CM>,
         connection_key: CM::Key,
     ) -> Self {
+        let connection = data.get_connection(&connection_key)
+            .expect("Connection for resender not found");
         Self {
             data: datam,
             logger: data.logger.clone(),
             is_client: data.is_client,
             connections: data.connections.clone(),
             connection_key,
-            connection: data.get_connection(&connection_key)
-                .expect("Connection for resender not found"),
+            connection,
             lock: None,
             sink: data.udp_packet_sink.clone(),
             timeout: Delay::new(Instant::now()),
@@ -617,7 +633,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
         if self.lock.is_none() {
             self.lock = Some(self.connection.mutex.lock());
         }
-        let con = try_ready!(self.lock.unwrap().poll().map_err(|()|
+        let mut con = try_ready!(self.lock.as_mut().unwrap().poll().map_err(|()|
             format_err!("Failed to lock connection")));
         let con = &mut con.1;
         self.lock = None;
@@ -729,7 +745,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
             let key = self.connection_key.clone();
             let logger = self.logger.clone();
             let state = con.resender.state.get_name();
-            tokio::spawn(self.data.with(move |data| {
+            tokio::spawn(self.data.with(move |mut data| {
                 info!(logger, "Exiting connection because it is not responding";
                     "current state" => state);
                 data.remove_connection(&key);
@@ -752,16 +768,16 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
         };
         let last_threshold = now - rto;
 
-        while let Some(mut rec) = {
-            if let Some(rec) = con.resender.state.peek_next_record()? {
+        while let Some(id) = {
+            if let Some((id, tries, last)) = con.resender.state.peek_next_record()?.map(|r| (r.id, r.tries, r.last)) {
                 // Check if we should resend this packet or not
-                if rec.tries != 0 && rec.last > last_threshold {
+                if tries != 0 && last > last_threshold {
                     // Schedule next send
-                    let dur = rec.last
+                    let dur = last
                         .naive_utc()
                         .signed_duration_since(last_threshold.naive_utc());
                     let next = dur.to_std().unwrap();
-                    con.resender.state.insert_peeked_record(rec.id, next);
+                    con.resender.state.insert_peeked_record(id, next);
                     if let ResendStates::Stalling { .. } = con.resender.state {
                         self.timeout.reset(Instant::now() + next);
                         if let futures::Async::Ready(()) = self.timeout.poll()? {
@@ -774,7 +790,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
                 // Print packet for debugging
                 //info!(con.logger, "Packet in send queue"; "id" => ?rec.p_id,
                 //    "last" => ?rec.last);
-                Some(rec)
+                Some(id)
             } else {
                 //info!(con.logger, "No packet in send queue");
                 None
@@ -782,11 +798,11 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
         } {
             // Try to send this packet
             if let futures::AsyncSink::NotReady(_) =
-                self.sink.start_send((con.address, rec.packet.clone()))
+                self.sink.start_send((con.address, con.resender.state.peek_id(id).unwrap().packet.clone()))
                     .map_err(|e| format_err!("Failed to poll_complete udp packet sink ({:?})", e))?
             {
                 // The sink should notify us if it is ready
-                con.resender.state.insert_peeked_record(rec.id, time::Duration::from_secs(0));
+                con.resender.state.insert_peeked_record(id, time::Duration::from_secs(0));
                 break;
             } else {
                 // Successfully started sending the packet, now schedule the
@@ -798,42 +814,46 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
                     self.is_sending = true;
                 }
 
-                // Double srtt on packet loss
-                if rec.tries != 0 && con.resender.srtt
-                    < con.resender.config.normal_timeout {
-                    con.resender.srtt = con.resender.srtt * 2;
-                }
+                let is_normal_state;
+                {
+                    let rec = con.resender.state.peek_id(id).unwrap();
+                    // Double srtt on packet loss
+                    if rec.tries != 0 && con.resender.srtt
+                        < con.resender.config.normal_timeout {
+                        con.resender.srtt = con.resender.srtt * 2;
+                    }
 
-                let is_normal_state = if let ResendStates::Normal { .. } =
-                    con.resender.state {
-                    true
-                } else {
-                    false
-                };
+                    is_normal_state = if let ResendStates::Normal { .. } =
+                        con.resender.state {
+                        true
+                    } else {
+                        false
+                    };
 
-                // Update record
-                rec.last = now;
-                rec.tries += 1;
+                    // Update record
+                    rec.last = now;
+                    rec.tries += 1;
 
-                if rec.tries != 1 {
-                    let to_s = if self.is_client { "S" } else { "C" };
-                    warn!(self.logger, "Resend";
-                        "p_id" => rec.id.1,
-                        "tries" => rec.tries,
-                        "last" => %rec.last,
-                        "to" => to_s,
-                        "srtt" => ?con.resender.srtt,
-                        "srtt_dev" => ?con.resender.srtt_dev,
-                        "rto" => %rto,
-                    );
+                    if rec.tries != 1 {
+                        let to_s = if self.is_client { "S" } else { "C" };
+                        warn!(self.logger, "Resend";
+                            "p_id" => id.1,
+                            "tries" => rec.tries,
+                            "last" => %rec.last,
+                            "to" => to_s,
+                            "srtt" => ?con.resender.srtt,
+                            "srtt_dev" => ?con.resender.srtt_dev,
+                            "rto" => %rto,
+                        );
+                    }
                 }
 
                 let next = now + rto;
                 let dur = next.naive_utc().signed_duration_since(
                     now.naive_utc());
 
-                let p_id = rec.id.1;
-                con.resender.state.insert_peeked_record(rec.id, dur.to_std().unwrap());
+                let p_id = id.1;
+                con.resender.state.insert_peeked_record(id, dur.to_std().unwrap());
 
                 if is_normal_state && dur > con.resender.config.normal_timeout {
                     warn!(self.logger, "Max resend timeout exceeded";

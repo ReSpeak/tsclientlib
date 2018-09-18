@@ -2,8 +2,8 @@ use std::{mem, ptr};
 use std::net::SocketAddr;
 
 use {evmap, futures_locks, slog, slog_async, slog_term, tokio};
-use bytes::Bytes;
-use futures::{self, Future, Sink, Stream};
+use bytes::{Bytes, BytesMut};
+use futures::{future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
 use slog::Drain;
 use tokio::codec::BytesCodec;
@@ -13,7 +13,8 @@ use {Error, Result};
 use connection::*;
 use connectionmanager::ConnectionManager;
 use crypto::EccKeyPrivP256;
-use packet_codec::PacketCodecReceiver;
+use packet_codec::{PacketCodecReceiver, PacketCodecSender};
+use packets::{Packet, PacketType};
 use resend::DefaultResender;
 
 pub type DataM<CM> = futures_locks::Mutex<Data<CM>>;
@@ -26,7 +27,7 @@ pub trait ConnectionListener<CM: ConnectionManager>: Send {
     /// If `true` is returned, this listener will be removed.
     ///
     /// Per default, `false` is returned.
-    fn on_connection_created(&mut self, _data: &mut Data<CM>, _key: &mut CM::Key,
+    fn on_connection_created(&mut self, _key: &mut CM::Key,
         _adata: &mut CM::AssociatedData, _con: &mut Connection) -> bool {
         false
     }
@@ -37,10 +38,19 @@ pub trait ConnectionListener<CM: ConnectionManager>: Send {
     /// If `true` is returned, this listener will be removed.
     ///
     /// Per default, `false` is returned.
-    fn on_connection_removed(&mut self, _data: &mut Data<CM>, _key: &CM::Key,
+    fn on_connection_removed(&mut self, _key: &CM::Key,
         _con: &mut ConnectionValue<CM>) -> bool {
         false
     }
+}
+
+/// Will be cloned for some of the incoming packets. So be careful with
+/// modifying the internal state, it is not global.
+pub trait PacketHandler<CM: ConnectionManager>: Clone + Send {
+    type R: Future<Item=(), Error=Error> + Send;
+    /// Everything which is not a command packet.
+    fn handle_packet(&mut self, packet: Packet) -> Self::R;
+    fn handle_command_packet(&mut self, con: &mut (CM::AssociatedData, Connection), packet: Packet);
 }
 
 #[derive(Debug)]
@@ -51,6 +61,31 @@ pub struct ConnectionValue<CM: ConnectionManager + 'static> {
 impl<CM: ConnectionManager + 'static> ConnectionValue<CM> {
     pub fn new(data: CM::AssociatedData, con: Connection) -> Self {
         Self { mutex: futures_locks::Mutex::new((data, con)) }
+    }
+
+    fn encode_packet(&self, packet: Packet) -> impl Stream<Item=(PacketType, u16, Bytes), Error=Error> {
+        let sink = self.as_udp_packet_sink();
+        stream::futures_ordered(Some(self.mutex.with(|mut c| {
+            let codec = PacketCodecSender::new(c.1.is_client, c.1.logger.clone());
+            let p_type = packet.header.get_type();
+
+            let mut udp_packets = match codec.encode_packet(&mut c.1, packet) {
+                Ok(r) => r,
+                Err(e) => return future::err(e),
+            };
+            let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
+                (p_type, p_id, p)).collect::<Vec<_>>();
+            future::ok(stream::iter_ok(udp_packets))
+        }).unwrap())).flatten()
+    }
+
+    pub fn as_udp_packet_sink(&self) -> ::connection::ConnectionUdpPacketSink<CM> {
+        ::connection::ConnectionUdpPacketSink::new(self.clone())
+    }
+
+    pub fn as_packet_sink(&self) -> impl Sink<SinkItem=Packet, SinkError=Error> {
+        let cv = self.clone();
+        self.as_udp_packet_sink().with_flat_map(move |p| cv.encode_packet(p))
     }
 }
 
@@ -120,10 +155,12 @@ pub struct Data<CM: ConnectionManager + 'static> {
 impl<CM: ConnectionManager + 'static> Data<CM> {
     /// An optional logger can be provided. If none is provided, a new one will
     /// be created.
-    pub fn new<L: Into<Option<slog::Logger>>>(
+    pub fn new<L: Into<Option<slog::Logger>>, P: PacketHandler<CM> + 'static>(
         local_addr: SocketAddr,
         private_key: EccKeyPrivP256,
         is_client: bool,
+        unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+        packet_handler: P,
         connection_manager: CM,
         logger: L,
     ) -> Result<futures_locks::Mutex<Self>> {
@@ -167,7 +204,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
         // Handle incoming packets
         let logger = data.logger.clone();
-        let codec = PacketCodecReceiver::new(&data);
+        let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink,
+            packet_handler);
         tokio::spawn(stream.from_err()
             .for_each(move |(p, a)| codec.handle_udp_packet((a, p)))
             .map_err(move |e| error!(logger, "Packet receiver failed";
@@ -198,7 +236,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         let mut i = 0;
         while i < self.connection_listeners.len() {
             if self.connection_listeners[i].on_connection_created(
-                self, &mut key, &mut data, &mut con) {
+                &mut key, &mut data, &mut con) {
                 self.connection_listeners.remove(i);
             } else {
                 i += 1;
@@ -223,8 +261,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             // Call listeners
             let mut i = 0;
             while i < self.connection_listeners.len() {
-                if self.connection_listeners[i].on_connection_removed(
-                    self, &key, con) {
+                if self.connection_listeners[i].on_connection_removed(&key, con) {
                     self.connection_listeners.remove(i);
                 } else {
                     i += 1;

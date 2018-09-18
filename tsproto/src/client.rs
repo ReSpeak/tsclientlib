@@ -1,12 +1,11 @@
 use std::cell::RefCell;
-use std::mem;
 use std::net::SocketAddr;
 use std::rc::{Rc, Weak};
 
 use {base64, tokio};
 use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
-use futures::sync::oneshot;
+use futures::sync::mpsc;
 #[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
 #[cfg(not(feature = "rust-gmp"))]
@@ -24,7 +23,7 @@ use connection::*;
 use connectionmanager::{ConnectionManager, Resender, ResenderEvent,
     SocketConnectionManager};
 use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
-use handler_data::{ConnectionValue, Data, DataM};
+use handler_data::{ConnectionValue, Data, DataM, PacketHandler};
 use license::Licenses;
 use packets::*;
 use utils::MultiSink;
@@ -36,7 +35,6 @@ pub type ClientDataM = DataM<SocketConnectionManager<ServerConnectionData>>;
 pub type ClientConnection = Connection;
 pub type CM = SocketConnectionManager<ServerConnectionData>;
 
-#[derive(Default)]
 pub struct ServerConnectionData {
     /// Every function in this list is called when the state of the connection
     /// changes.
@@ -49,8 +47,6 @@ pub struct ServerConnectionData {
 
 #[derive(Debug)]
 pub enum ServerConnectionState {
-    /// Default state.
-    Uninitialized,
     /// After `Init0` was sent.
     Init0 { version: u32, random0: [u8; 4] },
     /// After `Init2` was sent.
@@ -64,12 +60,6 @@ pub enum ServerConnectionState {
     Connected,
     /// The connection is finished, no more packets can be sent or received.
     Disconnected,
-}
-
-impl Default for ServerConnectionState {
-    fn default() -> Self {
-        ServerConnectionState::Uninitialized
-    }
 }
 
 fn create_init_header() -> Header {
@@ -98,7 +88,7 @@ pub fn default_setup(data: &Rc<RefCell<Data<CM>>>, log: bool) {
         // TODO Packet logging
     }
 
-    DefaultPacketHandler::apply(data);
+    // TODO Default packet handler
 }
 
 /// Wait until a client reaches a certain state.
@@ -109,19 +99,26 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
     connection: &ConnectionValue<SocketConnectionManager<ServerConnectionData>>,
     f: F,
 ) -> impl Future<Item=(), Error=Error> {
-    let (send, recv) = oneshot::channel();
-    connection.mutex.with(|c| -> Result<()> {
+    let (send, recv) = mpsc::channel(0);
+    connection.mutex.with(move |mut c| -> Result<()> {
         c.0.state_change_listener.push(Box::new(move |s| {
+            let mut send = send.clone();
             // Check if it is the right state
             if f(s) {
-                send.send(()).unwrap();
+                if send.try_send(()).is_err() {
+                    tokio::spawn(send.send(()).map(|_| ()).map_err(|e| {
+                        println!("Failed to send while waiting for state ({:?})", e);
+                    }));
+                }
                 true
             } else {
                 false
             }
         }));
         Ok(())
-    }).unwrap().from_err().and_then(move |_| recv.from_err())
+    }).unwrap().from_err().and_then(move |_| recv.into_future().map(|_| ())
+        .map_err(|e| format_err!("Failed to receive while waiting for state \
+            ({:?})", e).into()))
 }
 
 pub fn wait_until_connected(
@@ -163,18 +160,21 @@ pub fn connect(
     };
     let cheader = create_init_header();
 
-    let mut state: ServerConnectionData = Default::default();
-    state.state = ServerConnectionState::Init0 {
-        version: timestamp,
-        random0,
+    let state = ServerConnectionData {
+        state_change_listener: Vec::new(),
+        state: ServerConnectionState::Init0 {
+            version: timestamp,
+            random0,
+        },
     };
     // Add the connection to the connection list
-    let key = data.add_connection(state, data.create_connection(server_addr));
+    let con = data.create_connection(server_addr);
+    let key = data.add_connection(state, con);
     let con = data.get_connection(&key).unwrap();
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
     let con2 = con.clone();
-    con.mutex.with(|c| c.1.send_packet(packet)).unwrap().and_then(move |_| {
+    con.as_packet_sink().send(packet).and_then(move |_| {
         wait_for_state(&con2, |state| {
             if let ServerConnectionState::Connecting = *state {
                 true
@@ -185,7 +185,182 @@ pub fn connect(
     })
 }
 
-struct DefaultPacketHandlerStream;
+#[derive(Clone, Debug)]
+struct DefaultPacketHandler;
+
+impl PacketHandler<CM> for DefaultPacketHandler {
+    type R = Box<Future<Item=(), Error=Error> + Send>;
+
+    fn handle_packet(&mut self, packet: Packet) -> Self::R {
+        Box::new(future::ok(()))
+    }
+
+    fn handle_command_packet(
+        &mut self,
+        con: &mut (<CM as ConnectionManager>::AssociatedData, Connection),
+        packet: Packet,
+    ) {
+    }
+}
+
+impl DefaultPacketHandler {
+    fn handle_init_packet(
+        con_value: ConnectionValue<CM>,
+        (state, con): &mut (ServerConnectionData, Connection),
+        packet: &Packet,
+        ignore_packet: &mut bool,
+        is_end: &mut bool,
+        private_key: &EccKeyPrivP256,
+        logger: &Logger,
+    ) -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+        let res = match state.state {
+            ServerConnectionState::Init0 { version, ref random0 } => {
+                // Handle an Init1
+                if let Packet { data: packets::Data::S2CInit(
+                    S2CInit::Init1 { ref random1, ref random0_r }), .. } = *packet {
+                    // Check the response
+                    if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
+                        // The packet is correct.
+                        // Send next init packet
+                        let cheader = create_init_header();
+                        let data = C2SInit::Init2 {
+                            version,
+                            random1: *random1,
+                            random0_r: *random0_r,
+                        };
+
+                        let state = ServerConnectionState::Init2 {
+                            version,
+                        };
+
+                        Some((state, Some(Packet::new(cheader,
+                            packets::Data::C2SInit(data)))))
+                    } else {
+                        return Err(format_err!("Init: Got wrong data in the Init1 response packet").into());
+                    }
+                } else {
+                    None
+                }
+            }
+            ServerConnectionState::Init2 { version } => {
+                // Handle an Init3
+                if let Packet { data: packets::Data::S2CInit(
+                    S2CInit::Init3 { ref x, ref n, level, ref random2 }), .. } = *packet {
+                    // Solve RSA puzzle: y = x ^ (2 ^ level) % n
+                    // Use Montgomery Reduction
+                    if level > 10_000_000 {
+                        // Reject too high exponents
+                        None
+                    } else {
+                        // Create clientinitiv
+                        let mut rng = rand::thread_rng();
+                        let alpha = rng.gen::<[u8; 10]>();
+                        // omega is an ASN.1-DER encoded public key from
+                        // the ECDH parameters.
+
+                        let alpha_s = base64::encode(&alpha);
+                        let priv_pub_key = private_key.to_pub();
+                        let ip = con.address.ip();
+                        let logger = logger.clone();
+                        let random2 = *random2;
+                        let x = *x;
+                        let n = *n;
+                        // Spawn this as another future
+                        let logger2 = logger.clone();
+                        let fut = future::lazy(move || {
+                            let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
+                                "Solve RSA puzzle", logger.clone(),
+                                ::slog::Level::Info);
+                            time_reporter.start("");
+
+                            // TODO Blocking operation with timeout
+                            // Use gmp for faster computations if it is
+                            // available.
+                            #[cfg(feature = "rust-gmp")]
+                            let y = {
+                                let n = (&n as &[u8]).into();
+                                let x: Mpz = (&x as &[u8]).into();
+                                let mut e = Mpz::new();
+                                e.setbit(level as usize);
+                                let y = x.powm(&e, &n);
+                                time_reporter.finish();
+                                info!(logger, "Solve RSA puzzle";
+                                      "level" => level);
+                                let ys = y.to_str_radix(10);
+                                let yi = ys.parse().unwrap();
+                                algs::biguint_to_array(&yi)
+                            };
+
+                            #[cfg(not(feature = "rust-gmp"))]
+                            let y = {
+                                let xi = BigUint::from_bytes_be(&x);
+                                let ni = BigUint::from_bytes_be(&n);
+                                let mut e = BigUint::one();
+                                e <<= level as usize;
+                                let yi = xi.modpow(&e, &ni);
+                                time_reporter.finish();
+                                info!(logger, "Solve RSA puzzle";
+                                      "level" => level, "x" => %xi, "n" => %ni,
+                                      "y" => %yi);
+                                algs::biguint_to_array(&yi)
+                            };
+
+                            // Create the command string
+                            // omega is an ASN.1-DER encoded public key from
+                            // the ECDH parameters.
+                            let omega_s = priv_pub_key.to_ts().unwrap();
+                            let mut command = Command::new("clientinitiv");
+                            command.push("alpha", alpha_s);
+                            command.push("omega", omega_s);
+                            command.push("ot", "1");
+                            // Set ip always except if it is a local address
+                            if ::utils::is_global_ip(&ip) {
+                                command.push("ip", ip.to_string());
+                            } else {
+                                command.push("ip", "");
+                            }
+
+                            let cheader = create_init_header();
+                            let data = C2SInit::Init4 {
+                                version,
+                                x,
+                                n,
+                                level,
+                                random2,
+                                y,
+                                command: command.clone(),
+                            };
+
+                            let packet = Packet::new(cheader, packets::Data::C2SInit(data));
+                            con_value.as_packet_sink().send(packet)
+                        }).map(|_| ()).map_err(move |error|
+                            error!(logger2, "Cannot send packet";
+                                "error" => ?error));
+                        tokio::spawn(fut);
+
+                        let state = ServerConnectionState::ClientInitIv {
+                            alpha,
+                        };
+
+                        *ignore_packet = true;
+                        Some((state, None))
+                    }
+                } else {
+                    None
+                }
+            }
+            ServerConnectionState::Disconnected => {
+                warn!(logger, "Got packet from server after disconnecting");
+                *is_end = true;
+                None
+            }
+            _ => None,
+        };
+        Ok(res)
+    }
+}
+
+/*struct DefaultPacketHandlerStream;
 
 impl DefaultPacketHandlerStream {
     pub fn new<
@@ -293,8 +468,6 @@ impl DefaultPacketHandlerStream {
         sink: MultiSink<InnerSink>)
         -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
         let res = match state.state {
-            ServerConnectionState::Uninitialized =>
-                return Err(format_err!("ServerConnectionState is uninitialized").into()),
             ServerConnectionState::Init0 { version, ref random0 } => {
                 // Handle an Init1
                 if let Packet { data: packets::Data::S2CInit(
@@ -671,57 +844,4 @@ impl<
     fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
         self.inner_sink.close()
     }
-}
-
-pub struct DefaultPacketHandler<
-    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
-> {
-    inner_stream: Box<Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error>>,
-    inner_sink: DefaultPacketHandlerSink<InnerSink>,
-}
-
-impl<
-    InnerSink: Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet), SinkError = Error> + 'static,
-> DefaultPacketHandler<InnerSink> {
-    pub fn new<
-        InnerStream: Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error> + 'static,
-    >(
-        data: &Rc<RefCell<Data<CM>>>,
-        inner_stream: InnerStream,
-        inner_sink: InnerSink,
-    ) -> Self {
-        let (inner_stream, inner_sink) = DefaultPacketHandlerStream::new(
-            data,
-            inner_stream,
-            inner_sink,
-        );
-        let inner_sink = DefaultPacketHandlerSink::new(Rc::downgrade(data), inner_sink);
-        Self {
-            inner_stream,
-            inner_sink,
-        }
-    }
-
-    pub fn split(self) -> (
-        DefaultPacketHandlerSink<InnerSink>,
-        Box<Stream<Item = (<CM as ConnectionManager>::Key, Packet), Error = Error>>,
-    ) {
-        (self.inner_sink, self.inner_stream)
-    }
-}
-
-impl DefaultPacketHandler<Box<Sink<SinkItem = (<CM as ConnectionManager>::Key, Packet),
-    SinkError = Error>>> {
-    pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
-        let (stream, sink) = {
-            let mut data = data.borrow_mut();
-            (data.packet_stream.take().unwrap(),
-                data.packet_sink.take().unwrap())
-        };
-        let handler = Self::new(data, stream, sink);
-        let (sink, stream) = handler.split();
-        let mut data = data.borrow_mut();
-        data.packet_stream = Some(stream);
-        data.packet_sink = Some(Box::new(sink));
-    }
-}
+}*/

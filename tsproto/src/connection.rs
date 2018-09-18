@@ -4,13 +4,16 @@ use std::net::SocketAddr;
 use std::u16;
 
 use bytes::Bytes;
-use futures::{self, AsyncSink, future, Future, Sink, stream, Stream};
+use futures::{self, Async, AsyncSink, future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
+use futures_locks::MutexFut;
 use num::ToPrimitive;
 use slog;
 
 use Error;
+use connectionmanager::ConnectionManager;
 use crypto::EccKeyPubP256;
+use handler_data::ConnectionValue;
 use packet_codec::PacketCodecSender;
 use packets::*;
 use resend::DefaultResender;
@@ -184,7 +187,7 @@ impl Connection {
         }
     }
 
-    pub fn send_packet<'a>(&'a mut self, packet: Packet) -> Box<Future<Item=(), Error=Error> + Send + 'a> {
+    /*pub fn send_packet<'a>(&'a mut self, packet: Packet) -> Box<Future<Item=(), Error=Error> + Send + 'a> {
         let p_type = packet.header.get_type();
 
         let codec = PacketCodecSender::new(self.is_client, self.logger.clone());
@@ -195,16 +198,22 @@ impl Connection {
         let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
             (p_type, p_id, p)).collect::<Vec<_>>();
         Box::new(stream::iter_ok(udp_packets).forward(self.as_udp_packet_sink()).map(|_| ()))
-    }
+    }*/
+}
 
-    pub fn as_udp_packet_sink(&self) -> ConnectionUdpPacketSink {
-        ConnectionUdpPacketSink { con: self }
+pub struct ConnectionUdpPacketSink<CM: ConnectionManager + 'static> {
+    con: ConnectionValue<CM>,
+    lock: Option<MutexFut<(CM::AssociatedData, Connection)>>,
+    udp_packet_sink: Option<(SocketAddr, mpsc::Sender<(SocketAddr, Bytes)>)>,
+}
+
+impl<CM: ConnectionManager + 'static> ConnectionUdpPacketSink<CM> {
+    pub fn new(con: ConnectionValue<CM>) -> Self {
+        Self { con, lock: None, udp_packet_sink: None }
     }
 }
 
-pub struct ConnectionUdpPacketSink<'a> { con: &'a Connection }
-
-impl<'a> Sink for ConnectionUdpPacketSink<'a> {
+impl<CM: ConnectionManager + 'static> Sink for ConnectionUdpPacketSink<CM> {
     type SinkItem = (PacketType, u16, Bytes);
     type SinkError = Error;
 
@@ -214,11 +223,35 @@ impl<'a> Sink for ConnectionUdpPacketSink<'a> {
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         match p_type {
             PacketType::Init | PacketType::Command | PacketType::CommandLow => {
-                self.con.resender.start_send((p_type, p_id, udp_packet))
+                if self.lock.is_none() {
+                    self.lock = Some(self.con.mutex.lock());
+                }
+                let mut lock = match self.lock.as_mut().unwrap().poll().unwrap() {
+                    Async::Ready(r) => r,
+                    Async::NotReady => return Ok(AsyncSink::NotReady(
+                        (p_type, p_id, udp_packet))),
+                };
+                let res = lock.1.resender.start_send((p_type, p_id, udp_packet));
+                self.lock = None;
+                res
             }
             _ => {
-                let addr = self.con.address;
-                Ok(match self.con.udp_packet_sink.start_send((addr, udp_packet))
+                if self.udp_packet_sink.is_none() {
+                    if self.lock.is_none() {
+                        self.lock = Some(self.con.mutex.lock());
+                    }
+                    let lock = match self.lock.as_mut().unwrap().poll().unwrap() {
+                        Async::Ready(r) => r,
+                        Async::NotReady => return Ok(AsyncSink::NotReady(
+                            (p_type, p_id, udp_packet))),
+                    };
+                    self.udp_packet_sink = Some((lock.1.address,
+                        lock.1.udp_packet_sink.clone()));
+                    self.lock = None;
+                }
+
+                let (addr, s) = self.udp_packet_sink.as_mut().unwrap();
+                Ok(match s.start_send((*addr, udp_packet))
                     .map_err(|e| format_err!("Failed to send udp packet ({:?})", e))? {
                     AsyncSink::Ready => AsyncSink::Ready,
                     AsyncSink::NotReady((_, p)) =>
@@ -229,12 +262,12 @@ impl<'a> Sink for ConnectionUdpPacketSink<'a> {
     }
 
     fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        if self.con.resender.poll_complete()?.is_ready() {
-            self.con.udp_packet_sink.poll_complete()
+        if let Some((_, s)) = &mut self.udp_packet_sink {
+            s.poll_complete()
                 .map_err(|e| format_err!("Failed to complete sending udp \
                     packet ({:?})", e).into())
         } else {
-            Ok(futures::Async::NotReady)
+            Ok(futures::Async::Ready(()))
         }
     }
 }

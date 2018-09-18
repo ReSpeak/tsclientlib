@@ -6,7 +6,7 @@ use std::u16;
 
 use {evmap, futures_locks, tokio};
 use bytes::{Bytes, BytesMut};
-use futures::{future, Future, Sink, Stream};
+use futures::{future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog::Logger;
@@ -15,13 +15,13 @@ use {packets, Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN };
 use algorithms as algs;
 use connection::{ConnectedParams, Connection};
 use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data};
+use handler_data::{ConnectionValue, Data, PacketHandler};
 use packets::*;
 
 /// Decodes incoming udp packets.
 ///
 /// This part does the defragmentation, decryption and decompression.
-pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
+pub struct PacketCodecReceiver<CM: ConnectionManager + 'static, P: PacketHandler<CM>> {
     connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
     is_client: bool,
     logger: Logger,
@@ -29,17 +29,23 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
     /// The sink for `UdpPacket`s with no known connection.
     ///
     /// This can stay `None` so all packets without connection will be dropped.
-    pub unknown_udp_packet_sink:
-        Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+    unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+    packet_handler: P,
 }
 
-impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
-    pub fn new(data: &Data<CM>) -> Self {
+impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
+    PacketCodecReceiver<CM, P> {
+    pub fn new(
+        data: &Data<CM>,
+        unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+        packet_handler: P,
+    ) -> Self {
         Self {
             connections: data.connections.clone(),
             is_client: data.is_client,
             logger: data.logger.clone(),
-            unknown_udp_packet_sink: None,
+            unknown_udp_packet_sink,
+            packet_handler,
         }
     }
 
@@ -61,12 +67,14 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 
         // Find the right connection
         if let Some(con) = self.connections.get_and(&CM::get_connection_key(addr, &header),
-            |vs| vs[0].mutex.clone()) {
+            |vs| vs[0].clone()) {
             // If we are a client and have only a single connection, we will do the
             // work inside this future and not spawn a new one.
             let logger = self.logger.clone();
             if self.is_client && self.connections.len() == 1 {
-                Box::new(Self::connection_handle_udp_packet(self.logger.clone(), con, addr, udp_packet, header, pos)
+                Box::new(Self::connection_handle_udp_packet(self.logger.clone(),
+                    self.packet_handler.clone(), con, addr, udp_packet, header,
+                    pos)
                     .then(move |r| {
                         if let Err(e) = r {
                             error!(logger, "Error handling udp packed"; "error" => ?e);
@@ -74,8 +82,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                         Ok(())
                     }))
             } else {
+                let handler = self.packet_handler.clone();
                 tokio::spawn(future::lazy(move ||
-                    Self::connection_handle_udp_packet(logger.clone(), con, addr, udp_packet, header, pos)
+                    Self::connection_handle_udp_packet(logger.clone(),
+                        handler, con, addr, udp_packet,
+                        header, pos)
                     .map_err(move |e| {
                         error!(logger, "Error handling udp packed"; "error" => ?e);
                     })));
@@ -102,19 +113,23 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
     /// This part does the defragmentation, decryption and decompression.
     pub fn connection_handle_udp_packet(
         logger: Logger,
-        connection: futures_locks::Mutex<(CM::AssociatedData, Connection)>,
+        mut packet_handler: P,
+        connection: ConnectionValue<CM>,
         addr: SocketAddr,
         udp_packet: BytesMut,
         header: packets::Header,
         pos: usize,
     ) -> impl Future<Item=(), Error=Error> {
-        connection.with(move |mut con| {
+        let mut packet_handler2 = packet_handler.clone();
+        let con2 = connection.clone();
+        connection.mutex.with(move |mut con| {
             let con = &mut *con;
             let dec_data;
             let dec_data1;
             let mut udp_packet = &udp_packet[pos..];
             let mut ack = None;
-            let packets = if let Some(ref mut params) = con.1.params {
+            let mut packets = None;
+            let packet = if let Some(ref mut params) = con.1.params {
                 if header.get_type() == PacketType::Init {
                     return Err(Error::UnexpectedInitPacket);
                 }
@@ -163,7 +178,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                         // Check if it is ok for the packet to be unencrypted
                         return Err(Error::UnallowedUnencryptedPacket);
                     }
-                    Ok(match header.get_type() {
+                    match header.get_type() {
                         PacketType::Command |
                         PacketType::CommandLow => {
                             if header.get_type()
@@ -183,14 +198,16 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                                     ),
                                 ));
                             }
-                            Self::handle_command_packet(
+                            packets = Some(Self::handle_command_packet(
                                 &logger,
                                 params,
                                 header,
                                 udp_packet,
-                            )?
+                            )?);
+
+                            Err(Error::UnallowedUnencryptedPacket)
                         }
-                        _ => {
+                        _ => Ok({
                             if header.get_type() == PacketType::Ping {
                                 ack = Some((
                                     PacketType::Pong,
@@ -218,7 +235,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                                         PacketType::CommandLow
                                     };
                                     con.1.resender.ack_packet(p_type, p_id);
-                                    vec![Packet::new(header, p_data)]
+                                    Packet::new(header, p_data)
                                 }
                                 packets::Data::VoiceS2C { .. } |
                                 packets::Data::VoiceWhisperS2C { .. } => {
@@ -228,12 +245,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                                     let res = res.drain(..).map(|p|
                                         (con_key.clone(), p)).collect();
                                     Ok(res)*/
-                                    vec![Packet::new(header, p_data)]
+                                    Packet::new(header, p_data)
                                 }
-                                _ => vec![Packet::new(header, p_data)],
+                                _ => Packet::new(header, p_data),
                             }
-                        }
-                    })
+                        })
+                    }
                 } else {
                     // Send an ack for the case when it was lost
                     if header.get_type() == PacketType::Command {
@@ -272,23 +289,38 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
                     &header,
                     &mut Cursor::new(&*udp_packet),
                 )?;
-                Ok(vec![Packet::new(header, p_data)])
+                Ok(Packet::new(header, p_data))
             };
 
             // Send ack
             if let Some((ack_type, ack_packet)) = ack {
                 let mut ack_header = Header::default();
                 ack_header.set_type(ack_type);
-                tokio::spawn(con.1.send_packet(Packet::new(ack_header, ack_packet))
+                tokio::spawn(con2.as_packet_sink().send(Packet::new(ack_header, ack_packet))
+                    .map(|_| ())
                     .map_err(move |e| {
                         error!(logger, "Failed to send ack packet"; "error" => ?e);
                     }));
             }
-            let packets = packets?;
 
-            // TODO Do something with packets
-            Ok(())
-        }).unwrap()
+            if let Some(packets) = packets {
+                // Be careful with command packets, they are
+                // guaranteed to be in the right order now, because
+                // we hold a lock on the connection.
+                for p in packets {
+                    packet_handler2.handle_command_packet(con, p);
+                }
+                return Ok(None);
+            }
+
+            Ok(Some(packet?))
+        }).unwrap().and_then(move |packet| -> Box<Future<Item=(), Error=Error> + Send> {
+            if let Some(p) = packet {
+                Box::new(packet_handler.handle_packet(p))
+            } else {
+                Box::new(future::ok(()))
+            }
+        })
     }
 
     /// Handle `Command` and `CommandLow` packets.
