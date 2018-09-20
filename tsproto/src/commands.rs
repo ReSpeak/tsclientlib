@@ -252,8 +252,8 @@ impl<'a> CanonicalCommand<'a> {
 
 #[cfg(test)]
 mod tests {
-    use io::Cursor;
     use std::collections::HashMap;
+    use std::io::Cursor;
     use std::iter::FromIterator;
 
     use commands::{CanonicalCommand, Command};

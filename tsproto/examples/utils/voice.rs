@@ -56,18 +56,4 @@ impl IncommingVoiceHandler {
         Ok(())
     }
 }
-
-impl<Inner: Stream<Item = (SocketAddr, Packet), Error = Error> + 'static>
-    StreamWrapper<(SocketAddr, Packet), Error, Inner> for IncommingVoiceHandler {
-    type A = IncommingVoiceHandler;
-    type Result = Box<Stream<Item = (SocketAddr, Packet), Error = Error>>;
-
-    fn wrap(inner: Inner, mut handler: Self::A) -> Self::Result {
-        Box::new(inner.inspect(move |item: &(SocketAddr, Packet)| {
-            if let Err(error) = handler.handle_packet(item.0, &item.1) {
-                error!(handler.logger, "Error handling voice packet";
-                    "error" => ?error);
-            }
-        }))
-    }
-}
+// TODO use

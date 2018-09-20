@@ -229,7 +229,7 @@ impl<CM: ConnectionManager + 'static>
                                         PacketType::CommandLow
                                     };
                                     con.1.resender.ack_packet(p_type, p_id);
-                                    Packet::new(header, p_data)
+                                    return Ok(());
                                 }
                                 packets::Data::VoiceS2C { .. } |
                                 packets::Data::VoiceWhisperS2C { .. } => {
@@ -290,6 +290,7 @@ impl<CM: ConnectionManager + 'static>
             if let Some((ack_type, ack_packet)) = ack {
                 let mut ack_header = Header::default();
                 ack_header.set_type(ack_type);
+                let logger = logger.clone();
                 tokio::spawn(con2.as_packet_sink().send(Packet::new(ack_header, ack_packet))
                     .map(|_| ())
                     .map_err(move |e| {
@@ -302,21 +303,32 @@ impl<CM: ConnectionManager + 'static>
                 // guaranteed to be in the right order now, because
                 // we hold a lock on the connection.
                 for p in packets {
-                    // TODO Send to packet handler
-                    //packet_handler2.handle_command_packet(con, p);
+                    // Send to packet handler
+                    if let Err(e) = con.1.command_sink.unbounded_send(p) {
+                        error!(logger, "Failed to send command packet to \
+                            handler"; "error" => ?e);
+                    }
                 }
-                return Ok(None);
+                return Ok(());
             }
 
-            Ok(Some(packet?))
-        }).unwrap().and_then(move |packet| -> Box<Future<Item=(), Error=Error> + Send> {
-            if let Some(p) = packet {
-                // TODO Send packet to packet handler
-                Box::new(future::ok(()))
-            } else {
-                Box::new(future::ok(()))
+            let packet = packet?;
+            let sink = match packet.data {
+                packets::Data::VoiceS2C { .. } |
+                packets::Data::VoiceWhisperS2C { .. } =>
+                    &mut con.1.audio_sink,
+                packets::Data::Ping { .. } => return Ok(()),
+                _ => {
+                    // Send as command packet
+                    &mut con.1.command_sink
+                }
+            };
+            if let Err(e) = sink.unbounded_send(packet) {
+                error!(logger, "Failed to send audio packet to handler";
+                    "error" => ?e);
             }
-        })
+            Ok(())
+        }).unwrap()
     }
 
     /// Handle `Command` and `CommandLow` packets.

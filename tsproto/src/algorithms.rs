@@ -312,7 +312,7 @@ mod tests {
         ::init().unwrap();
         let data = (0..100).into_iter().collect::<Vec<_>>();
         let mut header = Header::default();
-        let enc_data = encrypt_fake(&mut header, &mut enc_data).unwrap();
+        let enc_data = encrypt_fake(&mut header, &data).unwrap();
         let dec_data = decrypt_fake(&header, &enc_data).unwrap();
         assert_eq!(&data, &dec_data);
     }

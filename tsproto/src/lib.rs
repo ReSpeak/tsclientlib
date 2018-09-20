@@ -52,7 +52,7 @@ pub mod packet_codec;
 pub mod resend;
 pub mod utils;
 
-type BoxFuture<T, E> = Box<Future<Item = T, Error = E>>;
+type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
 
 /// The maximum number of bytes for a fragmented packet.

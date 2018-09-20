@@ -81,25 +81,25 @@ pub trait Resender: Sink<SinkItem = (PacketType, u16, Bytes),
 /// socket.
 ///
 /// `T` contains associated data that will be saved for each connection.
-pub struct SocketConnectionManager<PH: PacketHandler<T> + Send, T: Send + 'static> {
+pub struct SocketConnectionManager<PH: PacketHandler<T>, T: Send + 'static> {
     phantom: PhantomData<T>,
     phantom2: PhantomData<PH>,
 }
 
-impl<PH: PacketHandler<T> + Send, T: Send + 'static> Default for SocketConnectionManager<PH, T> {
+impl<PH: PacketHandler<T>, T: Send + 'static> Default for SocketConnectionManager<PH, T> {
     fn default() -> Self {
         SocketConnectionManager { phantom: PhantomData, phantom2: PhantomData }
     }
 }
 
-impl<PH: PacketHandler<T> + Send, T: Send + 'static> SocketConnectionManager<PH, T> {
+impl<PH: PacketHandler<T>, T: Send + 'static> SocketConnectionManager<PH, T> {
     /// Create a new connection manager.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<PH: PacketHandler<T> + Send, T: Send + 'static> ConnectionManager for SocketConnectionManager<PH, T> {
+impl<PH: PacketHandler<T>, T: Send + 'static> ConnectionManager for SocketConnectionManager<PH, T> {
     type Key = SocketAddr;
     type AssociatedData = T;
     type PacketHandler = PH;

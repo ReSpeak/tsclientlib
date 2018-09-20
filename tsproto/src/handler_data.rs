@@ -46,20 +46,19 @@ pub trait ConnectionListener<CM: ConnectionManager>: Send {
 
 /// Will be cloned for some of the incoming packets. So be careful with
 /// modifying the internal state, it is not global.
-pub trait PacketHandler<T: 'static> {
-    /// Called for every new connection which is added.
+pub trait PacketHandler<T: 'static>: Send {
+    /// Called for every new connection.
     ///
     /// The `command_stream` gets all command and init packets.
     /// The `audio_stream` gets all audio packets.
     fn new_connection<S1, S2>(
         &mut self,
-        con_val: ConnectionValue<T>,
-        con: &Connection,
+        con_val: &ConnectionValue<T>,
         command_stream: S1,
         audio_stream: S2,
     ) where
-        S1: Stream<Item=Packet, Error=Error>,
-        S2: Stream<Item=Packet, Error=Error>;
+        S1: Stream<Item=Packet, Error=Error> + Send + 'static,
+        S2: Stream<Item=Packet, Error=Error> + Send + 'static;
 }
 
 #[derive(Debug)]
@@ -148,6 +147,7 @@ pub struct Data<CM: ConnectionManager + 'static> {
 
     pub connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
     pub connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+    pub packet_handler: CM::PacketHandler,
 
     /// A list of all connected clients or servers
     ///
@@ -166,12 +166,12 @@ pub struct Data<CM: ConnectionManager + 'static> {
 impl<CM: ConnectionManager + 'static> Data<CM> {
     /// An optional logger can be provided. If none is provided, a new one will
     /// be created.
-    pub fn new<L: Into<Option<slog::Logger>>, P: PacketHandler<CM> + 'static>(
+    pub fn new<L: Into<Option<slog::Logger>>>(
         local_addr: SocketAddr,
         private_key: EccKeyPrivP256,
         is_client: bool,
         unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
-        packet_handler: P,
+        packet_handler: CM::PacketHandler,
         connection_manager: CM,
         logger: L,
     ) -> Result<futures_locks::Mutex<Self>> {
@@ -203,6 +203,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             resend_config: Default::default(),
             connections,
             connections_writer,
+            packet_handler,
             connection_manager,
             connection_listeners: Vec::new(),
         };
@@ -223,23 +224,20 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         Ok(futures_locks::Mutex::new(data))
     }
 
-    pub fn create_connection(&self, addr: SocketAddr) -> Connection {
+    /// Add a new connection to this socket.
+    pub fn add_connection(&mut self, mut data: CM::AssociatedData, addr: SocketAddr)
+        -> CM::Key {
         // Add options like ip to logger
         let logger = self.logger.new(o!("addr" => addr.to_string()));
         let resender = DefaultResender::new(self.resend_config.clone(),
             logger.clone());
-        Connection::new(addr, resender, logger, self.udp_packet_sink.clone(),
-            self.is_client)
-    }
+        // Use an unbounded channel so try_send never fails
+        let (command_send, command_recv) = mpsc::unbounded();
+        let (audio_send, audio_recv) = mpsc::unbounded();
+        let mut con = Connection::new(addr, resender, logger,
+            self.udp_packet_sink.clone(), self.is_client, command_send,
+            audio_send);
 
-    /// Add a new connection to this socket.
-    ///
-    /// The connection object can be created e. g. by the [`create_connection`]
-    /// function.
-    ///
-    /// [`create_connection`]: #method.create_connection
-    pub fn add_connection(&mut self, mut data: CM::AssociatedData,
-        mut con: Connection) -> CM::Key {
         let mut key = self.connection_manager.new_connection_key(&mut data,
             &mut con);
         // Call listeners
@@ -253,8 +251,15 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             }
         }
 
+        let con_val = ConnectionValue::new(data, con);
+        self.packet_handler.new_connection(
+            &con_val,
+            command_recv.map_err(|_| format_err!("Failed to receive").into()),
+            audio_recv.map_err(|_| format_err!("Failed to receive").into()),
+        );
+
         // Add connection
-        self.connections_writer.insert(key.clone(), ConnectionValue::new(data, con));
+        self.connections_writer.insert(key.clone(), con_val);
         self.connections_writer.refresh();
         key
     }

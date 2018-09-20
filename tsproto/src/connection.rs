@@ -166,6 +166,8 @@ pub struct Connection {
 
     pub resender: DefaultResender,
     udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
+    pub command_sink: mpsc::UnboundedSender<Packet>,
+    pub audio_sink: mpsc::UnboundedSender<Packet>,
 }
 
 impl Connection {
@@ -176,6 +178,8 @@ impl Connection {
         logger: slog::Logger,
         udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
         is_client: bool,
+        command_sink: mpsc::UnboundedSender<Packet>,
+        audio_sink: mpsc::UnboundedSender<Packet>,
     ) -> Self {
         Self {
             is_client,
@@ -184,21 +188,10 @@ impl Connection {
             address,
             resender,
             udp_packet_sink,
+            command_sink,
+            audio_sink,
         }
     }
-
-    /*pub fn send_packet<'a>(&'a mut self, packet: Packet) -> Box<Future<Item=(), Error=Error> + Send + 'a> {
-        let p_type = packet.header.get_type();
-
-        let codec = PacketCodecSender::new(self.is_client, self.logger.clone());
-        let mut udp_packets = match codec.encode_packet(self, packet) {
-            Ok(r) => r,
-            Err(e) => return Box::new(future::err(e)),
-        };
-        let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
-            (p_type, p_id, p)).collect::<Vec<_>>();
-        Box::new(stream::iter_ok(udp_packets).forward(self.as_udp_packet_sink()).map(|_| ()))
-    }*/
 }
 
 pub struct ConnectionUdpPacketSink<T: Send + 'static> {

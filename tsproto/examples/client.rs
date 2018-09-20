@@ -1,5 +1,10 @@
 extern crate base64;
+extern crate failure;
 extern crate futures;
+#[macro_use]
+extern crate gstreamer as gst;
+extern crate gstreamer_app as gst_app;
+extern crate gstreamer_audio as gst_audio;
 extern crate ring;
 #[macro_use]
 extern crate slog;
@@ -7,18 +12,19 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate structopt;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tsproto;
 
 use std::net::SocketAddr;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use futures::Sink;
+use futures::{Future, Sink};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Timeout};
+use tokio::timer::Delay;
+use tokio::util::FutureExt;
 use tsproto::*;
 use tsproto::packets::*;
 
@@ -43,7 +49,6 @@ fn main() {
 
     // Parse command line options
     let args = Args::from_args();
-    let mut core = Core::new().unwrap();
 
     let logger = {
         let decorator = slog_term::TermDecorator::new().build();
@@ -54,20 +59,23 @@ fn main() {
         slog::Logger::root(drain, o!())
     };
 
-    let c = create_client(args.local_address, core.handle(), logger.clone(), true);
+    let c = create_client(args.local_address, logger.clone(), SimplePacketHandler, true);
 
     // Connect
-    let handle = core.handle();
-    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
-        args.address)) {
-        error!(logger, "Failed to connect"; "error" => ?error);
-        return;
-    }
+    tokio::run(connect(logger.clone(), c.clone(), args.address)
+        .map(|_| ())
+        .map_err(|e| panic!("Failed to connect ({:?})", e)));
     info!(logger, "Connected");
 
+    // Get connection
+    let con = {
+        let c = c.try_lock().unwrap();
+        c.get_connection(&args.address).unwrap()
+    };
+
     // Wait some time
-    let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
-    core.run(action).unwrap();
+    let action = Delay::new(Instant::now() + Duration::from_secs(2));
+    tokio::run(action.map_err(|e| panic!("{:?}", e)));
     info!(logger, "Waited");
 
     // Send packet
@@ -78,19 +86,16 @@ fn main() {
     cmd.push("targetmode", "3");
     cmd.push("msg", "Hello");
 
-    let packets = handler_data::Data::get_packets(Rc::downgrade(&c));
     let packet = Packet::new(header, Data::Command(cmd));
-    core.run(packets.send((args.address, packet.clone()))).unwrap();
+    tokio::run(con.as_packet_sink().send(packet.clone()).map(|_| ())
+        .map_err(|e| panic!("Failed to send packet ({:?})", e)));
 
     // Wait some time
-    let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();
-    core.run(action).unwrap();
+    let action = Delay::new(Instant::now() + Duration::from_secs(3));
+    tokio::run(action.map_err(|e| panic!("{:?}", e)));
 
     // Disconnect
-    if let Err(error) = core.run(disconnect(c.clone(),
-        args.address)) {
-        error!(logger, "Failed to disconnect"; "error" => ?error);
-        return;
-    }
+    tokio::run(disconnect(con.clone(),
+        args.address).map_err(|e| panic!("Failed to send packet ({:?})", e)));
     info!(logger, "Disconnected");
 }

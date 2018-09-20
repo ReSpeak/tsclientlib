@@ -15,7 +15,7 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate structopt;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tokio_signal;
 extern crate tsproto;
 
@@ -33,7 +33,8 @@ use num_traits::cast::ToPrimitive;
 use slog::{Drain, Logger};
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Handle, Remote, Timeout};
+use tokio::timer::Delay;
+use tokio::util::FutureExt;
 #[cfg(target_family = "unix")]
 use tokio_signal::unix::{Signal, SIGHUP};
 use tsproto::*;
@@ -76,8 +77,6 @@ fn main() {
 
     // Parse command line options
     let args = Args::from_args();
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
 
     let logger = {
         let decorator = slog_term::TermDecorator::new().build();
@@ -88,21 +87,21 @@ fn main() {
         Logger::root(drain, o!())
     };
 
-    let c = create_client(args.local_address, core.handle(), logger.clone(), false);
+    let c = create_client(args.local_address, logger.clone(), false);
 
     if !args.no_output {
         // Setup incoming voice handler
-        let in_pipe = create_ts_to_audio_pipeline(core.remote(), logger.clone()).unwrap();
+        let in_pipe = create_ts_to_audio_pipeline(logger.clone()).unwrap();
         let audio = main_loop(&in_pipe, logger.clone()).unwrap();
         let in_handler = IncommingVoiceHandler::new(logger.clone(), in_pipe).unwrap();
         ClientData::apply_packet_stream_wrapper::<IncommingVoiceHandler>(&c, in_handler);
 
         // Run event handler in background
-        handle.spawn(audio);
+        tokio::spawn(audio);
     }
 
     // Connect
-    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
+    if let Err(error) = tokio::run(connect(logger.clone(), c.clone(),
         args.address)) {
         error!(logger, "Failed to connect"; "error" => ?error);
         return;
@@ -116,12 +115,12 @@ fn main() {
         pipeline = None;
         audio = None;
     } else {
-        let (pipeline2, audio2) = match setup_audio(&args, Rc::downgrade(&c), handle.clone(), logger.clone()) {
+        let (pipeline2, audio2) = match setup_audio(&args, Rc::downgrade(&c), logger.clone()) {
             Err(error) => {
                 error!(logger, "Failed to setup audio"; "error" => ?error);
 
                 // Disconnect
-                if let Err(error) = core.run(disconnect(c.clone(), args.address)) {
+                if let Err(error) = tokio::run(disconnect(c.clone(), args.address)) {
                     error!(logger, "Failed to disconnect"; "error" => ?error);
                 }
                 return;
@@ -133,14 +132,14 @@ fn main() {
     }
 
     // Wait until song is finished
-    //if let Err(_error) = core.run(audio) {
+    //if let Err(_error) = tokio::run(audio) {
         // Also returns with an error when the stream finished
         //error!(logger, "Error while playing"; "error" => ?error);
     //}
     //info!(logger, "Waited");
 
     if let Some(audio) = audio {
-        handle.spawn(audio);
+        tokio::spawn(audio);
     }
 
     // Pause or unpause sending on sighup
@@ -173,15 +172,15 @@ fn main() {
         }).map_err(move |error| {
             error!(logger3, "Error waiting for signal"; "error" => ?error);
         });
-        handle.spawn(sighup);
+        tokio::spawn(sighup);
     }
 
     // Stop with ctrl + c
     let ctrl_c = tokio_signal::ctrl_c().flatten_stream();
-    core.run(ctrl_c.into_future().map(move |_| ()).map_err(move |_| ())).unwrap();
+    tokio::run(ctrl_c.into_future().map(move |_| ()).map_err(move |_| ())).unwrap();
 
     // Disconnect
-    if let Err(error) = core.run(disconnect(c.clone(), args.address)) {
+    if let Err(error) = tokio::run(disconnect(c.clone(), args.address)) {
         error!(logger, "Failed to disconnect"; "error" => ?error);
         return;
     }
@@ -199,20 +198,24 @@ fn main() {
 // If a client stops (signalled by the appsource), wait a second and then remove
 // the appsource again.
 
-fn setup_audio(args: &Args, c: Weak<RefCell<ClientData>>, handle: Handle,
-    logger: Logger) -> Result<(gst::Pipeline, Box<Future<Item = (), Error = ()>>), Error> {
+fn setup_audio<PH: PacketHandler<client::ServerConnectionState>>(
+    args: &Args,
+    client: client::ClientDataM<PH>,
+    logger: Logger,
+) -> Result<(gst::Pipeline, Box<Future<Item = (), Error = ()>>), Error> {
     // Channel, which can buffer some packets
     let (send, recv) = mpsc::channel(5);
     let pipeline = create_audio_to_ts_pipeline(send, args, logger.clone())?;
     let audio = main_loop(&pipeline, logger)?;
-    handle.spawn(packet_sender(c, recv));
+    tokio::spawn(packet_sender(client, recv));
     Ok((pipeline, audio))
 }
 
-fn packet_sender(data: Weak<RefCell<ClientData>>,
-    recv: mpsc::Receiver<(SocketAddr, Packet)>)
-    -> Box<Future<Item = (), Error = ()>> {
-    let sink = ClientData::get_packets(data);
+fn packet_sender<PH: PacketHandler<client::ServerConnectionState>>(
+    client: client::ClientDataM<PH>,
+    recv: mpsc::Receiver<(SocketAddr, Packet)>,
+) -> Box<Future<Item = (), Error = ()>> {
+    let sink = ClientData::get_packets(client);
     Box::new(recv.forward(sink.sink_map_err(|error| {
         println!("Error when forwarding: {:?}", error);
     })).map(|_| ()).map_err(|error| {
@@ -220,21 +223,20 @@ fn packet_sender(data: Weak<RefCell<ClientData>>,
     }))
 }
 
-fn voice_timeout<F: FnOnce() + 'static>(f: F, last_sent: Arc<Mutex<Instant>>, handle: Handle) {
-    let timeout = Timeout::new(Duration::from_secs(VOICE_TIMEOUT_SECS), &handle).unwrap();
-    let h = handle.clone();
-    handle.spawn(timeout.then(move |_| {
+fn voice_timeout<F: FnOnce() + 'static>(f: F, last_sent: Arc<Mutex<Instant>>) {
+    let timeout = Delay::new(Duration::from_secs(VOICE_TIMEOUT_SECS)).unwrap();
+    tokio::spawn(timeout.then(move |_| {
         let last = *last_sent.lock().unwrap();
         if Instant::now().duration_since(last).as_secs() >= VOICE_TIMEOUT_SECS {
             f();
         } else {
-            voice_timeout(f, last_sent, h);
+            voice_timeout(f, last_sent);
         }
         Ok(())
     }));
 }
 
-fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pipeline, failure::Error> {
+fn create_ts_to_audio_pipeline(logger: Logger) -> Result<gst::Pipeline, failure::Error> {
     let pipeline = gst::Pipeline::new("ts-to-audio-pipeline");
 
     let appsrc = gst::ElementFactory::make("appsrc", "appsrc").ok_or_else(||
@@ -356,7 +358,6 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
         let pipe = pipe.clone();
         let sink = autosink.clone();
         let queue = queue.clone();
-        let handle = handle.clone();
         decode.connect_pad_added(move |dbin, src_pad| {
             debug!(logger, "Got new client decoder pad"; "name" => src_pad.get_name());
 
@@ -455,10 +456,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
                 decode.set_state(gst::State::Null).into_result().unwrap();
             };
 
-            handle.spawn(move |h| {
-                voice_timeout(func, last_sent, h.clone());
-                Ok(())
-            });
+            tokio::spawn(voice_timeout(func, last_sent));
 
             if first_pad {
                 // Start pipeline

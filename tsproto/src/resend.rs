@@ -469,9 +469,9 @@ impl ResendStates {
             ResendStates::Stalling { to_send, .. } => {
                 to_send.first_mut()
             }
-            ResendStates::Connecting    { packets, to_send, .. } |
-            ResendStates::Normal        { packets, to_send, .. } |
-            ResendStates::Disconnecting { packets, to_send, .. } => {
+            ResendStates::Connecting    { packets, .. } |
+            ResendStates::Normal        { packets, .. } |
+            ResendStates::Disconnecting { packets, .. } => {
                 packets.get_mut(&id).map(|(p, _)| p)
             }
             ResendStates::Dead { .. } => None,
@@ -481,9 +481,9 @@ impl ResendStates {
     /// Reinsert a record that was fetched with `peek_next_record`.
     fn insert_peeked_record(&mut self, id: PacketId, next: time::Duration) {
         match self {
-            ResendStates::Connecting    { packets, to_send, .. } |
-            ResendStates::Normal        { packets, to_send, .. } |
-            ResendStates::Disconnecting { packets, to_send, .. } => {
+            ResendStates::Connecting    { to_send, .. } |
+            ResendStates::Normal        { to_send, .. } |
+            ResendStates::Disconnecting { to_send, .. } => {
                 to_send.insert(id, next);
             }
             ResendStates::Stalling { .. } |
