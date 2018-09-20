@@ -19,7 +19,7 @@ use std::net::SocketAddr;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use futures::{Future, Sink};
+use futures::{future, Future, Sink};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
@@ -59,43 +59,42 @@ fn main() {
         slog::Logger::root(drain, o!())
     };
 
-    let c = create_client(args.local_address, logger.clone(), SimplePacketHandler, true);
+    tokio::run(future::lazy(move || {
+        let c = create_client(args.local_address, logger.clone(), SimplePacketHandler, true);
 
-    // Connect
-    tokio::run(connect(logger.clone(), c.clone(), args.address)
-        .map(|_| ())
-        .map_err(|e| panic!("Failed to connect ({:?})", e)));
-    info!(logger, "Connected");
+        // Connect
+        connect(logger.clone(), c.clone(), args.address)
+            .map_err(|e| panic!("Failed to connect ({:?})", e)).and_then(move |con| {
+            info!(logger, "Connected");
 
-    // Get connection
-    let con = {
-        let c = c.try_lock().unwrap();
-        c.get_connection(&args.address).unwrap()
-    };
+            // Wait some time
+            Delay::new(Instant::now() + Duration::from_secs(2)).and_then(move |_| {
+                info!(logger, "Waited");
 
-    // Wait some time
-    let action = Delay::new(Instant::now() + Duration::from_secs(2));
-    tokio::run(action.map_err(|e| panic!("{:?}", e)));
-    info!(logger, "Waited");
+                // Send packet
+                let mut header = Header::default();
+                header.set_type(PacketType::Command);
+                let mut cmd = commands::Command::new("sendtextmessage");
 
-    // Send packet
-    let mut header = Header::default();
-    header.set_type(PacketType::Command);
-    let mut cmd = commands::Command::new("sendtextmessage");
+                cmd.push("targetmode", "3");
+                cmd.push("msg", "Hello");
 
-    cmd.push("targetmode", "3");
-    cmd.push("msg", "Hello");
-
-    let packet = Packet::new(header, Data::Command(cmd));
-    tokio::run(con.as_packet_sink().send(packet.clone()).map(|_| ())
-        .map_err(|e| panic!("Failed to send packet ({:?})", e)));
-
-    // Wait some time
-    let action = Delay::new(Instant::now() + Duration::from_secs(3));
-    tokio::run(action.map_err(|e| panic!("{:?}", e)));
-
-    // Disconnect
-    tokio::run(disconnect(con.clone(),
-        args.address).map_err(|e| panic!("Failed to send packet ({:?})", e)));
-    info!(logger, "Disconnected");
+                let packet = Packet::new(header, Data::Command(cmd));
+                con.as_packet_sink().send(packet.clone()).map(|_| ())
+                    .map_err(|e| panic!("Failed to send packet ({:?})", e))
+                    .and_then(|_| {
+                        Delay::new(Instant::now() + Duration::from_secs(3))
+                    })
+                    .and_then(move |_| {
+                        // Disconnect
+                        disconnect(con,
+                            args.address).map_err(|e| panic!("Failed to send packet ({:?})", e))
+                    })
+                    .and_then(move |_| {
+                        info!(logger, "Disconnected");
+                        Ok(())
+                    })
+            })
+        })
+    }).map_err(|e| panic!("An error occurred {:?}", e)));
 }

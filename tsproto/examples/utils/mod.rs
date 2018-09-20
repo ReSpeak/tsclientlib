@@ -67,7 +67,8 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     client: client::ClientDataM<PH>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = client::ClientConVal, Error = Error> + Send> {
-    let connect_fut = client.with(move |mut d| client::connect(&mut *d, server_addr)).unwrap();
+    let c = client.clone();
+    let connect_fut = client.with(move |mut d| client::connect(c, &mut *d, server_addr)).unwrap();
 
     Box::new(connect_fut.and_then(move |c| {
         // Wait some time
@@ -134,7 +135,7 @@ pub fn disconnect(
     let packet = Packet::new(header, p_data);
 
     Box::new(con.mutex
-        .with(|c| {
+        .with(|mut c| {
             c.1.resender.handle_event(ResenderEvent::Disconnecting);
             Ok(())
         })

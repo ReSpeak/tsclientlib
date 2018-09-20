@@ -745,12 +745,12 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
             let key = self.connection_key.clone();
             let logger = self.logger.clone();
             let state = con.resender.state.get_name();
-            tokio::spawn(self.data.with(move |mut data| {
+            tokio::spawn(self.data.lock().and_then(move |mut data| {
                 info!(logger, "Exiting connection because it is not responding";
                     "current state" => state);
                 data.remove_connection(&key);
                 Ok(())
-            }).unwrap());
+            }));
             return Ok(futures::Async::NotReady);
         }
 

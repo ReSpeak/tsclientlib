@@ -52,7 +52,7 @@ pub enum CodecType {
     OpusMusic,
 }
 
-pub struct UdpPacket<'a>(&'a [u8]);
+pub struct UdpPacket<'a>(pub &'a [u8]);
 
 impl<'a> fmt::Debug for UdpPacket<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -240,8 +240,8 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
                     };
                     self.udp_packet_sink = Some((lock.1.address,
                         lock.1.udp_packet_sink.clone()));
-                    self.lock = None;
                 }
+                self.lock = None;
 
                 let (addr, s) = self.udp_packet_sink.as_mut().unwrap();
                 Ok(match s.start_send((*addr, udp_packet))

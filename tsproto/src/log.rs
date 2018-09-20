@@ -7,9 +7,8 @@ use packets::{Packet, UdpPacket};
 
 pub struct PacketLogger;
 impl PacketLogger {
-    fn prepare_logger<Id: Display>(
+    fn prepare_logger(
         logger: &Logger,
-        id: &Id,
         is_client: bool,
         incoming: bool,
     ) -> Logger {
@@ -25,8 +24,7 @@ impl PacketLogger {
             "OUT"
         };
         let to_s = if is_client { "S" } else { "C" };
-        let id_s = format!("{}", id);
-        logger.new(o!("addr" => id_s, "dir" => in_s, "to" => to_s))
+        logger.new(o!("dir" => in_s, "to" => to_s))
     }
 
     pub fn log_udp_packet(
@@ -36,18 +34,18 @@ impl PacketLogger {
         incoming: bool,
         packet: &UdpPacket,
     ) {
-        let logger = Self::prepare_logger(logger, &addr, is_client, incoming);
+        let logger = Self::prepare_logger(&logger.new(o!("addr" => addr)),
+            is_client, incoming);
         debug!(logger, "UdpPacket"; "content" => ?packet);
     }
 
-    pub fn log_packet<Id: Display>(
+    pub fn log_packet(
         logger: &Logger,
-        id: &Id,
         is_client: bool,
         incoming: bool,
         packet: &Packet,
     ) {
-        let logger = Self::prepare_logger(logger, id, is_client, incoming);
+        let logger = Self::prepare_logger(logger, is_client, incoming);
         debug!(logger, "Packet"; "content" => ?packet);
     }
 }

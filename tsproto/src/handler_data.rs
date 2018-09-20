@@ -74,7 +74,12 @@ impl<T: Send + 'static> ConnectionValue<T> {
     fn encode_packet(&self, packet: Packet)
         -> impl Stream<Item=(PacketType, u16, Bytes), Error=Error> {
         let sink = self.as_udp_packet_sink();
-        stream::futures_ordered(Some(self.mutex.with(|mut c| {
+        stream::futures_ordered(Some(self.mutex.lock()
+            .map_err(|()| format_err!("Failed to lock mutex").into())
+            .and_then(|mut c| {
+            ::log::PacketLogger::log_packet(&c.1.logger,
+                c.1.is_client, false, &packet);
+
             let codec = PacketCodecSender::new(c.1.is_client, c.1.logger.clone());
             let p_type = packet.header.get_type();
 
@@ -85,7 +90,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
             let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
                 (p_type, p_id, p)).collect::<Vec<_>>();
             future::ok(stream::iter_ok(udp_packets))
-        }).unwrap())).flatten()
+        }))).flatten()
     }
 
     pub fn as_udp_packet_sink(&self)
@@ -95,7 +100,9 @@ impl<T: Send + 'static> ConnectionValue<T> {
 
     pub fn as_packet_sink(&self) -> impl Sink<SinkItem=Packet, SinkError=Error> {
         let cv = self.clone();
-        self.as_udp_packet_sink().with_flat_map(move |p| cv.encode_packet(p))
+        self.as_udp_packet_sink().with_flat_map(move |p| {
+            cv.encode_packet(p)
+        })
     }
 }
 
@@ -208,8 +215,13 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             connection_listeners: Vec::new(),
         };
 
-        tokio::spawn(udp_packet_sink_sender.map(|(addr, p)|
-            (p, addr))
+        let logger = data.logger.clone();
+        let is_client = data.is_client;
+        tokio::spawn(udp_packet_sink_sender.map(move |(addr, p)| {
+                ::log::PacketLogger::log_udp_packet(&logger, addr, is_client,
+                    false, &::packets::UdpPacket(&p));
+                (p, addr)
+            })
             .forward(sink.sink_map_err(move |e|
                 error!(logger2, "Failed to send udp packet"; "error" => ?e))
             ).map(|_| ()));
@@ -225,8 +237,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     }
 
     /// Add a new connection to this socket.
-    pub fn add_connection(&mut self, mut data: CM::AssociatedData, addr: SocketAddr)
-        -> CM::Key {
+    pub fn add_connection(
+        &mut self,
+        data_mut: ::futures_locks::Mutex<Self>,
+        mut data: CM::AssociatedData,
+        addr: SocketAddr,
+    ) -> CM::Key {
         // Add options like ip to logger
         let logger = self.logger.new(o!("addr" => addr.to_string()));
         let resender = DefaultResender::new(self.resend_config.clone(),
@@ -234,7 +250,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         // Use an unbounded channel so try_send never fails
         let (command_send, command_recv) = mpsc::unbounded();
         let (audio_send, audio_recv) = mpsc::unbounded();
-        let mut con = Connection::new(addr, resender, logger,
+        let mut con = Connection::new(addr, resender, logger.clone(),
             self.udp_packet_sink.clone(), self.is_client, command_send,
             audio_send);
 
@@ -261,6 +277,13 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         // Add connection
         self.connections_writer.insert(key.clone(), con_val);
         self.connections_writer.refresh();
+
+        // Start resender
+        let resend_fut = ::resend::ResendFuture::new(&self, data_mut, key.clone());
+        ::tokio::spawn(resend_fut.map_err(move |e| {
+            error!(logger, "Resend future failed"; "error" => ?e);
+        }));
+
         key
     }
 

@@ -129,6 +129,7 @@ pub fn wait_until_connected(
 /// [`ServerConnectionState::Connecting`]:
 /// [`wait_until_connected`]:
 pub fn connect<PH: PacketHandler<ServerConnectionData>>(
+    datam: ClientDataM<PH>,
     data: &mut ClientData<PH>,
     server_addr: SocketAddr,
 ) -> impl Future<Item=ClientConVal, Error=Error> {
@@ -155,7 +156,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
         },
     };
     // Add the connection to the connection list
-    let key = data.add_connection(state, server_addr);
+    let key = data.add_connection(datam, state, server_addr);
     let con = data.get_connection(&key).unwrap();
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
