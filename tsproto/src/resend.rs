@@ -571,9 +571,9 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
     data: DataM<CM>,
     is_client: bool,
     logger: Logger,
-    connections: ::evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
+    connections: ::evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
     connection_key: CM::Key,
-    connection: ConnectionValue<CM>,
+    connection: ConnectionValue<CM::AssociatedData>,
     lock: Option<futures_locks::MutexFut<(CM::AssociatedData, Connection)>>,
     sink: mpsc::Sender<(SocketAddr, Bytes)>,
     /// The future to wake us up when the next packet should be resent.

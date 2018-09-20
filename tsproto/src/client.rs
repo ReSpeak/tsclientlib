@@ -29,11 +29,12 @@ use packets::*;
 use utils::MultiSink;
 
 /// The data of our client.
-pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
-pub type ClientDataM = DataM<SocketConnectionManager<ServerConnectionData>>;
+pub type CM = SocketConnectionManager<DefaultPacketHandler, ServerConnectionData>;
+pub type ClientData = Data<CM>;
+pub type ClientDataM = DataM<CM>;
 /// Connections from a client to a server.
 pub type ClientConnection = Connection;
-pub type CM = SocketConnectionManager<ServerConnectionData>;
+pub type ClientConVal = ConnectionValue<ServerConnectionData>;
 
 pub struct ServerConnectionData {
     /// Every function in this list is called when the state of the connection
@@ -96,7 +97,7 @@ pub fn default_setup(data: &Rc<RefCell<Data<CM>>>, log: bool) {
 /// `is_state` should return `true`, if the state is reached and `false` if this
 /// function should continue waiting.
 pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
-    connection: &ConnectionValue<SocketConnectionManager<ServerConnectionData>>,
+    connection: &ClientConVal,
     f: F,
 ) -> impl Future<Item=(), Error=Error> {
     let (send, recv) = mpsc::channel(0);
@@ -122,7 +123,7 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
 }
 
 pub fn wait_until_connected(
-    connection: &ConnectionValue<SocketConnectionManager<ServerConnectionData>>,
+    connection: &ClientConVal,
 ) -> impl Future<Item=(), Error=Error> {
     wait_for_state(connection, |state| {
         if let ServerConnectionState::Connected = *state {
@@ -186,20 +187,18 @@ pub fn connect(
 }
 
 #[derive(Clone, Debug)]
-struct DefaultPacketHandler;
+pub struct DefaultPacketHandler;
 
-impl PacketHandler<CM> for DefaultPacketHandler {
-    type R = Box<Future<Item=(), Error=Error> + Send>;
-
-    fn handle_packet(&mut self, packet: Packet) -> Self::R {
-        Box::new(future::ok(()))
-    }
-
-    fn handle_command_packet(
+impl PacketHandler<ServerConnectionData> for DefaultPacketHandler {
+    fn new_connection<S1, S2>(
         &mut self,
-        con: &mut (<CM as ConnectionManager>::AssociatedData, Connection),
-        packet: Packet,
-    ) {
+        con_val: ClientConVal,
+        con: &Connection,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=Error>,
+        S2: Stream<Item=Packet, Error=Error> {
     }
 }
 

@@ -21,8 +21,8 @@ use packets::*;
 /// Decodes incoming udp packets.
 ///
 /// This part does the defragmentation, decryption and decompression.
-pub struct PacketCodecReceiver<CM: ConnectionManager + 'static, P: PacketHandler<CM>> {
-    connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
+pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
+    connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
     is_client: bool,
     logger: Logger,
 
@@ -30,22 +30,19 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static, P: PacketHandler
     ///
     /// This can stay `None` so all packets without connection will be dropped.
     unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
-    packet_handler: P,
 }
 
-impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
-    PacketCodecReceiver<CM, P> {
+impl<CM: ConnectionManager + 'static>
+    PacketCodecReceiver<CM> {
     pub fn new(
         data: &Data<CM>,
         unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
-        packet_handler: P,
     ) -> Self {
         Self {
             connections: data.connections.clone(),
             is_client: data.is_client,
             logger: data.logger.clone(),
             unknown_udp_packet_sink,
-            packet_handler,
         }
     }
 
@@ -73,7 +70,7 @@ impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
             let logger = self.logger.clone();
             if self.is_client && self.connections.len() == 1 {
                 Box::new(Self::connection_handle_udp_packet(self.logger.clone(),
-                    self.packet_handler.clone(), con, addr, udp_packet, header,
+                    con, addr, udp_packet, header,
                     pos)
                     .then(move |r| {
                         if let Err(e) = r {
@@ -82,10 +79,9 @@ impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
                         Ok(())
                     }))
             } else {
-                let handler = self.packet_handler.clone();
                 tokio::spawn(future::lazy(move ||
                     Self::connection_handle_udp_packet(logger.clone(),
-                        handler, con, addr, udp_packet,
+                        con, addr, udp_packet,
                         header, pos)
                     .map_err(move |e| {
                         error!(logger, "Error handling udp packed"; "error" => ?e);
@@ -113,14 +109,12 @@ impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
     /// This part does the defragmentation, decryption and decompression.
     pub fn connection_handle_udp_packet(
         logger: Logger,
-        mut packet_handler: P,
-        connection: ConnectionValue<CM>,
+        connection: ConnectionValue<CM::AssociatedData>,
         addr: SocketAddr,
         udp_packet: BytesMut,
         header: packets::Header,
         pos: usize,
     ) -> impl Future<Item=(), Error=Error> {
-        let mut packet_handler2 = packet_handler.clone();
         let con2 = connection.clone();
         connection.mutex.with(move |mut con| {
             let con = &mut *con;
@@ -308,7 +302,8 @@ impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
                 // guaranteed to be in the right order now, because
                 // we hold a lock on the connection.
                 for p in packets {
-                    packet_handler2.handle_command_packet(con, p);
+                    // TODO Send to packet handler
+                    //packet_handler2.handle_command_packet(con, p);
                 }
                 return Ok(None);
             }
@@ -316,7 +311,8 @@ impl<CM: ConnectionManager + 'static, P: PacketHandler<CM> + 'static>
             Ok(Some(packet?))
         }).unwrap().and_then(move |packet| -> Box<Future<Item=(), Error=Error> + Send> {
             if let Some(p) = packet {
-                Box::new(packet_handler.handle_packet(p))
+                // TODO Send packet to packet handler
+                Box::new(future::ok(()))
             } else {
                 Box::new(future::ok(()))
             }

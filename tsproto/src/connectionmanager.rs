@@ -7,6 +7,7 @@ use futures::Sink;
 
 use Error;
 use connection::Connection;
+use handler_data::PacketHandler;
 use packets::PacketType;
 
 /// The unique identification of a connection is handled by the implementation.
@@ -16,7 +17,9 @@ pub trait ConnectionManager: Send {
 
     /// Data which is associated with each connection. This can be used to store
     /// additional connection information.
-    type AssociatedData: Send;
+    type AssociatedData: Send + 'static;
+
+    type PacketHandler: PacketHandler<Self::AssociatedData>;
 
     fn new_connection_key(&mut self, data: &mut Self::AssociatedData,
         con: &mut Connection) -> Self::Key;
@@ -78,24 +81,28 @@ pub trait Resender: Sink<SinkItem = (PacketType, u16, Bytes),
 /// socket.
 ///
 /// `T` contains associated data that will be saved for each connection.
-pub struct SocketConnectionManager<T: Send> {
+pub struct SocketConnectionManager<PH: PacketHandler<T> + Send, T: Send + 'static> {
     phantom: PhantomData<T>,
+    phantom2: PhantomData<PH>,
 }
 
-impl<T: Send> Default for SocketConnectionManager<T> {
-    fn default() -> Self { SocketConnectionManager { phantom: PhantomData } }
+impl<PH: PacketHandler<T> + Send, T: Send + 'static> Default for SocketConnectionManager<PH, T> {
+    fn default() -> Self {
+        SocketConnectionManager { phantom: PhantomData, phantom2: PhantomData }
+    }
 }
 
-impl<T: Send> SocketConnectionManager<T> {
+impl<PH: PacketHandler<T> + Send, T: Send + 'static> SocketConnectionManager<PH, T> {
     /// Create a new connection manager.
     pub fn new() -> Self {
         Self::default()
     }
 }
 
-impl<T: Send> ConnectionManager for SocketConnectionManager<T> {
+impl<PH: PacketHandler<T> + Send, T: Send + 'static> ConnectionManager for SocketConnectionManager<PH, T> {
     type Key = SocketAddr;
     type AssociatedData = T;
+    type PacketHandler = PH;
 
     fn new_connection_key(&mut self, data: &mut Self::AssociatedData,
         con: &mut Connection) -> Self::Key {

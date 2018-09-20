@@ -201,19 +201,19 @@ impl Connection {
     }*/
 }
 
-pub struct ConnectionUdpPacketSink<CM: ConnectionManager + 'static> {
-    con: ConnectionValue<CM>,
-    lock: Option<MutexFut<(CM::AssociatedData, Connection)>>,
+pub struct ConnectionUdpPacketSink<T: Send + 'static> {
+    con: ConnectionValue<T>,
+    lock: Option<MutexFut<(T, Connection)>>,
     udp_packet_sink: Option<(SocketAddr, mpsc::Sender<(SocketAddr, Bytes)>)>,
 }
 
-impl<CM: ConnectionManager + 'static> ConnectionUdpPacketSink<CM> {
-    pub fn new(con: ConnectionValue<CM>) -> Self {
+impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
+    pub fn new(con: ConnectionValue<T>) -> Self {
         Self { con, lock: None, udp_packet_sink: None }
     }
 }
 
-impl<CM: ConnectionManager + 'static> Sink for ConnectionUdpPacketSink<CM> {
+impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
     type SinkItem = (PacketType, u16, Bytes);
     type SinkError = Error;
 

@@ -39,31 +39,41 @@ pub trait ConnectionListener<CM: ConnectionManager>: Send {
     ///
     /// Per default, `false` is returned.
     fn on_connection_removed(&mut self, _key: &CM::Key,
-        _con: &mut ConnectionValue<CM>) -> bool {
+        _con: &mut ConnectionValue<CM::AssociatedData>) -> bool {
         false
     }
 }
 
 /// Will be cloned for some of the incoming packets. So be careful with
 /// modifying the internal state, it is not global.
-pub trait PacketHandler<CM: ConnectionManager>: Clone + Send {
-    type R: Future<Item=(), Error=Error> + Send;
-    /// Everything which is not a command packet.
-    fn handle_packet(&mut self, packet: Packet) -> Self::R;
-    fn handle_command_packet(&mut self, con: &mut (CM::AssociatedData, Connection), packet: Packet);
+pub trait PacketHandler<T: 'static> {
+    /// Called for every new connection which is added.
+    ///
+    /// The `command_stream` gets all command and init packets.
+    /// The `audio_stream` gets all audio packets.
+    fn new_connection<S1, S2>(
+        &mut self,
+        con_val: ConnectionValue<T>,
+        con: &Connection,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=Error>,
+        S2: Stream<Item=Packet, Error=Error>;
 }
 
 #[derive(Debug)]
-pub struct ConnectionValue<CM: ConnectionManager + 'static> {
-    pub mutex: futures_locks::Mutex<(CM::AssociatedData, Connection)>,
+pub struct ConnectionValue<T: 'static> {
+    pub mutex: futures_locks::Mutex<(T, Connection)>,
 }
 
-impl<CM: ConnectionManager + 'static> ConnectionValue<CM> {
-    pub fn new(data: CM::AssociatedData, con: Connection) -> Self {
+impl<T: Send + 'static> ConnectionValue<T> {
+    pub fn new(data: T, con: Connection) -> Self {
         Self { mutex: futures_locks::Mutex::new((data, con)) }
     }
 
-    fn encode_packet(&self, packet: Packet) -> impl Stream<Item=(PacketType, u16, Bytes), Error=Error> {
+    fn encode_packet(&self, packet: Packet)
+        -> impl Stream<Item=(PacketType, u16, Bytes), Error=Error> {
         let sink = self.as_udp_packet_sink();
         stream::futures_ordered(Some(self.mutex.with(|mut c| {
             let codec = PacketCodecSender::new(c.1.is_client, c.1.logger.clone());
@@ -79,7 +89,8 @@ impl<CM: ConnectionManager + 'static> ConnectionValue<CM> {
         }).unwrap())).flatten()
     }
 
-    pub fn as_udp_packet_sink(&self) -> ::connection::ConnectionUdpPacketSink<CM> {
+    pub fn as_udp_packet_sink(&self)
+        -> ::connection::ConnectionUdpPacketSink<T> {
         ::connection::ConnectionUdpPacketSink::new(self.clone())
     }
 
@@ -89,21 +100,21 @@ impl<CM: ConnectionManager + 'static> ConnectionValue<CM> {
     }
 }
 
-impl<CM: ConnectionManager + 'static> PartialEq for ConnectionValue<CM> {
+impl<T: 'static> PartialEq for ConnectionValue<T> {
     fn eq(&self, other: &Self) -> bool {
         self as *const ConnectionValue<_> == other as *const _
     }
 }
 
-impl<CM: ConnectionManager + 'static> Eq for ConnectionValue<CM> {}
+impl<T: 'static> Eq for ConnectionValue<T> {}
 
-impl<CM: ConnectionManager + 'static> Clone for ConnectionValue<CM> {
+impl<T: 'static> Clone for ConnectionValue<T> {
     fn clone(&self) -> Self {
         Self { mutex: self.mutex.clone() }
     }
 }
 
-impl<CM: ConnectionManager + 'static> evmap::ShallowCopy for ConnectionValue<CM> {
+impl<T: 'static> evmap::ShallowCopy for ConnectionValue<T> {
     unsafe fn shallow_copy(&mut self) -> Self {
         // Try to copy without generating memory leaks
         let mut r: Self = mem::uninitialized();
@@ -135,8 +146,8 @@ pub struct Data<CM: ConnectionManager + 'static> {
     /// The default resend config. It gets copied for each new connection.
     resend_config: ::resend::ResendConfig,
 
-    pub connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM>>,
-    pub connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM>>,
+    pub connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+    pub connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
 
     /// A list of all connected clients or servers
     ///
@@ -204,8 +215,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
         // Handle incoming packets
         let logger = data.logger.clone();
-        let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink,
-            packet_handler);
+        let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
         tokio::spawn(stream.from_err()
             .for_each(move |(p, a)| codec.handle_udp_packet((a, p)))
             .map_err(move |e| error!(logger, "Packet receiver failed";
@@ -250,7 +260,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     }
 
     pub fn remove_connection(&mut self, key: &CM::Key)
-        -> Option<ConnectionValue<CM>> {
+        -> Option<ConnectionValue<CM::AssociatedData>> {
         // Get connection
         let mut res = self.get_connection(key);
         if let Some(con) = &mut res {
@@ -271,7 +281,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         res
     }
 
-    pub fn get_connection(&self, key: &CM::Key) -> Option<ConnectionValue<CM>> {
+    pub fn get_connection(&self, key: &CM::Key) -> Option<ConnectionValue<CM::AssociatedData>> {
         self.connections.get_and(&key, |v| v[0].clone())
     }
 }
