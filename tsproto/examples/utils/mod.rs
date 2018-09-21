@@ -67,10 +67,8 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     client: client::ClientDataM<PH>,
     server_addr: SocketAddr,
 ) -> Box<Future<Item = client::ClientConVal, Error = Error> + Send> {
-    let c = client.clone();
-    let connect_fut = client.with(move |mut d| client::connect(c, &mut *d, server_addr)).unwrap();
-
-    Box::new(connect_fut.and_then(move |c| {
+    Box::new(client::connect(client.clone(), &mut *client.lock().unwrap(), server_addr)
+        .and_then(move |c| {
         // Wait some time
         // TODO Document in protocol paper
         Delay::new(Instant::now() + Duration::from_millis(5)).from_err().map(move |_| c)
@@ -134,22 +132,19 @@ pub fn disconnect(
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
 
-    Box::new(con.mutex
-        .with(|mut c| {
-            c.1.resender.handle_event(ResenderEvent::Disconnecting);
-            Ok(())
-        })
-        .unwrap()
-        .and_then(move |_| con.as_packet_sink()
-            .send(packet)
-            .and_then(move |_| {
-                client::wait_for_state(&con, |state| {
-                    if let client::ServerConnectionState::Disconnected = *state {
-                        true
-                    } else {
-                        false
-                    }
-                })
-            }))
-    )
+    {
+        let mut con = con.mutex.lock().unwrap();
+        con.1.resender.handle_event(ResenderEvent::Disconnecting);
+    }
+    Box::new(con.as_packet_sink()
+        .send(packet)
+        .and_then(move |_| {
+            client::wait_for_state(&con, |state| {
+                if let client::ServerConnectionState::Disconnected = *state {
+                    true
+                } else {
+                    false
+                }
+            })
+        }))
 }

@@ -1,20 +1,18 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 use std::u16;
 
 use bytes::Bytes;
-use futures::{self, Async, AsyncSink, future, Future, Sink, stream, Stream};
+use futures::{self, AsyncSink, Future, Sink, Stream};
 use futures::sync::mpsc;
-use futures_locks::MutexFut;
 use num::ToPrimitive;
 use slog;
 
 use Error;
-use connectionmanager::ConnectionManager;
 use crypto::EccKeyPubP256;
 use handler_data::ConnectionValue;
-use packet_codec::PacketCodecSender;
 use packets::*;
 use resend::DefaultResender;
 
@@ -196,13 +194,12 @@ impl Connection {
 
 pub struct ConnectionUdpPacketSink<T: Send + 'static> {
     con: ConnectionValue<T>,
-    lock: Option<MutexFut<(T, Connection)>>,
     udp_packet_sink: Option<(SocketAddr, mpsc::Sender<(SocketAddr, Bytes)>)>,
 }
 
 impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
     pub fn new(con: ConnectionValue<T>) -> Self {
-        Self { con, lock: None, udp_packet_sink: None }
+        Self { con, udp_packet_sink: None }
     }
 }
 
@@ -216,32 +213,16 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         match p_type {
             PacketType::Init | PacketType::Command | PacketType::CommandLow => {
-                if self.lock.is_none() {
-                    self.lock = Some(self.con.mutex.lock());
-                }
-                let mut lock = match self.lock.as_mut().unwrap().poll().unwrap() {
-                    Async::Ready(r) => r,
-                    Async::NotReady => return Ok(AsyncSink::NotReady(
-                        (p_type, p_id, udp_packet))),
-                };
-                let res = lock.1.resender.start_send((p_type, p_id, udp_packet));
-                self.lock = None;
+                let mut con = self.con.mutex.lock().unwrap();
+                let res = con.1.resender.start_send((p_type, p_id, udp_packet));
                 res
             }
             _ => {
                 if self.udp_packet_sink.is_none() {
-                    if self.lock.is_none() {
-                        self.lock = Some(self.con.mutex.lock());
-                    }
-                    let lock = match self.lock.as_mut().unwrap().poll().unwrap() {
-                        Async::Ready(r) => r,
-                        Async::NotReady => return Ok(AsyncSink::NotReady(
-                            (p_type, p_id, udp_packet))),
-                    };
-                    self.udp_packet_sink = Some((lock.1.address,
-                        lock.1.udp_packet_sink.clone()));
+                    let con = self.con.mutex.lock().unwrap();
+                    self.udp_packet_sink = Some((con.1.address,
+                        con.1.udp_packet_sink.clone()));
                 }
-                self.lock = None;
 
                 let (addr, s) = self.udp_packet_sink.as_mut().unwrap();
                 Ok(match s.start_send((*addr, udp_packet))

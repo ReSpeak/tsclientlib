@@ -11,9 +11,7 @@ extern crate curve25519_dalek;
 extern crate evmap;
 #[macro_use]
 extern crate failure;
-#[macro_use]
 extern crate futures;
-extern crate futures_locks;
 #[cfg(feature = "rust-gmp")]
 extern crate gmp;
 #[macro_use]

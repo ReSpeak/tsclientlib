@@ -1,7 +1,8 @@
 use std::{mem, ptr};
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
 
-use {evmap, futures_locks, slog, slog_async, slog_term, tokio};
+use {evmap, slog, slog_async, slog_term, tokio};
 use bytes::{Bytes, BytesMut};
 use futures::{future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
@@ -17,7 +18,7 @@ use packet_codec::{PacketCodecReceiver, PacketCodecSender};
 use packets::{Packet, PacketType};
 use resend::DefaultResender;
 
-pub type DataM<CM> = futures_locks::Mutex<Data<CM>>;
+pub type DataM<CM> = Arc<Mutex<Data<CM>>>;
 
 /// A listener for added and removed connections.
 pub trait ConnectionListener<CM: ConnectionManager>: Send {
@@ -63,34 +64,32 @@ pub trait PacketHandler<T: 'static>: Send {
 
 #[derive(Debug)]
 pub struct ConnectionValue<T: 'static> {
-    pub mutex: futures_locks::Mutex<(T, Connection)>,
+    pub mutex: Arc<Mutex<(T, Connection)>>,
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
     pub fn new(data: T, con: Connection) -> Self {
-        Self { mutex: futures_locks::Mutex::new((data, con)) }
+        Self { mutex: Arc::new(Mutex::new((data, con))) }
     }
 
     fn encode_packet(&self, packet: Packet)
-        -> impl Stream<Item=(PacketType, u16, Bytes), Error=Error> {
+        -> Box<Stream<Item=(PacketType, u16, Bytes), Error=Error> + Send> {
         let sink = self.as_udp_packet_sink();
-        stream::futures_ordered(Some(self.mutex.lock()
-            .map_err(|()| format_err!("Failed to lock mutex").into())
-            .and_then(|mut c| {
-            ::log::PacketLogger::log_packet(&c.1.logger,
-                c.1.is_client, false, &packet);
+        let mut con = self.mutex.lock().unwrap();
+        ::log::PacketLogger::log_packet(&con.1.logger,
+            con.1.is_client, false, &packet);
 
-            let codec = PacketCodecSender::new(c.1.is_client, c.1.logger.clone());
-            let p_type = packet.header.get_type();
+        let codec = PacketCodecSender::new(con.1.is_client, con.1.logger.clone());
+        let p_type = packet.header.get_type();
 
-            let mut udp_packets = match codec.encode_packet(&mut c.1, packet) {
-                Ok(r) => r,
-                Err(e) => return future::err(e),
-            };
-            let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
-                (p_type, p_id, p)).collect::<Vec<_>>();
-            future::ok(stream::iter_ok(udp_packets))
-        }))).flatten()
+        let mut udp_packets = match codec.encode_packet(&mut con.1, packet) {
+            Ok(r) => r,
+            Err(e) => return Box::new(stream::once(Err(e))),
+        };
+
+        let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
+            (p_type, p_id, p)).collect::<Vec<_>>();
+        Box::new(stream::iter_ok(udp_packets))
     }
 
     pub fn as_udp_packet_sink(&self)
@@ -181,7 +180,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         packet_handler: CM::PacketHandler,
         connection_manager: CM,
         logger: L,
-    ) -> Result<futures_locks::Mutex<Self>> {
+    ) -> Result<Arc<Mutex<Self>>> {
         let logger = logger.into().unwrap_or_else(|| {
             let decorator = slog_term::TermDecorator::new().build();
             let drain = slog_term::FullFormat::new(decorator).build().fuse();
@@ -228,18 +227,27 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
         // Handle incoming packets
         let logger = data.logger.clone();
+        let logger2 = logger.clone();
         let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
-        tokio::spawn(stream.from_err()
-            .for_each(move |(p, a)| codec.handle_udp_packet((a, p)))
-            .map_err(move |e| error!(logger, "Packet receiver failed";
-                "error" => ?e)));
-        Ok(futures_locks::Mutex::new(data))
+        tokio::spawn(stream
+            .map_err(move |e| error!(logger2, "Packet stream errored";
+                "error" => ?e))
+            .for_each(move |(p, a)| {
+                let logger = logger.clone();
+                codec.handle_udp_packet((a, p)).then(move |r| {
+                    if let Err(e) = r {
+                        warn!(logger, "Packet receiver errored"; "error" => ?e);
+                    }
+                    Ok(())
+                })
+            }));
+        Ok(Arc::new(Mutex::new(data)))
     }
 
     /// Add a new connection to this socket.
     pub fn add_connection(
         &mut self,
-        data_mut: ::futures_locks::Mutex<Self>,
+        data_mut: Arc<Mutex<Self>>,
         mut data: CM::AssociatedData,
         addr: SocketAddr,
     ) -> CM::Key {

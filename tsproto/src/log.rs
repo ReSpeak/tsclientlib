@@ -1,4 +1,3 @@
-use std::fmt::Display;
 use std::net::SocketAddr;
 
 use slog::Logger;

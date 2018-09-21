@@ -11,7 +11,6 @@ use chrono::{DateTime, Duration, Utc};
 use futures::{self, Async, Future, Sink, Stream};
 use futures::sync::mpsc;
 use futures::task::{self, Task};
-use futures_locks;
 use slog::Logger;
 use tokio;
 use tokio::timer::{delay_queue, DelayQueue, Delay};
@@ -574,7 +573,6 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
     connections: ::evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
     connection_key: CM::Key,
     connection: ConnectionValue<CM::AssociatedData>,
-    lock: Option<futures_locks::MutexFut<(CM::AssociatedData, Connection)>>,
     sink: mpsc::Sender<(SocketAddr, Bytes)>,
     /// The future to wake us up when the next packet should be resent.
     ///
@@ -601,7 +599,6 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
             connections: data.connections.clone(),
             connection_key,
             connection,
-            lock: None,
             sink: data.udp_packet_sink.clone(),
             timeout: Delay::new(Instant::now()),
             state_timeout: Delay::new(Instant::now()),
@@ -630,13 +627,8 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
         }
 
         // Get connection
-        if self.lock.is_none() {
-            self.lock = Some(self.connection.mutex.lock());
-        }
-        let mut con = try_ready!(self.lock.as_mut().unwrap().poll().map_err(|()|
-            format_err!("Failed to lock connection")));
+        let mut con = self.connection.mutex.lock().unwrap();
         let con = &mut con.1;
-        self.lock = None;
         // Set task
         if !con.resender.resender_future_task.as_ref()
             .map(|t| t.will_notify_current()).unwrap_or(false) {
@@ -742,15 +734,11 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
             return Ok(futures::Async::NotReady);
         } else if let StateChange::EndConnection = next_state {
             // End connection
-            let key = self.connection_key.clone();
-            let logger = self.logger.clone();
             let state = con.resender.state.get_name();
-            tokio::spawn(self.data.lock().and_then(move |mut data| {
-                info!(logger, "Exiting connection because it is not responding";
-                    "current state" => state);
-                data.remove_connection(&key);
-                Ok(())
-            }));
+            let mut data = self.data.lock().unwrap();
+            info!(self.logger, "Exiting connection because it is not responding";
+                "current state" => state);
+            data.remove_connection(&self.connection_key);
             return Ok(futures::Async::NotReady);
         }
 
@@ -841,8 +829,8 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
                             "tries" => rec.tries,
                             "last" => %rec.last,
                             "to" => to_s,
-                            "srtt" => ?con.resender.srtt,
-                            "srtt_dev" => ?con.resender.srtt_dev,
+                            "srtt" => %con.resender.srtt,
+                            "srtt_dev" => %con.resender.srtt_dev,
                             "rto" => %rto,
                         );
                     }

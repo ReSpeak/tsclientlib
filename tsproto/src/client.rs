@@ -1,12 +1,10 @@
-use std::cell::RefCell;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex};
 
 use {base64, tokio};
 use chrono::Utc;
 use futures::{self, future, Future, Sink, Stream};
 use futures::sync::mpsc;
-use futures_locks;
 #[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
 #[cfg(not(feature = "rust-gmp"))]
@@ -21,13 +19,11 @@ use {packets, BoxFuture, Error, Result};
 use algorithms as algs;
 use commands::Command;
 use connection::*;
-use connectionmanager::{ConnectionManager, Resender, ResenderEvent,
-    SocketConnectionManager};
+use connectionmanager::{Resender, ResenderEvent, SocketConnectionManager};
 use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
 use handler_data::{ConnectionValue, Data, DataM, PacketHandler};
 use license::Licenses;
 use packets::*;
-use utils::MultiSink;
 
 /// The data of our client.
 pub type CM<PH> = SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
@@ -87,25 +83,24 @@ pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
     f: F,
 ) -> impl Future<Item=(), Error=Error> {
     let (send, recv) = mpsc::channel(0);
-    connection.mutex.with(move |mut c| -> Result<()> {
-        c.0.state_change_listener.push(Box::new(move |s| {
-            let mut send = send.clone();
-            // Check if it is the right state
-            if f(s) {
-                if send.try_send(()).is_err() {
-                    tokio::spawn(send.send(()).map(|_| ()).map_err(|e| {
-                        println!("Failed to send while waiting for state ({:?})", e);
-                    }));
-                }
-                true
-            } else {
-                false
+    let mut con = connection.mutex.lock().unwrap();
+    con.0.state_change_listener.push(Box::new(move |s| {
+        let mut send = send.clone();
+        // Check if it is the right state
+        if f(s) {
+            if send.try_send(()).is_err() {
+                tokio::spawn(send.send(()).map(|_| ()).map_err(|e| {
+                    println!("Failed to send while waiting for state ({:?})", e);
+                }));
             }
-        }));
-        Ok(())
-    }).unwrap().from_err().and_then(move |_| recv.into_future().map(|_| ())
+            true
+        } else {
+            false
+        }
+    }));
+    recv.into_future().map(|_| ())
         .map_err(|e| format_err!("Failed to receive while waiting for state \
-            ({:?})", e).into()))
+            ({:?})", e).into())
 }
 
 pub fn wait_until_connected(
@@ -176,7 +171,7 @@ pub struct DefaultPacketHandler<IPH: PacketHandler<ServerConnectionData> + 'stat
     inner: IPH,
     /// The data instance is created after the packet handler so this has to be
     /// an option.
-    data: Option<futures_locks::Mutex<ClientData<IPH>>>,
+    data: Option<Arc<Mutex<ClientData<IPH>>>>,
 }
 
 impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerConnectionData> for DefaultPacketHandler<IPH> {
@@ -191,7 +186,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
     {
         let con_val2 = con_val.clone();
         let data = self.data.as_ref().unwrap().clone();
-        let command_stream = command_stream.and_then(move |p| -> BoxFuture<Option<Packet>> {
+        let command_stream = command_stream.and_then(move |p| -> Result<Option<Packet>> {
             // Check if we handle this packet
             let handle = match &p.data {
                 packets::Data::S2CInit(_) => true,
@@ -207,74 +202,70 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
             };
             if !handle {
                 // Forward packet
-                return Box::new(future::ok(Some(p)));
+                return Ok(Some(p));
             }
 
             let con_val = con_val2.clone();
             // Get private key
             let data2 = data.clone();
-            Box::new(data
-                .with(|d| Ok((d.private_key.clone(), d.logger.clone())))
-                .unwrap()
-                .and_then(move |(key, logger)| {
-                con_val.mutex.clone().with(move |mut con| {
-                    let mut ignore_packet = true;
-                    let mut is_end = false;
-                    let handle_res = Self::handle_packet(
-                        con_val.clone(),
-                        &mut *con,
-                        &p,
-                        &mut ignore_packet,
-                        &mut is_end,
-                        key,
-                        &logger,
-                    )?;
+            let (key, logger) = {
+                let d = data.lock().unwrap();
+                (d.private_key.clone(), d.logger.clone())
+            };
+            let con_val2 = con_val.clone();
+            let mut con = con_val.mutex.lock().unwrap();
+            let mut ignore_packet = true;
+            let mut is_end = false;
+            let handle_res = Self::handle_packet(
+                con_val2.clone(),
+                &mut *con,
+                &p,
+                &mut ignore_packet,
+                &mut is_end,
+                key,
+                &logger,
+            )?;
 
-                    if let Some((s, packet)) = handle_res {
-                        con.0.state = s;
-                        if let Some(packet) = packet {
-                            // First send the packet, then notify the listeners,
-                            // this ensures that the clientek packet is sent
-                            // before the clientinit.
-                            tokio::spawn(con_val
-                                .as_packet_sink()
-                                .send(packet)
-                                .and_then(move |_| con_val.mutex.with(|mut con| {
-                                    let state = &mut con.0;
-                                    // Notify state changed listeners
-                                    let mut i = 0;
-                                    while i < state.state_change_listener.len() {
-                                        if state.state_change_listener.get_mut(i).unwrap()(&state.state) {
-                                            state.state_change_listener.remove(i);
-                                        } else {
-                                            i += 1;
-                                        }
-                                    }
-                                    Ok(())
-                                }).unwrap())
-                                .map_err(move |e| error!(logger,
-                                    "Error sending response packet";
-                                    "error" => ?e)));
-                        }
-                    }
+            if let Some((s, packet)) = handle_res {
+                con.0.state = s;
+                if let Some(packet) = packet {
+                    // First send the packet, then notify the listeners,
+                    // this ensures that the clientek packet is sent
+                    // before the clientinit.
+                    tokio::spawn(con_val2
+                        .as_packet_sink()
+                        .send(packet)
+                        .and_then(move |_| {
+                            let mut con = con_val2.mutex.lock().unwrap();
+                            let state = &mut con.0;
+                            // Notify state changed listeners
+                            let mut i = 0;
+                            while i < state.state_change_listener.len() {
+                                if state.state_change_listener.get_mut(i).unwrap()(&state.state) {
+                                    state.state_change_listener.remove(i);
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                            Ok(())
+                        })
+                        .map_err(move |e| error!(logger,
+                            "Error sending response packet";
+                            "error" => ?e)));
+                }
+            }
 
-                    if is_end {
-                        // Close connection
-                        let addr = con.1.address;
-                        tokio::spawn(data2
-                            .with(move |mut d| Ok(d.remove_connection(&addr)))
-                            .unwrap()
-                            .map(|_| ())
-                        );
-                    }
+            if is_end {
+                // Close connection
+                let addr = con.1.address;
+                data.lock().unwrap().remove_connection(&addr);
+            }
 
-                    if ignore_packet {
-                        Ok(None)
-                    } else {
-                        Ok(Some(p))
-                    }
-                }).unwrap()
-            }))
+            if ignore_packet {
+                Ok(None)
+            } else {
+                Ok(Some(p))
+            }
         }).filter_map(|p| p);
 
         self.inner.new_connection(con_val, command_stream, audio_stream)
@@ -290,7 +281,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
     }
 
     /// Needs to be called to complete the initialization of this packet handler.
-    pub fn complete(&mut self, data: futures_locks::Mutex<ClientData<IPH>>) {
+    pub fn complete(&mut self, data: Arc<Mutex<ClientData<IPH>>>) {
         self.data = Some(data);
     }
 
