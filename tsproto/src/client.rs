@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Mutex, Weak};
 
 use {base64, tokio};
 use chrono::Utc;
@@ -21,7 +21,7 @@ use commands::Command;
 use connection::*;
 use connectionmanager::{Resender, ResenderEvent, SocketConnectionManager};
 use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
-use handler_data::{ConnectionValue, Data, DataM, PacketHandler};
+use handler_data::{ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler};
 use license::Licenses;
 use packets::*;
 
@@ -31,7 +31,7 @@ pub type ClientData<PH> = Data<CM<PH>>;
 pub type ClientDataM<PH> = DataM<CM<PH>>;
 /// Connections from a client to a server.
 pub type ClientConnection = Connection;
-pub type ClientConVal = ConnectionValue<ServerConnectionData>;
+pub type ClientConVal = ConnectionValueWeak<ServerConnectionData>;
 
 pub struct ServerConnectionData {
     /// Every function in this list is called when the state of the connection
@@ -81,33 +81,35 @@ fn create_init_header() -> Header {
 pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
     connection: &ClientConVal,
     f: F,
-) -> impl Future<Item=(), Error=Error> {
+) -> Box<Future<Item=(), Error=Error> + Send> {
     let (send, recv) = mpsc::channel(0);
-    let mut con = connection.mutex.lock().unwrap();
+    let con = match connection.mutex.upgrade() {
+        Some(c) => c,
+        None => return Box::new(future::err(format_err!("Connection is gone")
+            .into())),
+    };
+    let mut con = con.lock().unwrap();
     con.0.state_change_listener.push(Box::new(move |s| {
-        let mut send = send.clone();
         // Check if it is the right state
         if f(s) {
-            if send.try_send(()).is_err() {
-                tokio::spawn(send.send(()).map(|_| ()).map_err(|e| {
-                    println!("Failed to send while waiting for state ({:?})", e);
-                }));
-            }
+            let send = send.clone();
+            // Ignore errors
+            tokio::spawn(send.send(()).then(|_| Ok(())));
             true
         } else {
             false
         }
     }));
-    recv.into_future().map(|_| ())
+    Box::new(recv.into_future().map(|_| ())
         .map_err(|e| format_err!("Failed to receive while waiting for state \
-            ({:?})", e).into())
+            ({:?})", e).into()))
 }
 
 pub fn wait_until_connected(
     connection: &ClientConVal,
 ) -> impl Future<Item=(), Error=Error> {
     wait_for_state(connection, |state| {
-        if let ServerConnectionState::Connected = *state {
+        if let ServerConnectionState::Connected = state {
             true
         } else {
             false
@@ -124,7 +126,7 @@ pub fn wait_until_connected(
 /// [`ServerConnectionState::Connecting`]:
 /// [`wait_until_connected`]:
 pub fn connect<PH: PacketHandler<ServerConnectionData>>(
-    datam: ClientDataM<PH>,
+    datam: Weak<Mutex<ClientData<PH>>>,
     data: &mut ClientData<PH>,
     server_addr: SocketAddr,
 ) -> impl Future<Item=ClientConVal, Error=Error> {
@@ -152,39 +154,39 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     };
     // Add the connection to the connection list
     let key = data.add_connection(datam, state, server_addr);
-    let con = data.get_connection(&key).unwrap();
+    let con = data.get_connection(&key).unwrap().downgrade();
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
     let con2 = con.clone();
     con.as_packet_sink().send(packet).and_then(move |_| {
-        wait_for_state(&con2, |state| {
+        wait_for_state(&con, |state| {
             if let ServerConnectionState::Connecting = *state {
                 true
             } else {
                 false
             }
         })
-    }).map(move |_| con)
+    }).and_then(move |_| Ok(con2))
 }
 
 pub struct DefaultPacketHandler<IPH: PacketHandler<ServerConnectionData> + 'static> {
     inner: IPH,
     /// The data instance is created after the packet handler so this has to be
     /// an option.
-    data: Option<Arc<Mutex<ClientData<IPH>>>>,
+    data: Option<Weak<Mutex<ClientData<IPH>>>>,
 }
 
 impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerConnectionData> for DefaultPacketHandler<IPH> {
     fn new_connection<S1, S2>(
         &mut self,
-        con_val: &ClientConVal,
+        con_val: &ConnectionValue<ServerConnectionData>,
         command_stream: S1,
         audio_stream: S2,
     ) where
         S1: Stream<Item=Packet, Error=Error> + Send + 'static,
         S2: Stream<Item=Packet, Error=Error> + Send + 'static,
     {
-        let con_val2 = con_val.clone();
+        let con_val2 = con_val.downgrade();
         let data = self.data.as_ref().unwrap().clone();
         let command_stream = command_stream.and_then(move |p| -> Result<Option<Packet>> {
             // Check if we handle this packet
@@ -205,18 +207,28 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
                 return Ok(Some(p));
             }
 
-            let con_val = con_val2.clone();
             // Get private key
             let (key, logger) = {
-                let d = data.lock().unwrap();
+                let d = if let Some(d) = data.upgrade() {
+                    d
+                } else {
+                    // Connection doesn't exist anymore
+                    return Err(format_err!("Connection does not exist while \
+                        handling packet").into());
+                };
+                let d = d.lock().unwrap();
                 (d.private_key.clone(), d.logger.clone())
             };
-            let con_val2 = con_val.clone();
+
+            let con_val_weak = con_val2.clone();
+            let con_val = con_val2.upgrade().ok_or_else(||
+                format_err!("Connection is gone"))?;
+            let con_val3 = con_val.clone();
             let mut con = con_val.mutex.lock().unwrap();
             let mut ignore_packet = true;
             let mut is_end = false;
             let handle_res = Self::handle_packet(
-                con_val2.clone(),
+                con_val3.clone(),
                 &mut *con,
                 &p,
                 &mut ignore_packet,
@@ -235,7 +247,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
                         .as_packet_sink()
                         .send(packet)
                         .and_then(move |_| {
-                            let mut con = con_val2.mutex.lock().unwrap();
+                            let mutex = con_val_weak.upgrade().ok_or_else(||
+                                format_err!("Connection is gone"))?
+                                .mutex;
+                            let mut con = mutex.lock().unwrap();
                             let state = &mut con.0;
                             // Notify state changed listeners
                             let mut i = 0;
@@ -251,13 +266,31 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
                         .map_err(move |e| error!(logger,
                             "Error sending response packet";
                             "error" => ?e)));
+                } else {
+                    let state = &mut con.0;
+                    // Notify state changed listeners
+                    let mut i = 0;
+                    while i < state.state_change_listener.len() {
+                        if state.state_change_listener.get_mut(i).unwrap()(&state.state) {
+                            state.state_change_listener.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
                 }
             }
 
             if is_end {
                 // Close connection
                 let addr = con.1.address;
-                data.lock().unwrap().remove_connection(&addr);
+                let d = if let Some(d) = data.upgrade() {
+                    d
+                } else {
+                    // Connection doesn't exist anymore
+                    return Err(format_err!("Data does not exist while \
+                        handling packet").into());
+                };
+                d.lock().unwrap().remove_connection(&addr);
             }
 
             if ignore_packet {
@@ -280,7 +313,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
     }
 
     /// Needs to be called to complete the initialization of this packet handler.
-    pub fn complete(&mut self, data: Arc<Mutex<ClientData<IPH>>>) {
+    pub fn complete(&mut self, data: Weak<Mutex<ClientData<IPH>>>) {
         self.data = Some(data);
     }
 
@@ -293,6 +326,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
         private_key: EccKeyPrivP256,
         logger: &Logger,
     ) -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+        let con_value = con_value.downgrade();
         let res = match state.state {
             ServerConnectionState::Init0 { version, ref random0 } => {
                 // Handle an Init1
@@ -300,6 +334,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                     S2CInit::Init1 { ref random1, ref random0_r }), .. } = *packet {
                     // Check the response
                     if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
+                        con.resender.ack_packet(PacketType::Init, 0);
                         // The packet is correct.
                         // Send next init packet
                         let cheader = create_init_header();
@@ -332,6 +367,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                         // Reject too high exponents
                         None
                     } else {
+                        con.resender.ack_packet(PacketType::Init, 2);
                         // Create clientinitiv
                         let mut rng = rand::thread_rng();
                         let alpha = rng.gen::<[u8; 10]>();
@@ -429,6 +465,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                 }
             }
             ServerConnectionState::ClientInitIv { ref alpha } => {
+                let resender = &mut con.resender;
                 let res = (|con_params: &mut Option<ConnectedParams>| -> Result<_> {
                     if let Packet { data: packets::Data::Command(ref command), .. } = *packet {
                         let cmd = command.get_commands().remove(0);
@@ -438,6 +475,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                             && cmd.has_arg("omega")
                             && base64::decode(cmd.args["alpha"])
                             .map(|a| a == alpha).unwrap_or(false) {
+                            resender.ack_packet(PacketType::Init, 4);
 
                             let beta_vec = base64::decode(cmd.args["beta"])?;
                             if beta_vec.len() != 10 {
@@ -473,6 +511,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                             && cmd.args["ot"] == "1"
                             && cmd.has_arg("time")
                             && cmd.has_arg("beta") {
+                            resender.ack_packet(PacketType::Init, 4);
 
                             let mut server_key = EccKeyPubP256::
                                 from_ts(cmd.args["omega"])?;
@@ -555,14 +594,20 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                     let cmd = cmd.get_commands().remove(0);
                     if cmd.command == "initserver" && cmd.has_arg("aclid") {
                         // Handle an initserver
-                        if let Some(ref mut params) = con.params {
+                        if let Some(params) = &mut con.params {
                             if let Ok(c_id) = cmd.args["aclid"].parse() {
                                 params.c_id = c_id;
                             }
+
+                            let clientinit_id =
+                                if let ::connection::SharedIv::Protocol31(_) =
+                                    params.shared_iv { 2 } else { 1 };
+                            // initserver is the ack for clientinit
+                            // Remove from send queue
+                            con.resender.ack_packet(PacketType::Command,
+                                clientinit_id);
                         }
-                        // initserver is the ack for clientinit
-                        // Remove from send queue
-                        con.resender.ack_packet(PacketType::Command, 1);
+
                         // Notify the resender that we are connected
                         con.resender.handle_event(ResenderEvent::Connected);
                         res = Some((ServerConnectionState::Connected, None));

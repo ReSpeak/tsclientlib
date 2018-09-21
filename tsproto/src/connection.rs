@@ -11,7 +11,7 @@ use slog;
 
 use Error;
 use crypto::EccKeyPubP256;
-use handler_data::ConnectionValue;
+use handler_data::ConnectionValueWeak;
 use packets::*;
 use resend::DefaultResender;
 
@@ -192,12 +192,12 @@ impl Connection {
 }
 
 pub struct ConnectionUdpPacketSink<T: Send + 'static> {
-    con: ConnectionValue<T>,
+    con: ConnectionValueWeak<T>,
     udp_packet_sink: Option<(SocketAddr, mpsc::Sender<(SocketAddr, Bytes)>)>,
 }
 
 impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
-    pub fn new(con: ConnectionValue<T>) -> Self {
+    pub fn new(con: ConnectionValueWeak<T>) -> Self {
         Self { con, udp_packet_sink: None }
     }
 }
@@ -212,15 +212,23 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
     ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
         match p_type {
             PacketType::Init | PacketType::Command | PacketType::CommandLow => {
-                let mut con = self.con.mutex.lock().unwrap();
-                let res = con.1.resender.start_send((p_type, p_id, udp_packet));
-                res
+                if let Some(mutex) = self.con.mutex.upgrade() {
+                    let mut con = mutex.lock().unwrap();
+                    let res = con.1.resender.start_send((p_type, p_id, udp_packet));
+                    res
+                } else {
+                    Err(format_err!("Connection is gone").into())
+                }
             }
             _ => {
                 if self.udp_packet_sink.is_none() {
-                    let con = self.con.mutex.lock().unwrap();
-                    self.udp_packet_sink = Some((con.1.address,
-                        con.1.udp_packet_sink.clone()));
+                    if let Some(mutex) = self.con.mutex.upgrade() {
+                        let con = mutex.lock().unwrap();
+                        self.udp_packet_sink = Some((con.1.address,
+                            con.1.udp_packet_sink.clone()));
+                    } else {
+                        return Err(format_err!("Connection is gone").into());
+                    }
                 }
 
                 let (addr, s) = self.udp_packet_sink.as_mut().unwrap();

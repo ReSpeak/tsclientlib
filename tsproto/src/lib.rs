@@ -34,7 +34,6 @@ extern crate yasna;
 use std::net::SocketAddr;
 
 use failure::ResultExt;
-use futures::Future;
 
 pub mod algorithms;
 pub mod client;
@@ -50,7 +49,6 @@ pub mod packet_codec;
 pub mod resend;
 pub mod utils;
 
-type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
 
 /// The maximum number of bytes for a fragmented packet.

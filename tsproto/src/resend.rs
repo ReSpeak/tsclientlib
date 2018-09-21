@@ -4,6 +4,7 @@ use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::mem;
 use std::net::SocketAddr;
+use std::sync::{Mutex, Weak};
 use std::time::{self, Instant};
 
 use bytes::Bytes;
@@ -16,7 +17,7 @@ use tokio::timer::{delay_queue, DelayQueue, Delay};
 
 use {Error, Result};
 use connectionmanager::{ConnectionManager, Resender, ResenderEvent};
-use handler_data::{ConnectionValue, Data, DataM};
+use handler_data::{ConnectionValue, ConnectionValueWeak, Data};
 use packets::*;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -564,12 +565,12 @@ impl Default for ResendConfig {
 /// This future is running in parallel to the rest and is responsible for
 /// sending all command packets.
 pub struct ResendFuture<CM: ConnectionManager + 'static> {
-    data: DataM<CM>,
+    data: Weak<Mutex<Data<CM>>>,
     is_client: bool,
     logger: Logger,
     connections: ::evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
     connection_key: CM::Key,
-    connection: ConnectionValue<CM::AssociatedData>,
+    connection: ConnectionValueWeak<CM::AssociatedData>,
     sink: mpsc::Sender<(SocketAddr, Bytes)>,
     /// The future to wake us up when the next packet should be resent.
     ///
@@ -584,11 +585,11 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
 impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
     pub fn new(
         data: &Data<CM>,
-        datam: DataM<CM>,
+        datam: Weak<Mutex<Data<CM>>>,
         connection_key: CM::Key,
     ) -> Self {
         let connection = data.get_connection(&connection_key)
-            .expect("Connection for resender not found");
+            .expect("Connection for resender not found").downgrade();
         Self {
             data: datam,
             logger: data.logger.clone(),
@@ -624,7 +625,11 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
         }
 
         // Get connection
-        let mut con = self.connection.mutex.lock().unwrap();
+        let con = match self.connection.upgrade() {
+            Some(c) => c,
+            None => return Ok(Async::Ready(())),
+        };
+        let mut con = con.mutex.lock().unwrap();
         let con = &mut con.1;
         // Set task
         if !con.resender.resender_future_task.as_ref()
@@ -732,7 +737,12 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
         } else if let StateChange::EndConnection = next_state {
             // End connection
             let state = con.resender.state.get_name();
-            let mut data = self.data.lock().unwrap();
+            let data = match self.data.upgrade() {
+                Some(d) => d,
+                // Connection is gone
+                None => return Ok(futures::Async::Ready(())),
+            };
+            let mut data = data.lock().unwrap();
             info!(self.logger, "Exiting connection because it is not responding";
                 "current state" => state);
             data.remove_connection(&self.connection_key);
@@ -773,8 +783,11 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
                 }
 
                 // Print packet for debugging
-                //info!(con.logger, "Packet in send queue"; "id" => ?rec.p_id,
-                //    "last" => ?rec.last);
+                //info!(con.logger, "Packet in send queue";
+                    //"p_id" => id.1,
+                    //"p_type" => ?id.0,
+                    //"last" => ?last,
+                //);
                 Some(id)
             } else {
                 //info!(con.logger, "No packet in send queue");
@@ -822,6 +835,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
                     if rec.tries != 1 {
                         let to_s = if self.is_client { "S" } else { "C" };
                         warn!(self.logger, "Resend";
+                            "p_type" => ?id.0,
                             "p_id" => id.1,
                             "tries" => rec.tries,
                             "last" => %rec.last,

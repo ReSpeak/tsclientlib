@@ -39,6 +39,8 @@ struct Args {
     #[structopt(long = "local-address", default_value = "0.0.0.0:0",
                 help = "The listening address of the client")]
     local_address: SocketAddr,
+    #[structopt(short = "v", long = "verbose", help = "Log packet content.")]
+    verbose: bool,
 }
 
 fn main() {
@@ -57,15 +59,17 @@ fn main() {
     };
 
     tokio::run(future::lazy(move || {
-        let c = create_client(args.local_address, logger.clone(), SimplePacketHandler, true);
+        let c = create_client(args.local_address, logger.clone(),
+            SimplePacketHandler, args.verbose);
 
         // Connect
+        let logger2 = logger.clone();
         connect(logger.clone(), c.clone(), args.address)
             .map_err(|e| panic!("Failed to connect ({:?})", e)).and_then(move |con| {
-            info!(logger, "Connected");
-
-            // Wait some time
-            Delay::new(Instant::now() + Duration::from_secs(2)).and_then(move |_| {
+                info!(logger2, "Connected");
+                // Wait some time
+                Delay::new(Instant::now() + Duration::from_secs(2)).map(move |_| con)
+            }).and_then(move |con| {
                 info!(logger, "Waited");
 
                 // Send packet
@@ -77,7 +81,7 @@ fn main() {
                 cmd.push("msg", "Hello");
 
                 let packet = Packet::new(header, Data::Command(cmd));
-                con.as_packet_sink().send(packet.clone()).map(|_| ())
+                con.as_packet_sink().send(packet).map(|_| ())
                     .map_err(|e| panic!("Failed to send packet ({:?})", e))
                     .and_then(|_| {
                         Delay::new(Instant::now() + Duration::from_secs(3))
@@ -89,9 +93,10 @@ fn main() {
                     })
                     .and_then(move |_| {
                         info!(logger, "Disconnected");
+                        // Quit client
+                        drop(c);
                         Ok(())
                     })
             })
-        })
     }).map_err(|e| panic!("An error occurred {:?}", e)));
 }

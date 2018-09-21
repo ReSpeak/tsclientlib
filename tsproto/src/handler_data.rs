@@ -1,11 +1,12 @@
+use std::mem;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use {evmap, slog, slog_async, slog_term, tokio};
 use bytes::{Bytes, BytesMut};
 use futures::{Future, Sink, stream, Stream};
-use futures::sync::mpsc;
+use futures::sync::{mpsc, oneshot};
 use slog::Drain;
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
@@ -109,16 +110,11 @@ impl<T: Send + 'static> ConnectionValue<T> {
         Box::new(stream::iter_ok(udp_packets))
     }
 
-    pub fn as_udp_packet_sink(&self)
-        -> ::connection::ConnectionUdpPacketSink<T> {
-        ::connection::ConnectionUdpPacketSink::new(self.clone())
-    }
-
-    pub fn as_packet_sink(&self) -> impl Sink<SinkItem=Packet, SinkError=Error> {
-        let cv = self.clone();
-        self.as_udp_packet_sink().with_flat_map(move |p| {
-            cv.encode_packet(p)
-        })
+    pub fn downgrade(&self) -> ConnectionValueWeak<T> {
+        ConnectionValueWeak {
+            mutex: Arc::downgrade(&self.mutex),
+            log_packets: self.log_packets.clone(),
+        }
     }
 }
 
@@ -149,6 +145,43 @@ impl<T: 'static> evmap::ShallowCopy for ConnectionValue<T> {
     }
 }
 
+#[derive(Debug)]
+pub struct ConnectionValueWeak<T: Send + 'static> {
+    pub mutex: Weak<Mutex<(T, Connection)>>,
+    pub log_packets: Arc<AtomicBool>,
+}
+
+impl<T: Send + 'static> ConnectionValueWeak<T> {
+    pub fn upgrade(&self) -> Option<ConnectionValue<T>> {
+        self.mutex.upgrade().map(|mutex| ConnectionValue {
+            mutex,
+            log_packets: self.log_packets.clone(),
+        })
+    }
+
+    pub fn as_udp_packet_sink(&self)
+        -> ::connection::ConnectionUdpPacketSink<T> {
+        ::connection::ConnectionUdpPacketSink::new(self.clone())
+    }
+
+    pub fn as_packet_sink(&self) -> impl Sink<SinkItem=Packet, SinkError=Error> {
+        let cv = self.clone();
+        self.as_udp_packet_sink().with_flat_map(move |p| {
+            if let Some(cv) = cv.upgrade() {
+                cv.encode_packet(p)
+            } else {
+                Box::new(stream::once(Err(format_err!("Connection is gone").into())))
+            }
+        })
+    }
+}
+
+impl<T: Send + 'static> Clone for ConnectionValueWeak<T> {
+    fn clone(&self) -> Self {
+        Self { mutex: self.mutex.clone(), log_packets: self.log_packets.clone() }
+    }
+}
+
 /// The stored data for our server or client.
 ///
 /// This handles a single socket.
@@ -169,6 +202,7 @@ pub struct Data<CM: ConnectionManager + 'static> {
 
     /// The sink of udp packets.
     pub udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
+    exit_send: oneshot::Sender<()>,
 
     /// The default resend config. It gets copied for each new connection.
     resend_config: ::resend::ResendConfig,
@@ -189,6 +223,14 @@ pub struct Data<CM: ConnectionManager + 'static> {
     pub connection_manager: CM,
     /// Listen for new or removed connections.
     pub connection_listeners: Vec<Box<ConnectionListener<CM>>>,
+}
+
+impl<CM: ConnectionManager + 'static> Drop for Data<CM> {
+    fn drop(&mut self) {
+        // Ignore if the receiver was already dropped
+        let sender = mem::replace(&mut self.exit_send, oneshot::channel().0);
+        let _ = sender.send(());
+    }
 }
 
 impl<CM: ConnectionManager + 'static> Data<CM> {
@@ -218,6 +260,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         debug!(logger, "Listening"; "local_addr" => %local_addr);
         let (sink, stream) = UdpFramed::new(socket, BytesCodec::new()).split();
 
+        let (exit_send, exit_recv) = oneshot::channel();
         let (udp_packet_sink, udp_packet_sink_sender) = mpsc::channel(::UDP_SINK_CAPACITY);
         let logger2 = logger.clone();
 
@@ -230,6 +273,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             logger,
             log_config,
             udp_packet_sink,
+            exit_send,
             resend_config: Default::default(),
             connections,
             connections_writer,
@@ -244,7 +288,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         tokio::spawn(udp_packet_sink_sender.map(move |(addr, p)| {
                 if log_udp.load(Ordering::Relaxed) {
                     ::log::PacketLogger::log_udp_packet(&logger, addr, is_client,
-                        false, &::packets::UdpPacket(&p));
+                        false, &::packets::UdpPacket(&p, is_client));
                 }
                 (p, addr)
             })
@@ -263,23 +307,28 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             .for_each(move |(p, a)| {
                 if log_udp.load(Ordering::Relaxed) {
                     ::log::PacketLogger::log_udp_packet(&logger, a,
-                        is_client, true, &::packets::UdpPacket(&p));
+                        is_client, true, &::packets::UdpPacket(&p, !is_client));
                 }
+
                 let logger = logger.clone();
                 codec.handle_udp_packet((a, p)).then(move |r| {
                     if let Err(e) = r {
                         warn!(logger, "Packet receiver errored"; "error" => ?e);
                     }
+                    // Ignore errors for one packet
                     Ok(())
                 })
-            }));
+            })
+            .select2(exit_recv)
+            .map_err(|_| ())
+            .map(|_| ()));
         Ok(Arc::new(Mutex::new(data)))
     }
 
     /// Add a new connection to this socket.
     pub fn add_connection(
         &mut self,
-        data_mut: Arc<Mutex<Self>>,
+        data_mut: Weak<Mutex<Self>>,
         mut data: CM::AssociatedData,
         addr: SocketAddr,
     ) -> CM::Key {
@@ -320,7 +369,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         self.connections_writer.refresh();
 
         // Start resender
-        let resend_fut = ::resend::ResendFuture::new(&self, data_mut, key.clone());
+        let resend_fut = ::resend::ResendFuture::new(&self, data_mut,
+            key.clone());
         ::tokio::spawn(resend_fut.map_err(move |e| {
             error!(logger, "Resend future failed"; "error" => ?e);
         }));
@@ -334,7 +384,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         let mut res = self.get_connection(key);
         if let Some(con) = &mut res {
             // Remove connection
-            self.connections_writer.clear(key.clone());
+            self.connections_writer.empty(key.clone());
             self.connections_writer.refresh();
 
             // Call listeners

@@ -33,6 +33,7 @@ impl PacketLogger {
         incoming: bool,
         packet: &UdpPacket,
     ) {
+        // TODO Put is_client into udp packet for decoding the header
         let logger = Self::prepare_logger(&logger.new(o!("addr" => addr)),
             is_client, incoming);
         debug!(logger, "UdpPacket"; "content" => ?packet);

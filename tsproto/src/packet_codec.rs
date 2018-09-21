@@ -19,6 +19,7 @@ use connection::{ConnectedParams, Connection};
 use connectionmanager::{ConnectionManager, Resender};
 use handler_data::{ConnectionValue, Data};
 use packets::*;
+use packets::Data as PData;
 
 /// Decodes incoming udp packets.
 ///
@@ -75,7 +76,7 @@ impl<CM: ConnectionManager + 'static>
             let log_packets = self.log_packets.load(Ordering::Relaxed);
             if self.is_client && self.connections.len() == 1 {
                 Self::connection_handle_udp_packet(
-                    self.logger.clone(), log_packets, self.is_client,
+                    logger, log_packets, self.is_client,
                     con, addr, udp_packet, header, pos).into_future()
             } else {
                 let is_client = self.is_client;
@@ -118,7 +119,7 @@ impl<CM: ConnectionManager + 'static>
         header: packets::Header,
         pos: usize,
     ) -> Result<()> {
-        let con2 = connection.clone();
+        let con2 = connection.downgrade();
         let mut con = connection.mutex.lock().unwrap();
         let con = &mut *con;
         let dec_data;
@@ -183,14 +184,14 @@ impl<CM: ConnectionManager + 'static>
                         {
                             ack = Some((
                                 PacketType::Ack,
-                                packets::Data::Ack(header.p_id),
+                                PData::Ack(header.p_id),
                             ));
                         } else if header.get_type()
                             == PacketType::CommandLow
                         {
                             ack = Some((
                                 PacketType::AckLow,
-                                packets::Data::AckLow(
+                                PData::AckLow(
                                     header.p_id,
                                 ),
                             ));
@@ -208,7 +209,7 @@ impl<CM: ConnectionManager + 'static>
                         if header.get_type() == PacketType::Ping {
                             ack = Some((
                                 PacketType::Pong,
-                                packets::Data::Pong(
+                                PData::Pong(
                                     header.p_id,
                                 ),
                             ));
@@ -217,13 +218,13 @@ impl<CM: ConnectionManager + 'static>
                         let id = id.wrapping_add(1);
                         params.incoming_p_ids[type_i] = (gen_id, id);
 
-                        let p_data = packets::Data::read(
+                        let p_data = PData::read(
                             &header,
                             &mut Cursor::new(&udp_packet),
                         )?;
                         match p_data {
-                            packets::Data::Ack(p_id) |
-                            packets::Data::AckLow(p_id) => {
+                            PData::Ack(p_id) |
+                            PData::AckLow(p_id) => {
                                 // Remove command packet from send queue if the fitting ack is received.
                                 let p_type = if header.get_type()
                                     == PacketType::Ack {
@@ -234,8 +235,8 @@ impl<CM: ConnectionManager + 'static>
                                 con.1.resender.ack_packet(p_type, p_id);
                                 return Ok(());
                             }
-                            packets::Data::VoiceS2C { .. } |
-                            packets::Data::VoiceWhisperS2C { .. } => {
+                            PData::VoiceS2C { .. } |
+                            PData::VoiceWhisperS2C { .. } => {
                                 // Seems to work better without assembling the first 3 voice packets
                                 // Use handle_voice_packet to assemble fragmented voice packets
                                 /*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
@@ -253,12 +254,12 @@ impl<CM: ConnectionManager + 'static>
                 if header.get_type() == PacketType::Command {
                     ack = Some((
                         PacketType::Ack,
-                        packets::Data::Ack(header.p_id),
+                        PData::Ack(header.p_id),
                     ));
                 } else if header.get_type() == PacketType::CommandLow {
                     ack = Some((
                         PacketType::AckLow,
-                        packets::Data::AckLow(header.p_id),
+                        PData::AckLow(header.p_id),
                     ));
                 }
                 Err(Error::NotInReceiveWindow {
@@ -278,11 +279,11 @@ impl<CM: ConnectionManager + 'static>
                 if header.get_type() == PacketType::Command {
                     ack = Some((
                         PacketType::Ack,
-                        packets::Data::Ack(header.p_id),
+                        PData::Ack(header.p_id),
                     ));
                 }
             }
-            let p_data = packets::Data::read(
+            let p_data = PData::read(
                 &header,
                 &mut Cursor::new(&*udp_packet),
             )?;
@@ -325,18 +326,17 @@ impl<CM: ConnectionManager + 'static>
         }
 
         let sink = match packet.data {
-            packets::Data::VoiceS2C { .. } |
-            packets::Data::VoiceWhisperS2C { .. } =>
+            PData::VoiceS2C { .. } |
+            PData::VoiceWhisperS2C { .. } =>
                 &mut con.1.audio_sink,
-            packets::Data::Ping { .. } => return Ok(()),
+            PData::Ping { .. } => return Ok(()),
             _ => {
                 // Send as command packet
                 &mut con.1.command_sink
             }
         };
         if let Err(e) = sink.unbounded_send(packet) {
-            error!(logger, "Failed to send audio packet to handler";
-                "error" => ?e);
+            error!(logger, "Failed to send packet to handler"; "error" => ?e);
         }
         Ok(())
     }
@@ -394,7 +394,7 @@ impl<CM: ConnectionManager + 'static>
                                 "string" => %String::from_utf8_lossy(&decompressed),
                             );
                         }*/
-                        let p_data = packets::Data::read(
+                        let p_data = PData::read(
                             &header,
                             &mut Cursor::new(decompressed.as_slice()),
                         )?;
@@ -430,7 +430,7 @@ impl<CM: ConnectionManager + 'static>
                     /*if header.get_compressed() {
                         debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
                     }*/
-                    let p_data = packets::Data::read(
+                    let p_data = PData::read(
                         &header,
                         &mut Cursor::new(decompressed.as_slice()),
                     )?;
@@ -481,7 +481,7 @@ impl<CM: ConnectionManager + 'static>
         logger: &slog::Logger,
         params: &mut ConnectedParams,
         header: &Header,
-        packet: packets::Data,
+        packet: PData,
     ) -> Vec<Packet> {
         let cmd_i = if header.get_type() == PacketType::Voice {
             0
@@ -491,8 +491,8 @@ impl<CM: ConnectionManager + 'static>
         let frag_queue = &mut params.voice_fragmented_queue[cmd_i];
 
         let (id, from_id, codec_type, voice_data) = match packet {
-            packets::Data::VoiceS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
-            packets::Data::VoiceWhisperS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
+            PData::VoiceS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
+            PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
             _ => unreachable!("handle_voice_packet did get an unknown voice packet"),
         };
 
@@ -510,17 +510,17 @@ impl<CM: ConnectionManager + 'static>
         if let Some(frags) = frag_queue.remove(&from_id) {
             // We got two packets
             let packet_data = if header.get_type() == PacketType::Voice {
-                packets::Data::VoiceS2C { id, from_id, codec_type, voice_data: frags }
+                PData::VoiceS2C { id, from_id, codec_type, voice_data: frags }
             } else {
-                packets::Data::VoiceWhisperS2C { id, from_id, codec_type, voice_data: frags }
+                PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data: frags }
             };
             res.push(Packet::new(header.clone(), packet_data));
         }
 
         let packet_data = if header.get_type() == PacketType::Voice {
-            packets::Data::VoiceS2C { id, from_id, codec_type, voice_data }
+            PData::VoiceS2C { id, from_id, codec_type, voice_data }
         } else {
-            packets::Data::VoiceWhisperS2C { id, from_id, codec_type, voice_data }
+            PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data }
         };
         res.push(Packet::new(header.clone(), packet_data));
         res
@@ -547,6 +547,14 @@ impl PacketCodecSender {
             || packet.header.get_type() == PacketType::CommandLow)
             && self.is_client;
 
+        // Change state on disconnect
+        if let PData::Command(cmd) = &packet.data {
+            if cmd.command == "clientdisconnect" {
+                con.resender.handle_event(
+                    ::connectionmanager::ResenderEvent::Disconnecting);
+            }
+        }
+
         // Get the connection parameters
         if let Some(params) = con.params.as_mut() {
             let p_type = packet.header.get_type();
@@ -562,7 +570,7 @@ impl PacketCodecSender {
                 && ((!self.is_client && p_id == 0)
                     || (self.is_client && p_id == 1 && {
                         // Test if it is a clientek packet
-                        if let ::packets::Data::Command(ref cmd) =
+                        if let PData::Command(ref cmd) =
                             packet.data {
                             cmd.command == "clientek"
                         } else {
@@ -578,11 +586,11 @@ impl PacketCodecSender {
             } else {
                 // Set the inner packet id for voice packets
                 match packet.data {
-                    ::packets::Data::VoiceC2S { ref mut id, .. }           |
-                    ::packets::Data::VoiceS2C { ref mut id, .. }           |
-                    ::packets::Data::VoiceWhisperC2S { ref mut id, .. }    |
-                    ::packets::Data::VoiceWhisperNewC2S { ref mut id, .. } |
-                    ::packets::Data::VoiceWhisperS2C { ref mut id, .. } => {
+                    PData::VoiceC2S { ref mut id, .. }           |
+                    PData::VoiceS2C { ref mut id, .. }           |
+                    PData::VoiceWhisperC2S { ref mut id, .. }    |
+                    PData::VoiceWhisperNewC2S { ref mut id, .. } |
+                    PData::VoiceWhisperS2C { ref mut id, .. } => {
                         *id = params.outgoing_p_ids[type_i].1;
                     }
                     _ => {}
@@ -664,10 +672,20 @@ impl PacketCodecSender {
                 p_data = algs::encrypt_fake(&mut header, &p_data)?;
             }
 
+            // Identify init packets by their number
+            let p_id = match packet.data {
+                PData::C2SInit(C2SInit::Init0 { .. }) => 0,
+                PData::C2SInit(C2SInit::Init2 { .. }) => 2,
+                PData::C2SInit(C2SInit::Init4 { .. }) => 4,
+                PData::S2CInit(S2CInit::Init1 { .. }) => 1,
+                PData::S2CInit(S2CInit::Init3 { .. }) => 3,
+                _ => header.p_id,
+            };
+
             let mut buf = Vec::new();
             header.write(&mut buf)?;
             buf.append(&mut p_data);
-            Ok(vec![(header.p_id, buf.into())])
+            Ok(vec![(p_id, buf.into())])
         }
     }
 }

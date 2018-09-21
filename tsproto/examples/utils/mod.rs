@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use {slog, slog_perf};
@@ -8,7 +9,6 @@ use tokio::timer::Delay;
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::client::ServerConnectionData;
-use tsproto::connectionmanager::{Resender, ResenderEvent};
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
@@ -20,15 +20,17 @@ pub struct SimplePacketHandler;
 impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
     fn new_connection<S1, S2>(
         &mut self,
-        con_val: &handler_data::ConnectionValue<T>,
+        _: &handler_data::ConnectionValue<T>,
         command_stream: S1,
         audio_stream: S2,
     ) where
         S1: Stream<Item=Packet, Error=Error> + Send + 'static,
         S2: Stream<Item=Packet, Error=Error> + Send + 'static,
     {
-        tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|_| ()));
-        tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(|_| ()));
+        tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e|
+            println!("Command stream exited with error ({:?})", e)));
+        tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(|e|
+            println!("Audio stream exited with error ({:?})", e)));
     }
 }
 
@@ -57,7 +59,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
     ).unwrap();
 
     // Set the data reference
-    let c2 = c.clone();
+    let c2 = Arc::downgrade(&c);
     c.try_lock().unwrap().packet_handler.complete(c2);
 
     c
@@ -68,7 +70,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     client: client::ClientDataM<PH>,
     server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error> {
-    client::connect(client.clone(), &mut *client.lock().unwrap(), server_addr)
+    client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
         .and_then(move |c| {
         // Wait some time
         // TODO Document in protocol paper
@@ -131,10 +133,6 @@ pub fn disconnect(con: client::ClientConVal)
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
 
-    {
-        let mut con = con.mutex.lock().unwrap();
-        con.1.resender.handle_event(ResenderEvent::Disconnecting);
-    }
     con.as_packet_sink()
         .send(packet)
         .and_then(move |_| {
