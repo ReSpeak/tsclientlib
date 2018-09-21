@@ -2,12 +2,13 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use std::mem;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::u16;
 
 use {evmap, tokio};
 use bytes::{Bytes, BytesMut};
-use futures::{future, Future, IntoFuture, Sink, stream, Stream};
+use futures::{future, Future, IntoFuture, Sink};
 use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog::Logger;
@@ -16,7 +17,7 @@ use {packets, Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN };
 use algorithms as algs;
 use connection::{ConnectedParams, Connection};
 use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data, PacketHandler};
+use handler_data::{ConnectionValue, Data};
 use packets::*;
 
 /// Decodes incoming udp packets.
@@ -26,6 +27,7 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
     connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
     is_client: bool,
     logger: Logger,
+    log_packets: Arc<AtomicBool>,
 
     /// The sink for `UdpPacket`s with no known connection.
     ///
@@ -43,6 +45,7 @@ impl<CM: ConnectionManager + 'static>
             connections: data.connections.clone(),
             is_client: data.is_client,
             logger: data.logger.clone(),
+            log_packets: data.log_config.log_packets.clone(),
             unknown_udp_packet_sink,
         }
     }
@@ -68,14 +71,18 @@ impl<CM: ConnectionManager + 'static>
             |vs| vs[0].clone()) {
             // If we are a client and have only a single connection, we will do the
             // work inside this future and not spawn a new one.
-            let logger = self.logger.clone();
+            let logger = self.logger.new(o!("addr" => addr));
+            let log_packets = self.log_packets.load(Ordering::Relaxed);
             if self.is_client && self.connections.len() == 1 {
-                Self::connection_handle_udp_packet(self.logger.clone(), con,
-                    addr, udp_packet, header, pos).into_future()
+                Self::connection_handle_udp_packet(
+                    self.logger.clone(), log_packets, self.is_client,
+                    con, addr, udp_packet, header, pos).into_future()
             } else {
+                let is_client = self.is_client;
                 tokio::spawn(future::lazy(move || {
                     if let Err(e) = Self::connection_handle_udp_packet(
-                        logger.clone(), con, addr, udp_packet, header, pos) {
+                        logger.clone(), log_packets, is_client,
+                        con, addr, udp_packet, header, pos) {
                         error!(logger, "Error handling udp packed"; "error" => ?e);
                     }
                     Ok(())
@@ -103,8 +110,10 @@ impl<CM: ConnectionManager + 'static>
     /// This part does the defragmentation, decryption and decompression.
     pub fn connection_handle_udp_packet(
         logger: Logger,
+        log_packets: bool,
+        is_client: bool,
         connection: ConnectionValue<CM::AssociatedData>,
-        addr: SocketAddr,
+        _: SocketAddr,
         udp_packet: BytesMut,
         header: packets::Header,
         pos: usize,
@@ -136,7 +145,7 @@ impl<CM: ConnectionManager + 'static>
                     // If it is the first ack packet of a
                     // client, try to fake decrypt it.
                     let decrypted = if header.get_type() == PacketType::Ack
-                        && header.p_id == 0
+                        && header.p_id == 0 && is_client
                     {
                         if let Ok(dec) = algs::decrypt_fake(
                             &header,
@@ -297,6 +306,10 @@ impl<CM: ConnectionManager + 'static>
             // guaranteed to be in the right order now, because
             // we hold a lock on the connection.
             for p in packets {
+                if log_packets {
+                    ::log::PacketLogger::log_packet(&logger, is_client, true,
+                        &p);
+                }
                 // Send to packet handler
                 if let Err(e) = con.1.command_sink.unbounded_send(p) {
                     error!(logger, "Failed to send command packet to \
@@ -307,6 +320,10 @@ impl<CM: ConnectionManager + 'static>
         }
 
         let packet = packet?;
+        if log_packets {
+            ::log::PacketLogger::log_packet(&logger, is_client, true, &packet);
+        }
+
         let sink = match packet.data {
             packets::Data::VoiceS2C { .. } |
             packets::Data::VoiceWhisperS2C { .. } =>

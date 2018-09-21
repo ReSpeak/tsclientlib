@@ -104,7 +104,7 @@ impl<PH: PacketHandler<T>, T: Send + 'static> ConnectionManager for SocketConnec
     type AssociatedData = T;
     type PacketHandler = PH;
 
-    fn new_connection_key(&mut self, data: &mut Self::AssociatedData,
+    fn new_connection_key(&mut self, _: &mut Self::AssociatedData,
         con: &mut Connection) -> Self::Key {
         con.address
     }

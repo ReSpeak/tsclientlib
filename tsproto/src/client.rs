@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use {base64, tokio};
 use chrono::Utc;
-use futures::{self, future, Future, Sink, Stream};
+use futures::{future, Future, Sink, Stream};
 use futures::sync::mpsc;
 #[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
@@ -15,7 +15,7 @@ use num::bigint::BigUint;
 use rand::{self, Rng};
 use slog::Logger;
 
-use {packets, BoxFuture, Error, Result};
+use {packets, Error, Result};
 use algorithms as algs;
 use commands::Command;
 use connection::*;
@@ -207,7 +207,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
 
             let con_val = con_val2.clone();
             // Get private key
-            let data2 = data.clone();
             let (key, logger) = {
                 let d = data.lock().unwrap();
                 (d.private_key.clone(), d.logger.clone())

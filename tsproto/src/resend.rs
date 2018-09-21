@@ -12,12 +12,9 @@ use futures::{self, Async, Future, Sink, Stream};
 use futures::sync::mpsc;
 use futures::task::{self, Task};
 use slog::Logger;
-use tokio;
 use tokio::timer::{delay_queue, DelayQueue, Delay};
-use tokio::util::FutureExt;
 
 use {Error, Result};
-use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender, ResenderEvent};
 use handler_data::{ConnectionValue, Data, DataM};
 use packets::*;

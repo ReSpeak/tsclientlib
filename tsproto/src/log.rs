@@ -23,7 +23,7 @@ impl PacketLogger {
             "OUT"
         };
         let to_s = if is_client { "S" } else { "C" };
-        logger.new(o!("dir" => in_s, "to" => to_s))
+        logger.new(o!("to" => to_s, "dir" => in_s))
     }
 
     pub fn log_udp_packet(

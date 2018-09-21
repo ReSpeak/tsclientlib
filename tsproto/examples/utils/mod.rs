@@ -2,14 +2,13 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use {slog, slog_perf};
-use futures::{future, Future, Sink, Stream};
+use futures::{Future, Sink, Stream};
 use tokio;
-use tokio::util::FutureExt;
 use tokio::timer::Delay;
 use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::client::ServerConnectionData;
-use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
+use tsproto::connectionmanager::{Resender, ResenderEvent};
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
@@ -45,6 +44,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
         k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
         DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
+    let log_config = handler_data::LogConfig::new(log, log);
     let c = client::ClientData::new(
         local_address,
         private_key,
@@ -53,6 +53,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
         client::DefaultPacketHandler::new(packet_handler),
         connectionmanager::SocketConnectionManager::new(),
         logger,
+        log_config,
     ).unwrap();
 
     // Set the data reference
@@ -66,8 +67,8 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     logger: slog::Logger,
     client: client::ClientDataM<PH>,
     server_addr: SocketAddr,
-) -> Box<Future<Item = client::ClientConVal, Error = Error> + Send> {
-    Box::new(client::connect(client.clone(), &mut *client.lock().unwrap(), server_addr)
+) -> impl Future<Item = client::ClientConVal, Error = Error> {
+    client::connect(client.clone(), &mut *client.lock().unwrap(), server_addr)
         .and_then(move |c| {
         // Wait some time
         // TODO Document in protocol paper
@@ -116,13 +117,11 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
         con.as_packet_sink().send(clientinit_packet)
             .and_then(move |_| client::wait_until_connected(&con))
             .map(move |_| con2)
-    }))
+    })
 }
 
-pub fn disconnect(
-    con: client::ClientConVal,
-    server_addr: SocketAddr,
-) -> Box<Future<Item = (), Error = Error> + Send> {
+pub fn disconnect(con: client::ClientConVal)
+    -> impl Future<Item = (), Error = Error> {
     let header = Header::new(PacketType::Command);
     let mut command = commands::Command::new("clientdisconnect");
 
@@ -136,7 +135,7 @@ pub fn disconnect(
         let mut con = con.mutex.lock().unwrap();
         con.1.resender.handle_event(ResenderEvent::Disconnecting);
     }
-    Box::new(con.as_packet_sink()
+    con.as_packet_sink()
         .send(packet)
         .and_then(move |_| {
             client::wait_for_state(&con, |state| {
@@ -146,5 +145,5 @@ pub fn disconnect(
                     false
                 }
             })
-        }))
+        })
 }

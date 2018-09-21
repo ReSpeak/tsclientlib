@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
 use std::u16;
 
 use bytes::Bytes;
-use futures::{self, AsyncSink, Future, Sink, Stream};
+use futures::{self, AsyncSink, Sink};
 use futures::sync::mpsc;
 use num::ToPrimitive;
 use slog;

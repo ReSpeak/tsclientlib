@@ -1,7 +1,6 @@
 extern crate base64;
 extern crate failure;
 extern crate futures;
-#[macro_use]
 extern crate gstreamer as gst;
 extern crate gstreamer_app as gst_app;
 extern crate gstreamer_audio as gst_audio;
@@ -16,7 +15,6 @@ extern crate tokio;
 extern crate tsproto;
 
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use futures::{future, Future, Sink};
@@ -24,7 +22,6 @@ use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio::timer::Delay;
-use tokio::util::FutureExt;
 use tsproto::*;
 use tsproto::packets::*;
 
@@ -87,8 +84,8 @@ fn main() {
                     })
                     .and_then(move |_| {
                         // Disconnect
-                        disconnect(con,
-                            args.address).map_err(|e| panic!("Failed to send packet ({:?})", e))
+                        disconnect(con).map_err(|e| panic!("Failed to \
+                            disconnect ({:?})", e))
                     })
                     .and_then(move |_| {
                         info!(logger, "Disconnected");

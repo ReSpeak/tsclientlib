@@ -2,7 +2,6 @@ use std::io::Cursor;
 use std::net::SocketAddr;
 
 use {gst, gst_app};
-use futures::Stream;
 use gst::prelude::*;
 use slog::Logger;
 use tsproto::*;
@@ -35,13 +34,13 @@ impl IncommingVoiceHandler {
     fn handle_packet(&mut self, _addr: SocketAddr, packet: &Packet)
         -> Result<(), ::failure::Error> {
         // Check if we got a voice packet
-        if let packets::Data::VoiceS2C { ref voice_data, id, .. } = packet.data {
+        if let packets::Data::VoiceS2C { ref voice_data, .. } = packet.data {
             let mut buffer = gst::Buffer::with_size(voice_data.len() + 5).unwrap();
 
             {
                 let buffer = buffer.get_mut().unwrap();
 
-                let clock = self.appsrc.get_clock().unwrap();
+                //let clock = self.appsrc.get_clock().unwrap();
                 //println!("Push buffer {} at {}", id, clock.get_time() - self.appsrc.get_base_time());
 
                 let mut data = buffer.map_writable().unwrap();
@@ -56,4 +55,4 @@ impl IncommingVoiceHandler {
         Ok(())
     }
 }
-// TODO use
+// TODO

@@ -1,10 +1,10 @@
-use std::{mem, ptr};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use {evmap, slog, slog_async, slog_term, tokio};
 use bytes::{Bytes, BytesMut};
-use futures::{future, Future, Sink, stream, Stream};
+use futures::{Future, Sink, stream, Stream};
 use futures::sync::mpsc;
 use slog::Drain;
 use tokio::codec::BytesCodec;
@@ -62,22 +62,39 @@ pub trait PacketHandler<T: 'static>: Send {
         S2: Stream<Item=Packet, Error=Error> + Send + 'static;
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct LogConfig {
+    pub log_packets: Arc<AtomicBool>,
+    pub log_udp_packets: Arc<AtomicBool>,
+}
+
+impl LogConfig {
+    pub fn new(log_packets: bool, log_udp_packets: bool) -> Self {
+        Self {
+            log_packets: Arc::new(AtomicBool::new(log_packets)),
+            log_udp_packets: Arc::new(AtomicBool::new(log_udp_packets)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ConnectionValue<T: 'static> {
     pub mutex: Arc<Mutex<(T, Connection)>>,
+    pub log_packets: Arc<AtomicBool>,
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
-    pub fn new(data: T, con: Connection) -> Self {
-        Self { mutex: Arc::new(Mutex::new((data, con))) }
+    pub fn new(data: T, con: Connection, log_packets: Arc<AtomicBool>) -> Self {
+        Self { mutex: Arc::new(Mutex::new((data, con))), log_packets }
     }
 
     fn encode_packet(&self, packet: Packet)
         -> Box<Stream<Item=(PacketType, u16, Bytes), Error=Error> + Send> {
-        let sink = self.as_udp_packet_sink();
         let mut con = self.mutex.lock().unwrap();
-        ::log::PacketLogger::log_packet(&con.1.logger,
-            con.1.is_client, false, &packet);
+        if self.log_packets.load(Ordering::Relaxed) {
+            ::log::PacketLogger::log_packet(&con.1.logger,
+                con.1.is_client, false, &packet);
+        }
 
         let codec = PacketCodecSender::new(con.1.is_client, con.1.logger.clone());
         let p_type = packet.header.get_type();
@@ -115,16 +132,20 @@ impl<T: 'static> Eq for ConnectionValue<T> {}
 
 impl<T: 'static> Clone for ConnectionValue<T> {
     fn clone(&self) -> Self {
-        Self { mutex: self.mutex.clone() }
+        Self { mutex: self.mutex.clone(), log_packets: self.log_packets.clone() }
     }
 }
 
 impl<T: 'static> evmap::ShallowCopy for ConnectionValue<T> {
     unsafe fn shallow_copy(&mut self) -> Self {
+        Self {
+            mutex: Arc::from_raw(&*self.mutex),
+            log_packets: Arc::from_raw(&*self.log_packets),
+        }
         // Try to copy without generating memory leaks
-        let mut r: Self = mem::uninitialized();
-        ptr::copy_nonoverlapping(self, &mut r, 1);
-        r
+        //let mut r: Self = mem::uninitialized();
+        //ptr::copy_nonoverlapping(self, &mut r, 1);
+        //r
     }
 }
 
@@ -144,6 +165,7 @@ pub struct Data<CM: ConnectionManager + 'static> {
     /// The private key of this instance.
     pub private_key: EccKeyPrivP256,
     pub logger: slog::Logger,
+    pub log_config: LogConfig,
 
     /// The sink of udp packets.
     pub udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
@@ -180,6 +202,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         packet_handler: CM::PacketHandler,
         connection_manager: CM,
         logger: L,
+        log_config: LogConfig,
     ) -> Result<Arc<Mutex<Self>>> {
         let logger = logger.into().unwrap_or_else(|| {
             let decorator = slog_term::TermDecorator::new().build();
@@ -205,6 +228,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             local_addr,
             private_key,
             logger,
+            log_config,
             udp_packet_sink,
             resend_config: Default::default(),
             connections,
@@ -216,9 +240,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
         let logger = data.logger.clone();
         let is_client = data.is_client;
+        let log_udp = data.log_config.log_udp_packets.clone();
         tokio::spawn(udp_packet_sink_sender.map(move |(addr, p)| {
-                ::log::PacketLogger::log_udp_packet(&logger, addr, is_client,
-                    false, &::packets::UdpPacket(&p));
+                if log_udp.load(Ordering::Relaxed) {
+                    ::log::PacketLogger::log_udp_packet(&logger, addr, is_client,
+                        false, &::packets::UdpPacket(&p));
+                }
                 (p, addr)
             })
             .forward(sink.sink_map_err(move |e|
@@ -228,11 +255,16 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         // Handle incoming packets
         let logger = data.logger.clone();
         let logger2 = logger.clone();
+        let log_udp = data.log_config.log_udp_packets.clone();
         let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
         tokio::spawn(stream
             .map_err(move |e| error!(logger2, "Packet stream errored";
                 "error" => ?e))
             .for_each(move |(p, a)| {
+                if log_udp.load(Ordering::Relaxed) {
+                    ::log::PacketLogger::log_udp_packet(&logger, a,
+                        is_client, true, &::packets::UdpPacket(&p));
+                }
                 let logger = logger.clone();
                 codec.handle_udp_packet((a, p)).then(move |r| {
                     if let Err(e) = r {
@@ -275,7 +307,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             }
         }
 
-        let con_val = ConnectionValue::new(data, con);
+        let con_val = ConnectionValue::new(data, con,
+            self.log_config.log_packets.clone());
         self.packet_handler.new_connection(
             &con_val,
             command_recv.map_err(|_| format_err!("Failed to receive").into()),
