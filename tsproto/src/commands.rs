@@ -158,7 +158,7 @@ impl Command {
                 '\\' => write!(w, "\\\\"),
                 '\t' => write!(w, "\\t"),
                 '\r' => write!(w, "\\r"),
-                '\n' => write!(w, "\\n"),
+                '\n' => writeln!(w),
                 '|' => write!(w, "\\p"),
                 ' ' => write!(w, "\\s"),
                 '/' => write!(w, "\\/"),

@@ -228,7 +228,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
             let mut ignore_packet = true;
             let mut is_end = false;
             let handle_res = Self::handle_packet(
-                con_val3.clone(),
+                &con_val3,
                 &mut *con,
                 &p,
                 &mut ignore_packet,
@@ -255,7 +255,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
                             // Notify state changed listeners
                             let mut i = 0;
                             while i < state.state_change_listener.len() {
-                                if state.state_change_listener.get_mut(i).unwrap()(&state.state) {
+                                if (&mut state.state_change_listener[i])(&state.state) {
                                     state.state_change_listener.remove(i);
                                 } else {
                                     i += 1;
@@ -271,7 +271,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
                     // Notify state changed listeners
                     let mut i = 0;
                     while i < state.state_change_listener.len() {
-                        if state.state_change_listener.get_mut(i).unwrap()(&state.state) {
+                        if (&mut state.state_change_listener[i])(&state.state) {
                             state.state_change_listener.remove(i);
                         } else {
                             i += 1;
@@ -318,7 +318,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
     }
 
     fn handle_packet(
-        con_value: ConnectionValue<ServerConnectionData>,
+        con_value: &ConnectionValue<ServerConnectionData>,
         (state, con): &mut (ServerConnectionData, Connection),
         packet: &Packet,
         ignore_packet: &mut bool,
@@ -631,23 +631,22 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                         }
                     } else if cmd.command == "notifyplugincmd"
                         && cmd.has_arg("name") && cmd.has_arg("data")
-                        && cmd.args["name"] == "cliententerview" {
-                        if cmd.args["data"] == "version" {
-                            let mut command = Command::new("plugincmd");
-                            command.push("name", "cliententerview");
-                            command.push("data", format!("{},{}-{}",
-                                con.params.as_ref().unwrap().c_id,
-                                env!("CARGO_PKG_NAME"),
-                                env!("CARGO_PKG_VERSION"),
-                            ));
-                            command.push("targetmode", "1");
+                        && cmd.args["name"] == "cliententerview"
+                        && cmd.args["data"] == "version "{
+                        let mut command = Command::new("plugincmd");
+                        command.push("name", "cliententerview");
+                        command.push("data", format!("{},{}-{}",
+                            con.params.as_ref().unwrap().c_id,
+                            env!("CARGO_PKG_NAME"),
+                            env!("CARGO_PKG_VERSION"),
+                        ));
+                        command.push("targetmode", "1");
 
-                            let header = Header::new(PacketType::Command);
+                        let header = Header::new(PacketType::Command);
 
-                            let p = Some(Packet::new(header,
-                                packets::Data::Command(command)));
-                            res = Some((ServerConnectionState::Connected, p));
-                        }
+                        let p = Some(Packet::new(header,
+                            packets::Data::Command(command)));
+                        res = Some((ServerConnectionState::Connected, p));
                     }
                 }
                 res

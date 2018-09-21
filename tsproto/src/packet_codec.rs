@@ -76,14 +76,14 @@ impl<CM: ConnectionManager + 'static>
             let log_packets = self.log_packets.load(Ordering::Relaxed);
             if self.is_client && self.connections.len() == 1 {
                 Self::connection_handle_udp_packet(
-                    logger, log_packets, self.is_client,
-                    con, addr, udp_packet, header, pos).into_future()
+                    &logger, log_packets, self.is_client,
+                    &con, addr, &udp_packet, header, pos).into_future()
             } else {
                 let is_client = self.is_client;
                 tokio::spawn(future::lazy(move || {
                     if let Err(e) = Self::connection_handle_udp_packet(
-                        logger.clone(), log_packets, is_client,
-                        con, addr, udp_packet, header, pos) {
+                        &logger, log_packets, is_client,
+                        &con, addr, &udp_packet, header, pos) {
                         error!(logger, "Error handling udp packed"; "error" => ?e);
                     }
                     Ok(())
@@ -110,12 +110,12 @@ impl<CM: ConnectionManager + 'static>
     ///
     /// This part does the defragmentation, decryption and decompression.
     pub fn connection_handle_udp_packet(
-        logger: Logger,
+        logger: &Logger,
         log_packets: bool,
         is_client: bool,
-        connection: ConnectionValue<CM::AssociatedData>,
+        connection: &ConnectionValue<CM::AssociatedData>,
         _: SocketAddr,
-        udp_packet: BytesMut,
+        udp_packet: &BytesMut,
         header: packets::Header,
         pos: usize,
     ) -> Result<()> {
@@ -197,7 +197,7 @@ impl<CM: ConnectionManager + 'static>
                             ));
                         }
                         packets = Some(Self::handle_command_packet(
-                            &logger,
+                            logger,
                             params,
                             header,
                             udp_packet,
@@ -272,7 +272,7 @@ impl<CM: ConnectionManager + 'static>
             res
         } else {
             // Try to fake decrypt the packet
-            if let Ok(dec) = algs::decrypt_fake(&header, &mut udp_packet) {
+            if let Ok(dec) = algs::decrypt_fake(&header, &udp_packet) {
                 dec_data = dec;
                 udp_packet = &dec_data;
                 // Send ack

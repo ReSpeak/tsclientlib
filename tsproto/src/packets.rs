@@ -27,11 +27,11 @@ pub enum PacketType {
 }
 
 impl PacketType {
-    pub fn is_command(&self) -> bool {
-        *self == PacketType::Command || *self == PacketType::CommandLow
+    pub fn is_command(self) -> bool {
+        self == PacketType::Command || self == PacketType::CommandLow
     }
-    pub fn is_voice(&self) -> bool {
-        *self == PacketType::Voice || *self == PacketType::VoiceWhisper
+    pub fn is_voice(self) -> bool {
+        self == PacketType::Voice || self == PacketType::VoiceWhisper
     }
 }
 
@@ -60,9 +60,8 @@ impl<'a> fmt::Debug for UdpPacket<'a> {
         write!(f, "UdpPacket {{ header: ")?;
 
         // Parse header
-        match Header::read(&self.1, &mut Cursor::new(self.0)) {
-            Ok(h) => h.fmt(f)?,
-            Err(_) => {} // Give up
+        if let Ok(h) = Header::read(&self.1, &mut Cursor::new(self.0)) {
+            h.fmt(f)?;
         }
 
         write!(f, ", raw: {:?} }}", HexSlice(self.0))?;
