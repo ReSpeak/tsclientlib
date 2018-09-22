@@ -283,6 +283,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         };
 
         let logger = data.logger.clone();
+        let logger3 = logger.clone();
         let is_client = data.is_client;
         let log_udp = data.log_config.log_udp_packets.clone();
         tokio::spawn(udp_packet_sink_sender.map(move |(addr, p)| {
@@ -294,11 +295,14 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             })
             .forward(sink.sink_map_err(move |e|
                 error!(logger2, "Failed to send udp packet"; "error" => ?e))
-            ).map(|_| ()));
+            //).map(|_| ()));
+            // TODO Sometimes does not quit
+            ).map(move |_| info!(logger3, "A exited")));
 
         // Handle incoming packets
         let logger = data.logger.clone();
         let logger2 = logger.clone();
+        let logger3 = logger.clone();
         let log_udp = data.log_config.log_udp_packets.clone();
         let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
         tokio::spawn(stream
@@ -321,7 +325,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             })
             .select2(exit_recv)
             .map_err(|_| ())
-            .map(|_| ()));
+            .map(move |_| info!(logger3, "B exited")));
         Ok(Arc::new(Mutex::new(data)))
     }
 

@@ -286,9 +286,9 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerCon
                 let d = if let Some(d) = data.upgrade() {
                     d
                 } else {
-                    // Connection doesn't exist anymore
-                    return Err(format_err!("Data does not exist while \
-                        handling packet").into());
+                    // Connection doesn't exist anymore, ignore it, the
+                    // connection is already gone.
+                    return Ok(None);
                 };
                 d.lock().unwrap().remove_connection(&addr);
             }
@@ -626,6 +626,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IP
                         if let Some(ref mut params) = con.params {
                             if cmd.args["clid"].parse() == Ok(params.c_id) {
                                 *is_end = true;
+                                // TODO Wait with the disconnect until we sent the ack
                                 res = Some((ServerConnectionState::Disconnected, None));
                             }
                         }
