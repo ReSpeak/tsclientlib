@@ -39,7 +39,8 @@ struct Args {
     #[structopt(long = "local-address", default_value = "0.0.0.0:0",
                 help = "The listening address of the client")]
     local_address: SocketAddr,
-    #[structopt(short = "v", long = "verbose", help = "Log packet content.")]
+    #[structopt(short = "v", long = "verbose",
+                help = "Display the content of all packets")]
     verbose: bool,
 }
 

@@ -1075,7 +1075,7 @@ impl Field {
             }
             ElementType::Integer(_) => {
                 if data_val == "0" {
-                    writeln!(w, "write!(f, \"0\")")?;
+                    write!(w, "write!(f, \"0\")")?;
                 } else {
                     writeln!(
                         w,
@@ -1083,7 +1083,7 @@ impl Field {
                         data_val
                     )?;
                     writeln!(w, "\twrite!(f, \"{{:#x}}\", {})", data_val)?;
-                    writeln!(w, "}}")?;
+                    write!(w, "}}")?;
                 }
             }
             ElementType::Array(_) => {
@@ -1100,7 +1100,7 @@ impl Field {
         if self.optional {
             writeln!(
                 w,
-                ";\twrite!(f, \")\")?;\n}} else {{\n\twrite!(f, \
+                ";\n\twrite!(f, \")\")?;\n}} else {{\n\twrite!(f, \
                  \"None\")?;\n}}"
             )?;
         }
