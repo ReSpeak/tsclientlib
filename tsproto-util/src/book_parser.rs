@@ -15,17 +15,7 @@ impl Declaration for BookDeclarations {
     fn get_filename() -> &'static str { "BookDeclarations.toml" }
 
     fn parse(s: &str, (): Self::Dep) -> Self {
-        let mut decls: Self = ::toml::from_str(s).unwrap();
-
-        // Add connection as id
-        for struc in &mut decls.structs {
-            struc.id.insert(0, Id {
-			    struct_name: "Connection".to_string(),
-			    prop: "Id".to_string(),
-		    });
-        }
-
-        decls
+        ::toml::from_str(s).unwrap()
     }
 }
 
@@ -113,7 +103,7 @@ impl Property {
             res = format!("Vec<{}>", res);
         } else if self.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
             let key = self.key.as_ref().expect("Specified map without key");
-            res = format!("Map<{}, {}>", key, res);
+            res = format!("HashMap<{}, {}>", key, res);
         }
         if self.opt {
             res = format!("Option<{}>", res);

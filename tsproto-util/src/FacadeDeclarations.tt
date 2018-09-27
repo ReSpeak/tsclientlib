@@ -1,48 +1,5 @@
 <#@ template cleanws="true" #>
-<# for struc in &self.0.structs { #>
-<#= doc_comment(&struc.doc) #>
-pub struct <#= struc.name #><'a> {
-    cm: &'a ConnectionManager,
-<# for i in &struc.id {
-	let p = i.find_property(&self.0.structs); #>
-    <#= PropId::from(i).get_attr_name(struc) #>: <#= p.get_rust_type() #>,
-<# } #>
-}
-
-<#= doc_comment(&struc.doc) #>
-pub struct <#= struc.name #>Mut<'a> {
-    cm: &'a mut ConnectionManager,
-<# for i in &struc.id {
-	let p = i.find_property(&self.0.structs); #>
-    <#= PropId::from(i).get_attr_name(struc) #>: <#= p.get_rust_type() #>,
-<# } #>
-}
 <#
-
-fn create_id_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
-    struc: &Struct, id: &Id) -> ::std::fmt::Result {
-    let p = id.find_property(structs);
-    let pi = PropId::from(id);
-    let name = pi.get_attr_name(struc); #>
-    pub fn get_<#= name #>(&self) -> <#= if p.get_rust_type() == "String" { String::from("&str") } else { get_return_type(&p.get_rust_type()) } #> {
-    <# if p.get_rust_type() == "Option<String>" { #>
-        self.<#= name #>.as_ref().map(|x| x.as_str())
-    <# } else if p.get_rust_type().starts_with("Option<") {
-           if is_ref_type(&p.get_rust_type()[7..p.get_rust_type().len() - 1]) { #>
-        self.<#= name #>.as_ref()
-        <# } else { #>
-        self.<#= name #>
-        <# }
-       } else if is_ref_type(&p.get_rust_type()) { #>
-        &self.<#= name #>
-    <# } else { #>
-        self.<#= name #>
-    <# } #>
-    }
-<#
-    Ok(())
-}
-
 fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
     struc: &Struct, p: &Property, ids: &[Id]) -> ::std::fmt::Result {
     let pi = PropId::from(p);
@@ -79,44 +36,35 @@ fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
     Ok(())
 }
 
-#>
 
-impl<'a> <#= struc.name #><'a> {
-<#
-    // Ids
-    for p in &struc.id {
-        create_id_getter(f, &self.0.structs, struc, p)?;
-    }
-
-    // Normal properties
-    // TODO Ids do not work, nested structs also
-    for p in struc.properties.iter().filter(|p| p.get_get(struc)
-        && struc.id.iter().filter(|i| i.prop == p.name).next().is_none()
-        && !p.name.ends_with("Data")
-        && p.name != "Server"
-        && p.name != "OwnClient"
-        && p.modifier.is_none()) {
-        create_normal_getter(f, &self.0.structs, struc, p, &struc.id)?;
-    }
 #>
+<# for struc in &self.0.structs { #>
+<#= doc_comment(&struc.doc) #>
+pub struct <#= struc.name #>Mut<'a> {
+    pub(crate) connection: InnerConnection,
+    pub(crate) inner: &'a <#= struc.name #>,
+}
+
+impl<'a> Deref for <#= struc.name #>Mut<'a> {
+    type Target = <#= struc.name #>;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner
+    }
 }
 
 impl<'a> <#= struc.name #>Mut<'a> {
 <#
-    // Ids
-    for p in &struc.id {
-        create_id_getter(f, &self.0.structs, struc, p)?;
-    }
-
     // Normal properties
-    for p in struc.properties.iter().filter(|p| p.get_get(struc)
+    // TODO Implement get_mut_xxx for nested structs
+    /*for p in struc.properties.iter().filter(|p| p.get_get(struc)
         && struc.id.iter().filter(|i| i.prop == p.name).next().is_none()
         && !p.name.ends_with("Data")
         && p.name != "Server"
         && p.name != "OwnClient"
         && p.modifier.is_none()) {
         create_normal_getter(f, &self.0.structs, struc, p, &struc.id)?;
-    }
+    }*/
 #>
 }
 

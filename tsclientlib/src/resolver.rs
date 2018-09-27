@@ -12,9 +12,9 @@ use futures::sync::oneshot;
 use rand::{thread_rng, Rng};
 use reqwest;
 use slog::Logger;
-use tokio_core::net::TcpStream;
-use tokio_core::reactor::Handle;
-use tokio_io::io;
+use tokio;
+use tokio::io;
+use tokio::net::TcpStream;
 use trust_dns_resolver::{AsyncResolver, Name};
 
 use {Error, Result};
@@ -95,7 +95,7 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 /// If a port is given with `:port`, it overwrites the automatically determined
 /// port. IPv6 addresses are put in square brackets when a port is present:
 /// `[::1]:9987`
-pub fn resolve(logger: &Logger, handle: Handle, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
+pub fn resolve(logger: &Logger, address: &str) -> impl Stream<Item = SocketAddr, Error = Error> {
 	let logger = logger.new(o!("module" => "resolver"));
 	debug!(logger, "Starting resolve"; "address" => address);
 	let addr;
@@ -109,7 +109,7 @@ pub fn resolve(logger: &Logger, handle: Handle, address: &str) -> impl Stream<It
 			addr = a.to_string();
 			port = p;
 			if let Some(port) = port {
-				debug!(logger2, "Found port"; "port" => port);
+				debug!(logger, "Found port"; "port" => port);
 			}
 		}
 		Err(res) => return Box::new(stream::once(Err(res))),
@@ -121,7 +121,8 @@ pub fn resolve(logger: &Logger, handle: Handle, address: &str) -> impl Stream<It
 	let nickname_res = (move || -> Box<Stream<Item=_, Error=_>> {
 		let addr = address;
 		if !addr.contains('.') && addr != "localhost" {
-			debug!(logger2, "Resolving nickname"; "address" => addr);
+			let addr2 = addr.clone();
+			debug!(logger2, "Resolving nickname"; "address" => addr2);
 			// Could be a server nickname
 			Box::new(resolve_nickname(addr).map(move |mut addr| {
 				if let Some(port) = p {
@@ -138,7 +139,7 @@ pub fn resolve(logger: &Logger, handle: Handle, address: &str) -> impl Stream<It
 		Ok(r) => r,
 		Err(e) => return Box::new(stream::once(Err(e.into()))),
 	};
-	handle.spawn(background);
+	tokio::spawn(background);
 	let resolve = resolver.clone();
 	let address = addr.clone();
 	let srv_res = stream::futures_ordered(Some(future::lazy(move || -> Result<_> {
@@ -276,7 +277,7 @@ pub fn resolve_nickname(nickname: String) -> impl Stream<Item = SocketAddr, Erro
 }
 
 pub fn resolve_tsdns(server: SocketAddr, addr: String) -> impl Stream<Item = SocketAddr, Error = Error> {
-	stream::futures_ordered(Some(TcpStream::connect2(&server)
+	stream::futures_ordered(Some(TcpStream::connect(&server)
 		.and_then(move |tcp| io::write_all(tcp, addr))
 		.and_then(|(tcp, _)| io::read_to_end(tcp, Vec::new()))
 		.from_err::<Error>()
