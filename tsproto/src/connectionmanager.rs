@@ -50,16 +50,16 @@ pub enum ResenderEvent {
 /// sink, so it is possible to put two packets into the sink while no ack has
 /// been received.
 ///
-/// [`Command`]:
-/// [`CommandLow`]:
+/// [`Command`]: ../commands/struct.Command.html
+/// [`CommandLow`]: ../commands/struct.CommandLow.html
 pub trait Resender: Sink<SinkItem = (PacketType, u16, Bytes),
     SinkError = Error> {
     /// Called for a received ack packet.
     ///
     /// The packet type must be [`Command`] or [`CommandLow`].
     ///
-    /// [`Command`]:
-    /// [`CommandLow`]:
+    /// [`Command`]: ../commands/struct.Command.html
+    /// [`CommandLow`]: ../commands/struct.CommandLow.html
     fn ack_packet(&mut self, p_type: PacketType, p_id: u16);
 
     /// The resender can block outgoing voice packets.

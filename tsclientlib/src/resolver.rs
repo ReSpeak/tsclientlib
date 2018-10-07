@@ -4,6 +4,7 @@
 
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::{self, FromStr};
+use std::time::Duration;
 use std::thread;
 
 use futures::{Async, future, Future, Poll, stream, Stream};
@@ -14,6 +15,7 @@ use slog::Logger;
 use tokio;
 use tokio::io;
 use tokio::net::TcpStream;
+use tokio::util::StreamExt;
 use trust_dns_resolver::{AsyncResolver, Name};
 
 use {Error, Result};
@@ -203,10 +205,10 @@ pub fn resolve(logger: &Logger, address: &str) -> Box<Stream<Item = SocketAddr, 
 		Box::new(last_res),
 	];
 
-	Box::new(StreamCombiner::new(streams))
-	// TODO timeout returns error on stream
-		//.select2(Timeout::new(Duration::from_secs(TIMEOUT_SECONDS), &handle)
-			//.expect("Failed to create Timeout"))
+	Box::new(StreamCombiner::new(streams)
+		.timeout(Duration::from_secs(TIMEOUT_SECONDS))
+		.map_err(|e| e.into_inner().unwrap_or_else(||
+			format_err!("Resolve timed out").into())))
 }
 
 fn parse_ip(address: &str) -> Result<ParseIpResult> {

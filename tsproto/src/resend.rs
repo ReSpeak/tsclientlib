@@ -81,7 +81,7 @@ impl Hash for SendRecord {
 
 /// An implementation of a [`Resender`] that is provided by this library.
 ///
-/// [`Resender`]:
+/// [`Resender`]: ../connectionmanager/trait.Resender.html
 #[derive(Debug)]
 pub struct DefaultResender {
     logger: Logger,
@@ -100,10 +100,12 @@ pub struct DefaultResender {
     /// when an element is removed from the queue.
     resender_task: Vec<Task>,
 
-    /// The task of the [`DefaultResenderFuture`]
+    /// The task of the [`ResendFuture`]
     ///
     /// It should be notified when a new packet is inserted into the queue or
     /// the connection gets dropped.
+    ///
+    /// [`ResendFuture`]: struct.ResendFuture.html
     resender_future_task: Option<Task>,
 }
 
@@ -524,18 +526,18 @@ pub struct ResendConfig {
     pub connecting_interval: Duration,
     /// Timeout to give up sending the first packet and close the connection.
     pub connecting_timeout: Duration,
-    /// Swith to [`Stalling`] when no awaited response was received after this
+    /// Swith to `Stalling` when no awaited response was received after this
     /// duration (added to the current estimated response time).
     pub normal_timeout: Duration,
-    /// Interval to resend the first packet in [`Stalling`] mode.
+    /// Interval to resend the first packet in `Stalling` mode.
     pub stalling_interval: Duration,
-    /// Switch to [`Dead`] when no awaited response was received after this
+    /// Switch to `Dead` when no awaited response was received after this
     /// duration.
     pub stalling_timeout: Duration,
-    /// When in [`Dead`] state, close the connection after no packet is received
+    /// When in `Dead` state, close the connection after no packet is received
     /// for this duration.
     pub dead_timeout: Duration,
-    /// When in [`Disconnecting`] state, close the connection after no packet is
+    /// When in `Disconnecting` state, close the connection after no packet is
     /// received for this duration.
     pub disconnect_timeout: Duration,
     /// Interval to resend the disconnect packet.

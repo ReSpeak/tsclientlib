@@ -12,8 +12,7 @@ use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio::timer::Delay;
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions,
-    Reason};
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Reason};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings =
@@ -26,6 +25,11 @@ struct Args {
     #[structopt(short = "v", long = "verbose",
                 help = "Print the content of all packets")]
     verbose: bool,
+    // TODO verbose: u8
+    // 0. Print nothing
+    // 1. Print command string
+    // 2. Print packets
+    // 3. Print udp packets
 }
 
 fn main() -> Result<(), failure::Error> {
@@ -47,7 +51,6 @@ fn main() -> Result<(), failure::Error> {
     }).and_then(|con| {
         {
             let con = con.lock();
-            println!("Connected to server {}", &con.server.uid);
             println!("Server welcome message: {}",
                 sanitize(&con.server.welcome_message));
         }

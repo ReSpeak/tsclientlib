@@ -17,10 +17,12 @@
 
 extern crate base64;
 extern crate bytes;
+extern crate chashmap;
 extern crate chrono;
 #[macro_use]
 extern crate failure;
 extern crate futures;
+extern crate num;
 extern crate rand;
 extern crate reqwest;
 #[macro_use]
@@ -48,9 +50,10 @@ use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::{client, crypto, packets, commands};
 use tsproto::commands::Command;
-use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::{Header, Packet, PacketType};
-use tsproto_commands::*;
+use tsproto_commands::messages::Message;
+
+use packet_handler::{ReturnCodeHandler, SimplePacketHandler};
 
 macro_rules! copy_attrs {
     ($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
@@ -61,14 +64,14 @@ macro_rules! copy_attrs {
     };
 }
 
-mod codec;
+mod packet_handler;
 pub mod data;
 pub mod resolver;
 
 // Reexports
-pub use tsproto_commands::Reason;
-pub use tsproto_commands::messages::Message;
+pub use tsproto_commands::{messages, Reason, Uid};
 pub use tsproto_commands::versions::Version;
+pub use tsproto_commands::errors::Error as TsError;
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
@@ -89,6 +92,8 @@ pub enum Error {
     Resolve(#[cause] trust_dns_resolver::error::ResolveError),
     #[fail(display = "{}", _0)]
     Reqwest(#[cause] reqwest::Error),
+    #[fail(display = "{}", _0)]
+    Ts(#[cause] TsError),
     #[fail(display = "{}", _0)]
     Tsproto(#[cause] tsproto::Error),
     #[fail(display = "{}", _0)]
@@ -146,6 +151,12 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+impl From<TsError> for Error {
+    fn from(e: TsError) -> Self {
+        Error::Ts(e)
+    }
+}
+
 impl From<tsproto::Error> for Error {
     fn from(e: tsproto::Error) -> Self {
         Error::Tsproto(e)
@@ -185,68 +196,6 @@ pub struct TalkPowerRequest {
     pub message: String,
 }
 
-struct SimplePacketHandler {
-    logger: Logger,
-    handle_packets: Option<PHBox>,
-    initserver_sender: Option<mpsc::Sender<Command>>,
-}
-
-impl SimplePacketHandler {
-    fn new(logger: Logger) -> Self {
-        Self { logger, handle_packets: None, initserver_sender: None }
-    }
-}
-
-impl<T: 'static> tsproto::handler_data::PacketHandler<T> for
-    SimplePacketHandler {
-    fn new_connection<S1, S2>(
-        &mut self,
-        _: &ConnectionValue<T>,
-        command_stream: S1,
-        audio_stream: S2,
-    ) where
-        S1: Stream<Item=Packet, Error=tsproto::Error> + Send + 'static,
-        S2: Stream<Item=Packet, Error=tsproto::Error> + Send + 'static,
-    {
-        let command_stream: Box<Stream<Item=Packet, Error=tsproto::Error>
-            + Send> = if let Some(send) = &self.initserver_sender {
-            let mut send = send.clone();
-            Box::new(command_stream.map(move |p| {
-                let is_cmd = if let Packet { data: packets::Data::Command(_), .. } = &p {
-                    true
-                } else {
-                    false
-                };
-                if is_cmd {
-                    if let Packet { data: packets::Data::Command(cmd), .. }
-                        = p {
-                        // Don't block, we should only send 1 command
-                        let _ = send.try_send(cmd);
-                        None
-                    } else {
-                        unreachable!();
-                    }
-                } else {
-                    Some(p)
-                }
-            }).filter_map(|p| p))
-        } else {
-            Box::new(command_stream)
-        };
-
-        if let Some(h) = &mut self.handle_packets {
-            h.new_connection(Box::new(command_stream), Box::new(audio_stream));
-        } else {
-            let logger = self.logger.clone();
-            tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(move |e|
-                error!(logger, "Command stream exited with error ({:?})", e)));
-            let logger = self.logger.clone();
-            tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(move |e|
-                error!(logger, "Audio stream exited with error ({:?})", e)));
-        }
-    }
-}
-
 type PHBox = Box<PacketHandler + Send>;
 pub trait PacketHandler {
     fn new_connection(
@@ -275,6 +224,7 @@ struct InnerConnection {
     connection: Arc<Mutex<data::Connection>>,
     client_data: client::ClientDataM<SimplePacketHandler>,
     client_connection: client::ClientConVal,
+    return_code_handler: Arc<ReturnCodeHandler>,
 }
 
 #[derive(Clone)]
@@ -365,6 +315,7 @@ impl Connection {
             let log_config = tsproto::handler_data::LogConfig::new(
                 options.log_packets, options.log_packets);
             let mut packet_handler = SimplePacketHandler::new(logger.clone());
+            let return_code_handler = packet_handler.return_codes.clone();
             let (initserver_send, initserver_recv) = mpsc::channel(0);
             packet_handler.initserver_sender = Some(initserver_send);
             if let Some(h) = &options.handle_packets {
@@ -499,6 +450,7 @@ impl Connection {
                         connection: Arc::new(Mutex::new(data)),
                         client_data: client2,
                         client_connection: con,
+                        return_code_handler,
                     };
                     Ok(Connection { inner: con })
                 }))
@@ -545,23 +497,22 @@ impl Connection {
         // The packet handler then sends a result to the sender if the answer is
         // received.
 
-        let return_code = "TODO";
         let np = msg.get_newprotocol();
         let typ = if !msg.get_commandlow() { PacketType::Command }
             else { PacketType::CommandLow };
         let mut cmd: Command = msg.into();
-        cmd.push("return_code", return_code);
+        let (code, recv) = self.inner.return_code_handler.get_return_code();
+        cmd.push("return_code", code.to_string());
         let mut header = Header::new(typ);
         header.set_newprotocol(np);
         let data = if typ == PacketType::Command { packets::Data::Command(cmd) }
             else { packets::Data::CommandLow(cmd) };
         let packet = packets::Packet::new(header, data);
 
-        // Send a message
-        self.get_packet_sink().send(packet).and_then(|_| {
-            // TODO Wait until we get an answer for the return code
-            future::ok(())
-        })
+        // Send a message and wait until we get an answer for the return code
+        self.get_packet_sink().send(packet).and_then(|_| recv
+            .map_err(|e| format_err!("Too many return codes ({:?})", e).into()))
+            .and_then(|r| if r == TsError::Ok { Ok(()) } else { Err(r.into()) })
     }
 
     pub fn lock(&self) -> ConnectionLock {
@@ -629,7 +580,6 @@ impl Connection {
         -> BoxFuture<()> {
         let options = options.into().unwrap_or_default();
 
-        // TODO Send as message/command
         let header = Header::new(PacketType::Command);
         let mut command = commands::Command::new("clientdisconnect");
 

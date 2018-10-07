@@ -123,8 +123,8 @@ pub fn wait_until_connected(
 /// [`ServerConnectionState::Connecting`] state. Then the client should send the
 /// `clientinit` packet and call [`wait_until_connected`].
 ///
-/// [`ServerConnectionState::Connecting`]:
-/// [`wait_until_connected`]:
+/// [`ServerConnectionState::Connecting`]: enum.ServerConnectionState.html
+/// [`wait_until_connected`]: method.wait_until_connected.html
 pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     datam: Weak<Mutex<ClientData<PH>>>,
     data: &mut ClientData<PH>,
