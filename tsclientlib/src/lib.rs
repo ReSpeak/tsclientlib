@@ -57,25 +57,19 @@ extern crate tsproto;
 extern crate tsproto_commands;
 
 use std::fmt;
-use std::mem;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard, Once, ONCE_INIT};
-use std::rc::Rc;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use failure::ResultExt;
 use futures::{future, Future, Sink, stream, Stream};
 use futures::sync::mpsc;
-use futures::task::{self, Task};
-use futures::future::Either;
 use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::{client, crypto, packets, commands};
 use tsproto::commands::Command;
-use tsproto::connectionmanager::ConnectionManager as TsprotoCM;
-use tsproto::connectionmanager::{Resender, ResenderEvent};
-use tsproto::handler_data::{ConnectionValue, Data};
+use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::{Header, Packet, PacketType};
 use tsproto_commands::*;
 
@@ -88,14 +82,14 @@ macro_rules! copy_attrs {
     };
 }
 
-macro_rules! tryf {
+/*macro_rules! tryf {
     ($e:expr) => {
         match $e {
             Ok(e) => e,
             Err(error) => return Box::new(future::err(error.into())),
         }
     };
-}
+}*/
 
 pub mod codec;
 pub mod data;
@@ -108,7 +102,7 @@ use tsproto_commands::messages;
 
 use codec::Message;
 
-type BoxFuture<T> = Box<Future<Item = T, Error = Error>>;
+type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
 
 include!(concat!(env!("OUT_DIR"), "/getters.rs"));
@@ -252,7 +246,7 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T> for
             + Send> = if let Some(send) = &self.initserver_sender {
             let mut send = send.clone();
             Box::new(command_stream.map(move |p| {
-                let is_cmd = if let Packet { data: packets::Data::Command(cmd), .. } = &p {
+                let is_cmd = if let Packet { data: packets::Data::Command(_), .. } = &p {
                     true
                 } else {
                     false
@@ -324,6 +318,11 @@ pub struct Connection {
 
 impl Connection {
     pub fn new(mut options: ConnectOptions) -> BoxFuture<Connection> {
+        // Initialize tsproto if it was not done yet
+        static TSPROTO_INIT: Once = ONCE_INIT;
+        TSPROTO_INIT.call_once(|| tsproto::init()
+            .expect("tsproto failed to initialize"));
+
         let logger = options.logger.take().unwrap_or_else(|| {
             let decorator = slog_term::TermDecorator::new().build();
             let drain = slog_term::FullFormat::new(decorator).build().fuse();
@@ -334,7 +333,7 @@ impl Connection {
         let logger = logger.new(o!("addr" => options.address.to_string()));
 
         // Try all addresses
-        let addr = options.address.resolve(&logger);
+        let addr: Box<Stream<Item=_, Error=_> + Send> = options.address.resolve(&logger);
         let private_key = match options.private_key.take().map(Ok)
             .unwrap_or_else(|| {
                 // Create new ECDH key
@@ -345,7 +344,7 @@ impl Connection {
         };
 
         let logger2 = logger.clone();
-        Box::new(addr.and_then(move |addr| -> Box<Future<Item=_, Error=_>> {
+        Box::new(addr.and_then(move |addr| -> Box<Future<Item=_, Error=_> + Send> {
             let log_config = tsproto::handler_data::LogConfig::new(
                 options.log_packets, options.log_packets);
             let mut packet_handler = SimplePacketHandler::new(logger.clone());
@@ -544,6 +543,37 @@ impl Connection {
             connection: self.inner.clone(),
             inner: &con,
         }
+    }
+
+    pub fn disconnect<O: Into<Option<DisconnectOptions>>>(self, options: O)
+        -> BoxFuture<()> {
+        let options = options.into().unwrap_or_default();
+
+        // TODO Send as message/command
+        let header = Header::new(PacketType::Command);
+        let mut command = commands::Command::new("clientdisconnect");
+
+        if let Some(reason) = options.reason {
+            command.push("reasonid", (reason as u8).to_string());
+        }
+        if let Some(msg) = options.message {
+            command.push("reasonmsg", msg);
+        }
+
+        let p_data = packets::Data::Command(command);
+        let packet = Packet::new(header, p_data);
+
+        let wait_for_state = client::wait_for_state(&self.inner.client_connection, |state| {
+            if let client::ServerConnectionState::Disconnected = state {
+                true
+            } else {
+                false
+            }
+        });
+        Box::new(self.inner.client_connection.as_packet_sink().send(packet)
+            .and_then(move |_| wait_for_state)
+            .from_err()
+            .map(move |_| drop(self)))
     }
 }
 
@@ -1189,12 +1219,9 @@ impl<'a> From<&'a str> for ServerAddress {
 }
 
 impl ServerAddress {
-    pub fn resolve(&self, logger: &Logger) -> impl Stream<Item=SocketAddr, Error=Error> {
+    pub fn resolve(&self, logger: &Logger) -> Box<Stream<Item=SocketAddr, Error=Error> + Send> {
         match self {
-            ServerAddress::SocketAddr(a) => {
-                let res: Box<Stream<Item=_, Error=_>> = Box::new(stream::once(Ok(*a)));
-                res
-            }
+            ServerAddress::SocketAddr(a) => Box::new(stream::once(Ok(*a))),
             ServerAddress::Other(s) => Box::new(resolver::resolve(logger, s)),
         }
     }

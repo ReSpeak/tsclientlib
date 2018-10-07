@@ -1,17 +1,18 @@
+#[macro_use]
 extern crate failure;
 extern crate futures;
 extern crate structopt;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tsclientlib;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures::Future;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Timeout};
+use tokio::timer::Delay;
 
-use tsclientlib::{ConnectOptions, ConnectionManager, DisconnectOptions,
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions,
     Reason};
 
 #[derive(StructOpt, Debug)]
@@ -30,35 +31,35 @@ struct Args {
 fn main() -> Result<(), failure::Error> {
     // Parse command line options
     let args = Args::from_args();
-    let mut core = Core::new()?;
 
-    let mut cm = ConnectionManager::new(core.handle());
-    let con_config = ConnectOptions::new(args.address)
-        .log_packets(args.verbose);
+    tokio::run(futures::lazy(|| {
+        let con_config = ConnectOptions::new(args.address)
+            .log_packets(args.verbose);
 
-    // Optionally set the key of this client, otherwise a new key is generated.
-    let con_config = con_config.private_key_ts(
-        "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-        k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
-        C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+        // Optionally set the key of this client, otherwise a new key is generated.
+        let con_config = con_config.private_key_ts(
+            "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+            k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
+            C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-    // Connect
-    let con_id = core.run(cm.add_connection(con_config))?;
+        // Connect
+        Connection::new(con_config)
+    }).and_then(|con| {
+        {
+            let con = con.lock();
+            println!("Server welcome message: {}",
+                sanitize(&con.server.welcome_message));
+        }
 
-    {
-        let con = cm.get_connection(con_id).unwrap();
-        let server = con.get_server();
-        println!("Server welcome message: {}", sanitize(&*server.get_welcome_message()));
-    }
-
-    // Wait some time
-    let action = Timeout::new(Duration::from_secs(1), &core.handle())?;
-    core.run(action.select2(cm.run())).unwrap();
-
-    // Disconnect
-    core.run(cm.remove_connection(con_id, DisconnectOptions::new()
-        .reason(Reason::Clientdisconnect)
-        .message("Is this the real world?")))?;
+        // Wait some time
+        Delay::new(Instant::now() + Duration::from_secs(1)).map(move |_| con)
+            .map_err(|e| format_err!("Failed to wait ({:?})", e).into())
+    }).and_then(|con| {
+        // Disconnect
+        con.disconnect(DisconnectOptions::new()
+            .reason(Reason::Clientdisconnect)
+            .message("Is this the real world?"))
+    }).map_err(|e| panic!("An error occurred {:?}", e)));
 
     Ok(())
 }

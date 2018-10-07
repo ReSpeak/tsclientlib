@@ -1,15 +1,10 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::mem;
 use std::net::SocketAddr;
-use std::ops::{Deref, DerefMut};
-use std::rc::{Rc, Weak};
+use std::ops::Deref;
 use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
-use futures::{self, Stream};
-use tsproto::Error as tsproto_error;
-use tsproto::client;
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
 

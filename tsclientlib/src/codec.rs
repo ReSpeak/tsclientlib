@@ -1,11 +1,6 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use futures::{future, Sink, stream, Stream};
 use tsproto::Error;
 use tsproto::commands::Command;
-use tsproto::connectionmanager::ConnectionManager;
-use tsproto::handler_data;
 use tsproto::packets::{Data, Header, Packet, PacketType};
 
 use tsproto_commands::messages;
