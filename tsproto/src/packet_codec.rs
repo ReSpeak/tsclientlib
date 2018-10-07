@@ -308,8 +308,7 @@ impl<CM: ConnectionManager + 'static>
             // we hold a lock on the connection.
             for p in packets {
                 if log_packets {
-                    ::log::PacketLogger::log_packet(&logger, is_client, true,
-                        &p);
+                    ::log::PacketLogger::log_packet(&logger, is_client, &p);
                 }
                 // Send to packet handler
                 if let Err(e) = con.1.command_sink.unbounded_send(p) {
@@ -322,7 +321,7 @@ impl<CM: ConnectionManager + 'static>
 
         let packet = packet?;
         if log_packets {
-            ::log::PacketLogger::log_packet(&logger, is_client, true, &packet);
+            ::log::PacketLogger::log_packet(&logger, is_client, &packet);
         }
 
         let sink = match packet.data {
@@ -532,12 +531,11 @@ impl<CM: ConnectionManager + 'static>
 /// This part does the compression, encryption and fragmentation.
 pub struct PacketCodecSender {
     is_client: bool,
-    logger: Logger,
 }
 
 impl PacketCodecSender {
-    pub fn new(is_client: bool, logger: Logger) -> Self {
-        Self { is_client, logger }
+    pub fn new(is_client: bool) -> Self {
+        Self { is_client }
     }
 
     pub fn encode_packet(&self, con: &mut Connection, mut packet: Packet)

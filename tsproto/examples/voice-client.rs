@@ -33,7 +33,6 @@ use structopt::StructOpt;
 use structopt::clap::AppSettings;
 use tokio::runtime::{Runtime, TaskExecutor};
 use tokio::timer::Delay;
-use tokio::util::FutureExt;
 #[cfg(target_family = "unix")]
 use tokio_signal::unix::{Signal, SIGHUP};
 use tsproto::*;

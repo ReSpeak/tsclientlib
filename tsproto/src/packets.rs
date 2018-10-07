@@ -53,18 +53,27 @@ pub enum CodecType {
 }
 
 /// Packet data, from client
-pub struct UdpPacket<'a>(pub &'a [u8], pub bool);
+pub struct UdpPacket<'a> {
+    pub data: &'a [u8],
+    pub from_client: bool,
+}
+
+impl<'a> UdpPacket<'a> {
+    pub fn new(data: &'a [u8], from_client: bool) -> Self {
+        Self { data, from_client }
+    }
+}
 
 impl<'a> fmt::Debug for UdpPacket<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "UdpPacket {{ header: ")?;
 
         // Parse header
-        if let Ok(h) = Header::read(&self.1, &mut Cursor::new(self.0)) {
+        if let Ok(h) = Header::read(&self.from_client, &mut Cursor::new(self.data)) {
             h.fmt(f)?;
         }
 
-        write!(f, ", raw: {:?} }}", HexSlice(self.0))?;
+        write!(f, ", raw: {:?} }}", HexSlice(self.data))?;
         Ok(())
     }
 }

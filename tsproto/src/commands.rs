@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::io::prelude::*;
 use std::str;
 
-use nom::{self, alphanumeric, multispace};
+use nom::{alphanumeric, multispace};
+use nom::types::CompleteStr;
 
 use Result;
 
@@ -19,38 +20,28 @@ pub struct CanonicalCommand<'a> {
     pub args: HashMap<&'a str, &'a str>,
 }
 
-macro_rules! parse_to_string {
-    ($x:expr) => {
-        String::from_utf8($x.iter().flat_map(|v| v.iter())
-            .cloned().collect()).unwrap()
-    };
-}
-
-named!(command_arg<&[u8], (String, String)>, do_parse!(many0!(multispace) >>
-        name: many1!(is_not!("\u{b}\u{c}\\\t\r\n| /=")) >> // Argument name
-        value: alt!(
-            map!(eof!(), |_| vec![]) |
-            do_parse!( // Argument value
-                tag!("=") >>
-                value: many0!(alt!(
-                    map!(tag!("\\v"), |_| &b"\x0b"[..]) | // Vertical tab
-                    map!(tag!("\\f"), |_| &b"\x0c"[..]) | // Form feed
-                    map!(tag!("\\\\"), |_| &b"\\"[..]) |
-                    map!(tag!("\\t"), |_| &b"\t"[..]) |
-                    map!(tag!("\\r"), |_| &b"\r"[..]) |
-                    map!(tag!("\\n"), |_| &b"\n"[..]) |
-                    map!(tag!("\\p"), |_| &b"|"[..]) |
-                    map!(tag!("\\s"), |_| &b" "[..]) |
-                    map!(tag!("\\/"), |_| &b"/"[..]) |
-                    is_not!("\u{b}\u{c}\\\t\r\n| /")
-                )) >>
-                (value))
-            | map!(tag!(""), |_| vec![])
-        ) >> (parse_to_string!(name), parse_to_string!(value))
+named!(command_arg(CompleteStr) -> (String, String), do_parse!(many0!(multispace) >>
+        name: many1!(map!(is_not!("\u{b}\u{c}\\\t\r\n| /="), |s| *s)) >> // Argument name
+        value: map!(opt!( // Argument value
+            preceded!(tag!("="),
+                many0!(alt!(
+                    map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
+                    map!(tag!("\\f"), |_| "\x0c") | // Form feed
+                    map!(tag!("\\\\"), |_| "\\") |
+                    map!(tag!("\\t"), |_| "\t") |
+                    map!(tag!("\\r"), |_| "\r") |
+                    map!(tag!("\\n"), |_| "\n") |
+                    map!(tag!("\\p"), |_| "|") |
+                    map!(tag!("\\s"), |_| " ") |
+                    map!(tag!("\\/"), |_| "/") |
+                    map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
+                ))
+            )), |o| o.unwrap_or_default())
+        >> (name.concat(), value.concat())
 ));
 
-named!(parse_command<&[u8], Command>, do_parse!(
-    command: many1!(alphanumeric) >> // Command
+named!(parse_command(CompleteStr) -> Command, do_parse!(
+    command: alphanumeric >> // Command
     static_args: many0!(command_arg) >>
     list_args: many0!(do_parse!(many0!(multispace) >>
         tag!("|") >>
@@ -60,7 +51,7 @@ named!(parse_command<&[u8], Command>, do_parse!(
     many0!(multispace) >>
     eof!() >>
     (Command {
-        command: parse_to_string!(command),
+        command: command.to_string(),
         static_args,
         list_args,
     })
@@ -122,12 +113,16 @@ impl Command {
     }
 
     pub fn read<T>(_: T, r: &mut Read) -> Result<Command> {
-        let mut buf = Vec::new();
-        r.read_to_end(&mut buf)?;
-        // Check if the buffer contains valid UTF-8
-        str::from_utf8(&buf)?;
-        match parse_command(&buf) {
-            nom::IResult::Done(_, mut cmd) => {
+        let mut buf = String::new();
+        r.read_to_string(&mut buf)?;
+        match parse_command(CompleteStr(&buf)) {
+            Ok((rest, mut cmd)) => {
+                // Error if rest contains something
+                if !rest.is_empty() {
+                    return Err(::Error::ParseCommand(format!("Command was not \
+                        parsed completely {:?}", rest)));
+                }
+
                 // Some of the static args are variable so move the to the right
                 // category.
                 if !cmd.list_args.is_empty() {
@@ -146,7 +141,7 @@ impl Command {
                 }
                 Ok(cmd)
             }
-            error => Err(::Error::ParseCommand(format!("{:?}", error))),
+            Err(e) => Err(::Error::ParseCommand(format!("{:?}", e))),
         }
     }
 

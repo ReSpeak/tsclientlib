@@ -94,10 +94,10 @@ impl<T: Send + 'static> ConnectionValue<T> {
         let mut con = self.mutex.lock().unwrap();
         if self.log_packets.load(Ordering::Relaxed) {
             ::log::PacketLogger::log_packet(&con.1.logger,
-                con.1.is_client, false, &packet);
+                con.1.is_client, &packet);
         }
 
-        let codec = PacketCodecSender::new(con.1.is_client, con.1.logger.clone());
+        let codec = PacketCodecSender::new(con.1.is_client);
         let p_type = packet.header.get_type();
 
         let mut udp_packets = match codec.encode_packet(&mut con.1, packet) {
@@ -289,7 +289,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         tokio::spawn(udp_packet_sink_sender.map(move |(addr, p)| {
                 if log_udp.load(Ordering::Relaxed) {
                     ::log::PacketLogger::log_udp_packet(&logger, addr, is_client,
-                        false, &::packets::UdpPacket(&p, is_client));
+                        &::packets::UdpPacket::new(&p, is_client));
                 }
                 (p, addr)
             })
@@ -311,7 +311,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
             .for_each(move |(p, a)| {
                 if log_udp.load(Ordering::Relaxed) {
                     ::log::PacketLogger::log_udp_packet(&logger, a,
-                        is_client, true, &::packets::UdpPacket(&p, !is_client));
+                        is_client, &::packets::UdpPacket::new(&p, !is_client));
                 }
 
                 let logger = logger.clone();

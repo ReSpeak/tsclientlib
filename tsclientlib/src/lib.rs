@@ -387,31 +387,6 @@ impl Connection {
             let connect_fut = client::connect(Arc::downgrade(&client),
                 &mut *client.lock().unwrap(), addr).from_err();
 
-            // Poll the connection for packets
-            /*let initserver_poll = initserver_recv
-                .and_then(move |cmd| {
-                    let cmd = cmd.get_commands().remove(0);
-                    let notif = messages::Message::parse(cmd)?;
-                    if let messages::Message::InitServer(p) = notif {
-                        let con = {
-                            let mut client = client2.borrow_mut();
-                            client.connection_manager
-                                .get_connection(addr).unwrap()
-                        };
-
-                        // Create the connection
-                        let inner = InnerConnection {
-                            connection: Arc::new(Mutex::new(data::Connection::new())),
-                            client_data: client2,
-                            client_connection: con,
-                        };
-                        Ok(Connection { inner })
-                    } else {
-                        Err(Error::ConnectionFailed(
-                            String::from("Got no initserver")))
-                    }
-                });*/
-
             let initserver_poll = initserver_recv.into_future()
                 .map_err(|e| format_err!("Error while waiting for initserver \
                     ({:?})", e).into())
@@ -481,8 +456,19 @@ impl Connection {
                 // the initserver packet.
                 .and_then(move |con| initserver_poll.map(|r| (con, r)))
                 .and_then(move |(con, initserver)| {
+                    // Get uid of server
+                    let uid = {
+                        let mutex = con.upgrade().ok_or_else(||
+                            format_err!("Connection does not exist anymore"))?
+                            .mutex;
+                        let con = mutex.lock().unwrap();
+                        con.1.params.as_ref().ok_or_else(||
+                            format_err!("Connection params do not exist"))?
+                            .public_key.get_uid()?
+                    };
+
                     // Create connection
-                    let data = data::Connection::new(Uid("TODO".to_string()),
+                    let data = data::Connection::new(Uid(uid),
                         &initserver);
                     let con = InnerConnection {
                         connection: Arc::new(Mutex::new(data)),

@@ -93,6 +93,7 @@ pub struct ConnectedParams {
     /// If voice packets should be encrypted
     pub voice_encryption: bool,
 
+    /// The public key of the other side.
     pub public_key: EccKeyPubP256,
     /// The iv used to encrypt and decrypt packets.
     pub shared_iv: SharedIv,

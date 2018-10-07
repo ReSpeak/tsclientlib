@@ -22,6 +22,8 @@ impl Drop for IncommingVoiceHandler {
     }
 }
 
+// Only used in some examples
+#[allow(dead_code)]
 impl IncommingVoiceHandler {
     pub fn new(logger: Logger, pipeline: Option<gst::Pipeline>) -> Result<Self, ::failure::Error> {
         let appsrc = pipeline.as_ref().map(|p| {

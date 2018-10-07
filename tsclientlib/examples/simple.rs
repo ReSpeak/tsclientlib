@@ -47,6 +47,7 @@ fn main() -> Result<(), failure::Error> {
     }).and_then(|con| {
         {
             let con = con.lock();
+            println!("Connected to server {}", &con.server.uid);
             println!("Server welcome message: {}",
                 sanitize(&con.server.welcome_message));
         }

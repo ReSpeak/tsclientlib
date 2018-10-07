@@ -30,22 +30,20 @@ impl PacketLogger {
         logger: &Logger,
         addr: SocketAddr,
         is_client: bool,
-        incoming: bool,
         packet: &UdpPacket,
     ) {
-        // TODO Put is_client into udp packet for decoding the header
         let logger = Self::prepare_logger(&logger.new(o!("addr" => addr)),
-            is_client, incoming);
+            is_client, is_client != packet.from_client);
         debug!(logger, "UdpPacket"; "content" => ?packet);
     }
 
     pub fn log_packet(
         logger: &Logger,
         is_client: bool,
-        incoming: bool,
         packet: &Packet,
     ) {
-        let logger = Self::prepare_logger(logger, is_client, incoming);
+        let logger = Self::prepare_logger(logger, is_client,
+            is_client != packet.header.c_id.is_some());
         debug!(logger, "Packet"; "content" => ?packet);
     }
 }
