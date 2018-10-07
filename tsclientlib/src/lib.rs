@@ -7,6 +7,9 @@
 //! The base class of this library is the [`Connection`]. One instance of this
 //! struct manages a single connection to a server.
 //!
+//! The futures from this library **must** be run in a tokio threadpool, so they
+//! can use `tokio_threadpool::blocking`.
+//!
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 
@@ -39,6 +42,7 @@
 #![allow(dead_code)]
 
 extern crate base64;
+extern crate bytes;
 extern crate chrono;
 #[macro_use]
 extern crate failure;
@@ -51,6 +55,7 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio;
+extern crate tokio_threadpool;
 extern crate trust_dns_proto;
 extern crate trust_dns_resolver;
 extern crate tsproto;
@@ -316,7 +321,58 @@ pub struct Connection {
     inner: InnerConnection,
 }
 
+/// The main type of this crate, which represents a connection to a server.
+///
+/// A new connection can be opened with the [`Connection::new`] function.
+///
+/// # Examples
+/// This will open a connection to the TeamSpeak server at `localhost`.
+///
+/// ```no_run
+/// extern crate tokio;
+/// extern crate tsclientlib;
+///
+/// use tokio::prelude::Future;
+/// use tsclientlib::{Connection, ConnectOptions};
+///
+/// fn main() {
+///     tokio::run(
+///         Connection::new(ConnectOptions::new("localhost"))
+///         .map(|connection| ())
+///         .map_err(|_| ())
+///     );
+/// }
+/// ```
+///
+/// [`Connection::new`]: #method.new
 impl Connection {
+    /// Connect to a server.
+    ///
+    /// This function opens a new connection to a server. The returned future
+    /// resolves, when the connection is established successfully.
+    ///
+    /// Settings like nickname of the user can be set using the
+    /// [`ConnectOptions`] parameter.
+    ///
+    /// # Examples
+    /// This will open a connection to the TeamSpeak server at `localhost`.
+    ///
+    /// ```no_run
+    /// # extern crate tokio;
+    /// # extern crate tsclientlib;
+    /// # use tokio::prelude::Future;
+    /// # use tsclientlib::{Connection, ConnectOptions};
+    /// #
+    /// # fn main() {
+    ///     tokio::run(
+    ///         Connection::new(ConnectOptions::new("localhost"))
+    ///         .map(|connection| ())
+    ///         .map_err(|_| ())
+    ///     );
+    /// # }
+    /// ```
+    ///
+    /// [`ConnectOptions`]: struct.ConnectOptions.html
     pub fn new(mut options: ConnectOptions) -> BoxFuture<Connection> {
         // Initialize tsproto if it was not done yet
         static TSPROTO_INIT: Once = ONCE_INIT;
@@ -406,22 +462,30 @@ impl Connection {
                     }
                 });
 
+            let logger2 = logger.clone();
             Box::new(connect_fut
                 .and_then(move |con| {
                     // TODO Add possibility to specify offset and level in ConnectOptions
                     // Compute hash cash
                     let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-                        "Compute public key hash cash level", logger.clone(),
+                        "Compute public key hash cash level", logger2.clone(),
                         slog::Level::Info);
                     time_reporter.start("Compute public key hash cash level");
-                    let (offset, omega) = {
+                    let pub_k = {
                         let mut c = client.lock().unwrap();
-                        let pub_k = c.private_key.to_pub();
-                        // TODO Run as blocking future
-                        (algs::hash_cash(&pub_k, 8).unwrap(),
-                        pub_k.to_ts().unwrap())
+                        c.private_key.to_pub()
                     };
-                    time_reporter.finish();
+                    future::poll_fn(move || {
+                        tokio_threadpool::blocking(|| {
+                            let res = (con.clone(), algs::hash_cash(&pub_k, 8).unwrap(),
+                                pub_k.to_ts().unwrap());
+                            res
+                        })
+                    }).map(|r| { time_reporter.finish(); r })
+                    .map_err(|e| format_err!("Failed to start \
+                        blocking operation ({:?})", e).into())
+                })
+                .and_then(move |(con, offset, omega)| {
                     info!(logger, "Computed hash cash level";
                         "level" => algs::get_hash_cash_level(&omega, offset),
                         "offset" => offset);
@@ -495,21 +559,23 @@ impl Connection {
     /// **This is part of the unstable interface.**
     ///
     /// You can use it if you need access to lower level functions, but this
-    /// interface may change, even on patch version changes.
-    pub fn get_packet_sink(&self) {
+    /// interface may change on any version changes.
+    pub fn get_packet_sink(&self) -> impl Sink<SinkItem=Packet, SinkError=Error> {
+        self.inner.client_connection.as_packet_sink().sink_map_err(|e| e.into())
     }
 
     /// **This is part of the unstable interface.**
     ///
     /// You can use it if you need access to lower level functions, but this
-    /// interface may change, even on patch version changes.
-    pub fn get_udp_packet_sink(&self) {
+    /// interface may change on any version changes.
+    pub fn get_udp_packet_sink(&self) -> impl Sink<SinkItem=(PacketType, u16, bytes::Bytes), SinkError=Error> {
+        self.inner.client_connection.as_udp_packet_sink().sink_map_err(|e| e.into())
     }
 
     /// **This is part of the unstable interface.**
     ///
     /// You can use it if you need access to lower level functions, but this
-    /// interface may change, even on patch version changes.
+    /// interface may change on any version changes.
     ///
     /// Adds a `return_code` to the command and returns if the corresponding
     /// answer is received. If an error occurs, the future will return an error.
@@ -517,6 +583,7 @@ impl Connection {
         // Store waiting in HashMap<usize (return code), oneshot::Sender>
         // The packet handler then sends a result to the sender if the answer is
         // received.
+        // TODO
     }
 
     pub fn lock(&self) -> ConnectionLock {
@@ -566,28 +633,6 @@ impl Connection {
 impl<'a> ConnectionLock<'a> {
     fn new(guard: MutexGuard<'a, data::Connection>) -> Self {
         Self { guard }
-    }
-}
-
-/// The connection manager which can be shared and cloned.
-#[cfg(TODO)]
-struct InnerCM {
-    handle: Handle,
-    logger: Logger,
-    connections: HashMap<ConnectionId, structs::NetworkWrapper>,
-}
-
-#[cfg(TODO)]
-impl InnerCM {
-    /// Returns the first free connection id.
-    fn find_connection_id(&self) -> ConnectionId {
-        for i in 0..self.connections.len() + 1 {
-            let id = ConnectionId(i);
-            if !self.connections.contains_key(&id) {
-                return id;
-            }
-        }
-        unreachable!("Found no free connection id, this should not happen");
     }
 }
 
@@ -1222,25 +1267,25 @@ impl fmt::Display for ServerAddress {
     }
 }
 
-/// The configuration used to create a new connection.
-///
-/// This is a builder for a connection.
+/// The configuration to create a new connection.
 ///
 /// # Example
 ///
-/// ```rust,no_run
-/// # extern crate tokio_core;
+/// ```no_run
+/// # extern crate tokio;
 /// # extern crate tsclientlib;
 /// #
-/// # use tsclientlib::{ConnectionManager, ConnectOptions};
+/// # use tokio::prelude::Future;
+/// # use tsclientlib::{Connection, ConnectOptions};
 /// # fn main() {
 /// #
-/// let mut core = tokio_core::reactor::Core::new().unwrap();
-///
 /// let con_config = ConnectOptions::new("localhost");
 ///
-/// let mut cm = ConnectionManager::new(core.handle());
-/// let con = core.run(cm.add_connection(con_config)).unwrap();
+/// tokio::run(
+///     Connection::new(con_config)
+///     .map(|connection| ())
+///     .map_err(|_| ())
+/// );
 /// # }
 /// ```
 pub struct ConnectOptions {

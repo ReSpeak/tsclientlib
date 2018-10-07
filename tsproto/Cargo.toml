@@ -39,6 +39,7 @@ slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 tokio = "0.1"
+tokio-threadpool = "0.1"
 #quicklz = "0.1"
 quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
 yasna = "0.1"

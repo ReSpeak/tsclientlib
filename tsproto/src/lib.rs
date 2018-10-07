@@ -29,6 +29,7 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate tokio;
+extern crate tokio_threadpool;
 extern crate yasna;
 
 use std::net::SocketAddr;
