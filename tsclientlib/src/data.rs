@@ -9,7 +9,6 @@ use tsproto_commands::*;
 use tsproto_commands::messages::*;
 
 use {ChannelType, InnerConnection, MaxFamilyClients, TalkPowerRequest, Result};
-use codec::Message;
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
@@ -20,7 +19,7 @@ macro_rules! max_clients {
         let ch = if $cmd.is_max_clients_unlimited { None }
             else if $cmd.max_clients >= 0 && $cmd.max_clients <= u16::MAX as i32 { Some($cmd.max_clients as u16) }
             else {
-                // TODO Warning
+                // Max clients is less than zero or too high so ignore it
                 None
             };
         let ch_fam =
@@ -28,7 +27,7 @@ macro_rules! max_clients {
             else if $cmd.inherits_max_family_clients { MaxFamilyClients::Inherited }
             else if $cmd.max_family_clients >= 0 && $cmd.max_family_clients <= u16::MAX as i32 { MaxFamilyClients::Limited($cmd.max_family_clients as u16) }
             else {
-                // TODO Warning
+                // Max clients is less than zero or too high so ignore it
                 MaxFamilyClients::Unlimited
             };
         (ch, ch_fam)
@@ -69,8 +68,8 @@ impl Connection {
                 created: packet.server_created,
                 ip: packet.server_ip.clone(),
                 ask_for_privilegekey: packet.ask_for_privilegekey,
-                // TODO license: packet.license_type,
-                license: LicenseType::NoLicense,
+                // TODO Or get from license struct
+                license: packet.license_type.unwrap_or(LicenseType::NoLicense),
 
                 optional_data: None,
                 connection_data: None,
@@ -82,12 +81,10 @@ impl Connection {
     }
 
     fn handle_message(&mut self, msg: &Message) -> Result<()> {
-        if let Message::Message(ref notification) = *msg {
-            self.handle_message_generated(&*notification)?;
-        }
+        self.handle_message_generated(msg)?;
 
         // Also raise events
-        match *msg {
+        match msg {
             _ => {} // TODO
         }
         Ok(())
@@ -164,7 +161,6 @@ impl Connection {
     }
 
     fn talk_power_fun(&self, cmd: &ClientEnterView) -> Option<TalkPowerRequest> {
-        // TODO optional time && msg
         if cmd.talk_power_request_time.timestamp() > 0 {
             Some( TalkPowerRequest {
                 time: cmd.talk_power_request_time,
@@ -182,67 +178,5 @@ impl Connection {
     fn address_fun(&self, cmd: &ConnectionInfo) -> Option<SocketAddr> {
         let ip = if let Ok(ip) = cmd.ip.parse() { ip } else { return None };
         Some(SocketAddr::new(ip, cmd.port))
-    }
-}
-
-#[cfg(TODO)]
-pub struct NetworkWrapper {
-    connection: Connection,
-    pub client_data: Rc<RefCell<client::ClientData>>,
-    pub client_connection: Weak<RefCell<client::ClientConnection>>,
-    pub inner_stream: Box<Stream<Item = (SocketAddr, Message),
-        Error = tsproto_error>>,
-}
-
-#[cfg(TODO)]
-impl NetworkWrapper {
-    pub fn new(
-        id: ConnectionId,
-        client_data: Rc<RefCell<client::ClientData>>,
-        client_connection: Weak<RefCell<client::ClientConnection>>,
-        initserver: &InitServer,
-    ) -> Self {
-        let connection = Connection::new(id, Uid(String::from("TODO")),
-            initserver);
-        let inner_stream = ::codec::CommandCodec::new_stream(&client_data);
-        Self {
-            connection,
-            client_data,
-            client_connection,
-            inner_stream,
-        }
-    }
-}
-
-#[cfg(TODO)]
-impl Deref for NetworkWrapper {
-    type Target = Connection;
-
-    fn deref(&self) -> &Self::Target {
-        &self.connection
-    }
-}
-
-#[cfg(TODO)]
-impl DerefMut for NetworkWrapper {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.connection
-    }
-}
-
-#[cfg(TODO)]
-impl Stream for NetworkWrapper {
-    type Item = (SocketAddr, Message);
-    type Error = tsproto_error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let res = self.inner_stream.poll()?;
-        if let futures::Async::Ready(Some((_, ref msg))) = res {
-            if let Err(error) = self.connection.handle_message(msg) {
-                warn!(self.client_data.borrow().logger,
-                    "Error when handling message"; "error" => ?error);
-            }
-        }
-        Ok(res)
     }
 }

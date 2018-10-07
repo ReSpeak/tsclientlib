@@ -6,7 +6,7 @@ use std::io::prelude::*;
 use std::path::Path;
 
 use tsproto_util::{Declaration, BookDeclarations, FacadeDeclarations,
-    MessageDeclarations, MessagesToBookDeclarations, ConnectionManagerGetters};
+    MessageDeclarations, MessagesToBookDeclarations};
 
 fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -32,8 +32,4 @@ fn main() {
     // Write facades
     let mut structs = File::create(&path.join("facades.rs")).unwrap();
     write!(&mut structs, "{}", FacadeDeclarations(decls)).unwrap();
-
-    // Write getters
-    let mut structs = File::create(&path.join("getters.rs")).unwrap();
-    write!(&mut structs, "{}", ConnectionManagerGetters::default()).unwrap();
 }

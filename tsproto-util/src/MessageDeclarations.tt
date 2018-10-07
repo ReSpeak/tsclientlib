@@ -310,7 +310,7 @@ pub enum Message {
 }
 
 impl Message {
-    pub fn parse<'a>(cmd: CanonicalCommand<'a>) -> Result<Self, ParseError> {
+    pub fn parse(cmd: CanonicalCommand) -> Result<Self, ParseError> {
         match cmd.command {
             <# for msg_group in &self.msg_group {
                 for msg in msg_group.msg.iter().filter(|m| m.notify.is_some()) { #>
@@ -318,6 +318,26 @@ impl Message {
             <# }
             } #>
             _ => Err(ParseError::UnknownCommand(cmd.command.to_string()))
+        }
+    }
+
+    pub fn get_commandlow(&self) -> bool {
+        match self {
+            <# for msg_group in &self.msg_group {
+                for msg in &msg_group.msg { #>
+            Message::<#= msg.name #>(_) => <#= msg_group.default.low #>,
+            <# }
+            } #>
+        }
+    }
+
+    pub fn get_newprotocol(&self) -> bool {
+        match self {
+            <# for msg_group in &self.msg_group {
+                for msg in &msg_group.msg { #>
+            Message::<#= msg.name #>(_) => <#= msg_group.default.np #>,
+            <# }
+            } #>
         }
     }
 }

@@ -13,33 +13,7 @@
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 
-// TODO Update
-// # Internal structure
-// ConnectionManager is a wrapper around Rc<RefCell<InnerCM>>,
-// it contains the api to create and destroy connections.
-// To inspect/modify things, facade objects are used (included in lib.rs).
-// All facade objects exist in a mutable and non-mutable version and they borrow
-// the ConnectionManager.
-// That means all references have to be handed back before the ConnectionManager
-// can be used again.
-//
-// InnerCM contains a HashMap<ConnectionId, structs::NetworkWrapper>.
-//
-// NetworkWrapper contains the Connection which is the bookkeeping struct,
-// the Rc<RefCell<client::ClientData>>, which is the tsproto connection,
-// a reference to the ClientConnection of tsproto
-// and a stream of Messages.
-//
-// The NetworkWrapper wraps the stream of Messages and updates the
-// bookkeeping, raises events, etc. on new packets.
-// The ConnectionManager wraps all those streams into one stream (like a
-// select). To progress, the user of the library has to poll the
-// ConnectionManager for new notifications and sound.
-//
-// The items of the stream are either Messages or audio data.
-
-// TODO
-#![allow(dead_code)]
+#![allow(dead_code)] // TODO
 
 extern crate base64;
 extern crate bytes;
@@ -87,30 +61,17 @@ macro_rules! copy_attrs {
     };
 }
 
-/*macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(e) => e,
-            Err(error) => return Box::new(future::err(error.into())),
-        }
-    };
-}*/
-
-pub mod codec;
+mod codec;
 pub mod data;
 pub mod resolver;
 
 // Reexports
 pub use tsproto_commands::Reason;
+pub use tsproto_commands::messages::Message;
 pub use tsproto_commands::versions::Version;
-use tsproto_commands::messages;
-
-use codec::Message;
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-
-include!(concat!(env!("OUT_DIR"), "/getters.rs"));
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -453,8 +414,8 @@ impl Connection {
                             String::from("Got no initserver"))),
                     };
                     let cmd = cmd.get_commands().remove(0);
-                    let notif = messages::Message::parse(cmd)?;
-                    if let messages::Message::InitServer(p) = notif {
+                    let notif = Message::parse(cmd)?;
+                    if let Message::InitServer(p) = notif {
                         Ok(p)
                     } else {
                         Err(Error::ConnectionFailed(
@@ -579,11 +540,28 @@ impl Connection {
     ///
     /// Adds a `return_code` to the command and returns if the corresponding
     /// answer is received. If an error occurs, the future will return an error.
-    pub fn send_command(&self, command: Command) {
+    pub fn send_message(&self, msg: Message) -> impl Future<Item=(), Error=Error> {
         // Store waiting in HashMap<usize (return code), oneshot::Sender>
         // The packet handler then sends a result to the sender if the answer is
         // received.
-        // TODO
+
+        let return_code = "TODO";
+        let np = msg.get_newprotocol();
+        let typ = if !msg.get_commandlow() { PacketType::Command }
+            else { PacketType::CommandLow };
+        let mut cmd: Command = msg.into();
+        cmd.push("return_code", return_code);
+        let mut header = Header::new(typ);
+        header.set_newprotocol(np);
+        let data = if typ == PacketType::Command { packets::Data::Command(cmd) }
+            else { packets::Data::CommandLow(cmd) };
+        let packet = packets::Packet::new(header, data);
+
+        // Send a message
+        self.get_packet_sink().send(packet).and_then(|_| {
+            // TODO Wait until we get an answer for the return code
+            future::ok(())
+        })
     }
 
     pub fn lock(&self) -> ConnectionLock {
@@ -598,6 +576,55 @@ impl Connection {
         }
     }
 
+    /// Disconnect from the server.
+    ///
+    /// # Arguments
+    /// - `options`: Either `None` or `DisconnectOptions`.
+    ///
+    /// # Examples
+    ///
+    /// Use default options:
+    ///
+    /// ```no_run
+    /// # extern crate tokio;
+    /// # extern crate tsclientlib;
+    /// #
+    /// # use tokio::prelude::Future;
+    /// # use tsclientlib::{Connection, ConnectOptions};
+    /// # fn main() {
+    /// #
+    /// tokio::run(Connection::new(ConnectOptions::new("localhost"))
+    ///     .and_then(|connection| {
+    ///         connection.disconnect(None)
+    ///     })
+    ///     .map_err(|_| ())
+    /// );
+    /// # }
+    /// ```
+    ///
+    /// Specify a reason and a quit message:
+    ///
+    /// ```no_run
+    /// # extern crate tokio;
+    /// # extern crate tsclientlib;
+    /// #
+    /// # use tokio::prelude::Future;
+    /// # use tsclientlib::{Connection, ConnectOptions};
+    /// # fn main() {
+    /// #
+    /// use tsclientlib::{DisconnectOptions, Reason};
+    /// tokio::run(Connection::new(ConnectOptions::new("localhost"))
+    ///     .and_then(|connection| {
+    ///         let options = DisconnectOptions::new()
+    ///             .reason(Reason::Clientdisconnect)
+    ///             .message("Away for a while");
+    ///
+    ///         connection.disconnect(options)
+    ///     })
+    ///     .map_err(|_| ())
+    /// );
+    /// # }
+    /// ```
     pub fn disconnect<O: Into<Option<DisconnectOptions>>>(self, options: O)
         -> BoxFuture<()> {
         let options = options.into().unwrap_or_default();
@@ -633,595 +660,6 @@ impl Connection {
 impl<'a> ConnectionLock<'a> {
     fn new(guard: MutexGuard<'a, data::Connection>) -> Self {
         Self { guard }
-    }
-}
-
-/// The main type of this crate, which holds all connections.
-///
-/// It can be created with the [`ConnectionManager::new`] function:
-///
-/// ```
-/// # extern crate tokio;
-/// # extern crate tsclientlib;
-/// # use std::boxed::Box;
-/// # use std::error::Error;
-/// #
-/// # use tsclientlib::ConnectionManager;
-/// # fn main() {
-/// #
-/// let cm = ConnectionManager::new();
-/// # }
-/// ```
-///
-/// [`ConnectionManager::new`]: #method.new
-#[cfg(TODO)]
-pub struct ConnectionManager {
-    inner: Rc<RefCell<InnerCM>>,
-    /// The index of the connection which should be polled next.
-    ///
-    /// This is used to ensure that connections don't starve if one connection
-    /// always returns something. It is used in the `Stream` implementation of
-    /// `ConnectionManager`.
-    poll_index: usize,
-    /// The task of the current `Run`, which polls all connections.
-    ///
-    /// It will be notified when a new connection is added.
-    task: Option<Task>,
-}
-
-#[cfg(TODO)]
-impl ConnectionManager {
-    /// Creates a new `ConnectionManager` which is then used to add new
-    /// connections.
-    ///
-    /// Connecting to a server is done by [`ConnectionManager::add_connection`].
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # extern crate tokio;
-    /// # extern crate tsclientlib;
-    /// # use std::boxed::Box;
-    /// # use std::error::Error;
-    /// #
-    /// # use tsclientlib::ConnectionManager;
-    /// # fn main() {
-    /// #
-    /// let cm = ConnectionManager::new();
-    /// # }
-    /// ```
-    ///
-    /// [`ConnectionManager::add_connection`]: #method.add_connection
-    pub fn new() -> Self {
-        // Initialize tsproto if it was not done yet
-        static TSPROTO_INIT: Once = ONCE_INIT;
-        TSPROTO_INIT.call_once(|| tsproto::init()
-            .expect("tsproto failed to initialize"));
-
-        // TODO Create with builder so the logger is optional
-        // Don't log anything to console as default setting
-        // Option to log to a file
-        let logger = {
-            let decorator = slog_term::TermDecorator::new().build();
-            let drain = slog_term::FullFormat::new(decorator).build().fuse();
-            let drain = slog_async::Async::new(drain).build().fuse();
-
-            slog::Logger::root(drain, o!())
-        };
-
-        Self {
-            inner: Rc::new(RefCell::new(InnerCM {
-                handle,
-                logger,
-                connections: HashMap::new(),
-            })),
-            poll_index: 0,
-            task: None,
-        }
-    }
-
-    /// Connect to a server.
-    pub fn add_connection(&mut self, mut config: ConnectOptions) -> Connect {
-        let res: BoxFuture<ConnectionId> = {
-            let inner = self.inner.borrow();
-            // Try all addresses
-            let addr = config.address.resolve(&inner.logger, inner.handle.clone());
-            let private_key = match config.private_key.take().map(Ok)
-                .unwrap_or_else(|| {
-                    // Create new ECDH key
-                    crypto::EccKeyPrivP256::create()
-                }) {
-                Ok(key) => key,
-                Err(error) => return Connect::new_from_error(error.into()),
-            };
-
-            let logger = inner.logger.clone();
-            let handle = inner.handle.clone();
-            let inner = Rc::downgrade(&self.inner);
-
-            let logger2 = logger.clone();
-
-            Box::new(addr.and_then(move |addr| -> Box<Future<Item=_, Error=_>> {
-                let client = match client::ClientData::new(
-                    config.local_address.unwrap_or_else(|| if addr.is_ipv4() {
-                        "0.0.0.0:0".parse().unwrap()
-                    } else {
-                        "[::]:0".parse().unwrap()
-                    }),
-                    private_key.clone(),
-                    handle.clone(),
-                    true,
-                    tsproto::connectionmanager::SocketConnectionManager::new(),
-                    logger.clone(),
-                ) {
-                    Ok(client) => client,
-                    Err(error) => return Box::new(future::err(error.into())),
-                };
-
-                // Set the data reference
-                {
-                    let c2 = client.clone();
-                    let mut client = client.borrow_mut();
-                    client.connection_manager.set_data_ref(Rc::downgrade(&c2));
-                }
-                client::default_setup(&client, config.log_packets);
-
-                let logger = logger.clone();
-                let inner = inner.clone();
-                let client = client.clone();
-                let client2 = client.clone();
-                let config = config.clone();
-
-                // Create a connection
-                debug!(logger, "Connecting"; "addr" => %addr);
-                let connect_fut = client::connect(&client, addr);
-
-                // Poll the connection for packets
-                let initserver_poll = client::ClientData::get_packets(
-                    Rc::downgrade(&client))
-                    .filter_map(|(_, p)| {
-                        // Filter commands
-                        if let Packet { data: packets::Data::Command(cmd), .. } = p {
-                            Some(cmd)
-                        } else {
-                            None
-                        }
-                    })
-                    .into_future().map_err(|(e, _)| e.into())
-                    .and_then(move |(cmd, _)| -> BoxFuture<_> {
-                        let cmd = if let Some(cmd) = cmd {
-                            cmd
-                        } else {
-                            return Box::new(future::err(Error::ConnectionFailed(
-                                String::from("Connection ended"))));
-                        };
-
-                        let cmd = cmd.get_commands().remove(0);
-                        let notif = tryf!(messages::Message::parse(cmd));
-                        if let messages::Message::InitServer(p) = notif {
-                            // Create a connection id
-                            let inner = inner.upgrade().expect(
-                                "Connection manager does not exist anymore");
-                            let mut inner = inner.borrow_mut();
-                            let id = inner.find_connection_id();
-
-                            let con;
-                            {
-                                let mut client = client2.borrow_mut();
-                                con = client.connection_manager
-                                    .get_connection(addr).unwrap();
-                            }
-
-                            // Create the connection
-                            let con = structs::NetworkWrapper::new(id, client2,
-                                Rc::downgrade(&con), &p);
-
-                            // Add the connection
-                            inner.connections.insert(id, con);
-
-                            Box::new(future::ok(id))
-                        } else {
-                            Box::new(future::err(Error::ConnectionFailed(
-                                String::from("Got no initserver"))))
-                        }
-                    });
-
-                Box::new(connect_fut.and_then(move |()| {
-                    // TODO Add possibility to specify offset and level in ConnectOptions
-                    // Compute hash cash
-                    let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-                        "Compute public key hash cash level", logger.clone(),
-                        slog::Level::Info);
-                    time_reporter.start("Compute public key hash cash level");
-                    let (offset, omega) = {
-                        let mut c = client.borrow_mut();
-                        let pub_k = c.private_key.to_pub();
-                        (algs::hash_cash(&pub_k, 8).unwrap(),
-                        pub_k.to_ts().unwrap())
-                    };
-                    time_reporter.finish();
-                    info!(logger, "Computed hash cash level";
-                        "level" => algs::get_hash_cash_level(&omega, offset),
-                        "offset" => offset);
-
-                    // Create clientinit packet
-                    let header = Header::new(PacketType::Command);
-                    let mut command = commands::Command::new("clientinit");
-                    command.push("client_nickname", config.name);
-                    command.push("client_version", config.version.get_version_string());
-                    command.push("client_platform", config.version.get_platform());
-                    command.push("client_input_hardware", "1");
-                    command.push("client_output_hardware", "1");
-                    command.push("client_default_channel", "");
-                    command.push("client_default_channel_password", "");
-                    command.push("client_server_password", "");
-                    command.push("client_meta_data", "");
-                    command.push("client_version_sign", base64::encode(
-                        config.version.get_signature()));
-                    command.push("client_key_offset", offset.to_string());
-                    command.push("client_nickname_phonetic", "");
-                    command.push("client_default_token", "");
-                    command.push("hwid", "123,456");
-                    let p_data = packets::Data::Command(command);
-                    let clientinit_packet = Packet::new(header, p_data);
-
-                    let sink = Data::get_packets(Rc::downgrade(&client));
-
-                    sink.send((addr, clientinit_packet))
-                })
-                .from_err()
-                // Wait until we sent the clientinit packet and afterwards received
-                // the initserver packet.
-                .join(initserver_poll)
-                .map(|(_, id)| id))
-            })
-            .then(move |r| -> Result<_> {
-                if let Err(e) = &r {
-                    debug!(logger2, "Connecting failed, trying next address"; "error" => ?e);
-                }
-                Ok(r.ok())
-            })
-            .filter_map(|r: Option<ConnectionId>| r)
-            .into_future()
-            .map_err(|_| Error::from(format_err!("Failed to connect to server")))
-            .and_then(|(r, _)| r.ok_or_else(|| format_err!("Failed to connect to server").into()))
-            )
-        };
-        Connect::new_from_future(self.run().select2(res))
-    }
-
-    /// Disconnect from a server.
-    ///
-    /// # Arguments
-    /// - `id`: The connection which should be removed.
-    /// - `options`: Either `None` or `DisconnectOptions`.
-    ///
-    /// # Examples
-    ///
-    /// Use default options:
-    ///
-    /// ```rust,no_run
-    /// # extern crate tokio_core;
-    /// # extern crate tsclientlib;
-    /// # use std::boxed::Box;
-    /// #
-    /// # use tsclientlib::{ConnectionId, ConnectionManager};
-    /// # fn main() {
-    /// #
-    /// let mut core = tokio_core::reactor::Core::new().unwrap();
-    /// let mut cm = ConnectionManager::new(core.handle());
-    ///
-    /// // Add connection...
-    ///
-    /// # let con_id = ConnectionId(0);
-    /// let disconnect_future = cm.remove_connection(con_id, None);
-    /// core.run(disconnect_future).unwrap();
-    /// # }
-    /// ```
-    ///
-    /// Specify a reason and a quit message:
-    ///
-    /// ```rust,no_run
-    /// # extern crate tokio_core;
-    /// # extern crate tsclientlib;
-    /// # use std::boxed::Box;
-    /// #
-    /// # use tsclientlib::{ConnectionId, ConnectionManager, DisconnectOptions,
-    /// # Reason};
-    /// # fn main() {
-    /// #
-    /// # let mut core = tokio_core::reactor::Core::new().unwrap();
-    /// # let mut cm = ConnectionManager::new(core.handle());
-    /// # let con_id = ConnectionId(0);
-    /// cm.remove_connection(con_id, DisconnectOptions::new()
-    ///     .reason(Reason::Clientdisconnect)
-    ///     .message("Away for a while"));
-    /// # }
-    /// ```
-    pub fn remove_connection<O: Into<Option<DisconnectOptions>>>(&mut self,
-        id: ConnectionId, options: O) -> Disconnect {
-        let client_con;
-        let client_data;
-        {
-            let inner_b = self.inner.borrow();
-            if let Some(con) = inner_b.connections.get(&id) {
-                client_con = con.client_connection.clone();
-                client_data = con.client_data.clone();
-            } else {
-                return Disconnect::new_from_ok();
-            }
-        }
-
-        let client_con = if let Some(c) = client_con.upgrade() {
-            c
-        } else {
-            // Already disconnected
-            return Disconnect::new_from_ok();
-        };
-
-        let header = Header::new(PacketType::Command);
-        let mut command = commands::Command::new("clientdisconnect");
-
-        let options = options.into().unwrap_or_default();
-        if let Some(reason) = options.reason {
-            command.push("reasonid", (reason as u8).to_string());
-        }
-        if let Some(msg) = options.message {
-            command.push("reasonmsg", msg);
-        }
-
-        let p_data = packets::Data::Command(command);
-        let packet = Packet::new(header, p_data);
-
-        let addr;
-        {
-            let mut con = client_con.borrow_mut();
-            con.resender.handle_event(ResenderEvent::Disconnecting);
-            addr = con.address;
-        }
-
-        let sink = Data::get_packets(Rc::downgrade(&client_data));
-        let wait_for_state = client::wait_for_state(&client_data, addr, |state| {
-            if let client::ServerConnectionState::Disconnected = *state {
-                true
-            } else {
-                false
-            }
-        });
-        let fut: BoxFuture<_> = Box::new(sink.send((addr, packet))
-            .and_then(move |_| wait_for_state)
-            .from_err());
-        Disconnect::new_from_future(self.run().select(fut))
-    }
-
-    #[inline]
-    pub fn get_connection(&self, id: ConnectionId) -> Option<Connection> {
-        if self.inner.borrow().connections.contains_key(&id) {
-            Some(Connection { cm: self, id })
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    pub fn get_mut_connection(&mut self, id: ConnectionId) -> Option<ConnectionMut> {
-        if self.inner.borrow().connections.contains_key(&id) {
-            Some(ConnectionMut { cm: self, id })
-        } else {
-            None
-        }
-    }
-
-    #[inline]
-    /// Creates a future to handle all packets.
-    pub fn run(&mut self) -> Run {
-        Run { cm: self }
-    }
-}
-
-// Private methods
-#[cfg(TODO)]
-impl ConnectionManager {
-    fn get_file(&self, _con: ConnectionId, _chan: ChannelId, _path: &str, _file: &str) -> Ref<structs::File> {
-        unimplemented!("File transfer is not yet implemented")
-    }
-
-    fn get_chat_entry(&self, _con: ConnectionId, _sender: ClientId) -> Ref<structs::ChatEntry> {
-        unimplemented!("Chatting is not yet implemented")
-    }
-
-    /// Poll like a stream to get the next message.
-    fn poll_stream(&mut self) -> futures::Poll<Option<(ConnectionId, Message)>,
-        Error> {
-        if !self.task.as_ref().map(|t| t.will_notify_current()).unwrap_or(false) {
-            self.task = Some(task::current());
-        }
-
-        // Poll all connections
-        let inner = &mut *self.inner.borrow_mut();
-        let keys: Vec<_> = inner.connections.keys().cloned().collect();
-        if keys.is_empty() {
-            // Wait until our task gets notified
-            return Ok(futures::Async::NotReady);
-        }
-
-        if self.poll_index >= keys.len() {
-            self.poll_index = 0;
-        }
-
-        let mut remove_connection = false;
-        let mut result = Ok(futures::Async::NotReady);
-        for con_id in 0..keys.len() {
-            let i = (self.poll_index + con_id) % keys.len();
-            let con = inner.connections.get_mut(&keys[i]).unwrap();
-            match con.poll() {
-                Ok(futures::Async::Ready(None)) =>
-                    warn!(inner.logger, "Got None from a connection";
-                        "connection" => %keys[i].0),
-                Ok(futures::Async::Ready(Some((_, res)))) => {
-                    // Check if the connection is still alive
-                    if con.client_connection.upgrade().is_none() {
-                        remove_connection = true;
-                    }
-                    self.poll_index = i + 1;
-                    result = Ok(futures::Async::Ready(Some((keys[i], res))));
-                    break;
-                }
-                Ok(futures::Async::NotReady) => {}
-                Err(error) =>
-                    warn!(inner.logger, "Got an error from a connection";
-                        "error" => ?error, "connection" => %keys[i].0),
-            }
-        }
-        if remove_connection {
-            // Remove the connection
-            inner.connections.remove(&keys[self.poll_index - 1]);
-        }
-        result
-    }
-
-    #[inline]
-    // Poll like a future created by (ConnectionManager as Stream).for_each().
-    fn poll_future(&mut self) -> futures::Poll<(), Error> {
-        loop {
-            match self.poll_stream()? {
-                futures::Async::Ready(Some(_)) => {}
-                futures::Async::Ready(None) =>
-                    return Ok(futures::Async::Ready(())),
-                futures::Async::NotReady => return Ok(futures::Async::NotReady),
-            }
-        }
-    }
-}
-
-#[cfg(TODO)]
-impl fmt::Debug for ConnectionManager {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "ConnectionManager(...)")
-    }
-}
-
-/// A future which runs the `ConnectionManager` indefinitely.
-#[cfg(TODO)]
-#[derive(Debug)]
-pub struct Run<'a> {
-    cm: &'a mut ConnectionManager,
-}
-
-#[cfg(TODO)]
-impl<'a> Future for Run<'a> {
-    type Item = ();
-    type Error = Error;
-
-    #[inline]
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        self.cm.poll_future()
-    }
-}
-
-#[cfg(TODO)]
-pub struct Connect<'a> {
-    /// Contains an error if the `add_connection` functions should return an
-    /// error.
-    inner: Either<Option<Error>,
-        futures::future::Select2<Run<'a>, BoxFuture<ConnectionId>>>,
-}
-
-#[cfg(TODO)]
-impl<'a> Connect<'a> {
-    fn new_from_error(error: Error) -> Self {
-        Self { inner: Either::A(Some(error)) }
-    }
-
-    fn new_from_future(future: futures::future::Select2<Run<'a>,
-        BoxFuture<ConnectionId>>) -> Self {
-        Self { inner: Either::B(future) }
-    }
-}
-
-#[cfg(TODO)]
-impl<'a> Future for Connect<'a> {
-    type Item = ConnectionId;
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        match self.inner {
-            // Take the error, this will panic if called twice
-            Either::A(ref mut error) => Err(error.take().unwrap()),
-            Either::B(ref mut inner) => match inner.poll() {
-                Ok(futures::Async::Ready(Either::A(((), _)))) =>
-                    Err(format_err!("Could not connect").into()),
-                Ok(futures::Async::Ready(Either::B((id, _)))) =>
-                    Ok(futures::Async::Ready(id)),
-                Ok(futures::Async::NotReady) => Ok(futures::Async::NotReady),
-                Err(Either::A((error, _))) |
-                Err(Either::B((error, _))) => Err(error),
-            }
-        }
-    }
-}
-
-#[cfg(TODO)]
-pub struct Disconnect<'a> {
-    inner: Option<futures::future::Select<Run<'a>, BoxFuture<()>>>,
-}
-
-#[cfg(TODO)]
-impl<'a> Disconnect<'a> {
-    fn new_from_ok() -> Self {
-        Self { inner: None }
-    }
-
-    fn new_from_future(future: futures::future::Select<Run<'a>, BoxFuture<()>>)
-        -> Self {
-        Self { inner: Some(future) }
-    }
-}
-
-#[cfg(TODO)]
-impl<'a> Future for Disconnect<'a> {
-    type Item = ();
-    type Error = Error;
-
-    #[inline]
-    fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-        match self.inner {
-            None => Ok(futures::Async::Ready(())),
-            Some(ref mut f) => f.poll().map(|r| match r {
-                futures::Async::Ready(_) => futures::Async::Ready(()),
-                futures::Async::NotReady => futures::Async::NotReady,
-            }).map_err(|(e, _)| e),
-        }
-    }
-}
-
-#[cfg(TODO)]
-impl<'a> Connection<'a> {
-    #[inline]
-    pub fn get_server(&self) -> Server {
-        Server {
-            cm: self.cm,
-            connection_id: self.id,
-        }
-    }
-}
-
-#[cfg(TODO)]
-impl<'a> ConnectionMut<'a> {
-    #[inline]
-    pub fn get_server(&self) -> Server {
-        Server {
-            cm: self.cm,
-            connection_id: self.id,
-        }
-    }
-
-    #[inline]
-    pub fn get_mut_server(&mut self) -> ServerMut {
-        ServerMut {
-            cm: self.cm,
-            connection_id: self.id,
-        }
     }
 }
 

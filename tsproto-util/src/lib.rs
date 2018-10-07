@@ -13,7 +13,6 @@ use std::io::prelude::*;
 use std::fs::File;
 
 mod book_parser;
-mod connection_manager_getters;
 mod error_parser;
 mod facade_parser;
 mod message_parser;
@@ -23,7 +22,6 @@ mod permission_parser;
 mod version_parser;
 
 pub use book_parser::BookDeclarations;
-pub use connection_manager_getters::ConnectionManagerGetters;
 pub use error_parser::Errors;
 pub use facade_parser::FacadeDeclarations;
 pub use message_parser::MessageDeclarations;

@@ -103,7 +103,6 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
         let mut rules: TomlStruct = ::toml::from_str(s).unwrap();
 
         let mut decls: Vec<_> = rules.rule.drain(..).map(|r| {
-            // TODO Rename fields to toml names
             let set_msg = messages.get_message(&r.from);
             let msg_fields = set_msg.attributes.iter()
                 .map(|a| messages.get_field(a)).collect::<Vec<_>>();
