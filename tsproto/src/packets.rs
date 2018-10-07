@@ -27,11 +27,11 @@ pub enum PacketType {
 }
 
 impl PacketType {
-    pub fn is_command(&self) -> bool {
-        *self == PacketType::Command || *self == PacketType::CommandLow
+    pub fn is_command(self) -> bool {
+        self == PacketType::Command || self == PacketType::CommandLow
     }
-    pub fn is_voice(&self) -> bool {
-        *self == PacketType::Voice || *self == PacketType::VoiceWhisper
+    pub fn is_voice(self) -> bool {
+        self == PacketType::Voice || self == PacketType::VoiceWhisper
     }
 }
 
@@ -52,23 +52,19 @@ pub enum CodecType {
     OpusMusic,
 }
 
-#[derive(PartialEq, Eq, Clone)]
-pub struct UdpPacket(pub Vec<u8>);
+/// Packet data, from client
+pub struct UdpPacket<'a>(pub &'a [u8], pub bool);
 
-impl fmt::Debug for UdpPacket {
+impl<'a> fmt::Debug for UdpPacket<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "UdpPacket {{ header: ")?;
 
         // Parse header
-        match Header::read(&true, &mut Cursor::new(&self.0)) {
-            Ok(h) => h.fmt(f)?,
-            Err(_) => match Header::read(&false, &mut Cursor::new(&self.0)) {
-                Ok(h) => h.fmt(f)?,
-                Err(_) => {} // Give up
-            }
+        if let Ok(h) = Header::read(&self.1, &mut Cursor::new(self.0)) {
+            h.fmt(f)?;
         }
 
-        write!(f, ", raw: {:?} }}", HexSlice(&self.0))?;
+        write!(f, ", raw: {:?} }}", HexSlice(self.0))?;
         Ok(())
     }
 }

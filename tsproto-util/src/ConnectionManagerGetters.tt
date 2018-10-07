@@ -1,4 +1,5 @@
 <#@ template cleanws="true" #>
+#[cfg(TODO)]
 impl ConnectionManager {
 <# for g in &self.getters { #>
     fn has_<#= g.name #>(&self, <#= g.args #>) -> bool {

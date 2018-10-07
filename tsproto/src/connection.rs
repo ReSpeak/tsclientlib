@@ -1,16 +1,19 @@
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::rc::Rc;
 use std::u16;
 
-use slog;
+use bytes::Bytes;
+use futures::{self, AsyncSink, Sink};
+use futures::sync::mpsc;
 use num::ToPrimitive;
+use slog;
 
-use connectionmanager::ConnectionManager;
+use Error;
 use crypto::EccKeyPubP256;
+use handler_data::ConnectionValueWeak;
 use packets::*;
+use resend::DefaultResender;
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -119,19 +122,27 @@ impl ConnectedParams {
     }
 
     /// Check if a given id is in the receive window.
+    ///
+    /// Returns
+    /// 1. If the packet id is inside the receive window
+    /// 1. The generation of the packet
+    /// 1. The minimum accepted packet id
+    /// 1. The maximum accepted packet id
     pub(crate) fn in_receive_window(
         &self,
         p_type: PacketType,
         p_id: u16,
-    ) -> (bool, u16, u16) {
+    ) -> (bool, u32, u16, u16) {
         let type_i = p_type.to_usize().unwrap();
         // Receive window is the next half of ids
         let cur_next = self.incoming_p_ids[type_i].1;
         let limit = ((u32::from(cur_next) + u32::from(u16::MAX) / 2)
             % u32::from(u16::MAX)) as u16;
+        let gen = self.incoming_p_ids[type_i].0;
         (
             (cur_next < limit && p_id >= cur_next && p_id < limit)
                 || (cur_next > limit && (p_id >= cur_next || p_id < limit)),
+            if p_id >= cur_next { gen } else { gen + 1 },
             cur_next,
             limit,
         )
@@ -139,7 +150,9 @@ impl ConnectedParams {
 }
 
 /// Represents a currently alive connection.
-pub struct Connection<CM: ConnectionManager + 'static> {
+#[derive(Debug)]
+pub struct Connection {
+    pub is_client: bool,
     /// A logger for this connection.
     pub logger: slog::Logger,
     /// The parameters of this connection, if it is already established.
@@ -148,18 +161,94 @@ pub struct Connection<CM: ConnectionManager + 'static> {
     /// to.
     pub address: SocketAddr,
 
-    pub resender: CM::Resend,
+    pub resender: DefaultResender,
+    udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
+    pub command_sink: mpsc::UnboundedSender<Packet>,
+    pub audio_sink: mpsc::UnboundedSender<Packet>,
 }
 
-impl<CM: ConnectionManager + 'static> Connection<CM> {
+impl Connection {
     /// Creates a new connection struct.
-    pub fn new(address: SocketAddr, resender: CM::Resend, logger: slog::Logger)
-        -> Rc<RefCell<Self>> {
-        Rc::new(RefCell::new(Self {
+    pub fn new(
+        address: SocketAddr,
+        resender: DefaultResender,
+        logger: slog::Logger,
+        udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
+        is_client: bool,
+        command_sink: mpsc::UnboundedSender<Packet>,
+        audio_sink: mpsc::UnboundedSender<Packet>,
+    ) -> Self {
+        Self {
+            is_client,
             logger,
             params: None,
             address,
             resender,
-        }))
+            udp_packet_sink,
+            command_sink,
+            audio_sink,
+        }
+    }
+}
+
+pub struct ConnectionUdpPacketSink<T: Send + 'static> {
+    con: ConnectionValueWeak<T>,
+    udp_packet_sink: Option<(SocketAddr, mpsc::Sender<(SocketAddr, Bytes)>)>,
+}
+
+impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
+    pub fn new(con: ConnectionValueWeak<T>) -> Self {
+        Self { con, udp_packet_sink: None }
+    }
+}
+
+impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
+    type SinkItem = (PacketType, u16, Bytes);
+    type SinkError = Error;
+
+    fn start_send(
+        &mut self,
+        (p_type, p_id, udp_packet): Self::SinkItem
+    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+        match p_type {
+            PacketType::Init | PacketType::Command | PacketType::CommandLow => {
+                if let Some(mutex) = self.con.mutex.upgrade() {
+                    let mut con = mutex.lock().unwrap();
+                    let res = con.1.resender.start_send((p_type, p_id, udp_packet));
+                    res
+                } else {
+                    Err(format_err!("Connection is gone").into())
+                }
+            }
+            _ => {
+                if self.udp_packet_sink.is_none() {
+                    if let Some(mutex) = self.con.mutex.upgrade() {
+                        let con = mutex.lock().unwrap();
+                        self.udp_packet_sink = Some((con.1.address,
+                            con.1.udp_packet_sink.clone()));
+                    } else {
+                        return Err(format_err!("Connection is gone").into());
+                    }
+                }
+
+                let (addr, s) = self.udp_packet_sink.as_mut().unwrap();
+                Ok(match s.start_send((*addr, udp_packet))
+                    .map_err(|e| format_err!("Failed to send udp packet ({:?})", e))? {
+                    AsyncSink::Ready => AsyncSink::Ready,
+                    AsyncSink::NotReady((_, p)) =>
+                        AsyncSink::NotReady((p_type, p_id, p)),
+                })
+            }
+        }
+    }
+
+    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
+        if let Some((_, s)) = &mut self.udp_packet_sink {
+            s.poll_complete()
+                .map_err(|e| format_err!("Failed to complete sending udp \
+                    packet ({:?})", e).into())
+        } else {
+            Ok(futures::Async::Ready(()))
+        }
     }
 }

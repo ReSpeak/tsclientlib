@@ -1,11 +1,6 @@
-use std::cell::RefCell;
-use std::rc::Rc;
-
 use futures::{future, Sink, stream, Stream};
 use tsproto::Error;
 use tsproto::commands::Command;
-use tsproto::connectionmanager::ConnectionManager;
-use tsproto::handler_data;
 use tsproto::packets::{Data, Header, Packet, PacketType};
 
 use tsproto_commands::messages;
@@ -27,6 +22,7 @@ pub enum Message {
 /// Convert a stream/sink of `Packet`s to a stream of `Message`s.
 pub struct CommandCodec;
 
+#[cfg(TODO)]
 impl CommandCodec {
 	pub fn new_stream<CM: ConnectionManager + 'static>(
 		data: &Rc<RefCell<handler_data::Data<CM>>>)

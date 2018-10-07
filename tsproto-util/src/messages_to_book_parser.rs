@@ -99,106 +99,6 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
 
     fn get_filename() -> &'static str { "MessagesToBook.toml" }
 
-    #[cfg(TODO)]
-    fn parse_from_read(read: &mut Read, (book, messages): Self::Dep) -> Self {
-        let rgx_event = Regex::new(r##"^\s*(?P<msg>\w+)\s*->\s*(?P<stru>\w+)\[(?P<id>(\s*(@|\w+))*)\](?P<mod>(\+|-)?)$"##).unwrap();
-        let rgx_rule = Regex::new(r##"^\s*(?P<fld>\w+)\s*->\s*(?P<prop>(\w+|\(((\s*\w+\s*)(,(\s*\w+\s*))*)\)))(?P<mod>(\+|-)?)$"##).unwrap();
-
-        let mut decls = Vec::new();
-        let mut buildev: Option<(Event, Vec<&Field>)> = None;
-
-        for (i, line) in BufReader::new(read).lines().map(Result::unwrap).enumerate() {
-            let i = i + 1;
-            let trimmed = line.trim_left();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
-            if rgx_event.is_match(&trimmed) {
-                finalize(book, &mut decls, buildev);
-
-                let capture = rgx_event.captures(&trimmed).unwrap();
-
-                let msg = &capture["msg"];
-                let stru = &capture["stru"];
-                let id = &capture["id"];
-                let modi = &capture["mod"];
-
-                let set_msg = messages.get_message(msg);
-                let msg_fields = set_msg.attributes.iter()
-                    .map(|a| messages.get_field(a)).collect::<Vec<_>>();
-                let set_stru = book.structs.iter().find(|s| s.name == stru)
-                    .expect(&format!("Cannot find struct {} defined in line {}",
-                        stru, i));
-                let set_id = id
-                    .split(" ")
-                    .map(|s| s.trim())
-                    .map(|s|
-                        if s.starts_with('@') { IdKind::Id }
-                        else { IdKind::Fld(find_field(s, &msg_fields, i)) } )
-                    .collect::<Vec<_>>();
-                let set_modi = mod_to_enu(modi, i);
-
-                buildev = Some((Event {
-                    op: set_modi,
-                    id: set_id,
-                    msg: set_msg,
-                    book_struct: set_stru,
-                    rules: Vec::new(),
-                }, msg_fields));
-            } else if rgx_rule.is_match(&trimmed) {
-                let buildev = buildev.as_mut()
-                    .expect(&format!("No event declaration found before this \
-                        rule (line {})", i));
-
-                let capture = rgx_rule.captures(&trimmed).unwrap();
-
-                let find_prop = |name, book_struct: &'a Struct| -> &'a Property {
-                    if let Some(prop) = book_struct.properties.iter()
-                        .find(|p| p.name == name) {
-                        return prop;
-                    }
-                    panic!("No such (nested) property {} found in struct (line {})", name, i);
-                };
-
-                let fld = &capture["fld"];
-                let prop = &capture["prop"];
-                let modi = &capture["mod"];
-
-                let set_modi = mod_to_enu(modi, i);
-
-                let event = if prop.starts_with("(") { // Function
-                    RuleKind::Function {
-                        name: fld.to_string(),
-                        to: prop.trim_left_matches('(').trim_right_matches(')')
-                            .split(",")
-                            .map(|x| x.trim())
-                            .map(|x| find_prop(x, buildev.0.book_struct))
-                            .collect::<Vec<_>>(),
-                    }
-                } else { // Map
-                    let prop = find_prop(prop, buildev.0.book_struct);
-                    let from_fld = find_field(fld, &buildev.1, i);
-                    if from_fld.pretty == prop.name {
-                        println!("This field assignment is already implicitly defined (line {})", i);
-                    }
-                    RuleKind::Map {
-                        from: from_fld,
-                        to: prop,
-                        op: set_modi
-                    }
-                };
-                buildev.0.rules.push(event);
-            } else {
-                panic!("Parse error in line {}", i);
-            }
-        }
-
-        finalize(book, &mut decls, buildev);
-
-        MessagesToBookDeclarations{ book, messages, decls }
-    }
-
     fn parse(s: &str, (book, messages): Self::Dep) -> Self {
         let mut rules: TomlStruct = ::toml::from_str(s).unwrap();
 
@@ -210,7 +110,7 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
             let book_struct = book.structs.iter().find(|s| s.name == r.to)
                 .unwrap_or_else(|| panic!("Cannot find struct {}", r.to));
 
-            let mut properties = r.properties.unwrap_or_else(|| Vec::new());
+            let mut properties = r.properties.unwrap_or_else(Vec::new);
 
             let mut ev = Event {
                 op: r.operation.parse().expect("Failed to parse operation"),
@@ -298,50 +198,8 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
     }
 }
 
-#[cfg(TODO)]
-fn finalize<'a>(book: &'a BookDeclarations, decls: &mut Vec<Event<'a>>, buildev: Option<(Event<'a>, Vec<&'a Field>)>) {
-    if let Some((mut ev, flds)) = buildev {
-        let used_flds = ev.rules
-            .iter()
-            .filter_map(|f| match *f { RuleKind::Map{ from, .. } => Some(from), _ => None, })
-            .collect::<Vec<_>>();
-
-        let mut used_props = vec![];
-        for rule in &ev.rules {
-            match rule {
-                &RuleKind::Function{ ref to, .. } => {
-                    for p in to {
-                        used_props.push(p.name.clone());
-                    }
-                },
-                _ => {}
-            }
-        }
-
-        for fld in flds {
-            if used_flds.contains(&fld) {
-                continue;
-            }
-            if let Some(prop) = book.get_struct(&ev.book_struct.name).properties
-                .iter().find(|p| p.name == fld.pretty) {
-                if used_props.contains(&prop.name) {
-                    continue;
-                }
-
-                ev.rules.push(RuleKind::Map {
-                    from: fld,
-                    to: prop,
-                    op: RuleOp::Update,
-                });
-            }
-        }
-
-        decls.push(ev);
-    }
-}
-
 // the in rust callable name (in PascalCase) from the field
-fn find_field<'a>(name: &str, msg_fields: &Vec<&'a Field>) -> &'a Field {
+fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
     *msg_fields.iter().find(|f| f.pretty == name)
         .expect(&format!("Cannot find field '{}'", name))
 }

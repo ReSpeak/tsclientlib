@@ -4,12 +4,13 @@
 //! If you want a full client application, you might want to have a look at
 //! [Qint].
 //!
-//! The base class of this library is the [`ConnectionManager`]. From there you
-//! can create, inspect, modify and remove connections.
+//! The base class of this library is the [`Connection`]. One instance of this
+//! struct manages a single connection to a server.
 //!
-//! [`ConnectionManager`]: struct.ConnectionManager.html
+//! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 
+// TODO Update
 // # Internal structure
 // ConnectionManager is a wrapper around Rc<RefCell<InnerCM>>,
 // it contains the api to create and destroy connections.
@@ -19,7 +20,7 @@
 // That means all references have to be handed back before the ConnectionManager
 // can be used again.
 //
-// InnerCM contains a Map<ConnectionId, structs::NetworkWrapper>.
+// InnerCM contains a HashMap<ConnectionId, structs::NetworkWrapper>.
 //
 // NetworkWrapper contains the Connection which is the bookkeeping struct,
 // the Rc<RefCell<client::ClientData>>, which is the tsproto connection,
@@ -49,32 +50,26 @@ extern crate slog;
 extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
-extern crate tokio_core;
-extern crate tokio_io;
+extern crate tokio;
 extern crate trust_dns_proto;
 extern crate trust_dns_resolver;
 extern crate tsproto;
 extern crate tsproto_commands;
 
-use std::cell::{Ref, RefCell, RefMut};
 use std::fmt;
-use std::mem;
 use std::net::SocketAddr;
-use std::sync::{Once, ONCE_INIT};
-use std::rc::Rc;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, MutexGuard, Once, ONCE_INIT};
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use failure::ResultExt;
 use futures::{future, Future, Sink, stream, Stream};
-use futures::task::{self, Task};
-use futures::future::Either;
+use futures::sync::mpsc;
 use slog::{Drain, Logger};
-use tokio_core::reactor::Handle;
 use tsproto::algorithms as algs;
 use tsproto::{client, crypto, packets, commands};
-use tsproto::connectionmanager::ConnectionManager as TsprotoCM;
-use tsproto::connectionmanager::{Resender, ResenderEvent};
-use tsproto::handler_data::Data;
+use tsproto::commands::Command;
+use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::{Header, Packet, PacketType};
 use tsproto_commands::*;
 
@@ -87,33 +82,29 @@ macro_rules! copy_attrs {
     };
 }
 
-macro_rules! tryf {
+/*macro_rules! tryf {
     ($e:expr) => {
         match $e {
             Ok(e) => e,
             Err(error) => return Box::new(future::err(error.into())),
         }
     };
-}
+}*/
 
 pub mod codec;
-mod structs;
-mod resolver;
+pub mod data;
+pub mod resolver;
 
 // Reexports
-pub use tsproto_commands::ConnectionId;
 pub use tsproto_commands::Reason;
 pub use tsproto_commands::versions::Version;
 use tsproto_commands::messages;
 
-
 use codec::Message;
 
+type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-type BoxFuture<T> = Box<Future<Item = T, Error = Error>>;
-type Map<K, V> = std::collections::HashMap<K, V>;
 
-include!(concat!(env!("OUT_DIR"), "/facades.rs"));
 include!(concat!(env!("OUT_DIR"), "/getters.rs"));
 
 #[derive(Fail, Debug)]
@@ -228,13 +219,379 @@ pub struct TalkPowerRequest {
     pub message: String,
 }
 
+struct SimplePacketHandler {
+    logger: Logger,
+    handle_packets: Option<PHBox>,
+    initserver_sender: Option<mpsc::Sender<Command>>,
+}
+
+impl SimplePacketHandler {
+    fn new(logger: Logger) -> Self {
+        Self { logger, handle_packets: None, initserver_sender: None }
+    }
+}
+
+impl<T: 'static> tsproto::handler_data::PacketHandler<T> for
+    SimplePacketHandler {
+    fn new_connection<S1, S2>(
+        &mut self,
+        _: &ConnectionValue<T>,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=tsproto::Error> + Send + 'static,
+        S2: Stream<Item=Packet, Error=tsproto::Error> + Send + 'static,
+    {
+        let command_stream: Box<Stream<Item=Packet, Error=tsproto::Error>
+            + Send> = if let Some(send) = &self.initserver_sender {
+            let mut send = send.clone();
+            Box::new(command_stream.map(move |p| {
+                let is_cmd = if let Packet { data: packets::Data::Command(_), .. } = &p {
+                    true
+                } else {
+                    false
+                };
+                if is_cmd {
+                    if let Packet { data: packets::Data::Command(cmd), .. }
+                        = p {
+                        // Don't block, we should only send 1 command
+                        let _ = send.try_send(cmd);
+                        None
+                    } else {
+                        unreachable!();
+                    }
+                } else {
+                    Some(p)
+                }
+            }).filter_map(|p| p))
+        } else {
+            Box::new(command_stream)
+        };
+
+        if let Some(h) = &mut self.handle_packets {
+            h.new_connection(Box::new(command_stream), Box::new(audio_stream));
+        } else {
+            let logger = self.logger.clone();
+            tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(move |e|
+                error!(logger, "Command stream exited with error ({:?})", e)));
+            let logger = self.logger.clone();
+            tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(move |e|
+                error!(logger, "Audio stream exited with error ({:?})", e)));
+        }
+    }
+}
+
+type PHBox = Box<PacketHandler + Send>;
+pub trait PacketHandler {
+    fn new_connection(
+        &mut self,
+        command_stream: Box<Stream<Item=Packet, Error=tsproto::Error> + Send>,
+        audio_stream: Box<Stream<Item=Packet, Error=tsproto::Error> + Send>,
+    );
+    /// Clone into a box.
+    fn clone(&self) -> PHBox;
+}
+
+pub struct ConnectionLock<'a> {
+    guard: MutexGuard<'a, data::Connection>,
+}
+
+impl<'a> Deref for ConnectionLock<'a> {
+    type Target = data::Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.guard
+    }
+}
+
+#[derive(Clone)]
+struct InnerConnection {
+    connection: Arc<Mutex<data::Connection>>,
+    client_data: client::ClientDataM<SimplePacketHandler>,
+    client_connection: client::ClientConVal,
+}
+
+#[derive(Clone)]
+pub struct Connection {
+    inner: InnerConnection,
+}
+
+impl Connection {
+    pub fn new(mut options: ConnectOptions) -> BoxFuture<Connection> {
+        // Initialize tsproto if it was not done yet
+        static TSPROTO_INIT: Once = ONCE_INIT;
+        TSPROTO_INIT.call_once(|| tsproto::init()
+            .expect("tsproto failed to initialize"));
+
+        let logger = options.logger.take().unwrap_or_else(|| {
+            let decorator = slog_term::TermDecorator::new().build();
+            let drain = slog_term::FullFormat::new(decorator).build().fuse();
+            let drain = slog_async::Async::new(drain).build().fuse();
+
+            slog::Logger::root(drain, o!())
+        });
+        let logger = logger.new(o!("addr" => options.address.to_string()));
+
+        // Try all addresses
+        let addr: Box<Stream<Item=_, Error=_> + Send> = options.address.resolve(&logger);
+        let private_key = match options.private_key.take().map(Ok)
+            .unwrap_or_else(|| {
+                // Create new ECDH key
+                crypto::EccKeyPrivP256::create()
+            }) {
+            Ok(key) => key,
+            Err(e) => return Box::new(future::err(e.into())),
+        };
+
+        let logger2 = logger.clone();
+        Box::new(addr.and_then(move |addr| -> Box<Future<Item=_, Error=_> + Send> {
+            let log_config = tsproto::handler_data::LogConfig::new(
+                options.log_packets, options.log_packets);
+            let mut packet_handler = SimplePacketHandler::new(logger.clone());
+            let (initserver_send, initserver_recv) = mpsc::channel(0);
+            packet_handler.initserver_sender = Some(initserver_send);
+            if let Some(h) = &options.handle_packets {
+                packet_handler.handle_packets = Some(h.as_ref().clone());
+            }
+            let packet_handler = client::DefaultPacketHandler::new(
+                packet_handler);
+            let client = match client::ClientData::new(
+                options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
+                    "0.0.0.0:0".parse().unwrap()
+                } else {
+                    "[::]:0".parse().unwrap()
+                }),
+                private_key.clone(),
+                true,
+                None,
+                packet_handler,
+                tsproto::connectionmanager::SocketConnectionManager::new(),
+                logger.clone(),
+                log_config,
+            ) {
+                Ok(client) => client,
+                Err(error) => return Box::new(future::err(error.into())),
+            };
+
+            // Set the data reference
+            let client2 = Arc::downgrade(&client);
+            client.try_lock().unwrap().packet_handler.complete(client2);
+
+            let logger = logger.clone();
+            let client = client.clone();
+            let client2 = client.clone();
+            let options = options.clone();
+
+            // Create a connection
+            debug!(logger, "Connecting"; "address" => %addr);
+            let connect_fut = client::connect(Arc::downgrade(&client),
+                &mut *client.lock().unwrap(), addr).from_err();
+
+            // Poll the connection for packets
+            /*let initserver_poll = initserver_recv
+                .and_then(move |cmd| {
+                    let cmd = cmd.get_commands().remove(0);
+                    let notif = messages::Message::parse(cmd)?;
+                    if let messages::Message::InitServer(p) = notif {
+                        let con = {
+                            let mut client = client2.borrow_mut();
+                            client.connection_manager
+                                .get_connection(addr).unwrap()
+                        };
+
+                        // Create the connection
+                        let inner = InnerConnection {
+                            connection: Arc::new(Mutex::new(data::Connection::new())),
+                            client_data: client2,
+                            client_connection: con,
+                        };
+                        Ok(Connection { inner })
+                    } else {
+                        Err(Error::ConnectionFailed(
+                            String::from("Got no initserver")))
+                    }
+                });*/
+
+            let initserver_poll = initserver_recv.into_future()
+                .map_err(|e| format_err!("Error while waiting for initserver \
+                    ({:?})", e).into())
+                .and_then(move |(cmd, _)| {
+                    let cmd = match cmd {
+                        Some(c) => c,
+                        None => return Err(Error::ConnectionFailed(
+                            String::from("Got no initserver"))),
+                    };
+                    let cmd = cmd.get_commands().remove(0);
+                    let notif = messages::Message::parse(cmd)?;
+                    if let messages::Message::InitServer(p) = notif {
+                        Ok(p)
+                    } else {
+                        Err(Error::ConnectionFailed(
+                            String::from("Got no initserver")))
+                    }
+                });
+
+            Box::new(connect_fut
+                .and_then(move |con| {
+                    // TODO Add possibility to specify offset and level in ConnectOptions
+                    // Compute hash cash
+                    let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+                        "Compute public key hash cash level", logger.clone(),
+                        slog::Level::Info);
+                    time_reporter.start("Compute public key hash cash level");
+                    let (offset, omega) = {
+                        let mut c = client.lock().unwrap();
+                        let pub_k = c.private_key.to_pub();
+                        // TODO Run as blocking future
+                        (algs::hash_cash(&pub_k, 8).unwrap(),
+                        pub_k.to_ts().unwrap())
+                    };
+                    time_reporter.finish();
+                    info!(logger, "Computed hash cash level";
+                        "level" => algs::get_hash_cash_level(&omega, offset),
+                        "offset" => offset);
+
+                    // Create clientinit packet
+                    let header = Header::new(PacketType::Command);
+                    let mut command = commands::Command::new("clientinit");
+                    command.push("client_nickname", options.name);
+                    command.push("client_version", options.version.get_version_string());
+                    command.push("client_platform", options.version.get_platform());
+                    command.push("client_input_hardware", "1");
+                    command.push("client_output_hardware", "1");
+                    command.push("client_default_channel", "");
+                    command.push("client_default_channel_password", "");
+                    command.push("client_server_password", "");
+                    command.push("client_meta_data", "");
+                    command.push("client_version_sign", base64::encode(
+                        options.version.get_signature()));
+                    command.push("client_key_offset", offset.to_string());
+                    command.push("client_nickname_phonetic", "");
+                    command.push("client_default_token", "");
+                    command.push("hwid", "123,456");
+                    let p_data = packets::Data::Command(command);
+                    let clientinit_packet = Packet::new(header, p_data);
+
+                    let sink = con.as_packet_sink();
+
+                    sink.send(clientinit_packet).map(move |_| con)
+                })
+                .from_err()
+                // Wait until we sent the clientinit packet and afterwards received
+                // the initserver packet.
+                .and_then(move |con| initserver_poll.map(|r| (con, r)))
+                .and_then(move |(con, initserver)| {
+                    // Create connection
+                    let data = data::Connection::new(Uid("TODO".to_string()),
+                        &initserver);
+                    let con = InnerConnection {
+                        connection: Arc::new(Mutex::new(data)),
+                        client_data: client2,
+                        client_connection: con,
+                    };
+                    Ok(Connection { inner: con })
+                }))
+        })
+        .then(move |r| -> Result<_> {
+            if let Err(e) = &r {
+                debug!(logger2, "Connecting failed, trying next address";
+                    "error" => ?e);
+            }
+            Ok(r.ok())
+        })
+        .filter_map(|r| r)
+        .into_future()
+        .map_err(|_| Error::from(format_err!("Failed to connect to server")))
+        .and_then(|(r, _)| r.ok_or_else(|| format_err!("Failed to connect to server").into()))
+        )
+    }
+
+    /// **This is part of the unstable interface.**
+    ///
+    /// You can use it if you need access to lower level functions, but this
+    /// interface may change, even on patch version changes.
+    pub fn get_packet_sink(&self) {
+    }
+
+    /// **This is part of the unstable interface.**
+    ///
+    /// You can use it if you need access to lower level functions, but this
+    /// interface may change, even on patch version changes.
+    pub fn get_udp_packet_sink(&self) {
+    }
+
+    /// **This is part of the unstable interface.**
+    ///
+    /// You can use it if you need access to lower level functions, but this
+    /// interface may change, even on patch version changes.
+    ///
+    /// Adds a `return_code` to the command and returns if the corresponding
+    /// answer is received. If an error occurs, the future will return an error.
+    pub fn send_command(&self, command: Command) {
+        // Store waiting in HashMap<usize (return code), oneshot::Sender>
+        // The packet handler then sends a result to the sender if the answer is
+        // received.
+    }
+
+    pub fn lock(&self) -> ConnectionLock {
+        ConnectionLock::new(self.inner.connection.lock().unwrap())
+    }
+
+    pub fn to_mut<'a>(&self, con: &'a data::Connection)
+        -> data::ConnectionMut<'a> {
+        data::ConnectionMut {
+            connection: self.inner.clone(),
+            inner: &con,
+        }
+    }
+
+    pub fn disconnect<O: Into<Option<DisconnectOptions>>>(self, options: O)
+        -> BoxFuture<()> {
+        let options = options.into().unwrap_or_default();
+
+        // TODO Send as message/command
+        let header = Header::new(PacketType::Command);
+        let mut command = commands::Command::new("clientdisconnect");
+
+        if let Some(reason) = options.reason {
+            command.push("reasonid", (reason as u8).to_string());
+        }
+        if let Some(msg) = options.message {
+            command.push("reasonmsg", msg);
+        }
+
+        let p_data = packets::Data::Command(command);
+        let packet = Packet::new(header, p_data);
+
+        let wait_for_state = client::wait_for_state(&self.inner.client_connection, |state| {
+            if let client::ServerConnectionState::Disconnected = state {
+                true
+            } else {
+                false
+            }
+        });
+        Box::new(self.inner.client_connection.as_packet_sink().send(packet)
+            .and_then(move |_| wait_for_state)
+            .from_err()
+            .map(move |_| drop(self)))
+    }
+}
+
+impl<'a> ConnectionLock<'a> {
+    fn new(guard: MutexGuard<'a, data::Connection>) -> Self {
+        Self { guard }
+    }
+}
+
 /// The connection manager which can be shared and cloned.
+#[cfg(TODO)]
 struct InnerCM {
     handle: Handle,
     logger: Logger,
-    connections: Map<ConnectionId, structs::NetworkWrapper>,
+    connections: HashMap<ConnectionId, structs::NetworkWrapper>,
 }
 
+#[cfg(TODO)]
 impl InnerCM {
     /// Returns the first free connection id.
     fn find_connection_id(&self) -> ConnectionId {
@@ -253,7 +610,7 @@ impl InnerCM {
 /// It can be created with the [`ConnectionManager::new`] function:
 ///
 /// ```
-/// # extern crate tokio_core;
+/// # extern crate tokio;
 /// # extern crate tsclientlib;
 /// # use std::boxed::Box;
 /// # use std::error::Error;
@@ -261,12 +618,12 @@ impl InnerCM {
 /// # use tsclientlib::ConnectionManager;
 /// # fn main() {
 /// #
-/// let core = tokio_core::reactor::Core::new().unwrap();
-/// let cm = ConnectionManager::new(core.handle());
+/// let cm = ConnectionManager::new();
 /// # }
 /// ```
 ///
 /// [`ConnectionManager::new`]: #method.new
+#[cfg(TODO)]
 pub struct ConnectionManager {
     inner: Rc<RefCell<InnerCM>>,
     /// The index of the connection which should be polled next.
@@ -281,6 +638,7 @@ pub struct ConnectionManager {
     task: Option<Task>,
 }
 
+#[cfg(TODO)]
 impl ConnectionManager {
     /// Creates a new `ConnectionManager` which is then used to add new
     /// connections.
@@ -290,7 +648,7 @@ impl ConnectionManager {
     /// # Example
     ///
     /// ```
-    /// # extern crate tokio_core;
+    /// # extern crate tokio;
     /// # extern crate tsclientlib;
     /// # use std::boxed::Box;
     /// # use std::error::Error;
@@ -298,13 +656,12 @@ impl ConnectionManager {
     /// # use tsclientlib::ConnectionManager;
     /// # fn main() {
     /// #
-    /// let core = tokio_core::reactor::Core::new().unwrap();
-    /// let cm = ConnectionManager::new(core.handle());
+    /// let cm = ConnectionManager::new();
     /// # }
     /// ```
     ///
     /// [`ConnectionManager::add_connection`]: #method.add_connection
-    pub fn new(handle: Handle) -> Self {
+    pub fn new() -> Self {
         // Initialize tsproto if it was not done yet
         static TSPROTO_INIT: Once = ONCE_INIT;
         TSPROTO_INIT.call_once(|| tsproto::init()
@@ -325,7 +682,7 @@ impl ConnectionManager {
             inner: Rc::new(RefCell::new(InnerCM {
                 handle,
                 logger,
-                connections: Map::new(),
+                connections: HashMap::new(),
             })),
             poll_index: 0,
             task: None,
@@ -632,6 +989,7 @@ impl ConnectionManager {
 }
 
 // Private methods
+#[cfg(TODO)]
 impl ConnectionManager {
     fn get_file(&self, _con: ConnectionId, _chan: ChannelId, _path: &str, _file: &str) -> Ref<structs::File> {
         unimplemented!("File transfer is not yet implemented")
@@ -705,6 +1063,7 @@ impl ConnectionManager {
     }
 }
 
+#[cfg(TODO)]
 impl fmt::Debug for ConnectionManager {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ConnectionManager(...)")
@@ -712,11 +1071,13 @@ impl fmt::Debug for ConnectionManager {
 }
 
 /// A future which runs the `ConnectionManager` indefinitely.
+#[cfg(TODO)]
 #[derive(Debug)]
 pub struct Run<'a> {
     cm: &'a mut ConnectionManager,
 }
 
+#[cfg(TODO)]
 impl<'a> Future for Run<'a> {
     type Item = ();
     type Error = Error;
@@ -727,6 +1088,7 @@ impl<'a> Future for Run<'a> {
     }
 }
 
+#[cfg(TODO)]
 pub struct Connect<'a> {
     /// Contains an error if the `add_connection` functions should return an
     /// error.
@@ -734,6 +1096,7 @@ pub struct Connect<'a> {
         futures::future::Select2<Run<'a>, BoxFuture<ConnectionId>>>,
 }
 
+#[cfg(TODO)]
 impl<'a> Connect<'a> {
     fn new_from_error(error: Error) -> Self {
         Self { inner: Either::A(Some(error)) }
@@ -745,6 +1108,7 @@ impl<'a> Connect<'a> {
     }
 }
 
+#[cfg(TODO)]
 impl<'a> Future for Connect<'a> {
     type Item = ConnectionId;
     type Error = Error;
@@ -766,10 +1130,12 @@ impl<'a> Future for Connect<'a> {
     }
 }
 
+#[cfg(TODO)]
 pub struct Disconnect<'a> {
     inner: Option<futures::future::Select<Run<'a>, BoxFuture<()>>>,
 }
 
+#[cfg(TODO)]
 impl<'a> Disconnect<'a> {
     fn new_from_ok() -> Self {
         Self { inner: None }
@@ -781,6 +1147,7 @@ impl<'a> Disconnect<'a> {
     }
 }
 
+#[cfg(TODO)]
 impl<'a> Future for Disconnect<'a> {
     type Item = ();
     type Error = Error;
@@ -797,6 +1164,7 @@ impl<'a> Future for Disconnect<'a> {
     }
 }
 
+#[cfg(TODO)]
 impl<'a> Connection<'a> {
     #[inline]
     pub fn get_server(&self) -> Server {
@@ -807,6 +1175,7 @@ impl<'a> Connection<'a> {
     }
 }
 
+#[cfg(TODO)]
 impl<'a> ConnectionMut<'a> {
     #[inline]
     pub fn get_server(&self) -> Server {
@@ -850,13 +1219,19 @@ impl<'a> From<&'a str> for ServerAddress {
 }
 
 impl ServerAddress {
-    pub fn resolve(&self, logger: &Logger, handle: Handle) -> impl Stream<Item=SocketAddr, Error=Error> {
+    pub fn resolve(&self, logger: &Logger) -> Box<Stream<Item=SocketAddr, Error=Error> + Send> {
         match self {
-            ServerAddress::SocketAddr(a) => {
-                let res: Box<Stream<Item=_, Error=_>> = Box::new(stream::once(Ok(*a)));
-                res
-            }
-            ServerAddress::Other(s) => Box::new(resolver::resolve(logger, handle, s)),
+            ServerAddress::SocketAddr(a) => Box::new(stream::once(Ok(*a))),
+            ServerAddress::Other(s) => Box::new(resolver::resolve(logger, s)),
+        }
+    }
+}
+
+impl fmt::Display for ServerAddress {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ServerAddress::SocketAddr(a) => fmt::Display::fmt(a, f),
+            ServerAddress::Other(a) => fmt::Display::fmt(a, f),
         }
     }
 }
@@ -882,14 +1257,15 @@ impl ServerAddress {
 /// let con = core.run(cm.add_connection(con_config)).unwrap();
 /// # }
 /// ```
-#[derive(Clone, Debug)]
 pub struct ConnectOptions {
     address: ServerAddress,
     local_address: Option<SocketAddr>,
     private_key: Option<crypto::EccKeyPrivP256>,
     name: String,
     version: Version,
+    logger: Option<Logger>,
     log_packets: bool,
+    handle_packets: Option<PHBox>,
 }
 
 impl ConnectOptions {
@@ -913,7 +1289,9 @@ impl ConnectOptions {
             private_key: None,
             name: String::from("TeamSpeakUser"),
             version: Version::Linux_3_2_1,
+            logger: None,
             log_packets: false,
+            handle_packets: None,
         }
     }
 
@@ -983,6 +1361,68 @@ impl ConnectOptions {
     pub fn log_packets(mut self, log_packets: bool) -> Self {
         self.log_packets = log_packets;
         self
+    }
+
+    /// Set a custom logger for the connection.
+    ///
+    /// # Default
+    /// A new logger is created.
+    #[inline]
+    pub fn logger(mut self, logger: Logger) -> Self {
+        self.logger = Some(logger);
+        self
+    }
+
+    /// Handle incomming command and audio packets in a custom way,
+    /// additionally to the default handling.
+    ///
+    /// The given function will be called with a stream of command packets and a
+    /// second stream of audio packets.
+    ///
+    /// # Default
+    /// Packets are handled in the default way and then dropped.
+    #[inline]
+    pub fn handle_packets(mut self,
+        handle_packets: PHBox) -> Self {
+        self.handle_packets = Some(handle_packets);
+        self
+    }
+}
+
+impl fmt::Debug for ConnectOptions {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // Error if attributes are added
+        let ConnectOptions {
+            address, local_address, private_key, name, version, logger,
+            log_packets, handle_packets: _,
+        } = self;
+        write!(f, "ConnectOptions {{ \
+            address: {:?}, \
+            local_address: {:?}, \
+            private_key: {:?}, \
+            name: {}, \
+            version: {}, \
+            logger: {:?}, \
+            log_packets: {}, \
+            }}", address, local_address, private_key, name, version, logger,
+            log_packets)?;
+        Ok(())
+    }
+}
+
+impl Clone for ConnectOptions {
+    fn clone(&self) -> Self {
+        ConnectOptions {
+            address: self.address.clone(),
+            local_address: self.local_address.clone(),
+            private_key: self.private_key.clone(),
+            name: self.name.clone(),
+            version: self.version.clone(),
+            logger: self.logger.clone(),
+            log_packets: self.log_packets.clone(),
+            handle_packets: self.handle_packets.as_ref()
+                .map(|h| h.as_ref().clone()),
+        }
     }
 }
 

@@ -1,22 +1,19 @@
-use std::cell::RefCell;
+use std::collections::HashMap;
 use std::mem;
 use std::net::SocketAddr;
-use std::ops::{Deref, DerefMut};
-use std::rc::{Rc, Weak};
+use std::ops::Deref;
 use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
-use futures::{self, Stream};
-use tsproto::Error as tsproto_error;
-use tsproto::client;
 use tsproto_commands::*;
 use tsproto_commands::messages::*;
 
-use {ChannelType, Map, MaxFamilyClients, TalkPowerRequest, Result};
+use {ChannelType, InnerConnection, MaxFamilyClients, TalkPowerRequest, Result};
 use codec::Message;
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
+include!(concat!(env!("OUT_DIR"), "/facades.rs"));
 
 macro_rules! max_clients {
     ($cmd:ident) => {{
@@ -39,10 +36,8 @@ macro_rules! max_clients {
 }
 
 impl Connection {
-    fn new(id: ConnectionId, server_uid: Uid, packet: &InitServer)
-        -> Self {
+    pub(crate) fn new(server_uid: Uid, packet: &InitServer) -> Self {
         Self {
-            id,
             own_client: packet.client_id,
             server: copy_attrs!(packet, Server;
                 welcome_message,
@@ -67,7 +62,6 @@ impl Connection {
                 temp_channel_default_delete_delay,
                 ;
 
-                connection_id: id,
                 uid: server_uid,
                 name: packet.name.clone(),
                 platform: packet.server_platform.clone(),
@@ -80,9 +74,9 @@ impl Connection {
 
                 optional_data: None,
                 connection_data: None,
-                clients: Map::new(),
-                channels: Map::new(),
-                groups: Map::new(),
+                clients: HashMap::new(),
+                channels: HashMap::new(),
+                groups: HashMap::new(),
             ),
         }
     }
@@ -191,6 +185,7 @@ impl Connection {
     }
 }
 
+#[cfg(TODO)]
 pub struct NetworkWrapper {
     connection: Connection,
     pub client_data: Rc<RefCell<client::ClientData>>,
@@ -199,6 +194,7 @@ pub struct NetworkWrapper {
         Error = tsproto_error>>,
 }
 
+#[cfg(TODO)]
 impl NetworkWrapper {
     pub fn new(
         id: ConnectionId,
@@ -218,6 +214,7 @@ impl NetworkWrapper {
     }
 }
 
+#[cfg(TODO)]
 impl Deref for NetworkWrapper {
     type Target = Connection;
 
@@ -226,12 +223,14 @@ impl Deref for NetworkWrapper {
     }
 }
 
+#[cfg(TODO)]
 impl DerefMut for NetworkWrapper {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.connection
     }
 }
 
+#[cfg(TODO)]
 impl Stream for NetworkWrapper {
     type Item = (SocketAddr, Message);
     type Error = tsproto_error;

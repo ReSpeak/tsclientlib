@@ -121,7 +121,7 @@ impl EccKeyPubP256 {
         let pubkey_bin = self.0.public_key().to_bytes(&group,
             ec::PointConversionForm::UNCOMPRESSED, &mut ctx)?;
         let pub_len = (pubkey_bin.len() - 1) / 2;
-        let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..1 + pub_len]);
+        let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..=pub_len]);
         let pubkey_y = BigUint::from_bytes_be(&pubkey_bin[1 + pub_len..]);
 
         // Write tomcrypt DER
@@ -233,6 +233,7 @@ impl EccKeyPrivP256 {
         }
 
         // Xor first 100 bytes with a static value
+        #[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
         for i in 0..cmp::min(data.len(), 100) {
             data[i] ^= ::IDENTITY_OBFUSCATION[i];
         }
@@ -273,6 +274,7 @@ impl EccKeyPrivP256 {
     pub fn to_ts_obfuscated(&self) -> Result<String> {
         let mut data = self.to_ts()?.into_bytes();
         // Xor first 100 bytes with a static value
+        #[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
         for i in 0..cmp::min(data.len(), 100) {
             data[i] ^= ::IDENTITY_OBFUSCATION[i];
         }
@@ -297,7 +299,7 @@ impl EccKeyPrivP256 {
         let pubkey_bin = pubkey.to_bytes(&group,
             ec::PointConversionForm::UNCOMPRESSED, &mut ctx)?;
         let pub_len = (pubkey_bin.len() - 1) / 2;
-        let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..1 + pub_len]);
+        let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..=pub_len]);
         let pubkey_y = BigUint::from_bytes_be(&pubkey_bin[1 + pub_len..]);
 
         let privkey = BigUint::from_bytes_be(&self.0.private_key()
@@ -441,7 +443,6 @@ impl Eax {
         let h = Self::cmac_with_iv(key, 1, header)?;
 
         // 3. enc ← CTR(M) using n as iv
-        // TODO Try to encrypt/decrypt in place and check if it is faster
         let enc = symm::encrypt(Cipher::aes_128_ctr(), key, Some(&n), data)?;
 
         // 4. c ← OMAC(2 || enc)

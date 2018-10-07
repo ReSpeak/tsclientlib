@@ -14,10 +14,6 @@ pub mod versions;
 
 use std::fmt;
 
-/// A `ConnectionId` identifies a connection from us to a server.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct ConnectionId(pub usize);
-
 /// A `ClientId` identifies a client which is connected to a server.
 ///
 /// Every client that we see on a server has a `ClientId`, even our own
@@ -177,11 +173,6 @@ pub enum LicenseType
 	Unknown = 4,
 }
 
-impl fmt::Display for ConnectionId {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
-	}
-}
 impl fmt::Display for ClientId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{}", self.0)

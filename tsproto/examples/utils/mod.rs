@@ -1,74 +1,81 @@
-use std::cell::RefCell;
 use std::net::SocketAddr;
-use std::rc::Rc;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use {slog, slog_perf};
-use futures::{future, Future, Sink, Stream};
-use tokio_core::reactor::{Handle, Timeout};
+use futures::{Future, Sink, Stream};
+use tokio;
+use tokio::timer::Delay;
 use tsproto::*;
 use tsproto::algorithms as algs;
-use tsproto::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
+use tsproto::client::ServerConnectionData;
 use tsproto::crypto::EccKeyPrivP256;
+use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
 
 pub mod voice;
 
-pub fn create_client(local_address: SocketAddr, handle: Handle, logger: slog::Logger, log: bool) -> Rc<RefCell<client::ClientData>> {
+pub struct SimplePacketHandler;
+
+impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
+    fn new_connection<S1, S2>(
+        &mut self,
+        _: &handler_data::ConnectionValue<T>,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=Error> + Send + 'static,
+        S2: Stream<Item=Packet, Error=Error> + Send + 'static,
+    {
+        tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e|
+            println!("Command stream exited with error ({:?})", e)));
+        tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(|e|
+            println!("Audio stream exited with error ({:?})", e)));
+    }
+}
+
+pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
+    local_address: SocketAddr,
+    logger: slog::Logger,
+    packet_handler: PH,
+    log: bool,
+) -> client::ClientDataM<PH> {
     // Get P-256 ECDH key
     let private_key = EccKeyPrivP256::from_ts(
         "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
         k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
         DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
+    let log_config = handler_data::LogConfig::new(log, log);
     let c = client::ClientData::new(
         local_address,
         private_key,
-        handle,
         true,
+        None,
+        client::DefaultPacketHandler::new(packet_handler),
         connectionmanager::SocketConnectionManager::new(),
         logger,
+        log_config,
     ).unwrap();
 
     // Set the data reference
-    {
-        let c2 = c.clone();
-        let mut c = c.borrow_mut();
-        c.connection_manager.set_data_ref(Rc::downgrade(&c2));
-    }
-
-    // Packet encoding
-    client::default_setup(&c, log);
+    let c2 = Arc::downgrade(&c);
+    c.try_lock().unwrap().packet_handler.complete(c2);
 
     c
 }
 
-pub fn connect(
+pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     logger: slog::Logger,
-    handle: &Handle,
-    client: Rc<RefCell<client::ClientData>>,
+    client: client::ClientDataM<PH>,
     server_addr: SocketAddr,
-) -> Box<Future<Item = (), Error = Error>> {
-    let connect_fut = client::connect(&client, server_addr);
-
-    // Listen for packets so we can answer them
-    let packets = handler_data::Data::get_packets(Rc::downgrade(&client));
-
-    let logger2 = logger.clone();
-    let logger3 = logger.clone();
-    let listen = packets
-        .for_each(|_| future::ok(()))
-        .map(move |()| info!(logger2, "Listening finished"))
-        .map_err(move |error| error!(logger3, "Listening error";
-            "error" => ?error));
-    handle.spawn(listen);
-
-    let handle2 = handle.clone();
-    Box::new(connect_fut.and_then(move |_| {
+) -> impl Future<Item = client::ClientConVal, Error = Error> {
+    client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
+        .and_then(move |c| {
         // Wait some time
         // TODO Document in protocol paper
-        Timeout::new(Duration::from_millis(5), &handle2).unwrap().map_err(|e| e.into())
-    }).and_then(move |()| {
+        Delay::new(Instant::now() + Duration::from_millis(5)).from_err().map(move |_| c)
+    }).and_then(move |con| {
         let private_key = EccKeyPrivP256::from_ts(
             "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
             k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
@@ -108,17 +115,15 @@ pub fn connect(
         let p_data = packets::Data::Command(command);
         let clientinit_packet = Packet::new(header, p_data);
 
-        let sink = handler_data::Data::get_packets(Rc::downgrade(&client));
-        sink.send((server_addr, clientinit_packet)).and_then(move |_| {
-            client::wait_until_connected(&client, server_addr)
-        })
-    }))
+        let con2 = con.clone();
+        con.as_packet_sink().send(clientinit_packet)
+            .and_then(move |_| client::wait_until_connected(&con))
+            .map(move |_| con2)
+    })
 }
 
-pub fn disconnect(
-    client: Rc<RefCell<client::ClientData>>,
-    server_addr: SocketAddr,
-) -> Box<Future<Item = (), Error = Error>> {
+pub fn disconnect(con: client::ClientConVal)
+    -> impl Future<Item = (), Error = Error> {
     let header = Header::new(PacketType::Command);
     let mut command = commands::Command::new("clientdisconnect");
 
@@ -128,20 +133,15 @@ pub fn disconnect(
     let p_data = packets::Data::Command(command);
     let packet = Packet::new(header, p_data);
 
-    let con = client.borrow().connection_manager
-        .get_connection(server_addr).unwrap();
-    con.borrow_mut().resender.handle_event(ResenderEvent::Disconnecting);
-    let sink = handler_data::Data::get_packets(Rc::downgrade(&client));
-    Box::new(sink
-        .send((server_addr, packet))
+    con.as_packet_sink()
+        .send(packet)
         .and_then(move |_| {
-            client::wait_for_state(&client, server_addr, |state| {
+            client::wait_for_state(&con, |state| {
                 if let client::ServerConnectionState::Disconnected = *state {
                     true
                 } else {
                     false
                 }
             })
-        }),
-    )
+        })
 }

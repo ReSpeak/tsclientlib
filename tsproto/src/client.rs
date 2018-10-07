@@ -1,13 +1,10 @@
-use std::cell::RefCell;
-use std::fmt::Display;
-use std::mem;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
+use std::sync::{Mutex, Weak};
 
-use base64;
+use {base64, tokio};
 use chrono::Utc;
-use futures::{self, future, Future, Sink, Stream};
-use futures::unsync::oneshot;
+use futures::{future, Future, Sink, Stream};
+use futures::sync::mpsc;
 #[cfg(feature = "rust-gmp")]
 use gmp::mpz::Mpz;
 #[cfg(not(feature = "rust-gmp"))]
@@ -17,35 +14,37 @@ use num::ToPrimitive;
 use num::bigint::BigUint;
 use rand::{self, Rng};
 use slog::Logger;
-use tokio_core::reactor::Handle;
 
-use {packets, BoxFuture, Error, Result};
+use {packets, Error, Result};
 use algorithms as algs;
 use commands::Command;
 use connection::*;
-use connectionmanager::{AttachedDataConnectionManager, Resender, ResenderEvent,
-    SocketConnectionManager};
+use connectionmanager::{Resender, ResenderEvent, SocketConnectionManager};
 use crypto::{EccKeyPrivP256, EccKeyPubP256, EccKeyPrivEd25519};
-use handler_data::Data;
+use handler_data::{ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler};
 use license::Licenses;
 use packets::*;
-use utils::MultiSink;
 
 /// The data of our client.
-pub type ClientData = Data<SocketConnectionManager<ServerConnectionData>>;
+pub type CM<PH> = SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
+pub type ClientData<PH> = Data<CM<PH>>;
+pub type ClientDataM<PH> = DataM<CM<PH>>;
 /// Connections from a client to a server.
-pub type ClientConnection = Connection<SocketConnectionManager<ServerConnectionData>>;
+pub type ClientConnection = Connection;
+pub type ClientConVal = ConnectionValueWeak<ServerConnectionData>;
 
-#[derive(Default)]
 pub struct ServerConnectionData {
-    pub state_change_listener: Vec<Box<FnMut() -> BoxFuture<(), Error>>>,
+    /// Every function in this list is called when the state of the connection
+    /// changes.
+    ///
+    /// Return `false` to remain in the list of listeners.
+    /// If `true` is returned, this listener will be removed.
+    pub state_change_listener: Vec<Box<FnMut(&ServerConnectionState) -> bool + Send>>,
     pub state: ServerConnectionState,
 }
 
 #[derive(Debug)]
 pub enum ServerConnectionState {
-    /// Default state.
-    Uninitialized,
     /// After `Init0` was sent.
     Init0 { version: u32, random0: [u8; 4] },
     /// After `Init2` was sent.
@@ -59,12 +58,6 @@ pub enum ServerConnectionState {
     Connected,
     /// The connection is finished, no more packets can be sent or received.
     Disconnected,
-}
-
-impl Default for ServerConnectionState {
-    fn default() -> Self {
-        ServerConnectionState::Uninitialized
-    }
 }
 
 fn create_init_header() -> Header {
@@ -81,69 +74,42 @@ fn create_init_header() -> Header {
     header
 }
 
-/// Configures the default setup chain, including logging and decoding
-/// of packets.
-pub fn default_setup<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
->(data: &Rc<RefCell<Data<CM>>>, log: bool) where CM::ConnectionsKey: Display {
-    if log {
-        // Logging
-        let a = {
-            let data = data.borrow();
-            (data.logger.clone(), data.is_client)
-        };
-        Data::apply_udp_packet_stream_wrapper::<
-            ::log::UdpPacketStreamLogger>(data, a.clone());
-        Data::apply_udp_packet_sink_wrapper::<
-            ::log::UdpPacketSinkLogger>(data, a.clone());
-
-        Data::apply_packet_stream_wrapper::<
-            ::log::PacketStreamLogger<CM::ConnectionsKey>>(data, a.clone());
-        Data::apply_packet_sink_wrapper::<
-            ::log::PacketSinkLogger<CM::ConnectionsKey>>(data, a);
-    }
-
-    DefaultPacketHandler::apply(data);
-}
-
 /// Wait until a client reaches a certain state.
 ///
 /// `is_state` should return `true`, if the state is reached and `false` if this
 /// function should continue waiting.
-pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + 'static>(
-    data: &Rc<RefCell<ClientData>>,
-    server_addr: SocketAddr,
+pub fn wait_for_state<F: Fn(&ServerConnectionState) -> bool + Send + 'static>(
+    connection: &ClientConVal,
     f: F,
-) -> BoxFuture<(), Error> {
-    // Return a future that resolves when the function succeeds
-    let data2 = data.clone();
-    if let Some(state) = data.borrow_mut().connection_manager
-        .get_mut_data(server_addr) {
-        if f(&state.state) {
-            return Box::new(future::ok(()));
+) -> Box<Future<Item=(), Error=Error> + Send> {
+    let (send, recv) = mpsc::channel(0);
+    let con = match connection.mutex.upgrade() {
+        Some(c) => c,
+        None => return Box::new(future::err(format_err!("Connection is gone")
+            .into())),
+    };
+    let mut con = con.lock().unwrap();
+    con.0.state_change_listener.push(Box::new(move |s| {
+        // Check if it is the right state
+        if f(s) {
+            let send = send.clone();
+            // Ignore errors
+            tokio::spawn(send.send(()).then(|_| Ok(())));
+            true
+        } else {
+            false
         }
-        // Wait for the next state change
-        let (send, recv) = oneshot::channel();
-        let mut send = Some(send);
-        state.state_change_listener.push(Box::new(move || {
-            send.take().unwrap().send(()).unwrap();
-            Box::new(future::ok(()))
-        }));
-        Box::new(
-            recv.from_err()
-                .and_then(move |_| wait_for_state(&data2, server_addr, f)),
-        )
-    } else {
-        Box::new(future::ok(()))
-    }
+    }));
+    Box::new(recv.into_future().map(|_| ())
+        .map_err(|e| format_err!("Failed to receive while waiting for state \
+            ({:?})", e).into()))
 }
 
 pub fn wait_until_connected(
-    data: &Rc<RefCell<ClientData>>,
-    server_addr: SocketAddr,
-) -> BoxFuture<(), Error> {
-    wait_for_state(data, server_addr, |state| {
-        if let ServerConnectionState::Connected = *state {
+    connection: &ClientConVal,
+) -> impl Future<Item=(), Error=Error> {
+    wait_for_state(connection, |state| {
+        if let ServerConnectionState::Connected = state {
             true
         } else {
             false
@@ -159,10 +125,11 @@ pub fn wait_until_connected(
 ///
 /// [`ServerConnectionState::Connecting`]:
 /// [`wait_until_connected`]:
-pub fn connect(
-    data: &Rc<RefCell<ClientData>>,
+pub fn connect<PH: PacketHandler<ServerConnectionData>>(
+    datam: Weak<Mutex<ClientData<PH>>>,
+    data: &mut ClientData<PH>,
     server_addr: SocketAddr,
-) -> BoxFuture<(), Error> {
+) -> impl Future<Item=ClientConVal, Error=Error> {
     // Send the first init packet
     // Get the current timestamp
     let now = Utc::now();
@@ -176,151 +143,198 @@ pub fn connect(
         timestamp,
         random0,
     };
-
     let cheader = create_init_header();
-    // Add the connection to the connection list
-    Data::add_connection(data, Data::create_connection(data, server_addr));
 
-    // Change the state
-    let data2 = data.clone();
-    let mut data = data.borrow_mut();
-    {
-        let con_data = data.connection_manager.get_mut_data(server_addr)
-            .unwrap();
-        con_data.state = ServerConnectionState::Init0 {
+    let state = ServerConnectionData {
+        state_change_listener: Vec::new(),
+        state: ServerConnectionState::Init0 {
             version: timestamp,
             random0,
-        };
-    }
-
-    let packets = Data::get_packets(Rc::downgrade(&data2));
+        },
+    };
+    // Add the connection to the connection list
+    let key = data.add_connection(datam, state, server_addr);
+    let con = data.get_connection(&key).unwrap().downgrade();
 
     let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
-    Box::new(
-        packets.send((server_addr, packet))
-            .and_then(move |_| {
-                wait_for_state(&data2, server_addr, |state| {
-                    if let ServerConnectionState::Connecting = *state {
-                        true
-                    } else {
-                        false
-                    }
-                })
-            }),
-    )
-}
-
-struct DefaultPacketHandlerStream;
-
-impl DefaultPacketHandlerStream {
-    pub fn new<
-        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-        InnerStream: Stream<Item = (CM::ConnectionsKey, Packet), Error = Error> + 'static,
-        InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-    >(
-        data: &Rc<RefCell<Data<CM>>>,
-        inner_stream: InnerStream,
-        inner_sink: InnerSink,
-    ) -> (Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
-        MultiSink<InnerSink>) {
-        let sink = MultiSink::new(inner_sink);
-        let sink2 = sink.clone();
-        let data = Rc::downgrade(data);
-        let inner_stream = Box::new(inner_stream.and_then(move |(key, packet)|
-            -> BoxFuture<_, _> {
-            // true, if the packet should not be handled further.
-            let mut ignore_packet = true;
-            // If the connection should be removed
-            let mut is_end = false;
-            // Check if we have a connection for this server
-            let packet_res = {
-                let data = data.upgrade().unwrap();
-                let mut data = data.borrow_mut();
-                let data = &mut *data;
-                if let Some(con) = data.connection_manager
-                    .get_connection(key.clone()) {
-                    let mut con = con.borrow_mut();
-                    let logger = con.logger.clone();
-                    let state = data.connection_manager
-                        .get_mut_data(key.clone()).unwrap();
-                    let handle_res = match Self::handle_packet(state, &packet,
-                        &mut ignore_packet, &mut is_end, &data.private_key,
-                        &mut con, key.clone(), &logger, &data.handle,
-                        sink.clone()) {
-                        Ok(res) => res,
-                        Err(error) => {
-                            error!(logger, "Error when handling packet";
-                                "error" => ?error);
-                            None
-                        }
-                    };
-                    if let Some((s, packet)) = handle_res {
-                        state.state = s;
-                        let listeners = mem::replace(
-                            &mut state.state_change_listener, Vec::new());
-                        Some((listeners, packet))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            };
-
-            if is_end {
-                Data::remove_connection(&data.upgrade().unwrap(), key.clone());
-            }
-
-            if let Some((mut listeners, p)) = packet_res {
-                // First send the packet, then notify the listeners, this
-                // ensures that the clientek packet is sent before the
-                // clientinit.
-                let res_fut: BoxFuture<(), _> = if let Some(p) = p {
-                    // Send the packet
-                    Box::new(sink.clone().send((key.clone(), p)).map(|_| ()))
-                } else {
-                    Box::new(future::ok(()))
-                };
-
-                Box::new(res_fut.and_then(move |_| {
-                    // Notify state changed listeners
-                    let listeners = listeners.drain(..).map(|mut l| l())
-                        .collect::<Vec<_>>();
-                    future::join_all(listeners)
-                }).and_then(move |_|
-                    if ignore_packet {
-                        future::ok(None)
-                    } else {
-                        future::ok(Some((key, packet)))
-                    }))
-            } else if ignore_packet || is_end {
-                Box::new(future::ok(None))
+    let con2 = con.clone();
+    con.as_packet_sink().send(packet).and_then(move |_| {
+        wait_for_state(&con, |state| {
+            if let ServerConnectionState::Connecting = *state {
+                true
             } else {
-                Box::new(future::ok(Some((key, packet))))
+                false
             }
         })
-        .filter_map(|p| p));
-        (inner_stream, sink2)
+    }).and_then(move |_| Ok(con2))
+}
+
+pub struct DefaultPacketHandler<IPH: PacketHandler<ServerConnectionData> + 'static> {
+    inner: IPH,
+    /// The data instance is created after the packet handler so this has to be
+    /// an option.
+    data: Option<Weak<Mutex<ClientData<IPH>>>>,
+}
+
+impl<IPH: PacketHandler<ServerConnectionData> + 'static> PacketHandler<ServerConnectionData> for DefaultPacketHandler<IPH> {
+    fn new_connection<S1, S2>(
+        &mut self,
+        con_val: &ConnectionValue<ServerConnectionData>,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=Error> + Send + 'static,
+        S2: Stream<Item=Packet, Error=Error> + Send + 'static,
+    {
+        let con_val2 = con_val.downgrade();
+        let data = self.data.as_ref().unwrap().clone();
+        let command_stream = command_stream.and_then(move |p| -> Result<Option<Packet>> {
+            // Check if we handle this packet
+            let handle = match &p.data {
+                packets::Data::S2CInit(_) => true,
+                packets::Data::Command(cmd) |
+                packets::Data::CommandLow(cmd) => {
+                    cmd.command == "initivexpand"
+                        || cmd.command == "initivexpand2"
+                        || cmd.command == "initserver"
+                        || cmd.command == "notifyclientleftview"
+                        || cmd.command == "notifyplugincmd"
+                }
+                _ => false,
+            };
+            if !handle {
+                // Forward packet
+                return Ok(Some(p));
+            }
+
+            // Get private key
+            let (key, logger) = {
+                let d = if let Some(d) = data.upgrade() {
+                    d
+                } else {
+                    // Connection doesn't exist anymore
+                    return Err(format_err!("Connection does not exist while \
+                        handling packet").into());
+                };
+                let d = d.lock().unwrap();
+                (d.private_key.clone(), d.logger.clone())
+            };
+
+            let con_val_weak = con_val2.clone();
+            let con_val = con_val2.upgrade().ok_or_else(||
+                format_err!("Connection is gone"))?;
+            let con_val3 = con_val.clone();
+            let mut con = con_val.mutex.lock().unwrap();
+            let mut ignore_packet = true;
+            let mut is_end = false;
+            let handle_res = Self::handle_packet(
+                &con_val3,
+                &mut *con,
+                &p,
+                &mut ignore_packet,
+                &mut is_end,
+                key,
+                &logger,
+            )?;
+
+            if let Some((s, packet)) = handle_res {
+                con.0.state = s;
+                if let Some(packet) = packet {
+                    // First send the packet, then notify the listeners,
+                    // this ensures that the clientek packet is sent
+                    // before the clientinit.
+                    tokio::spawn(con_val2
+                        .as_packet_sink()
+                        .send(packet)
+                        .and_then(move |_| {
+                            let mutex = con_val_weak.upgrade().ok_or_else(||
+                                format_err!("Connection is gone"))?
+                                .mutex;
+                            let mut con = mutex.lock().unwrap();
+                            let state = &mut con.0;
+                            // Notify state changed listeners
+                            let mut i = 0;
+                            while i < state.state_change_listener.len() {
+                                if (&mut state.state_change_listener[i])(&state.state) {
+                                    state.state_change_listener.remove(i);
+                                } else {
+                                    i += 1;
+                                }
+                            }
+                            Ok(())
+                        })
+                        .map_err(move |e| error!(logger,
+                            "Error sending response packet";
+                            "error" => ?e)));
+                } else {
+                    let state = &mut con.0;
+                    // Notify state changed listeners
+                    let mut i = 0;
+                    while i < state.state_change_listener.len() {
+                        if (&mut state.state_change_listener[i])(&state.state) {
+                            state.state_change_listener.remove(i);
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+            }
+
+            if is_end {
+                // Close connection
+                let addr = con.1.address;
+                let d = if let Some(d) = data.upgrade() {
+                    d
+                } else {
+                    // Connection doesn't exist anymore, ignore it, the
+                    // connection is already gone.
+                    return Ok(None);
+                };
+                d.lock().unwrap().remove_connection(&addr);
+            }
+
+            if ignore_packet {
+                Ok(None)
+            } else {
+                Ok(Some(p))
+            }
+        }).filter_map(|p| p);
+
+        self.inner.new_connection(con_val, command_stream, audio_stream)
+    }
+}
+
+impl<IPH: PacketHandler<ServerConnectionData> + 'static> DefaultPacketHandler<IPH> {
+    /// Do not forget to call [`complete`] afterwards.
+    ///
+    /// [`complete`]: #method.complete
+    pub fn new(inner: IPH) -> Self {
+        Self { inner, data: None }
     }
 
-    fn handle_packet<
-        CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-        InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-    >(state: &mut ServerConnectionData, packet: &Packet,
-        ignore_packet: &mut bool, is_end: &mut bool,
-        private_key: &EccKeyPrivP256, con: &mut Connection<CM>,
-        con_key: CM::ConnectionsKey, logger: &Logger, handle: &Handle,
-        sink: MultiSink<InnerSink>)
-        -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+    /// Needs to be called to complete the initialization of this packet handler.
+    pub fn complete(&mut self, data: Weak<Mutex<ClientData<IPH>>>) {
+        self.data = Some(data);
+    }
+
+    fn handle_packet(
+        con_value: &ConnectionValue<ServerConnectionData>,
+        (state, con): &mut (ServerConnectionData, Connection),
+        packet: &Packet,
+        ignore_packet: &mut bool,
+        is_end: &mut bool,
+        private_key: EccKeyPrivP256,
+        logger: &Logger,
+    ) -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+        let con_value = con_value.downgrade();
         let res = match state.state {
-            ServerConnectionState::Uninitialized =>
-                return Err(format_err!("ServerConnectionState is uninitialized").into()),
             ServerConnectionState::Init0 { version, ref random0 } => {
                 // Handle an Init1
                 if let Packet { data: packets::Data::S2CInit(
                     S2CInit::Init1 { ref random1, ref random0_r }), .. } = *packet {
                     // Check the response
                     if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
+                        con.resender.ack_packet(PacketType::Init, 0);
                         // The packet is correct.
                         // Send next init packet
                         let cheader = create_init_header();
@@ -353,6 +367,7 @@ impl DefaultPacketHandlerStream {
                         // Reject too high exponents
                         None
                     } else {
+                        con.resender.ack_packet(PacketType::Init, 2);
                         // Create clientinitiv
                         let mut rng = rand::thread_rng();
                         let alpha = rng.gen::<[u8; 10]>();
@@ -360,7 +375,6 @@ impl DefaultPacketHandlerStream {
                         // the ECDH parameters.
 
                         let alpha_s = base64::encode(&alpha);
-                        let priv_pub_key = private_key.to_pub();
                         let ip = con.address.ip();
                         let logger = logger.clone();
                         let random2 = *random2;
@@ -374,6 +388,7 @@ impl DefaultPacketHandlerStream {
                                 ::slog::Level::Info);
                             time_reporter.start("");
 
+                            // TODO Blocking operation with timeout
                             // Use gmp for faster computations if it is
                             // available.
                             #[cfg(feature = "rust-gmp")]
@@ -408,7 +423,7 @@ impl DefaultPacketHandlerStream {
                             // Create the command string
                             // omega is an ASN.1-DER encoded public key from
                             // the ECDH parameters.
-                            let omega_s = priv_pub_key.to_ts().unwrap();
+                            let omega_s = private_key.to_pub().to_ts().unwrap();
                             let mut command = Command::new("clientinitiv");
                             command.push("alpha", alpha_s);
                             command.push("omega", omega_s);
@@ -432,11 +447,11 @@ impl DefaultPacketHandlerStream {
                             };
 
                             let packet = Packet::new(cheader, packets::Data::C2SInit(data));
-                            sink.send((con_key, packet))
+                            con_value.as_packet_sink().send(packet)
                         }).map(|_| ()).map_err(move |error|
                             error!(logger2, "Cannot send packet";
                                 "error" => ?error));
-                        handle.spawn(fut);
+                        tokio::spawn(fut);
 
                         let state = ServerConnectionState::ClientInitIv {
                             alpha,
@@ -450,6 +465,7 @@ impl DefaultPacketHandlerStream {
                 }
             }
             ServerConnectionState::ClientInitIv { ref alpha } => {
+                let resender = &mut con.resender;
                 let res = (|con_params: &mut Option<ConnectedParams>| -> Result<_> {
                     if let Packet { data: packets::Data::Command(ref command), .. } = *packet {
                         let cmd = command.get_commands().remove(0);
@@ -459,6 +475,7 @@ impl DefaultPacketHandlerStream {
                             && cmd.has_arg("omega")
                             && base64::decode(cmd.args["alpha"])
                             .map(|a| a == alpha).unwrap_or(false) {
+                            resender.ack_packet(PacketType::Init, 4);
 
                             let beta_vec = base64::decode(cmd.args["beta"])?;
                             if beta_vec.len() != 10 {
@@ -494,6 +511,7 @@ impl DefaultPacketHandlerStream {
                             && cmd.args["ot"] == "1"
                             && cmd.has_arg("time")
                             && cmd.has_arg("beta") {
+                            resender.ack_packet(PacketType::Init, 4);
 
                             let mut server_key = EccKeyPubP256::
                                 from_ts(cmd.args["omega"])?;
@@ -576,14 +594,20 @@ impl DefaultPacketHandlerStream {
                     let cmd = cmd.get_commands().remove(0);
                     if cmd.command == "initserver" && cmd.has_arg("aclid") {
                         // Handle an initserver
-                        if let Some(ref mut params) = con.params {
+                        if let Some(params) = &mut con.params {
                             if let Ok(c_id) = cmd.args["aclid"].parse() {
                                 params.c_id = c_id;
                             }
+
+                            let clientinit_id =
+                                if let ::connection::SharedIv::Protocol31(_) =
+                                    params.shared_iv { 2 } else { 1 };
+                            // initserver is the ack for clientinit
+                            // Remove from send queue
+                            con.resender.ack_packet(PacketType::Command,
+                                clientinit_id);
                         }
-                        // initserver is the ack for clientinit
-                        // Remove from send queue
-                        con.resender.ack_packet(PacketType::Command, 1);
+
                         // Notify the resender that we are connected
                         con.resender.handle_event(ResenderEvent::Connected);
                         res = Some((ServerConnectionState::Connected, None));
@@ -602,28 +626,28 @@ impl DefaultPacketHandlerStream {
                         if let Some(ref mut params) = con.params {
                             if cmd.args["clid"].parse() == Ok(params.c_id) {
                                 *is_end = true;
+                                // TODO Wait with the disconnect until we sent the ack
                                 res = Some((ServerConnectionState::Disconnected, None));
                             }
                         }
                     } else if cmd.command == "notifyplugincmd"
                         && cmd.has_arg("name") && cmd.has_arg("data")
-                        && cmd.args["name"] == "cliententerview" {
-                        if cmd.args["data"] == "version" {
-                            let mut command = Command::new("plugincmd");
-                            command.push("name", "cliententerview");
-                            command.push("data", format!("{},{}-{}",
-                                con.params.as_ref().unwrap().c_id,
-                                env!("CARGO_PKG_NAME"),
-                                env!("CARGO_PKG_VERSION"),
-                            ));
-                            command.push("targetmode", "1");
+                        && cmd.args["name"] == "cliententerview"
+                        && cmd.args["data"] == "version "{
+                        let mut command = Command::new("plugincmd");
+                        command.push("name", "cliententerview");
+                        command.push("data", format!("{},{}-{}",
+                            con.params.as_ref().unwrap().c_id,
+                            env!("CARGO_PKG_NAME"),
+                            env!("CARGO_PKG_VERSION"),
+                        ));
+                        command.push("targetmode", "1");
 
-                            let header = Header::new(PacketType::Command);
+                        let header = Header::new(PacketType::Command);
 
-                            let p = Some(Packet::new(header,
-                                packets::Data::Command(command)));
-                            res = Some((ServerConnectionState::Connected, p));
-                        }
+                        let p = Some(Packet::new(header,
+                            packets::Data::Command(command)));
+                        res = Some((ServerConnectionState::Connected, p));
                     }
                 }
                 res
@@ -635,120 +659,5 @@ impl DefaultPacketHandlerStream {
             }
         };
         Ok(res)
-    }
-}
-
-pub struct DefaultPacketHandlerSink<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-> {
-    data: Weak<RefCell<Data<CM>>>,
-    inner_sink: MultiSink<InnerSink>,
-}
-
-impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-> DefaultPacketHandlerSink<CM, InnerSink> {
-    pub fn new(
-        data: Weak<RefCell<Data<CM>>>,
-        inner_sink: MultiSink<InnerSink>,
-    ) -> Self {
-        Self { data, inner_sink }
-    }
-}
-
-impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-> Sink for DefaultPacketHandlerSink<CM, InnerSink> {
-    type SinkItem = InnerSink::SinkItem;
-    type SinkError = InnerSink::SinkError;
-
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        // Check if it is a disconnect packet
-        if let Packet { data: packets::Data::Command(ref command), .. } = item.1 {
-            let cmd = command.get_commands().remove(0);
-            if cmd.command == "clientdisconnect" {
-                if let Some(data) = self.data.upgrade() {
-                    let mut data = data.borrow_mut();
-                    if let Some(con) = data.connection_manager.get_connection(
-                        item.0.clone()) {
-                        con.borrow_mut().resender.handle_event(
-                            ResenderEvent::Disconnecting);
-                    }
-                }
-            }
-        }
-
-        self.inner_sink.start_send(item)
-    }
-
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        self.inner_sink.poll_complete()
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        self.inner_sink.close()
-    }
-}
-
-pub struct DefaultPacketHandler<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-> {
-    inner_stream: Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
-    inner_sink: DefaultPacketHandlerSink<CM, InnerSink>,
-}
-
-impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-    InnerSink: Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error> + 'static,
-> DefaultPacketHandler<CM, InnerSink> {
-    pub fn new<
-        InnerStream: Stream<Item = (CM::ConnectionsKey, Packet), Error = Error> + 'static,
-    >(
-        data: &Rc<RefCell<Data<CM>>>,
-        inner_stream: InnerStream,
-        inner_sink: InnerSink,
-    ) -> Self {
-        let (inner_stream, inner_sink) = DefaultPacketHandlerStream::new(
-            data,
-            inner_stream,
-            inner_sink,
-        );
-        let inner_sink = DefaultPacketHandlerSink::new(Rc::downgrade(data), inner_sink);
-        Self {
-            inner_stream,
-            inner_sink,
-        }
-    }
-
-    pub fn split(self) -> (
-        DefaultPacketHandlerSink<CM, InnerSink>,
-        Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>,
-    ) {
-        (self.inner_sink, self.inner_stream)
-    }
-}
-
-impl<
-    CM: AttachedDataConnectionManager<ServerConnectionData> + 'static,
-> DefaultPacketHandler<CM, Box<Sink<SinkItem = (CM::ConnectionsKey, Packet),
-    SinkError = Error>>> {
-    pub fn apply(data: &Rc<RefCell<Data<CM>>>) {
-        let (stream, sink) = {
-            let mut data = data.borrow_mut();
-            (data.packet_stream.take().unwrap(),
-                data.packet_sink.take().unwrap())
-        };
-        let handler = Self::new(data, stream, sink);
-        let (sink, stream) = handler.split();
-        let mut data = data.borrow_mut();
-        data.packet_stream = Some(stream);
-        data.packet_sink = Some(Box::new(sink));
     }
 }

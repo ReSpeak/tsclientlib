@@ -15,13 +15,11 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate structopt;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tokio_signal;
 extern crate tsproto;
 
-use std::cell::RefCell;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -33,11 +31,13 @@ use num_traits::cast::ToPrimitive;
 use slog::{Drain, Logger};
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Handle, Remote, Timeout};
+use tokio::runtime::{Runtime, TaskExecutor};
+use tokio::timer::Delay;
+use tokio::util::FutureExt;
 #[cfg(target_family = "unix")]
 use tokio_signal::unix::{Signal, SIGHUP};
 use tsproto::*;
-use tsproto::client::ClientData;
+use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
 
 mod utils;
@@ -61,13 +61,48 @@ struct Args {
                 help = "The URI of the audio, which should be played. \
                     If it is empty, it will capture from a microphone.")]
     uri: String,
-    #[structopt(long = "volume", short = "v", default_value = "1.0",
+    #[structopt(long = "volume", default_value = "1.0",
                 help = "The volume of audio-to-ts.")]
     volume: f64,
     #[structopt(long = "no-input", help = "Disable audio-to-ts.")]
     no_input: bool,
     #[structopt(long = "no-output", help = "Disable ts-to-audio.")]
     no_output: bool,
+    #[structopt(short = "v", long = "verbose",
+                help = "Display the content of all packets")]
+    verbose: bool,
+}
+
+struct MyPacketHandler {
+    logger: Logger,
+    in_handler: IncommingVoiceHandler,
+}
+
+impl MyPacketHandler {
+    fn new(logger: Logger, in_handler: IncommingVoiceHandler) -> Self {
+        Self { logger, in_handler }
+    }
+}
+
+impl PacketHandler<client::ServerConnectionData> for MyPacketHandler {
+    fn new_connection<S1, S2>(
+        &mut self,
+        con_val: &handler_data::ConnectionValue<client::ServerConnectionData>,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=Error> + Send + 'static,
+        S2: Stream<Item=Packet, Error=Error> + Send + 'static,
+    {
+        let mut h = self.in_handler.clone();
+        let logger = self.logger.clone();
+        let audio_stream = audio_stream.inspect(move |p| {
+            if let Err(e) = h.handle_packet(p) {
+                warn!(logger, "Error handling voice packet"; "error" => ?e);
+            }
+        });
+        SimplePacketHandler.new_connection(con_val, command_stream, audio_stream);
+    }
 }
 
 fn main() {
@@ -76,8 +111,6 @@ fn main() {
 
     // Parse command line options
     let args = Args::from_args();
-    let mut core = Core::new().unwrap();
-    let handle = core.handle();
 
     let logger = {
         let decorator = slog_term::TermDecorator::new().build();
@@ -88,109 +121,116 @@ fn main() {
         Logger::root(drain, o!())
     };
 
-    let c = create_client(args.local_address, core.handle(), logger.clone(), false);
+    let mut runtime = Runtime::new().unwrap();
+    let executor = runtime.executor();
+    runtime.spawn(future::lazy(move || {
+        let in_pipe = if !args.no_output {
+            // Setup incoming voice handler
+            let in_pipe = create_ts_to_audio_pipeline(executor, logger.clone()).unwrap();
+            let audio = main_loop(&in_pipe, logger.clone()).unwrap();
 
-    if !args.no_output {
-        // Setup incoming voice handler
-        let in_pipe = create_ts_to_audio_pipeline(core.remote(), logger.clone()).unwrap();
-        let audio = main_loop(&in_pipe, logger.clone()).unwrap();
-        let in_handler = IncommingVoiceHandler::new(logger.clone(), in_pipe).unwrap();
-        ClientData::apply_packet_stream_wrapper::<IncommingVoiceHandler>(&c, in_handler);
-
-        // Run event handler in background
-        handle.spawn(audio);
-    }
-
-    // Connect
-    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
-        args.address)) {
-        error!(logger, "Failed to connect"; "error" => ?error);
-        return;
-    }
-    info!(logger, "Connected");
-
-    // Disconnect if audio fails
-    let pipeline;
-    let audio;
-    if args.no_input {
-        pipeline = None;
-        audio = None;
-    } else {
-        let (pipeline2, audio2) = match setup_audio(&args, Rc::downgrade(&c), handle.clone(), logger.clone()) {
-            Err(error) => {
-                error!(logger, "Failed to setup audio"; "error" => ?error);
-
-                // Disconnect
-                if let Err(error) = core.run(disconnect(c.clone(), args.address)) {
-                    error!(logger, "Failed to disconnect"; "error" => ?error);
-                }
-                return;
-            }
-            Ok(r) => r,
+            // Run event handler in background
+            tokio::spawn(audio);
+            Some(in_pipe)
+        } else {
+            None
         };
-        pipeline = Some(pipeline2);
-        audio = Some(audio2);
-    }
+        let in_handler = IncommingVoiceHandler::new(logger.clone(), in_pipe).unwrap();
 
-    // Wait until song is finished
-    //if let Err(_error) = core.run(audio) {
-        // Also returns with an error when the stream finished
-        //error!(logger, "Error while playing"; "error" => ?error);
-    //}
-    //info!(logger, "Waited");
+        let ph = MyPacketHandler::new(logger.clone(), in_handler);
+        let c = create_client(args.local_address, logger.clone(),
+            ph, args.verbose);
 
-    if let Some(audio) = audio {
-        handle.spawn(audio);
-    }
+        // Connect
+        connect(logger.clone(), c.clone(), args.address)
+            .map_err(|e| panic!("Failed to connect ({:?})", e))
+            .and_then(move |con| -> Box<Future<Item=(), Error=()> + Send> {
+                info!(logger, "Connected");
 
-    // Pause or unpause sending on sighup
-    if let Some(pipeline) = &pipeline {
-        let pipe = pipeline.clone();
-        let logger2 = logger.clone();
-        let logger3 = logger.clone();
-        #[cfg(target_family = "unix")]
-        let sighup = Signal::new(SIGHUP).flatten_stream().for_each(move |_| {
-            // Switch state from playing to paused or reverse
-            // Returns (success, current state, pending state)
-            let state = pipe.get_state(gst::ClockTime::from_mseconds(10));
-            if state.0 != gst::StateChangeReturn::Failure {
-                //debug!(logger2, "Got state"; "current" => ?state.1, "pending" => ?state.2);
-                if state.1 == gst::State::Playing {
-                    debug!(logger2, "Change to paused");
-                    if let Err(error) = pipe.set_state(gst::State::Paused).into_result() {
-                        error!(logger2, "Failed to pause pipeline"; "error" => ?error);
-                    }
-                } else if state.1 == gst::State::Paused {
-                    debug!(logger2, "Change to playing");
-                    if let Err(error) = pipe.set_state(gst::State::Playing).into_result() {
-                        error!(logger2, "Failed to start pipeline"; "error" => ?error);
-                    }
+                // Disconnect if audio fails
+                let pipeline;
+                let audio;
+                if args.no_input {
+                    pipeline = None;
+                    audio = None;
+                } else {
+                    let (pipeline2, audio2) = match setup_audio(&args, con.clone(), logger.clone()) {
+                        Err(error) => {
+                            error!(logger, "Failed to setup audio"; "error" => ?error);
+
+                            // Disconnect
+                            return Box::new(disconnect(con).map(|_| drop(c))
+                                .map_err(|e| panic!("Failed to connect ({:?})", e)));
+                        }
+                        Ok(r) => r,
+                    };
+                    pipeline = Some(pipeline2);
+                    audio = Some(audio2);
                 }
-            } else {
-                error!(logger2, "Failed to get current state"; "result" => ?state);
-            }
-            future::ok(())
-        }).map_err(move |error| {
-            error!(logger3, "Error waiting for signal"; "error" => ?error);
-        });
-        handle.spawn(sighup);
-    }
 
-    // Stop with ctrl + c
-    let ctrl_c = tokio_signal::ctrl_c().flatten_stream();
-    core.run(ctrl_c.into_future().map(move |_| ()).map_err(move |_| ())).unwrap();
+                // Wait until song is finished
+                //if let Err(_error) = tokio::run(audio) {
+                    // Also returns with an error when the stream finished
+                    //error!(logger, "Error while playing"; "error" => ?error);
+                //}
+                //info!(logger, "Waited");
 
-    // Disconnect
-    if let Err(error) = core.run(disconnect(c.clone(), args.address)) {
-        error!(logger, "Failed to disconnect"; "error" => ?error);
-        return;
-    }
-    info!(logger, "Disconnected");
+                if let Some(audio) = audio {
+                    tokio::spawn(audio);
+                }
 
-    // Cleanup gstreamer
-    if let Some(pipeline) = pipeline {
-        pipeline.set_state(gst::State::Null).into_result().unwrap();
-    }
+                // Pause or unpause sending on sighup
+                if let Some(pipeline) = &pipeline {
+                    let pipe = pipeline.clone();
+                    let logger2 = logger.clone();
+                    let logger3 = logger.clone();
+                    #[cfg(target_family = "unix")]
+                    let sighup = Signal::new(SIGHUP).flatten_stream().for_each(move |_| {
+                        // Switch state from playing to paused or reverse
+                        // Returns (success, current state, pending state)
+                        let state = pipe.get_state(gst::ClockTime::from_mseconds(10));
+                        if state.0 != gst::StateChangeReturn::Failure {
+                            //debug!(logger2, "Got state"; "current" => ?state.1, "pending" => ?state.2);
+                            if state.1 == gst::State::Playing {
+                                debug!(logger2, "Change to paused");
+                                if let Err(error) = pipe.set_state(gst::State::Paused).into_result() {
+                                    error!(logger2, "Failed to pause pipeline"; "error" => ?error);
+                                }
+                            } else if state.1 == gst::State::Paused {
+                                debug!(logger2, "Change to playing");
+                                if let Err(error) = pipe.set_state(gst::State::Playing).into_result() {
+                                    error!(logger2, "Failed to start pipeline"; "error" => ?error);
+                                }
+                            }
+                        } else {
+                            error!(logger2, "Failed to get current state"; "result" => ?state);
+                        }
+                        future::ok(())
+                    }).map_err(move |error| {
+                        error!(logger3, "Error waiting for signal"; "error" => ?error);
+                    });
+                    tokio::spawn(sighup);
+                }
+
+                // Stop with ctrl + c
+                let ctrl_c = tokio_signal::ctrl_c().flatten_stream();
+                Box::new(ctrl_c.into_future().map(move |_| ()).map_err(move |_| ())
+                    .and_then(move |_| {
+                        // Disconnect
+                        disconnect(con).map(move |_| {
+                            info!(logger, "Disconnected");
+
+                            // Cleanup gstreamer
+                            if let Some(pipeline) = pipeline {
+                                pipeline.set_state(gst::State::Null).into_result().unwrap();
+                            }
+                            drop(c);
+                        })
+                        .map_err(|e| panic!("Failed to disconnect ({:?})", e))
+                    }))
+            })
+    }));
+    runtime.shutdown_on_idle().wait().unwrap();
 }
 
 // Output audio from other clients: Dynamically add appsources when a new client
@@ -199,42 +239,46 @@ fn main() {
 // If a client stops (signalled by the appsource), wait a second and then remove
 // the appsource again.
 
-fn setup_audio(args: &Args, c: Weak<RefCell<ClientData>>, handle: Handle,
-    logger: Logger) -> Result<(gst::Pipeline, Box<Future<Item = (), Error = ()>>), Error> {
+fn setup_audio(
+    args: &Args,
+    con: client::ClientConVal,
+    logger: Logger,
+) -> Result<(gst::Pipeline, Box<Future<Item = (), Error = ()> + Send>), Error> {
     // Channel, which can buffer some packets
     let (send, recv) = mpsc::channel(5);
     let pipeline = create_audio_to_ts_pipeline(send, args, logger.clone())?;
     let audio = main_loop(&pipeline, logger)?;
-    handle.spawn(packet_sender(c, recv));
+    tokio::spawn(packet_sender(con, recv));
     Ok((pipeline, audio))
 }
 
-fn packet_sender(data: Weak<RefCell<ClientData>>,
-    recv: mpsc::Receiver<(SocketAddr, Packet)>)
-    -> Box<Future<Item = (), Error = ()>> {
-    let sink = ClientData::get_packets(data);
-    Box::new(recv.forward(sink.sink_map_err(|error| {
+fn packet_sender(
+    con: client::ClientConVal,
+    recv: mpsc::Receiver<Packet>,
+) -> impl Future<Item = (), Error = ()> {
+    let sink = con.as_packet_sink();
+    recv.forward(sink.sink_map_err(|error| {
         println!("Error when forwarding: {:?}", error);
     })).map(|_| ()).map_err(|error| {
         println!("Error when forwarding: {:?}", error);
-    }))
+    })
 }
 
-fn voice_timeout<F: FnOnce() + 'static>(f: F, last_sent: Arc<Mutex<Instant>>, handle: Handle) {
-    let timeout = Timeout::new(Duration::from_secs(VOICE_TIMEOUT_SECS), &handle).unwrap();
-    let h = handle.clone();
-    handle.spawn(timeout.then(move |_| {
+fn voice_timeout<F: FnOnce() + Send + 'static>(executor: TaskExecutor, f: F, last_sent: Arc<Mutex<Instant>>) {
+    let timeout = Delay::new(Instant::now() + Duration::from_secs(VOICE_TIMEOUT_SECS));
+    let e = executor.clone();
+    executor.spawn(timeout.then(move |_| {
         let last = *last_sent.lock().unwrap();
         if Instant::now().duration_since(last).as_secs() >= VOICE_TIMEOUT_SECS {
             f();
         } else {
-            voice_timeout(f, last_sent, h);
+            voice_timeout(e, f, last_sent);
         }
         Ok(())
     }));
 }
 
-fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pipeline, failure::Error> {
+fn create_ts_to_audio_pipeline(executor: TaskExecutor, logger: Logger) -> Result<gst::Pipeline, failure::Error> {
     let pipeline = gst::Pipeline::new("ts-to-audio-pipeline");
 
     let appsrc = gst::ElementFactory::make("appsrc", "appsrc").ok_or_else(||
@@ -356,7 +400,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
         let pipe = pipe.clone();
         let sink = autosink.clone();
         let queue = queue.clone();
-        let handle = handle.clone();
+        let executor = executor.clone();
         decode.connect_pad_added(move |dbin, src_pad| {
             debug!(logger, "Got new client decoder pad"; "name" => src_pad.get_name());
 
@@ -384,7 +428,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
             let last_sent = Arc::new(Mutex::new(Instant::now()));
             let last = last_sent.clone();
             // Set as active if a buffer was sent
-            src_pad.add_probe(gst::PadProbeType::DATA_DOWNSTREAM, move |_pad, info| {
+            src_pad.add_probe(gst::PadProbeType::DATA_DOWNSTREAM, move |_pad, _info| {
                 let mut last_sent = last.lock().unwrap();
                 *last_sent = Instant::now();
                 gst::PadProbeReturn::Ok
@@ -455,10 +499,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
                 decode.set_state(gst::State::Null).into_result().unwrap();
             };
 
-            handle.spawn(move |h| {
-                voice_timeout(func, last_sent, h.clone());
-                Ok(())
-            });
+            voice_timeout(executor.clone(), func, last_sent);
 
             if first_pad {
                 // Start pipeline
@@ -472,7 +513,7 @@ fn create_ts_to_audio_pipeline(handle: Remote, logger: Logger) -> Result<gst::Pi
     Ok(pipeline)
 }
 
-fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args: &Args,
+fn create_audio_to_ts_pipeline(sender: mpsc::Sender<Packet>, args: &Args,
     logger: Logger) -> Result<gst::Pipeline, failure::Error> {
     let pipeline = gst::Pipeline::new("audio-to-ts-pipeline");
 
@@ -515,7 +556,6 @@ fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args:
 
     // Link decode to next element if a pad gets available
     let next = resampler;
-    let addr = args.address;
     decode.connect_pad_added(move |dbin, src_pad| {
         debug!(logger, "Got new pad"; "name" => src_pad.get_name());
         let is_audio = src_pad.get_current_caps().and_then(|caps| {
@@ -599,7 +639,7 @@ fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args:
                 let packet = packets::Packet::new(header, data);
 
                 // Write into packet sink
-                match sender.lock().unwrap().try_send((addr, packet)) {
+                match sender.lock().unwrap().try_send(packet) {
                     Ok(()) => gst::FlowReturn::Ok,
                     Err(error) => {
                         gst_element_error!(
@@ -620,7 +660,7 @@ fn create_audio_to_ts_pipeline(sender: mpsc::Sender<(SocketAddr, Packet)>, args:
 }
 
 fn main_loop(pipeline: &gst::Pipeline, logger: Logger)
-    -> Result<Box<Future<Item=(), Error = ()>>, failure::Error> {
+    -> Result<Box<Future<Item=(), Error = ()> + Send>, failure::Error> {
     pipeline.set_state(gst::State::Playing).into_result()?;
     debug!(logger, "Pipeline is playing");
 

@@ -2,28 +2,32 @@
 
 extern crate base64;
 extern crate cpuprofiler;
+extern crate failure;
 extern crate futures;
+extern crate gstreamer as gst;
+extern crate gstreamer_app as gst_app;
+extern crate gstreamer_audio as gst_audio;
 #[macro_use]
 extern crate slog;
 extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate structopt;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tsproto;
 
 use std::net::SocketAddr;
 use std::time::Instant;
 
+use futures::{future, Future};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::Core;
 
 mod utils;
 use utils::*;
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Debug, Clone)]
 #[structopt(raw(global_settings =
     "&[AppSettings::ColoredHelp, AppSettings::VersionlessSubcommands]"))]
 struct Args {
@@ -42,19 +46,28 @@ struct Args {
     verbose: bool,
 }
 
-fn connect_once(core: &mut Core, args: &Args, logger: &slog::Logger)
-    -> Result<(), tsproto::Error> {
-    let c = create_client(args.local_address, core.handle(), logger.clone(), args.verbose);
-    let handle = core.handle();
+fn connect_once(args: Args, logger: slog::Logger) {
+    tokio::run(future::lazy(move || {
+        // The TS server does not accept the 3rd reconnect from the same port
+        // so we create a new client for every connection.
+        let c = create_client(args.local_address, logger.clone(),
+            SimplePacketHandler, args.verbose);
 
-    // The TS server does not accept the 3rd reconnect from the same port
-
-    info!(logger, "Connecting");
-    core.run(connect(logger.clone(), &handle, c.clone(), args.address))?;
-
-    info!(logger, "Disconnecting");
-    core.run(disconnect(c.clone(), args.address)).unwrap();
-    Ok(())
+        info!(logger, "Connecting");
+        let logger2 = logger.clone();
+        connect(logger.clone(), c.clone(), args.address)
+            .map_err(|e| panic!("Failed to connect ({:?})", e))
+            .and_then(move |con| {
+                info!(logger, "Disconnecting");
+                disconnect(con).map_err(|e| panic!("Failed to disconnect ({:?})", e))
+            })
+            .and_then(move |_| {
+                info!(logger2, "Disconnected");
+                // Quit client
+                drop(c);
+                Ok(())
+            })
+    }));
 }
 
 fn main() {
@@ -62,11 +75,10 @@ fn main() {
 
     // Parse command line options
     let args = Args::from_args();
-    let mut core = Core::new().unwrap();
 
     let logger = {
         let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
         slog::Logger::root(drain, o!())
@@ -86,10 +98,7 @@ fn main() {
         // Wait a bit
         std::thread::sleep(std::time::Duration::from_millis(15));
 
-        if let Err(error) = connect_once(&mut core, &args, &logger) {
-            error!(logger, "Failed to connect"; "error" => ?error);
-            break;
-        }
+        connect_once(args.clone(), logger.clone());
         success_count += 1;
     }
     //cpuprofiler::PROFILER.lock().unwrap().stop().unwrap();

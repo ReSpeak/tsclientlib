@@ -211,20 +211,6 @@ impl Element {
                 } else {
                     self.pre_code.push(s);
                 }
-            } else if l.starts_with("+") {
-                let l = l[1..].trim();
-                if let Some(i) = l.find(' ') {
-                    let (key, val) = l.split_at(i);
-                    if pre_done {
-                        self.post_conditions
-                            .push((key.to_string(), val[1..].to_string()));
-                    } else {
-                        self.pre_conditions
-                            .push((key.to_string(), val[1..].to_string()));
-                    }
-                } else {
-                    panic!("Condition must have a value");
-                }
             } else if !l.starts_with("//") {
                 pre_done = true;
             }
@@ -958,11 +944,11 @@ impl Field {
             }
             ElementType::Integer(_) => if self.get_size() == "1" {
                 write!(w, "{}", self.content.elem.wrap_read(&format!(
-                    "r.read_{}().map_err(|e| Error::from(e))",
+                    "r.read_{}().map_err(Error::from)",
                     self.get_raw_type()))?)?;
             } else {
                 write!(w, "{}", self.content.elem.wrap_read(&format!(
-                    "r.read_{}::<NetworkEndian>().map_err(|e| Error::from(e))",
+                    "r.read_{}::<NetworkEndian>().map_err(Error::from)",
                     self.get_raw_type()))?)?;
             },
             ElementType::Array(ref s) => if s.starts_with("Vec<") {
@@ -1088,13 +1074,17 @@ impl Field {
                 write!(w, "write!(f, \"{{:?}}\", {})", data)?;
             }
             ElementType::Integer(_) => {
-                writeln!(
-                    w,
-                    "if {} == 0 {{\n\twrite!(f, \"0\")\n}} else {{",
-                    data_val
-                )?;
-                writeln!(w, "\twrite!(f, \"{{:#x}}\", {})", data_val)?;
-                writeln!(w, "}}")?;
+                if data_val == "0" {
+                    write!(w, "write!(f, \"0\")")?;
+                } else {
+                    writeln!(
+                        w,
+                        "if {} == 0 {{\n\twrite!(f, \"0\")\n}} else {{",
+                        data_val
+                    )?;
+                    writeln!(w, "\twrite!(f, \"{{:#x}}\", {})", data_val)?;
+                    write!(w, "}}")?;
+                }
             }
             ElementType::Array(_) => {
                 write!(w, "write!(f, \"{{:?}}\", HexSlice(&{}))", data_val)?;
@@ -1110,7 +1100,7 @@ impl Field {
         if self.optional {
             writeln!(
                 w,
-                ";\twrite!(f, \")\")?;\n}} else {{\n\twrite!(f, \
+                ";\n\twrite!(f, \")\")?;\n}} else {{\n\twrite!(f, \
                  \"None\")?;\n}}"
             )?;
         }

@@ -1,5 +1,9 @@
 extern crate base64;
+extern crate failure;
 extern crate futures;
+extern crate gstreamer as gst;
+extern crate gstreamer_app as gst_app;
+extern crate gstreamer_audio as gst_audio;
 extern crate ring;
 #[macro_use]
 extern crate slog;
@@ -7,18 +11,17 @@ extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
 extern crate structopt;
-extern crate tokio_core;
+extern crate tokio;
 extern crate tsproto;
 
 use std::net::SocketAddr;
-use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use futures::Sink;
+use futures::{future, Future, Sink};
 use slog::Drain;
 use structopt::StructOpt;
 use structopt::clap::AppSettings;
-use tokio_core::reactor::{Core, Timeout};
+use tokio::timer::Delay;
 use tsproto::*;
 use tsproto::packets::*;
 
@@ -36,6 +39,9 @@ struct Args {
     #[structopt(long = "local-address", default_value = "0.0.0.0:0",
                 help = "The listening address of the client")]
     local_address: SocketAddr,
+    #[structopt(short = "v", long = "verbose",
+                help = "Display the content of all packets")]
+    verbose: bool,
 }
 
 fn main() {
@@ -43,54 +49,54 @@ fn main() {
 
     // Parse command line options
     let args = Args::from_args();
-    let mut core = Core::new().unwrap();
 
     let logger = {
         let decorator = slog_term::TermDecorator::new().build();
-        // Or FullFormat
         let drain = slog_term::CompactFormat::new(decorator).build().fuse();
         let drain = slog_async::Async::new(drain).build().fuse();
 
         slog::Logger::root(drain, o!())
     };
 
-    let c = create_client(args.local_address, core.handle(), logger.clone(), true);
+    tokio::run(future::lazy(move || {
+        let c = create_client(args.local_address, logger.clone(),
+            SimplePacketHandler, args.verbose);
 
-    // Connect
-    let handle = core.handle();
-    if let Err(error) = core.run(connect(logger.clone(), &handle, c.clone(),
-        args.address)) {
-        error!(logger, "Failed to connect"; "error" => ?error);
-        return;
-    }
-    info!(logger, "Connected");
+        // Connect
+        let logger2 = logger.clone();
+        connect(logger.clone(), c.clone(), args.address)
+            .map_err(|e| panic!("Failed to connect ({:?})", e)).and_then(move |con| {
+                info!(logger2, "Connected");
+                // Wait some time
+                Delay::new(Instant::now() + Duration::from_secs(2)).map(move |_| con)
+            }).and_then(move |con| {
+                info!(logger, "Waited");
 
-    // Wait some time
-    let action = Timeout::new(Duration::from_secs(2), &core.handle()).unwrap();
-    core.run(action).unwrap();
-    info!(logger, "Waited");
+                // Send packet
+                let mut header = Header::default();
+                header.set_type(PacketType::Command);
+                let mut cmd = commands::Command::new("sendtextmessage");
 
-    // Send packet
-    let mut header = Header::default();
-    header.set_type(PacketType::Command);
-    let mut cmd = commands::Command::new("sendtextmessage");
+                cmd.push("targetmode", "3");
+                cmd.push("msg", "Hello");
 
-    cmd.push("targetmode", "3");
-    cmd.push("msg", "Hello");
-
-    let packets = handler_data::Data::get_packets(Rc::downgrade(&c));
-    let packet = Packet::new(header, Data::Command(cmd));
-    core.run(packets.send((args.address, packet.clone()))).unwrap();
-
-    // Wait some time
-    let action = Timeout::new(Duration::from_secs(3), &core.handle()).unwrap();
-    core.run(action).unwrap();
-
-    // Disconnect
-    if let Err(error) = core.run(disconnect(c.clone(),
-        args.address)) {
-        error!(logger, "Failed to disconnect"; "error" => ?error);
-        return;
-    }
-    info!(logger, "Disconnected");
+                let packet = Packet::new(header, Data::Command(cmd));
+                con.as_packet_sink().send(packet).map(|_| ())
+                    .map_err(|e| panic!("Failed to send packet ({:?})", e))
+                    .and_then(|_| {
+                        Delay::new(Instant::now() + Duration::from_secs(3))
+                    })
+                    .and_then(move |_| {
+                        // Disconnect
+                        disconnect(con).map_err(|e| panic!("Failed to \
+                            disconnect ({:?})", e))
+                    })
+                    .and_then(move |_| {
+                        info!(logger, "Disconnected");
+                        // Quit client
+                        drop(c);
+                        Ok(())
+                    })
+            })
+    }).map_err(|e| panic!("An error occurred {:?}", e)));
 }

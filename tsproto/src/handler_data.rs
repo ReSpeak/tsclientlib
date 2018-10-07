@@ -1,29 +1,36 @@
-use std::cell::RefCell;
 use std::mem;
 use std::net::SocketAddr;
-use std::rc::{Rc, Weak};
+use std::sync::{Arc, Mutex, Weak};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use {slog, slog_async, slog_term};
-use futures::{self, Sink, Stream};
-use futures::unsync::mpsc;
+use {evmap, slog, slog_async, slog_term, tokio};
+use bytes::{Bytes, BytesMut};
+use futures::{Future, Sink, stream, Stream};
+use futures::sync::{mpsc, oneshot};
 use slog::Drain;
-use tokio_core::net::UdpSocket;
-use tokio_core::reactor::Handle;
+use tokio::codec::BytesCodec;
+use tokio::net::{UdpFramed, UdpSocket};
 
-use {Error, Result, TsCodec, StreamWrapper, SinkWrapper};
+use {Error, Result};
 use connection::*;
 use connectionmanager::ConnectionManager;
 use crypto::EccKeyPrivP256;
-use packets::*;
+use packet_codec::{PacketCodecReceiver, PacketCodecSender};
+use packets::{Packet, PacketType};
+use resend::DefaultResender;
+
+pub type DataM<CM> = Arc<Mutex<Data<CM>>>;
 
 /// A listener for added and removed connections.
-pub trait ConnectionListener<CM: ConnectionManager> {
+pub trait ConnectionListener<CM: ConnectionManager>: Send {
     /// Called when a new connection is created.
     ///
     /// Return `false` to remain in the list of listeners.
     /// If `true` is returned, this listener will be removed.
-    fn on_connection_created(&mut self, _data: Rc<RefCell<Data<CM>>>,
-        _key: CM::ConnectionsKey) -> bool {
+    ///
+    /// Per default, `false` is returned.
+    fn on_connection_created(&mut self, _key: &mut CM::Key,
+        _adata: &mut CM::AssociatedData, _con: &mut Connection) -> bool {
         false
     }
 
@@ -31,61 +38,199 @@ pub trait ConnectionListener<CM: ConnectionManager> {
     ///
     /// Return `false` to remain in the list of listeners.
     /// If `true` is returned, this listener will be removed.
-    fn on_connection_removed(&mut self, _data: Rc<RefCell<Data<CM>>>,
-        _key: CM::ConnectionsKey) -> bool {
+    ///
+    /// Per default, `false` is returned.
+    fn on_connection_removed(&mut self, _key: &CM::Key,
+        _con: &mut ConnectionValue<CM::AssociatedData>) -> bool {
         false
+    }
+}
+
+/// Will be cloned for some of the incoming packets. So be careful with
+/// modifying the internal state, it is not global.
+pub trait PacketHandler<T: 'static>: Send {
+    /// Called for every new connection.
+    ///
+    /// The `command_stream` gets all command and init packets.
+    /// The `audio_stream` gets all audio packets.
+    fn new_connection<S1, S2>(
+        &mut self,
+        con_val: &ConnectionValue<T>,
+        command_stream: S1,
+        audio_stream: S2,
+    ) where
+        S1: Stream<Item=Packet, Error=Error> + Send + 'static,
+        S2: Stream<Item=Packet, Error=Error> + Send + 'static;
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct LogConfig {
+    pub log_packets: Arc<AtomicBool>,
+    pub log_udp_packets: Arc<AtomicBool>,
+}
+
+impl LogConfig {
+    pub fn new(log_packets: bool, log_udp_packets: bool) -> Self {
+        Self {
+            log_packets: Arc::new(AtomicBool::new(log_packets)),
+            log_udp_packets: Arc::new(AtomicBool::new(log_udp_packets)),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ConnectionValue<T: 'static> {
+    pub mutex: Arc<Mutex<(T, Connection)>>,
+    pub log_packets: Arc<AtomicBool>,
+}
+
+impl<T: Send + 'static> ConnectionValue<T> {
+    pub fn new(data: T, con: Connection, log_packets: Arc<AtomicBool>) -> Self {
+        Self { mutex: Arc::new(Mutex::new((data, con))), log_packets }
+    }
+
+    fn encode_packet(&self, packet: Packet)
+        -> Box<Stream<Item=(PacketType, u16, Bytes), Error=Error> + Send> {
+        let mut con = self.mutex.lock().unwrap();
+        if self.log_packets.load(Ordering::Relaxed) {
+            ::log::PacketLogger::log_packet(&con.1.logger,
+                con.1.is_client, false, &packet);
+        }
+
+        let codec = PacketCodecSender::new(con.1.is_client, con.1.logger.clone());
+        let p_type = packet.header.get_type();
+
+        let mut udp_packets = match codec.encode_packet(&mut con.1, packet) {
+            Ok(r) => r,
+            Err(e) => return Box::new(stream::once(Err(e))),
+        };
+
+        let udp_packets = udp_packets.drain(..).map(|(p_id, p)|
+            (p_type, p_id, p)).collect::<Vec<_>>();
+        Box::new(stream::iter_ok(udp_packets))
+    }
+
+    pub fn downgrade(&self) -> ConnectionValueWeak<T> {
+        ConnectionValueWeak {
+            mutex: Arc::downgrade(&self.mutex),
+            log_packets: self.log_packets.clone(),
+        }
+    }
+}
+
+impl<T: 'static> PartialEq for ConnectionValue<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self as *const ConnectionValue<_> == other as *const _
+    }
+}
+
+impl<T: 'static> Eq for ConnectionValue<T> {}
+
+impl<T: 'static> Clone for ConnectionValue<T> {
+    fn clone(&self) -> Self {
+        Self { mutex: self.mutex.clone(), log_packets: self.log_packets.clone() }
+    }
+}
+
+impl<T: 'static> evmap::ShallowCopy for ConnectionValue<T> {
+    unsafe fn shallow_copy(&mut self) -> Self {
+        Self {
+            mutex: Arc::from_raw(&*self.mutex),
+            log_packets: Arc::from_raw(&*self.log_packets),
+        }
+        // Try to copy without generating memory leaks
+        //let mut r: Self = mem::uninitialized();
+        //ptr::copy_nonoverlapping(self, &mut r, 1);
+        //r
+    }
+}
+
+#[derive(Debug)]
+pub struct ConnectionValueWeak<T: Send + 'static> {
+    pub mutex: Weak<Mutex<(T, Connection)>>,
+    pub log_packets: Arc<AtomicBool>,
+}
+
+impl<T: Send + 'static> ConnectionValueWeak<T> {
+    pub fn upgrade(&self) -> Option<ConnectionValue<T>> {
+        self.mutex.upgrade().map(|mutex| ConnectionValue {
+            mutex,
+            log_packets: self.log_packets.clone(),
+        })
+    }
+
+    pub fn as_udp_packet_sink(&self)
+        -> ::connection::ConnectionUdpPacketSink<T> {
+        ::connection::ConnectionUdpPacketSink::new(self.clone())
+    }
+
+    pub fn as_packet_sink(&self) -> impl Sink<SinkItem=Packet, SinkError=Error> {
+        let cv = self.clone();
+        self.as_udp_packet_sink().with_flat_map(move |p| {
+            if let Some(cv) = cv.upgrade() {
+                cv.encode_packet(p)
+            } else {
+                Box::new(stream::once(Err(format_err!("Connection is gone").into())))
+            }
+        })
+    }
+}
+
+impl<T: Send + 'static> Clone for ConnectionValueWeak<T> {
+    fn clone(&self) -> Self {
+        Self { mutex: self.mutex.clone(), log_packets: self.log_packets.clone() }
     }
 }
 
 /// The stored data for our server or client.
 ///
-/// This data is stored for one socket.
+/// This handles a single socket.
 ///
 /// The list of connections is not managed by this struct, but it is passed to
 /// an instance of [`ConnectionManager`] that is stored here.
 ///
-/// [`ConnectionManager`]:
-pub struct Data<CM: ConnectionManager> {
+/// [`ConnectionManager`]: trait.ConnectionManager.html
+pub struct Data<CM: ConnectionManager + 'static> {
     /// If this structure is owned by a client or a server.
     pub is_client: bool,
     /// The address of the socket.
     pub local_addr: SocketAddr,
     /// The private key of this instance.
     pub private_key: EccKeyPrivP256,
-    pub handle: Handle,
     pub logger: slog::Logger,
+    pub log_config: LogConfig,
 
-    /// The stream of `UdpPacket`s.
-    pub udp_packet_stream:
-        Option<Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>,
-    /// The sink of `UdpPacket`s.
-    pub udp_packet_sink:
-        Option<Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>,
-    /// The sink for `UdpPacket`s with no known connection.
-    ///
-    /// This can stay `None` so all packets without connection will be dropped.
-    pub unknown_udp_packet_sink:
-        Option<mpsc::Sender<(SocketAddr, UdpPacket)>>,
+    /// The sink of udp packets.
+    pub udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
+    exit_send: oneshot::Sender<()>,
 
-    /// The stream of `Packet`s.
-    pub packet_stream:
-        Option<Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>>,
-    /// The sink of `Packet`s.
-    pub packet_sink:
-        Option<Box<Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error>>>,
+    /// The default resend config. It gets copied for each new connection.
+    resend_config: ::resend::ResendConfig,
+
+    pub connections: evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+    pub connections_writer: evmap::WriteHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+    pub packet_handler: CM::PacketHandler,
 
     /// A list of all connected clients or servers
     ///
     /// You should not add or remove connections directly using the manager,
-    /// unless you know what you are doing (e.g. connection listeners are not
-    /// called).
+    /// unless you know what you are doing. E.g. connection listeners are not
+    /// called if you do so.
     /// Instead, use the [`add_connection`] und [`remove_connection`] function.
     ///
-    /// [`add_connection`]:
-    /// [`remove_connection`]:
+    /// [`add_connection`]: #method.add_connection
+    /// [`remove_connection`]: #method.remove_connection
     pub connection_manager: CM,
     /// Listen for new or removed connections.
     pub connection_listeners: Vec<Box<ConnectionListener<CM>>>,
+}
+
+impl<CM: ConnectionManager + 'static> Drop for Data<CM> {
+    fn drop(&mut self) {
+        // Ignore if the receiver was already dropped
+        let sender = mem::replace(&mut self.exit_send, oneshot::channel().0);
+        let _ = sender.send(());
+    }
 }
 
 impl<CM: ConnectionManager + 'static> Data<CM> {
@@ -94,11 +239,13 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
     pub fn new<L: Into<Option<slog::Logger>>>(
         local_addr: SocketAddr,
         private_key: EccKeyPrivP256,
-        handle: Handle,
         is_client: bool,
+        unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+        packet_handler: CM::PacketHandler,
         connection_manager: CM,
         logger: L,
-    ) -> Result<Rc<RefCell<Self>>> {
+        log_config: LogConfig,
+    ) -> Result<Arc<Mutex<Self>>> {
         let logger = logger.into().unwrap_or_else(|| {
             let decorator = slog_term::TermDecorator::new().build();
             let drain = slog_term::FullFormat::new(decorator).build().fuse();
@@ -108,320 +255,156 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
         });
 
         // Create the socket
-        let socket = UdpSocket::bind(&local_addr, &handle)?;
+        let socket = UdpSocket::bind(&local_addr)?;
         let local_addr = socket.local_addr().unwrap_or(local_addr);
-        let (sink, stream) = socket.framed(TsCodec::default()).split();
-        let sink = Box::new(sink.sink_from_err());
-        let stream = Box::new(stream.from_err());
+        debug!(logger, "Listening"; "local_addr" => %local_addr);
+        let (sink, stream) = UdpFramed::new(socket, BytesCodec::new()).split();
 
-        let data = Rc::new(RefCell::new(Self {
+        let (exit_send, exit_recv) = oneshot::channel();
+        let (udp_packet_sink, udp_packet_sink_sender) = mpsc::channel(::UDP_SINK_CAPACITY);
+        let logger2 = logger.clone();
+
+        let (connections, connections_writer) = evmap::new();
+
+        let data = Self {
             is_client,
             local_addr,
             private_key,
-            handle,
             logger,
-            udp_packet_stream: Some(stream),
-            udp_packet_sink: Some(sink),
-            unknown_udp_packet_sink: None,
-            packet_stream: None,
-            packet_sink: None,
+            log_config,
+            udp_packet_sink,
+            exit_send,
+            resend_config: Default::default(),
+            connections,
+            connections_writer,
+            packet_handler,
             connection_manager,
             connection_listeners: Vec::new(),
-        }));
-
-        // Apply packet codec to set packet stream and sink
-        ::packet_codec::PacketCodecSink::apply(&data);
-        ::packet_codec::PacketCodecStream::apply(&data, true);
-
-        Ok(data)
-    }
-
-    pub fn create_connection(data: &Rc<RefCell<Self>>, addr: SocketAddr)
-        -> Rc<RefCell<Connection<CM>>> {
-        // Add options like ip to logger
-        let (resender, logger) = {
-            let data = data.borrow();
-            let logger = data.logger.new(o!("addr" => addr.to_string()));
-
-            (data.connection_manager.create_resender(logger.clone()), logger)
         };
 
-        Connection::new(addr, resender, logger)
+        let logger = data.logger.clone();
+        let logger3 = logger.clone();
+        let is_client = data.is_client;
+        let log_udp = data.log_config.log_udp_packets.clone();
+        tokio::spawn(udp_packet_sink_sender.map(move |(addr, p)| {
+                if log_udp.load(Ordering::Relaxed) {
+                    ::log::PacketLogger::log_udp_packet(&logger, addr, is_client,
+                        false, &::packets::UdpPacket(&p, is_client));
+                }
+                (p, addr)
+            })
+            .forward(sink.sink_map_err(move |e|
+                error!(logger2, "Failed to send udp packet"; "error" => ?e))
+            //).map(|_| ()));
+            // TODO Sometimes does not quit
+            ).map(move |_| info!(logger3, "A exited")));
+
+        // Handle incoming packets
+        let logger = data.logger.clone();
+        let logger2 = logger.clone();
+        let logger3 = logger.clone();
+        let log_udp = data.log_config.log_udp_packets.clone();
+        let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
+        tokio::spawn(stream
+            .map_err(move |e| error!(logger2, "Packet stream errored";
+                "error" => ?e))
+            .for_each(move |(p, a)| {
+                if log_udp.load(Ordering::Relaxed) {
+                    ::log::PacketLogger::log_udp_packet(&logger, a,
+                        is_client, true, &::packets::UdpPacket(&p, !is_client));
+                }
+
+                let logger = logger.clone();
+                codec.handle_udp_packet((a, p)).then(move |r| {
+                    if let Err(e) = r {
+                        warn!(logger, "Packet receiver errored"; "error" => ?e);
+                    }
+                    // Ignore errors for one packet
+                    Ok(())
+                })
+            })
+            .select2(exit_recv)
+            .map_err(|_| ())
+            .map(move |_| info!(logger3, "B exited")));
+        Ok(Arc::new(Mutex::new(data)))
     }
 
     /// Add a new connection to this socket.
-    ///
-    /// The connection object can be created e. g. by the [`create_connection`]
-    /// function.
-    ///
-    /// [`create_connection`]:
-    pub fn add_connection(data: &Rc<RefCell<Self>>,
-        connection: Rc<RefCell<Connection<CM>>>) -> CM::ConnectionsKey {
-        let mut tmp;
-        // Add connection and take listeners
-        let key = {
-            let data = &mut *data.borrow_mut();
-            let key = data.connection_manager.add_connection(connection,
-                &data.handle);
-            tmp = mem::replace(&mut data.connection_listeners, Vec::new());
-            key
-        };
-        let key2 = key.clone();
-        let mut tmp = tmp.drain(..)
-            .filter_map(|mut l| if l.on_connection_created(data.clone(),
-                key2.clone()) {
-                None
+    pub fn add_connection(
+        &mut self,
+        data_mut: Weak<Mutex<Self>>,
+        mut data: CM::AssociatedData,
+        addr: SocketAddr,
+    ) -> CM::Key {
+        // Add options like ip to logger
+        let logger = self.logger.new(o!("addr" => addr.to_string()));
+        let resender = DefaultResender::new(self.resend_config.clone(),
+            logger.clone());
+        // Use an unbounded channel so try_send never fails
+        let (command_send, command_recv) = mpsc::unbounded();
+        let (audio_send, audio_recv) = mpsc::unbounded();
+        let mut con = Connection::new(addr, resender, logger.clone(),
+            self.udp_packet_sink.clone(), self.is_client, command_send,
+            audio_send);
+
+        let mut key = self.connection_manager.new_connection_key(&mut data,
+            &mut con);
+        // Call listeners
+        let mut i = 0;
+        while i < self.connection_listeners.len() {
+            if self.connection_listeners[i].on_connection_created(
+                &mut key, &mut data, &mut con) {
+                self.connection_listeners.remove(i);
             } else {
-                Some(l)
-            })
-            .collect::<Vec<_>>();
-        // Put listeners back
-        {
-            let mut data = data.borrow_mut();
-            tmp.append(&mut data.connection_listeners);
-            data.connection_listeners = tmp;
+                i += 1;
+            }
         }
+
+        let con_val = ConnectionValue::new(data, con,
+            self.log_config.log_packets.clone());
+        self.packet_handler.new_connection(
+            &con_val,
+            command_recv.map_err(|_| format_err!("Failed to receive").into()),
+            audio_recv.map_err(|_| format_err!("Failed to receive").into()),
+        );
+
+        // Add connection
+        self.connections_writer.insert(key.clone(), con_val);
+        self.connections_writer.refresh();
+
+        // Start resender
+        let resend_fut = ::resend::ResendFuture::new(&self, data_mut,
+            key.clone());
+        ::tokio::spawn(resend_fut.map_err(move |e| {
+            error!(logger, "Resend future failed"; "error" => ?e);
+        }));
+
         key
     }
 
-    pub fn remove_connection(data: &Rc<RefCell<Self>>, key: CM::ConnectionsKey) {
-        let mut tmp;
-        // Take listeners
-        {
-            let mut data = data.borrow_mut();
-            tmp = mem::replace(&mut data.connection_listeners, Vec::new());
+    pub fn remove_connection(&mut self, key: &CM::Key)
+        -> Option<ConnectionValue<CM::AssociatedData>> {
+        // Get connection
+        let mut res = self.get_connection(key);
+        if let Some(con) = &mut res {
+            // Remove connection
+            self.connections_writer.empty(key.clone());
+            self.connections_writer.refresh();
+
+            // Call listeners
+            let mut i = 0;
+            while i < self.connection_listeners.len() {
+                if self.connection_listeners[i].on_connection_removed(&key, con) {
+                    self.connection_listeners.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
         }
-        let key2 = key.clone();
-        let mut tmp = tmp.drain(..)
-            .filter_map(|mut l| if l.on_connection_removed(data.clone(),
-                key2.clone()) {
-                None
-            } else {
-                Some(l)
-            })
-            .collect::<Vec<_>>();
-        // Put listeners back and remove connection
-        {
-            let mut data = data.borrow_mut();
-            tmp.append(&mut data.connection_listeners);
-            data.connection_listeners = tmp;
-            data.connection_manager.remove_connection(key);
-        }
-    }
-
-    pub fn apply_udp_packet_stream_wrapper<
-        W: StreamWrapper<(SocketAddr, UdpPacket), Error,
-            Box<Stream<Item = (SocketAddr, UdpPacket), Error = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.udp_packet_stream.take().unwrap();
-        data.udp_packet_stream = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    pub fn apply_udp_packet_sink_wrapper<
-        W: SinkWrapper<(SocketAddr, UdpPacket), Error,
-            Box<Sink<SinkItem = (SocketAddr, UdpPacket), SinkError = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.udp_packet_sink.take().unwrap();
-        data.udp_packet_sink = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    pub fn apply_packet_stream_wrapper<
-        W: StreamWrapper<(CM::ConnectionsKey, Packet), Error,
-            Box<Stream<Item = (CM::ConnectionsKey, Packet), Error = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.packet_stream.take().unwrap();
-        data.packet_stream = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    pub fn apply_packet_sink_wrapper<
-        W: SinkWrapper<(CM::ConnectionsKey, Packet), Error,
-            Box<Sink<SinkItem = (CM::ConnectionsKey, Packet), SinkError = Error>>>
-            + 'static,
-    >(data: &Rc<RefCell<Self>>, a: W::A) {
-        let mut data = data.borrow_mut();
-        let inner = data.packet_sink.take().unwrap();
-        data.packet_sink = Some(Box::new(W::wrap(inner, a)));
-    }
-
-    /// Gives a `Stream` and `Sink` of `UdpPacket`s, which always references the
-    /// current stream in the `Data` struct.
-    pub fn get_udp_packets(data: Weak<RefCell<Self>>) -> DataUdpPackets<CM> {
-        DataUdpPackets { data }
-    }
-
-    /// Gives a `Stream` and `Sink` of `Packet`s, which always references the
-    /// current stream in the `Data` struct.
-    pub fn get_packets(data: Weak<RefCell<Self>>) -> DataPackets<CM> {
-        DataPackets { data }
-    }
-}
-
-/// A `Stream` and `Sink` of [`UdpPacket`]s, which always references the current
-/// stream in the [`Data`] struct.
-///
-/// [`UdpPacket`]: ../packets/struct.UdpPacket.html
-/// [`Data`]: struct.Data.html
-pub struct DataUdpPackets<CM: ConnectionManager> {
-    data: Weak<RefCell<Data<CM>>>,
-}
-
-impl<CM: ConnectionManager> Stream for DataUdpPackets<CM> {
-    type Item = (SocketAddr, UdpPacket);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::Ready(None));
-        };
-        let mut stream = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_stream
-                .take()
-                .unwrap()
-        };
-        let res = stream.poll();
-        let mut data = data.borrow_mut();
-        data.udp_packet_stream = Some(stream);
-        res
-    }
-}
-
-impl<CM: ConnectionManager> Sink for DataUdpPackets<CM> {
-    type SinkItem = (SocketAddr, UdpPacket);
-    type SinkError = Error;
-
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.start_send(item);
-        let mut data = data.borrow_mut();
-        data.udp_packet_sink = Some(sink);
         res
     }
 
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.poll_complete();
-        let mut data = data.borrow_mut();
-        data.udp_packet_sink = Some(sink);
-        res
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.udp_packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.close();
-        let mut data = data.borrow_mut();
-        data.udp_packet_sink = Some(sink);
-        res
-    }
-}
-
-/// A `Stream` and `Sink` of [`Packet`]s, which always references the current
-/// stream in the [`Data`] struct.
-///
-/// [`Packet`]: ../packets/struct.Packet.html
-/// [`Data`]: struct.Data.html
-pub struct DataPackets<CM: ConnectionManager> {
-    data: Weak<RefCell<Data<CM>>>,
-}
-
-impl<CM: ConnectionManager> Stream for DataPackets<CM> {
-    type Item = (CM::ConnectionsKey, Packet);
-    type Error = Error;
-
-    fn poll(&mut self) -> futures::Poll<Option<Self::Item>, Self::Error> {
-        let data = if let Some(data) = self.data.upgrade() {
-            data
-        } else {
-            return Ok(futures::Async::Ready(None));
-        };
-        let mut stream = {
-            let mut data = data.borrow_mut();
-            data.packet_stream
-                .take()
-                .unwrap()
-        };
-        let res = stream.poll();
-        let mut data = data.borrow_mut();
-        data.packet_stream = Some(stream);
-        res
-    }
-}
-
-impl<CM: ConnectionManager> Sink for DataPackets<CM> {
-    type SinkItem = (CM::ConnectionsKey, Packet);
-    type SinkError = Error;
-
-    fn start_send(
-        &mut self,
-        item: Self::SinkItem,
-    ) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.start_send(item);
-        let mut data = data.borrow_mut();
-        data.packet_sink = Some(sink);
-        res
-    }
-
-    fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.poll_complete();
-        let mut data = data.borrow_mut();
-        data.packet_sink = Some(sink);
-        res
-    }
-
-    fn close(&mut self) -> futures::Poll<(), Self::SinkError> {
-        let data = self.data.upgrade().unwrap();
-        let mut sink = {
-            let mut data = data.borrow_mut();
-            data.packet_sink
-                .take()
-                .unwrap()
-        };
-        let res = sink.close();
-        let mut data = data.borrow_mut();
-        data.packet_sink = Some(sink);
-        res
+    pub fn get_connection(&self, key: &CM::Key) -> Option<ConnectionValue<CM::AssociatedData>> {
+        self.connections.get_and(&key, |v| v[0].clone())
     }
 }

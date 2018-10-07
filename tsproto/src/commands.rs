@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::io::prelude::*;
 use std::str;
 
 use nom::{self, alphanumeric, multispace};
 
-use {Map, Result};
+use Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
@@ -15,7 +16,7 @@ pub struct Command {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalCommand<'a> {
     pub command: &'a str,
-    pub args: Map<&'a str, &'a str>,
+    pub args: HashMap<&'a str, &'a str>,
 }
 
 macro_rules! parse_to_string {
@@ -157,7 +158,7 @@ impl Command {
                 '\\' => write!(w, "\\\\"),
                 '\t' => write!(w, "\\t"),
                 '\r' => write!(w, "\\r"),
-                '\n' => write!(w, "\\n"),
+                '\n' => writeln!(w),
                 '|' => write!(w, "\\p"),
                 ' ' => write!(w, "\\s"),
                 '/' => write!(w, "\\/"),
@@ -251,10 +252,10 @@ impl<'a> CanonicalCommand<'a> {
 
 #[cfg(test)]
 mod tests {
-    use io::Cursor;
+    use std::collections::HashMap;
+    use std::io::Cursor;
     use std::iter::FromIterator;
 
-    use Map;
     use commands::{CanonicalCommand, Command};
 
     #[test]
@@ -320,7 +321,7 @@ mod tests {
             vec![
                 CanonicalCommand {
                     command: "cmd",
-                    args: Map::from_iter(
+                    args: HashMap::from_iter(
                         vec![("a", "1"), ("b", "2"), ("c", "3")]
                             .iter()
                             .cloned(),
@@ -328,7 +329,7 @@ mod tests {
                 },
                 CanonicalCommand {
                     command: "cmd",
-                    args: Map::from_iter(
+                    args: HashMap::from_iter(
                         vec![("a", "1"), ("b", "4"), ("c", "3")]
                             .iter()
                             .cloned(),
@@ -336,7 +337,7 @@ mod tests {
                 },
                 CanonicalCommand {
                     command: "cmd",
-                    args: Map::from_iter(
+                    args: HashMap::from_iter(
                         vec![("a", "1"), ("b", "5"), ("c", "3")]
                             .iter()
                             .cloned(),

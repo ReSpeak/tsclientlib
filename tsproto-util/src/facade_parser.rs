@@ -10,11 +10,11 @@ fn get_return_type(s: &str) -> String {
     if s.starts_with("Option<") {
         format!("Option<{}>", get_return_type(&s[7..s.len() - 1]))
     } else if s.starts_with("Vec<") {
-        format!("Ref<[{}]>", &s[4..s.len() - 1])
+        format!("&mut [{}]", &s[4..s.len() - 1])
     } else if s == "String" {
-        String::from("Ref<str>")
+        String::from("&str")
     } else if is_ref_type(s) {
-        format!("Ref<{}>", s)
+        format!("&mut {}", s)
     } else {
         String::from(s)
     }

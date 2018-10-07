@@ -13,7 +13,7 @@ use ring::digest;
 use Result;
 use crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 
-pub const TIMESTAMP_OFFSET: i64 = 0x50e22700;
+pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
 
 /// Either a public or a private key.
 #[derive(Debug, Clone)]
@@ -336,7 +336,7 @@ impl License {
     /// Get the private key from the hash of this license block.
     pub fn get_hash_key(&self) -> Scalar {
         // Make a valid private key from the hash
-        let mut hash_key = self.hash.clone();
+        let mut hash_key = self.hash;
         hash_key[0] &= 248;
         hash_key[31] &= 63;
         hash_key[31] |= 64;
@@ -365,7 +365,7 @@ impl License {
             return Err(format_err!("License contains no private key").into());
         };
         let hash_key = self.get_hash_key();
-        Ok(EccKeyPrivEd25519(priv_key * hash_key + &parent_key.0))
+        Ok(EccKeyPrivEd25519(priv_key * hash_key + parent_key.0))
     }
 }
 
