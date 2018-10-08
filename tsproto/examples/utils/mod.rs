@@ -2,75 +2,79 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use {slog, slog_perf};
 use futures::{Future, Sink, Stream};
 use tokio;
 use tokio::timer::Delay;
-use tsproto::*;
 use tsproto::algorithms as algs;
 use tsproto::client::ServerConnectionData;
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
+use tsproto::*;
+use {slog, slog_perf};
 
 pub mod voice;
 
 pub struct SimplePacketHandler;
 
 impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
-    fn new_connection<S1, S2>(
-        &mut self,
-        _: &handler_data::ConnectionValue<T>,
-        command_stream: S1,
-        audio_stream: S2,
-    ) where
-        S1: Stream<Item=Packet, Error=Error> + Send + 'static,
-        S2: Stream<Item=Packet, Error=Error> + Send + 'static,
-    {
-        tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e|
-            println!("Command stream exited with error ({:?})", e)));
-        tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(|e|
-            println!("Audio stream exited with error ({:?})", e)));
-    }
+	fn new_connection<S1, S2>(
+		&mut self,
+		_: &handler_data::ConnectionValue<T>,
+		command_stream: S1,
+		audio_stream: S2,
+	) where
+		S1: Stream<Item = Packet, Error = Error> + Send + 'static,
+		S2: Stream<Item = Packet, Error = Error> + Send + 'static,
+	{
+		tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e| {
+			println!("Command stream exited with error ({:?})", e)
+		}));
+		tokio::spawn(
+			audio_stream.for_each(|_| Ok(())).map_err(|e| {
+				println!("Audio stream exited with error ({:?})", e)
+			}),
+		);
+	}
 }
 
 pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
-    local_address: SocketAddr,
-    logger: slog::Logger,
-    packet_handler: PH,
-    log: bool,
+	local_address: SocketAddr,
+	logger: slog::Logger,
+	packet_handler: PH,
+	log: bool,
 ) -> client::ClientDataM<PH> {
-    // Get P-256 ECDH key
-    let private_key = EccKeyPrivP256::from_ts(
+	// Get P-256 ECDH key
+	let private_key = EccKeyPrivP256::from_ts(
         "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
         k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
         DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-    let log_config = handler_data::LogConfig::new(log, log);
-    let c = client::ClientData::new(
-        local_address,
-        private_key,
-        true,
-        None,
-        client::DefaultPacketHandler::new(packet_handler),
-        connectionmanager::SocketConnectionManager::new(),
-        logger,
-        log_config,
-    ).unwrap();
+	let log_config = handler_data::LogConfig::new(log, log);
+	let c = client::ClientData::new(
+		local_address,
+		private_key,
+		true,
+		None,
+		client::DefaultPacketHandler::new(packet_handler),
+		connectionmanager::SocketConnectionManager::new(),
+		logger,
+		log_config,
+	).unwrap();
 
-    // Set the data reference
-    let c2 = Arc::downgrade(&c);
-    c.try_lock().unwrap().packet_handler.complete(c2);
+	// Set the data reference
+	let c2 = Arc::downgrade(&c);
+	c.try_lock().unwrap().packet_handler.complete(c2);
 
-    c
+	c
 }
 
 pub fn connect<PH: PacketHandler<ServerConnectionData>>(
-    logger: slog::Logger,
-    client: client::ClientDataM<PH>,
-    server_addr: SocketAddr,
+	logger: slog::Logger,
+	client: client::ClientDataM<PH>,
+	server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error> {
-    client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
+	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
         .and_then(move |c| {
         // Wait some time
         // TODO Document in protocol paper
@@ -122,26 +126,25 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
     })
 }
 
-pub fn disconnect(con: client::ClientConVal)
-    -> impl Future<Item = (), Error = Error> {
-    let header = Header::new(PacketType::Command);
-    let mut command = commands::Command::new("clientdisconnect");
+pub fn disconnect(
+	con: client::ClientConVal,
+) -> impl Future<Item = (), Error = Error> {
+	let header = Header::new(PacketType::Command);
+	let mut command = commands::Command::new("clientdisconnect");
 
-    // Reason: Disconnect
-    command.push("reasonid", "8");
-    command.push("reasonmsg", "Bye");
-    let p_data = packets::Data::Command(command);
-    let packet = Packet::new(header, p_data);
+	// Reason: Disconnect
+	command.push("reasonid", "8");
+	command.push("reasonmsg", "Bye");
+	let p_data = packets::Data::Command(command);
+	let packet = Packet::new(header, p_data);
 
-    con.as_packet_sink()
-        .send(packet)
-        .and_then(move |_| {
-            client::wait_for_state(&con, |state| {
-                if let client::ServerConnectionState::Disconnected = *state {
-                    true
-                } else {
-                    false
-                }
-            })
-        })
+	con.as_packet_sink().send(packet).and_then(move |_| {
+		client::wait_for_state(&con, |state| {
+			if let client::ServerConnectionState::Disconnected = *state {
+				true
+			} else {
+				false
+			}
+		})
+	})
 }

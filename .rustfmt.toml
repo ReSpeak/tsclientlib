@@ -1,5 +1,6 @@
 max_width = 80
 
+hard_tabs = true
 format_strings = true
 reorder_imported_names = true
 imports_indent = "Block"

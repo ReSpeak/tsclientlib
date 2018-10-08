@@ -1,5 +1,5 @@
 use csv;
-use ::*;
+use *;
 
 #[derive(Template)]
 #[TemplatePath = "src/PermissionDeclarations.tt"]
@@ -7,12 +7,14 @@ use ::*;
 pub struct Permissions(Vec<EnumValue>);
 
 impl Declaration for Permissions {
-    type Dep = ();
+	type Dep = ();
 
-    fn get_filename() -> &'static str { "Permissions.csv" }
+	fn get_filename() -> &'static str {
+		"Permissions.csv"
+	}
 
-    fn parse_from_read(read: &mut Read, (): Self::Dep) -> Self {
-        let mut table = csv::Reader::from_reader(read);
-        Permissions(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap())
-    }
+	fn parse_from_read(read: &mut Read, (): Self::Dep) -> Self {
+		let mut table = csv::Reader::from_reader(read);
+		Permissions(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap())
+	}
 }

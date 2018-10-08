@@ -47,7 +47,9 @@ pub struct ChannelGroupId(pub u64);
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct IconHash(pub i32);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum TextMessageTargetMode {
 	/// Maybe to all servers?
 	Unknown,
@@ -59,7 +61,9 @@ pub enum TextMessageTargetMode {
 	Server,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum HostMessageMode {
 	/// Dont display anything
 	None,
@@ -71,7 +75,9 @@ pub enum HostMessageMode {
 	Modalquit,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum HostBannerMode {
 	/// Do not adjust
 	NoAdjust,
@@ -81,7 +87,9 @@ pub enum HostBannerMode {
 	AdjustKeepAspect,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum Codec {
 	/// Mono,   16bit,  8kHz, bitrate dependent on the quality setting
 	SpeexNarrowband,
@@ -97,7 +105,9 @@ pub enum Codec {
 	OpusMusic,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum CodecEncryptionMode {
 	/// Voice encryption is configured per channel
 	PerChannel,
@@ -107,7 +117,9 @@ pub enum CodecEncryptionMode {
 	ForcedOn,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum Reason {
 	/// No reason data
 	None,
@@ -131,14 +143,18 @@ pub enum Reason {
 	ClientdisconnectServerShutdown,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum ClientType {
 	Normal,
 	/// Server query client
 	Query,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum GroupNamingMode {
 	/// No group name is displayed.
 	None,
@@ -148,7 +164,9 @@ pub enum GroupNamingMode {
 	After,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum GroupType {
 	/// Template group (used for new virtual servers).
 	Template,
@@ -158,9 +176,10 @@ pub enum GroupType {
 	Query,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
-pub enum LicenseType
-{
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
+pub enum LicenseType {
 	/// No licence
 	NoLicense = 0,
 	/// Authorised TeamSpeak Host Provider License (ATHP)

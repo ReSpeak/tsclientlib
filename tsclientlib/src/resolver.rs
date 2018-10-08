@@ -6,18 +6,18 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::{self, FromStr};
 use std::time::Duration;
 
-use {reqwest, tokio, tokio_threadpool};
-use futures::{Async, future, Future, Poll, stream, Stream};
+use futures::{future, stream, Async, Future, Poll, Stream};
 use rand::{thread_rng, Rng};
 use slog::Logger;
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio::util::StreamExt;
 use trust_dns_resolver::{AsyncResolver, Name};
+use {reqwest, tokio, tokio_threadpool};
 
 use {Error, Result};
 
-const RESOLVER_ADDR: ([u8; 4], u16) = ([8,8,8,8], 53);
+const RESOLVER_ADDR: ([u8; 4], u16) = ([8, 8, 8, 8], 53);
 const DEFAULT_PORT: u16 = 9987;
 const TSDNS_DEFAULT_PORT: u16 = 41144;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
@@ -93,14 +93,18 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 /// If a port is given with `:port`, it overwrites the automatically determined
 /// port. IPv6 addresses are put in square brackets when a port is present:
 /// `[::1]:9987`
-pub fn resolve(logger: &Logger, address: &str) -> Box<Stream<Item = SocketAddr, Error = Error> + Send> {
+pub fn resolve(
+	logger: &Logger,
+	address: &str,
+) -> Box<Stream<Item = SocketAddr, Error = Error> + Send> {
 	let logger = logger.new(o!("module" => "resolver"));
 	debug!(logger, "Starting resolve"; "address" => address);
 	let addr;
 	let port;
 	match parse_ip(address) {
 		Ok(ParseIpResult::Addr(res)) => {
-			let res: Box<Stream<Item=_, Error=_> + Send> = Box::new(stream::once(Ok(res)));
+			let res: Box<Stream<Item = _, Error = _> + Send> =
+				Box::new(stream::once(Ok(res)));
 			return res;
 		}
 		Ok(ParseIpResult::Other(a, p)) => {
@@ -116,7 +120,7 @@ pub fn resolve(logger: &Logger, address: &str) -> Box<Stream<Item = SocketAddr, 
 	let p = port.clone();
 	let address = addr.clone();
 	let logger2 = logger.clone();
-	let nickname_res = (move || -> Box<Stream<Item=_, Error=_> + Send> {
+	let nickname_res = (move || -> Box<Stream<Item = _, Error = _> + Send> {
 		let addr = address;
 		if !addr.contains('.') && addr != "localhost" {
 			let addr2 = addr.clone();
@@ -129,7 +133,9 @@ pub fn resolve(logger: &Logger, address: &str) -> Box<Stream<Item = SocketAddr, 
 				addr
 			}))
 		} else {
-			Box::new(stream::once(Err(format_err!("Not a valid nickname").into())))
+			Box::new(stream::once(Err(
+				format_err!("Not a valid nickname").into()
+			)))
 		}
 	})();
 
@@ -140,59 +146,78 @@ pub fn resolve(logger: &Logger, address: &str) -> Box<Stream<Item = SocketAddr, 
 	tokio::spawn(background);
 	let resolve = resolver.clone();
 	let address = addr.clone();
-	let srv_res = stream::futures_ordered(Some(future::lazy(move || -> Result<_> {
-		let resolver = resolve.clone();
-		let addr = address;
-		// Try to get the address by an SRV record
-		let prefix = Name::from_str(DNS_PREFIX_UDP).map_err(|e| format_err!("Canot parse udp domain prefix ({:?})", e))?;
-		let mut name = Name::from_str(&addr).map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
-		name.set_fqdn(true);
+	let srv_res =
+		stream::futures_ordered(Some(future::lazy(move || -> Result<_> {
+			let resolver = resolve.clone();
+			let addr = address;
+			// Try to get the address by an SRV record
+			let prefix = Name::from_str(DNS_PREFIX_UDP).map_err(|e| {
+				format_err!("Canot parse udp domain prefix ({:?})", e)
+			})?;
+			let mut name = Name::from_str(&addr)
+				.map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
+			name.set_fqdn(true);
 
-		Ok(resolve_srv(resolver.clone(), &prefix.append_name(&name)))
-	}))).flatten();
+			Ok(resolve_srv(resolver.clone(), &prefix.append_name(&name)))
+		}))).flatten();
 
 	let address = addr.clone();
-	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(move ||
-		-> Box<Future<Item=_, Error=Error> + Send> {
-		let addr = address;
-		// Try to get the address of a tsdns server by an SRV record
-		let prefix = match Name::from_str(DNS_PREFIX_TCP) {
-			Ok(r) => r,
-			Err(e) => {
-				return Box::new(future::err(format_err!("Cannot parse tcp domain prefix ({:?})", e).into()));
-			}
-		};
-		let mut name = match Name::from_str(&addr) {
-			Ok(r) => r,
-			Err(e) => {
-				return Box::new(future::err(format_err!("Cannot parse domain ({:?})", e).into()));
-			}
-		};
-		name.set_fqdn(true);
+	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(
+		move || -> Box<Future<Item = _, Error = Error> + Send> {
+			let addr = address;
+			// Try to get the address of a tsdns server by an SRV record
+			let prefix = match Name::from_str(DNS_PREFIX_TCP) {
+				Ok(r) => r,
+				Err(e) => {
+					return Box::new(future::err(
+						format_err!("Cannot parse tcp domain prefix ({:?})", e)
+							.into(),
+					));
+				}
+			};
+			let mut name = match Name::from_str(&addr) {
+				Ok(r) => r,
+				Err(e) => {
+					return Box::new(future::err(
+						format_err!("Cannot parse domain ({:?})", e).into(),
+					));
+				}
+			};
+			name.set_fqdn(true);
 
-		let name = name.trim_to(2);
-		// Pick the first srv record of the first server that answers
-		Box::new(resolve_srv_raw(resolver.clone(), &prefix.append_name(&name))
-			.map(move |mut srvs| StreamCombiner::new(srvs.drain(..).map(|addrs| {
-				// Got tsdns server
-				let addr = addr.clone();
-				let port = port.clone();
-				addrs.map(move |srv| {
-					let port = port.clone();
-					resolve_tsdns(srv, addr.clone()).map(move |mut addr| {
-						if let Some(port) = port {
-							// Overwrite port if it was specified
-							addr.set_port(port);
-						}
-						addr
-					})
-				}).flatten()
-			}).collect())))
-	}))).flatten();
+			let name = name.trim_to(2);
+			// Pick the first srv record of the first server that answers
+			Box::new(
+				resolve_srv_raw(resolver.clone(), &prefix.append_name(&name))
+					.map(move |mut srvs| {
+						StreamCombiner::new(
+							srvs.drain(..)
+								.map(|addrs| {
+									// Got tsdns server
+									let addr = addr.clone();
+									let port = port.clone();
+									addrs
+										.map(move |srv| {
+											let port = port.clone();
+											resolve_tsdns(srv, addr.clone())
+												.map(move |mut addr| {
+													if let Some(port) = port {
+														// Overwrite port if it was specified
+														addr.set_port(port);
+													}
+													addr
+												})
+										}).flatten()
+								}).collect(),
+						)
+					}),
+			)
+		},
+	))).flatten();
 
 	let last_res = stream::futures_ordered(Some(
 		// Interpret as normal address and resolve with system resolver
-		Ok(resolve_hostname(addr, port.unwrap_or(DEFAULT_PORT))) as Result<_>
+		Ok(resolve_hostname(addr, port.unwrap_or(DEFAULT_PORT))) as Result<_>,
 	)).flatten();
 
 	let streams = vec![
@@ -202,10 +227,14 @@ pub fn resolve(logger: &Logger, address: &str) -> Box<Stream<Item = SocketAddr, 
 		Box::new(last_res),
 	];
 
-	Box::new(StreamCombiner::new(streams)
-		.timeout(Duration::from_secs(TIMEOUT_SECONDS))
-		.map_err(|e| e.into_inner().unwrap_or_else(||
-			format_err!("Resolve timed out").into())))
+	Box::new(
+		StreamCombiner::new(streams)
+			.timeout(Duration::from_secs(TIMEOUT_SECONDS))
+			.map_err(|e| {
+				e.into_inner()
+					.unwrap_or_else(|| format_err!("Resolve timed out").into())
+			}),
+	)
 }
 
 fn parse_ip(address: &str) -> Result<ParseIpResult> {
@@ -219,33 +248,57 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 			port = Some(&address[pos + 1..]);
 			if addr.chars().all(|c| c.is_digit(10) || c == '.') {
 				// IPv4 address
-				return Ok(ParseIpResult::Addr(address.to_socket_addrs()?.next()
-					.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?));
+				return Ok(ParseIpResult::Addr(
+					address.to_socket_addrs()?.next().ok_or_else(|| {
+						format_err!("Cannot parse IPv4 address")
+					})?,
+				));
 			}
 		} else if let Some(pos_bracket) = address.rfind(']') {
 			if pos_bracket < pos {
 				// IPv6 address and port
-				return Ok(ParseIpResult::Addr(address.to_socket_addrs()?.next()
-					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?));
-			} else if pos_bracket == address.len() - 1 && address.chars().next() == Some('[') {
+				return Ok(ParseIpResult::Addr(
+					address.to_socket_addrs()?.next().ok_or_else(|| {
+						format_err!("Cannot parse IPv6 address")
+					})?,
+				));
+			} else if pos_bracket == address.len() - 1
+				&& address.chars().next() == Some('[')
+			{
 				// IPv6 address
-				return Ok(ParseIpResult::Addr((&address[1..pos_bracket], DEFAULT_PORT).to_socket_addrs()?.next()
-					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?));
+				return Ok(ParseIpResult::Addr(
+					(&address[1..pos_bracket], DEFAULT_PORT)
+						.to_socket_addrs()?
+						.next()
+						.ok_or_else(|| {
+							format_err!("Cannot parse IPv6 address")
+						})?,
+				));
 			} else {
 				return Err(format_err!("Invalid ip address").into());
 			}
 		} else {
 			// IPv6 address
-			return Ok(ParseIpResult::Addr((address, DEFAULT_PORT).to_socket_addrs()?.next()
-				.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?));
+			return Ok(ParseIpResult::Addr(
+				(address, DEFAULT_PORT)
+					.to_socket_addrs()?
+					.next()
+					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
+			));
 		}
 	} else if address.chars().all(|c| c.is_digit(10) || c == '.') {
 		// IPv4 address
-		return Ok(ParseIpResult::Addr((address, DEFAULT_PORT).to_socket_addrs()?.next()
-			.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?));
+		return Ok(ParseIpResult::Addr(
+			(address, DEFAULT_PORT)
+				.to_socket_addrs()?
+				.next()
+				.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?,
+		));
 	}
-	let port = if let Some(port) = port.map(|p| p.parse()
-		.map_err(|e| format_err!("Cannot parse port ({:?})", e))) {
+	let port = if let Some(port) = port.map(|p| {
+		p.parse()
+			.map_err(|e| format_err!("Cannot parse port ({:?})", e))
+	}) {
 		Some(port?)
 	} else {
 		None
@@ -253,109 +306,163 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 	Ok(ParseIpResult::Other(addr, port))
 }
 
-pub fn resolve_nickname(nickname: String) -> impl Stream<Item = SocketAddr, Error = Error> {
-	stream::futures_ordered(Some(future::poll_fn(move || tokio_threadpool::blocking(|| {
-		let url = reqwest::Url::parse_with_params(NICKNAME_LOOKUP_ADDRESS, Some(("name", &nickname)))
-			.map_err(|e| format_err!("Cannot parse nickname lookup address ({:?})", e))?;
-		let res = reqwest::get(url)?.text()?
-			.split(&['\r', '\n'][..])
-			.filter(|s| !s.is_empty())
-			.map(|s| s.to_string()).collect::<Vec<_>>();
-		Ok(res)
-	})).from_err().and_then(|r: Result<_>| r)
+pub fn resolve_nickname(
+	nickname: String,
+) -> impl Stream<Item = SocketAddr, Error = Error> {
+	stream::futures_ordered(Some(
+		future::poll_fn(move || {
+			tokio_threadpool::blocking(|| {
+				let url = reqwest::Url::parse_with_params(
+					NICKNAME_LOOKUP_ADDRESS,
+					Some(("name", &nickname)),
+				).map_err(|e| {
+					format_err!(
+						"Cannot parse nickname lookup address ({:?})",
+						e
+					)
+				})?;
+				let res = reqwest::get(url)?
+					.text()?
+					.split(&['\r', '\n'][..])
+					.filter(|s| !s.is_empty())
+					.map(|s| s.to_string())
+					.collect::<Vec<_>>();
+				Ok(res)
+			})
+		}).from_err()
+		.and_then(|r: Result<_>| r)
 		.map(|addrs| {
-			stream::futures_ordered(addrs.iter().map(|addr|
-				-> Result<Box<Stream<Item=_, Error=_> + Send>> { match parse_ip(addr) {
-				Err(e) => Ok(Box::new(stream::once(Err(e)))),
-				Ok(ParseIpResult::Addr(a)) => Ok(Box::new(stream::once(Ok(a)))),
-				Ok(ParseIpResult::Other(a, p)) =>
-					Ok(Box::new(resolve_hostname(a.to_string(), p.unwrap_or(DEFAULT_PORT)))),
-			}})).flatten()
-		}))).flatten()
+			stream::futures_ordered(addrs.iter().map(
+				|addr| -> Result<Box<Stream<Item = _, Error = _> + Send>> {
+					match parse_ip(addr) {
+						Err(e) => Ok(Box::new(stream::once(Err(e)))),
+						Ok(ParseIpResult::Addr(a)) => {
+							Ok(Box::new(stream::once(Ok(a))))
+						}
+						Ok(ParseIpResult::Other(a, p)) => {
+							Ok(Box::new(resolve_hostname(
+								a.to_string(),
+								p.unwrap_or(DEFAULT_PORT),
+							)))
+						}
+					}
+				},
+			)).flatten()
+		}),
+	)).flatten()
 }
 
-pub fn resolve_tsdns(server: SocketAddr, addr: String) -> impl Stream<Item = SocketAddr, Error = Error> {
-	stream::futures_ordered(Some(TcpStream::connect(&server)
-		.and_then(move |tcp| io::write_all(tcp, addr))
-		.and_then(|(tcp, _)| io::read_to_end(tcp, Vec::new()))
-		.from_err::<Error>()
-		.and_then(|(_, data)| {
-			let addr = str::from_utf8(&data)?;
-			if addr.starts_with("404") {
-				return Err(format_err!("tsdns server does not know the address").into());
-			}
-			match parse_ip(addr)? {
-				ParseIpResult::Addr(a) => Ok(a),
-				_ => Err(format_err!("tsdns did not return an ip address").into()),
-			}
-		})))
+pub fn resolve_tsdns(
+	server: SocketAddr,
+	addr: String,
+) -> impl Stream<Item = SocketAddr, Error = Error> {
+	stream::futures_ordered(Some(
+		TcpStream::connect(&server)
+			.and_then(move |tcp| io::write_all(tcp, addr))
+			.and_then(|(tcp, _)| io::read_to_end(tcp, Vec::new()))
+			.from_err::<Error>()
+			.and_then(|(_, data)| {
+				let addr = str::from_utf8(&data)?;
+				if addr.starts_with("404") {
+					return Err(format_err!(
+						"tsdns server does not know the address"
+					).into());
+				}
+				match parse_ip(addr)? {
+					ParseIpResult::Addr(a) => Ok(a),
+					_ => Err(format_err!("tsdns did not return an ip address")
+						.into()),
+				}
+			}),
+	))
 }
 
-fn resolve_srv_raw(resolver: AsyncResolver, addr: &Name)
-	-> impl Future<Item = Vec<impl Stream<Item = SocketAddr, Error = Error>>, Error = Error> {
-	resolver.lookup_srv(addr).from_err::<Error>().and_then(|lookup| -> Result<_> {
-		let mut entries = Vec::new();
-		let mut max_prio = if let Some(e) = lookup.iter().next() {
-			e.priority()
-		} else {
-			return Err(format_err!("Found no SRV entry").into());
-		};
+fn resolve_srv_raw(
+	resolver: AsyncResolver,
+	addr: &Name,
+) -> impl Future<
+	Item = Vec<impl Stream<Item = SocketAddr, Error = Error>>,
+	Error = Error,
+> {
+	resolver.lookup_srv(addr).from_err::<Error>().and_then(
+		|lookup| -> Result<_> {
+			let mut entries = Vec::new();
+			let mut max_prio = if let Some(e) = lookup.iter().next() {
+				e.priority()
+			} else {
+				return Err(format_err!("Found no SRV entry").into());
+			};
 
-		// Move all SRV records into entries and only retain the ones with the
-		// lowest priority.
-		for srv in lookup.iter() {
-			if srv.priority() > max_prio {
-				max_prio = srv.priority();
-				entries.clear();
-				entries.push(srv);
-			} else if srv.priority() == max_prio {
-				entries.push(srv);
-			}
-		}
-
-		// Select by weight
-		let mut sorted_entries = Vec::new();
-		while !entries.is_empty() {
-			let weight: u32 = entries.iter().map(|e| e.weight() as u32).sum();
-			let mut rng = thread_rng();
-			let mut w = rng.gen_range(0, weight + 1);
-			if w == 0 {
-				// Pick the first entry with weight 0
-				if let Some(i) = entries.iter().position(|e| e.weight() == 0) {
-					sorted_entries.push(entries.remove(i));
+			// Move all SRV records into entries and only retain the ones with the
+			// lowest priority.
+			for srv in lookup.iter() {
+				if srv.priority() > max_prio {
+					max_prio = srv.priority();
+					entries.clear();
+					entries.push(srv);
+				} else if srv.priority() == max_prio {
+					entries.push(srv);
 				}
 			}
-			for i in 0..entries.len() {
-				let weight = entries[i].weight() as u32;
-				if w <= weight {
-					sorted_entries.push(entries.remove(i));
+
+			// Select by weight
+			let mut sorted_entries = Vec::new();
+			while !entries.is_empty() {
+				let weight: u32 =
+					entries.iter().map(|e| e.weight() as u32).sum();
+				let mut rng = thread_rng();
+				let mut w = rng.gen_range(0, weight + 1);
+				if w == 0 {
+					// Pick the first entry with weight 0
+					if let Some(i) =
+						entries.iter().position(|e| e.weight() == 0)
+					{
+						sorted_entries.push(entries.remove(i));
+					}
 				}
-				w -= weight;
+				for i in 0..entries.len() {
+					let weight = entries[i].weight() as u32;
+					if w <= weight {
+						sorted_entries.push(entries.remove(i));
+					}
+					w -= weight;
+				}
 			}
-		}
 
-		let entries: Vec<_> = sorted_entries.drain(..).map(|e| {
-			let addr = e.target().to_string();
-			let port = e.port();
-			resolve_hostname(addr, port)
-		}).collect();
-		Ok(entries)
-	})
+			let entries: Vec<_> = sorted_entries
+				.drain(..)
+				.map(|e| {
+					let addr = e.target().to_string();
+					let port = e.port();
+					resolve_hostname(addr, port)
+				}).collect();
+			Ok(entries)
+		},
+	)
 }
 
-fn resolve_srv(resolver: AsyncResolver, addr: &Name)
-	-> impl Stream<Item = SocketAddr, Error = Error> {
+fn resolve_srv(
+	resolver: AsyncResolver,
+	addr: &Name,
+) -> impl Stream<Item = SocketAddr, Error = Error> {
 	stream::futures_ordered(Some(
-		resolve_srv_raw(resolver, addr)
-		.map(StreamCombiner::new))).flatten()
+		resolve_srv_raw(resolver, addr).map(StreamCombiner::new),
+	)).flatten()
 }
 
-fn resolve_hostname(name: String, port: u16) -> impl Stream<Item = SocketAddr, Error = Error> {
+fn resolve_hostname(
+	name: String,
+	port: u16,
+) -> impl Stream<Item = SocketAddr, Error = Error> {
 	stream::futures_ordered(Some(
-		future::poll_fn(move || tokio_threadpool::blocking(|| (name.as_str(), port).to_socket_addrs().map_err(Error::from)))
-			.from_err::<Error>().flatten()))
-		.map(|addrs| stream::futures_ordered(addrs.map(Ok)))
-		.flatten()
+		future::poll_fn(move || {
+			tokio_threadpool::blocking(|| {
+				(name.as_str(), port).to_socket_addrs().map_err(Error::from)
+			})
+		}).from_err::<Error>()
+		.flatten(),
+	)).map(|addrs| stream::futures_ordered(addrs.map(Ok)))
+	.flatten()
 }
 
 #[cfg(test)]
@@ -366,31 +473,52 @@ mod test {
 	#[test]
 	fn parse_ip_without_port() {
 		let res = parse_ip("127.0.0.1");
-		assert_eq!(res.unwrap(), ParseIpResult::Addr(format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+		assert_eq!(
+			res.unwrap(),
+			ParseIpResult::Addr(
+				format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 
 	#[test]
 	fn parse_ip_with_port() {
 		let res = parse_ip("127.0.0.1:1");
-		assert_eq!(res.unwrap(), ParseIpResult::Addr("127.0.0.1:1".parse().unwrap()));
+		assert_eq!(
+			res.unwrap(),
+			ParseIpResult::Addr("127.0.0.1:1".parse().unwrap())
+		);
 	}
 
 	#[test]
 	fn parse_ip6_without_port() {
 		let res = parse_ip("::");
-		assert_eq!(res.unwrap(), ParseIpResult::Addr(format!("[::]:{}", DEFAULT_PORT).parse().unwrap()));
+		assert_eq!(
+			res.unwrap(),
+			ParseIpResult::Addr(
+				format!("[::]:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 
 	#[test]
 	fn parse_ip6_without_port2() {
 		let res = parse_ip("[::]");
-		assert_eq!(res.unwrap(), ParseIpResult::Addr(format!("[::]:{}", DEFAULT_PORT).parse().unwrap()));
+		assert_eq!(
+			res.unwrap(),
+			ParseIpResult::Addr(
+				format!("[::]:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 
 	#[test]
 	fn parse_ip6_with_port() {
 		let res = parse_ip("[::]:1");
-		assert_eq!(res.unwrap(), ParseIpResult::Addr("[::]:1".parse().unwrap()));
+		assert_eq!(
+			res.unwrap(),
+			ParseIpResult::Addr("[::]:1".parse().unwrap())
+		);
 	}
 
 	#[test]
@@ -424,7 +552,10 @@ mod test {
 		let mut core = Core::new().unwrap();
 		let res = resolve(core.handle(), "127.0.0.1");
 		let res = core.run(res.collect());
-		assert_eq!(res.unwrap().as_slice(), &[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]);
+		assert_eq!(
+			res.unwrap().as_slice(),
+			&[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]
+		);
 	}
 
 	#[test]
@@ -432,7 +563,11 @@ mod test {
 		let mut core = Core::new().unwrap();
 		let res = resolve(core.handle(), "localhost");
 		let res = core.run(res.collect());
-		assert!(res.unwrap().contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+		assert!(
+			res.unwrap().contains(
+				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -440,7 +575,9 @@ mod test {
 		let mut core = Core::new().unwrap();
 		let res = resolve(core.handle(), "example.com");
 		let res = core.run(res.collect());
-		assert!(res.unwrap().contains(&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()));
+		assert!(res.unwrap().contains(
+			&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()
+		));
 	}
 
 	#[test]
@@ -448,6 +585,10 @@ mod test {
 		let mut core = Core::new().unwrap();
 		let res = resolve(core.handle(), "loc");
 		let res = core.run(res.collect());
-		assert!(res.unwrap().contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+		assert!(
+			res.unwrap().contains(
+				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 }

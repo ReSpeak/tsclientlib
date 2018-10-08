@@ -1,11 +1,11 @@
-use std::u32;
 use std::collections::BTreeMap;
 use std::io::{Cursor, Write};
 use std::sync::Mutex;
+use std::u32;
 
+use gst_plugin::bytes::{WriteBytesExt, WriteBytesExtShort};
 use gst_plugin::element::*;
 use gst_plugin::object::*;
-use gst_plugin::bytes::{WriteBytesExt, WriteBytesExtShort};
 
 use gst;
 use gst::prelude::*;
@@ -52,24 +52,32 @@ struct AudioFormat {
 // Ignores bitrate
 impl PartialEq for AudioFormat {
 	fn eq(&self, other: &Self) -> bool {
-		self.codec.eq(&other.codec) && self.rate.eq(&other.rate)
-			&& self.width.eq(&other.width) && self.channels.eq(&other.channels)
+		self.codec.eq(&other.codec)
+			&& self.rate.eq(&other.rate)
+			&& self.width.eq(&other.width)
+			&& self.channels.eq(&other.channels)
 	}
 }
 
 impl AudioFormat {
 	fn new_data(codec: Codec, rate: u16, channels: u8) -> Self {
-		Self { codec, rate, width: 2, channels, bitrate: None }
+		Self {
+			codec,
+			rate,
+			width: 2,
+			channels,
+			bitrate: None,
+		}
 	}
 
 	fn new(typ: u8) -> Option<Self> {
 		Some(match typ {
-			0 => Self::new_data(Codec::Speex,  8_000, 1),
+			0 => Self::new_data(Codec::Speex, 8_000, 1),
 			1 => Self::new_data(Codec::Speex, 16_000, 1),
 			2 => Self::new_data(Codec::Speex, 32_000, 1),
-			3 => Self::new_data(Codec::Celt,  48_000, 1),
-			4 => Self::new_data(Codec::Opus,  48_000, 1),
-			5 => Self::new_data(Codec::Opus,  48_000, 2),
+			3 => Self::new_data(Codec::Celt, 48_000, 1),
+			4 => Self::new_data(Codec::Opus, 48_000, 1),
+			5 => Self::new_data(Codec::Opus, 48_000, 2),
 			_ => return None,
 		})
 	}
@@ -86,7 +94,7 @@ impl AudioFormat {
 					data.write_u32le(1).unwrap(); // version
 					data.write_u32le(80).unwrap(); // header size
 					data.write_u32le(16_000).unwrap(); // sample rate
-					// TODO Not only wideband
+										// TODO Not only wideband
 					data.write_u32le(1).unwrap(); // mode = wideband
 					data.write_u32le(4).unwrap(); // mode bitstream version
 					data.write_u32le(1).unwrap(); // channels
@@ -106,7 +114,8 @@ impl AudioFormat {
 
 				let comment = {
 					let comment_size = 4 + 7 /* nothing */ + 4 + 1;
-					let mut data = Cursor::new(Vec::with_capacity(comment_size));
+					let mut data =
+						Cursor::new(Vec::with_capacity(comment_size));
 					data.write_u32le(7).unwrap(); // length of "nothing"
 					data.write_all(b"nothing").unwrap(); // "vendor" string
 					data.write_u32le(0).unwrap(); // number of elements
@@ -127,11 +136,15 @@ impl AudioFormat {
 				// TODO celt is no opus, so the celt encoding was removed from
 				// gstreamer. The version which ts uses seems older.
 				//gst::Caps::new_simple("audio/x-celt", &[])
-				gst::Caps::new_simple("audio/x-opus", &[("channel-mapping-family", &0i32)])
+				gst::Caps::new_simple(
+					"audio/x-opus",
+					&[("channel-mapping-family", &0i32)],
+				)
 			}
-			Codec::Opus => {
-				gst::Caps::new_simple("audio/x-opus", &[("channel-mapping-family", &0i32)])
-			}
+			Codec::Opus => gst::Caps::new_simple(
+				"audio/x-opus",
+				&[("channel-mapping-family", &0i32)],
+			),
 		};
 
 		if self.rate != 0 {
@@ -209,7 +222,10 @@ impl Demuxer {
 		klass.add_pad_template(pad_template);
 	}
 
-	fn init(element: &Element, info: &DemuxerInfo) -> Box<ElementImpl<Element>> {
+	fn init(
+		element: &Element,
+		info: &DemuxerInfo,
+	) -> Box<ElementImpl<Element>> {
 		let templ = element.get_pad_template("sink").unwrap();
 		let sinkpad = gst::Pad::new_from_template(&templ, "sink");
 		sinkpad.set_activate_function(Demuxer::sink_activate);
@@ -241,7 +257,13 @@ impl Demuxer {
 		Box::new(imp)
 	}
 
-	pub fn add_stream(&self, element: &Element, index: u32, caps: gst::Caps, stream_id: &str) {
+	pub fn add_stream(
+		&self,
+		element: &Element,
+		index: u32,
+		caps: gst::Caps,
+		stream_id: &str,
+	) {
 		let mut srcpads = self.srcpads.lock().unwrap();
 		assert!(!srcpads.contains_key(&index));
 
@@ -293,10 +315,7 @@ impl Demuxer {
 
 		if let Some(pad) = srcpads.get(&index) {
 			let res = pad.push(buffer);
-			self.flow_combiner
-				.lock()
-				.unwrap()
-				.update_flow(res)
+			self.flow_combiner.lock().unwrap().update_flow(res)
 		} else {
 			gst::FlowReturn::Error
 		}
@@ -424,7 +443,6 @@ impl Demuxer {
 			let demuxer = element.get_impl().downcast_ref::<Demuxer>().unwrap();
 			let stream_index;
 			if let Some(map) = buffer.map_readable() {
-
 				// Find target client and codec
 				let client_id = ((map[2] as u16) << 8) | map[3] as u16;
 				let format = if let Some(format) = AudioFormat::new(map[4]) {
@@ -438,22 +456,42 @@ impl Demuxer {
 					);
 					return gst::FlowReturn::Ok;
 				};
-				gst_trace!(demuxer.cat, obj: &element,
-					"Handling buffer {:?} from {} {:?}", buffer, client_id,
-					format.codec);
+				gst_trace!(
+					demuxer.cat,
+					obj: &element,
+					"Handling buffer {:?} from {} {:?}",
+					buffer,
+					client_id,
+					format.codec
+				);
 
 				stream_index = ((client_id as u32) << 8) | map[4] as u32;
 				let stream_id = format!("src_{}_{:?}", client_id, format.codec);
 
 				// End of stream
 				if map.len() < 7 {
-					gst_debug!(demuxer.cat, obj: &element, "Got empty audio packet {}", stream_index);
+					gst_debug!(
+						demuxer.cat,
+						obj: &element,
+						"Got empty audio packet {}",
+						stream_index
+					);
 					return gst::FlowReturn::Ok;
 				}
 
 				if !demuxer.has_src_pad(stream_index) {
-					gst_debug!(demuxer.cat, obj: &element, "Got new stream {}", stream_index);
-					demuxer.add_stream(&element, stream_index, format.to_caps(), &stream_id);
+					gst_debug!(
+						demuxer.cat,
+						obj: &element,
+						"Got new stream {}",
+						stream_index
+					);
+					demuxer.add_stream(
+						&element,
+						stream_index,
+						format.to_caps(),
+						&stream_id,
+					);
 				}
 			} else {
 				gst_error!(demuxer.cat, obj: &element, "Failed to map buffer");
@@ -461,8 +499,12 @@ impl Demuxer {
 			}
 
 			// Cut off metadata
-			let mut buffer2 = buffer.copy_region(gst::BufferCopyFlags::all(),
-				5, Some(buffer.get_size() - 5)).unwrap();
+			let mut buffer2 = buffer
+				.copy_region(
+					gst::BufferCopyFlags::all(),
+					5,
+					Some(buffer.get_size() - 5),
+				).unwrap();
 			{
 				let buffer2 = buffer2.get_mut().unwrap();
 				let mut flags = buffer.get_flags();
@@ -476,7 +518,11 @@ impl Demuxer {
 		}
 	}
 
-	fn sink_event(pad: &gst::Pad, parent: &Option<gst::Object>, event: gst::Event) -> bool {
+	fn sink_event(
+		pad: &gst::Pad,
+		parent: &Option<gst::Object>,
+		event: gst::Event,
+	) -> bool {
 		use gst::EventView;
 
 		let element = parent
@@ -498,7 +544,11 @@ impl Demuxer {
 		}
 	}
 
-	fn src_query(pad: &gst::Pad, parent: &Option<gst::Object>, query: &mut gst::QueryRef) -> bool {
+	fn src_query(
+		pad: &gst::Pad,
+		parent: &Option<gst::Object>,
+		query: &mut gst::QueryRef,
+	) -> bool {
 		use gst::QueryView;
 
 		let element = parent
@@ -513,7 +563,7 @@ impl Demuxer {
 			QueryView::Position(ref mut q) => {
 				let fmt = q.get_format();
 				if fmt == gst::Format::Time {
-					let position = 0;//demuxer_impl.get_position(&element);
+					let position = 0; //demuxer_impl.get_position(&element);
 					gst_trace!(
 						demuxer.cat,
 						obj: &element,
@@ -521,7 +571,7 @@ impl Demuxer {
 						position
 					);
 
-					/*match *position {
+				/*match *position {
 						None => return false,
 						Some(_) => {
 							q.set(position);
@@ -535,7 +585,7 @@ impl Demuxer {
 			QueryView::Duration(ref mut q) => {
 				let fmt = q.get_format();
 				if fmt == gst::Format::Time {
-					let duration = 0;//demuxer_impl.get_duration(&element);
+					let duration = 0; //demuxer_impl.get_duration(&element);
 					gst_trace!(
 						demuxer.cat,
 						obj: &element,
@@ -543,7 +593,7 @@ impl Demuxer {
 						duration
 					);
 
-					/*match *duration {
+				/*match *duration {
 						None => return false,
 						Some(_) => {
 							q.set(duration);
@@ -562,7 +612,11 @@ impl Demuxer {
 		pad.query_default(parent.as_ref(), query)
 	}
 
-	fn src_event(pad: &gst::Pad, parent: &Option<gst::Object>, event: gst::Event) -> bool {
+	fn src_event(
+		pad: &gst::Pad,
+		parent: &Option<gst::Object>,
+		event: gst::Event,
+	) -> bool {
 		use gst::EventView;
 
 		/*match event.view() {
@@ -620,7 +674,10 @@ impl ElementImpl<Element> for Demuxer {
 		match transition {
 			gst::StateChange::PausedToReady => {
 				self.flow_combiner.lock().unwrap().clear();
-				let mut srcpads = ::std::mem::replace(&mut *self.srcpads.lock().unwrap(), Default::default());
+				let mut srcpads = ::std::mem::replace(
+					&mut *self.srcpads.lock().unwrap(),
+					Default::default(),
+				);
 				for (_, pad) in srcpads.iter().by_ref() {
 					element.remove_pad(pad).unwrap();
 				}
@@ -655,7 +712,10 @@ pub fn register(plugin: &gst::Plugin, info: DemuxerInfo) {
 	let name = info.name.clone();
 	let rank = info.rank;
 
-	let demuxer_static = DemuxerStatic { name: name.clone(), info };
+	let demuxer_static = DemuxerStatic {
+		name: name.clone(),
+		info,
+	};
 
 	let typ = register_type(demuxer_static);
 	gst::Element::register(plugin, &name, rank, typ);

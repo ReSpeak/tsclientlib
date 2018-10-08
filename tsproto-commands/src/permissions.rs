@@ -1,4 +1,4 @@
-use ::std::fmt;
+use std::fmt;
 
 include!(concat!(env!("OUT_DIR"), "/permissions.rs"));
 
