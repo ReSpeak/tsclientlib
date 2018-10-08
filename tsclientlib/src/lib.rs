@@ -56,12 +56,12 @@ use tsproto_commands::messages::Message;
 use packet_handler::{ReturnCodeHandler, SimplePacketHandler};
 
 macro_rules! copy_attrs {
-    ($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
-        $to {
-            $($attr: $from.$attr.clone(),)*
-            $($extra: $ex,)*
-        }
-    };
+	($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
+		$to {
+			$($attr: $from.$attr.clone(),)*
+			$($extra: $ex,)*
+		}
+	};
 }
 
 pub mod data;
@@ -323,162 +323,186 @@ impl Connection {
 			};
 
 		let logger2 = logger.clone();
-		Box::new(addr.and_then(move |addr| -> Box<Future<Item=_, Error=_> + Send> {
-            let log_config = tsproto::handler_data::LogConfig::new(
-                options.log_packets, options.log_packets);
-            let mut packet_handler = SimplePacketHandler::new(logger.clone());
-            let return_code_handler = packet_handler.return_codes.clone();
-            let (initserver_send, initserver_recv) = mpsc::channel(0);
-            packet_handler.initserver_sender = Some(initserver_send);
-            if let Some(h) = &options.handle_packets {
-                packet_handler.handle_packets = Some(h.as_ref().clone());
-            }
-            let packet_handler = client::DefaultPacketHandler::new(
-                packet_handler);
-            let client = match client::ClientData::new(
-                options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
-                    "0.0.0.0:0".parse().unwrap()
-                } else {
-                    "[::]:0".parse().unwrap()
-                }),
-                private_key.clone(),
-                true,
-                None,
-                packet_handler,
-                tsproto::connectionmanager::SocketConnectionManager::new(),
-                logger.clone(),
-                log_config,
-            ) {
-                Ok(client) => client,
-                Err(error) => return Box::new(future::err(error.into())),
-            };
+		Box::new(
+			addr.and_then(
+				move |addr| -> Box<Future<Item = _, Error = _> + Send> {
+					let log_config = tsproto::handler_data::LogConfig::new(
+						options.log_packets,
+						options.log_packets,
+					);
+					let mut packet_handler =
+						SimplePacketHandler::new(logger.clone());
+					let return_code_handler =
+						packet_handler.return_codes.clone();
+					let (initserver_send, initserver_recv) = mpsc::channel(0);
+					packet_handler.initserver_sender = Some(initserver_send);
+					if let Some(h) = &options.handle_packets {
+						packet_handler.handle_packets =
+							Some(h.as_ref().clone());
+					}
+					let packet_handler =
+						client::DefaultPacketHandler::new(packet_handler);
+					let client = match client::ClientData::new(
+				options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
+					"0.0.0.0:0".parse().unwrap()
+				} else {
+					"[::]:0".parse().unwrap()
+				}),
+				private_key.clone(),
+				true,
+				None,
+				packet_handler,
+				tsproto::connectionmanager::SocketConnectionManager::new(),
+				logger.clone(),
+				log_config,
+			) {
+				Ok(client) => client,
+				Err(error) => return Box::new(future::err(error.into())),
+			};
 
-            // Set the data reference
-            let client2 = Arc::downgrade(&client);
-            client.try_lock().unwrap().packet_handler.complete(client2);
+					// Set the data reference
+					let client2 = Arc::downgrade(&client);
+					client.try_lock().unwrap().packet_handler.complete(client2);
 
-            let logger = logger.clone();
-            let client = client.clone();
-            let client2 = client.clone();
-            let options = options.clone();
+					let logger = logger.clone();
+					let client = client.clone();
+					let client2 = client.clone();
+					let options = options.clone();
 
-            // Create a connection
-            debug!(logger, "Connecting"; "address" => %addr);
-            let connect_fut = client::connect(Arc::downgrade(&client),
-                &mut *client.lock().unwrap(), addr).from_err();
+					// Create a connection
+					debug!(logger, "Connecting"; "address" => %addr);
+					let connect_fut = client::connect(
+						Arc::downgrade(&client),
+						&mut *client.lock().unwrap(),
+						addr,
+					).from_err();
 
-            let initserver_poll = initserver_recv.into_future()
-                .map_err(|e| format_err!("Error while waiting for initserver \
-                    ({:?})", e).into())
-                .and_then(move |(cmd, _)| {
-                    let cmd = match cmd {
-                        Some(c) => c,
-                        None => return Err(Error::ConnectionFailed(
-                            String::from("Got no initserver"))),
-                    };
-                    let cmd = cmd.get_commands().remove(0);
-                    let notif = Message::parse(cmd)?;
-                    if let Message::InitServer(p) = notif {
-                        Ok(p)
-                    } else {
-                        Err(Error::ConnectionFailed(
-                            String::from("Got no initserver")))
-                    }
-                });
+					let initserver_poll = initserver_recv
+						.into_future()
+						.map_err(|e| {
+							format_err!(
+								"Error while waiting for initserver ({:?})",
+								e
+							).into()
+						}).and_then(move |(cmd, _)| {
+							let cmd = match cmd {
+								Some(c) => c,
+								None => {
+									return Err(Error::ConnectionFailed(
+										String::from("Got no initserver"),
+									))
+								}
+							};
+							let cmd = cmd.get_commands().remove(0);
+							let notif = Message::parse(cmd)?;
+							if let Message::InitServer(p) = notif {
+								Ok(p)
+							} else {
+								Err(Error::ConnectionFailed(String::from(
+									"Got no initserver",
+								)))
+							}
+						});
 
-            let logger2 = logger.clone();
-            Box::new(connect_fut
-                .and_then(move |con| {
-                    // TODO Add possibility to specify offset and level in ConnectOptions
-                    // Compute hash cash
-                    let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-                        "Compute public key hash cash level", logger2.clone(),
-                        slog::Level::Info);
-                    time_reporter.start("Compute public key hash cash level");
-                    let pub_k = {
-                        let mut c = client.lock().unwrap();
-                        c.private_key.to_pub()
-                    };
-                    future::poll_fn(move || {
-                        tokio_threadpool::blocking(|| {
-                            let res = (con.clone(), algs::hash_cash(&pub_k, 8).unwrap(),
-                                pub_k.to_ts().unwrap());
-                            res
-                        })
-                    }).map(|r| { time_reporter.finish(); r })
-                    .map_err(|e| format_err!("Failed to start \
-                        blocking operation ({:?})", e).into())
-                })
-                .and_then(move |(con, offset, omega)| {
-                    info!(logger, "Computed hash cash level";
-                        "level" => algs::get_hash_cash_level(&omega, offset),
-                        "offset" => offset);
+					let logger2 = logger.clone();
+					Box::new(
+						connect_fut
+				.and_then(move |con| {
+					// TODO Add possibility to specify offset and level in ConnectOptions
+					// Compute hash cash
+					let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+						"Compute public key hash cash level", logger2.clone(),
+						slog::Level::Info);
+					time_reporter.start("Compute public key hash cash level");
+					let pub_k = {
+						let mut c = client.lock().unwrap();
+						c.private_key.to_pub()
+					};
+					future::poll_fn(move || {
+						tokio_threadpool::blocking(|| {
+							let res = (con.clone(), algs::hash_cash(&pub_k, 8).unwrap(),
+								pub_k.to_ts().unwrap());
+							res
+						})
+					}).map(|r| { time_reporter.finish(); r })
+					.map_err(|e| format_err!("Failed to start \
+						blocking operation ({:?})", e).into())
+				})
+				.and_then(move |(con, offset, omega)| {
+					info!(logger, "Computed hash cash level";
+						"level" => algs::get_hash_cash_level(&omega, offset),
+						"offset" => offset);
 
-                    // Create clientinit packet
-                    let header = Header::new(PacketType::Command);
-                    let mut command = commands::Command::new("clientinit");
-                    command.push("client_nickname", options.name);
-                    command.push("client_version", options.version.get_version_string());
-                    command.push("client_platform", options.version.get_platform());
-                    command.push("client_input_hardware", "1");
-                    command.push("client_output_hardware", "1");
-                    command.push("client_default_channel", "");
-                    command.push("client_default_channel_password", "");
-                    command.push("client_server_password", "");
-                    command.push("client_meta_data", "");
-                    command.push("client_version_sign", base64::encode(
-                        options.version.get_signature()));
-                    command.push("client_key_offset", offset.to_string());
-                    command.push("client_nickname_phonetic", "");
-                    command.push("client_default_token", "");
-                    command.push("hwid", "123,456");
-                    let p_data = packets::Data::Command(command);
-                    let clientinit_packet = Packet::new(header, p_data);
+					// Create clientinit packet
+					let header = Header::new(PacketType::Command);
+					let mut command = commands::Command::new("clientinit");
+					command.push("client_nickname", options.name);
+					command.push("client_version", options.version.get_version_string());
+					command.push("client_platform", options.version.get_platform());
+					command.push("client_input_hardware", "1");
+					command.push("client_output_hardware", "1");
+					command.push("client_default_channel", "");
+					command.push("client_default_channel_password", "");
+					command.push("client_server_password", "");
+					command.push("client_meta_data", "");
+					command.push("client_version_sign", base64::encode(
+						options.version.get_signature()));
+					command.push("client_key_offset", offset.to_string());
+					command.push("client_nickname_phonetic", "");
+					command.push("client_default_token", "");
+					command.push("hwid", "123,456");
+					let p_data = packets::Data::Command(command);
+					let clientinit_packet = Packet::new(header, p_data);
 
-                    let sink = con.as_packet_sink();
+					let sink = con.as_packet_sink();
 
-                    sink.send(clientinit_packet).map(move |_| con)
-                })
-                .from_err()
-                // Wait until we sent the clientinit packet and afterwards received
-                // the initserver packet.
-                .and_then(move |con| initserver_poll.map(|r| (con, r)))
-                .and_then(move |(con, initserver)| {
-                    // Get uid of server
-                    let uid = {
-                        let mutex = con.upgrade().ok_or_else(||
-                            format_err!("Connection does not exist anymore"))?
-                            .mutex;
-                        let con = mutex.lock().unwrap();
-                        con.1.params.as_ref().ok_or_else(||
-                            format_err!("Connection params do not exist"))?
-                            .public_key.get_uid()?
-                    };
+					sink.send(clientinit_packet).map(move |_| con)
+				})
+				.from_err()
+				// Wait until we sent the clientinit packet and afterwards received
+				// the initserver packet.
+				.and_then(move |con| initserver_poll.map(|r| (con, r)))
+				.and_then(move |(con, initserver)| {
+					// Get uid of server
+					let uid = {
+						let mutex = con.upgrade().ok_or_else(||
+							format_err!("Connection does not exist anymore"))?
+							.mutex;
+						let con = mutex.lock().unwrap();
+						con.1.params.as_ref().ok_or_else(||
+							format_err!("Connection params do not exist"))?
+							.public_key.get_uid()?
+					};
 
-                    // Create connection
-                    let data = data::Connection::new(Uid(uid),
-                        &initserver);
-                    let con = InnerConnection {
-                        connection: Arc::new(Mutex::new(data)),
-                        client_data: client2,
-                        client_connection: con,
-                        return_code_handler,
-                    };
-                    Ok(Connection { inner: con })
-                }))
-        })
-        .then(move |r| -> Result<_> {
-            if let Err(e) = &r {
-                debug!(logger2, "Connecting failed, trying next address";
-                    "error" => ?e);
-            }
-            Ok(r.ok())
-        })
-        .filter_map(|r| r)
-        .into_future()
-        .map_err(|_| Error::from(format_err!("Failed to connect to server")))
-        .and_then(|(r, _)| r.ok_or_else(|| format_err!("Failed to connect to server").into()))
-        )
+					// Create connection
+					let data = data::Connection::new(Uid(uid),
+						&initserver);
+					let con = InnerConnection {
+						connection: Arc::new(Mutex::new(data)),
+						client_data: client2,
+						client_connection: con,
+						return_code_handler,
+					};
+					Ok(Connection { inner: con })
+				}),
+					)
+				},
+			).then(move |r| -> Result<_> {
+				if let Err(e) = &r {
+					debug!(logger2, "Connecting failed, trying next address";
+					"error" => ?e);
+				}
+				Ok(r.ok())
+			}).filter_map(|r| r)
+			.into_future()
+			.map_err(|_| {
+				Error::from(format_err!("Failed to connect to server"))
+			}).and_then(|(r, _)| {
+				r.ok_or_else(|| {
+					format_err!("Failed to connect to server").into()
+				})
+			}),
+		)
 	}
 
 	/// **This is part of the unstable interface.**

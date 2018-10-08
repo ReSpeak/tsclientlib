@@ -116,11 +116,11 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 											}
 										} else {
 											error!(logger, "Unknown error id";
-                    						"error_id" => e_code);
+												"error_id" => e_code);
 										}
 									} else {
 										error!(logger, "Unknown error id";
-                    					"error_id" => cmd.args["id"]);
+											"error_id" => cmd.args["id"]);
 									}
 								}
 							}
