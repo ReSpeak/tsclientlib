@@ -346,9 +346,9 @@ mod tests {
 	#[should_panic]
 	fn shared_iv31() {
 		let licenses = ::license::Licenses::parse(&base64::decode("AQA1hUFJiiSs\
-            0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
-            4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==")
-            .unwrap()).unwrap();
+			0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
+			4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==")
+			.unwrap()).unwrap();
 		let derived_key = licenses.derive_public_key().unwrap();
 
 		let client_ek = [
@@ -363,7 +363,7 @@ mod tests {
 		let mut alpha = [0; 10];
 		alpha.copy_from_slice(&alpha_b64);
 		let beta_b64 = base64::decode("wU5T/MM6toW6Wge9th7VlTlzVZ9JDWypw2P9migf\
-            c25pjGP2Tj7Hm6rJpmKeHRr08Ch7BEAR").unwrap();
+			c25pjGP2Tj7Hm6rJpmKeHRr08Ch7BEAR").unwrap();
 		let mut beta = [0; 54];
 		beta.copy_from_slice(&beta_b64);
 

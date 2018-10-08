@@ -291,8 +291,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									Ok(())
 								}).map_err(move |e| {
 									error!(logger,
-                            "Error sending response packet";
-                            "error" => ?e)
+										"Error sending response packet";
+										"error" => ?e)
 								}),
 						);
 					} else {
@@ -441,83 +441,94 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// Spawn this as another future
 						let logger2 = logger.clone();
 						let fut = future::lazy(move || {
-                            let logger2 = logger.clone();
-                            future::poll_fn(move || {
-                                let logger = logger2.clone();
-                                tokio_threadpool::blocking(|| {
-                                    let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-                                        "Solve RSA puzzle", logger.clone(),
-                                        ::slog::Level::Info);
-                                    time_reporter.start("");
+							let logger2 = logger.clone();
+							future::poll_fn(move || {
+								let logger = logger2.clone();
+								tokio_threadpool::blocking(|| {
+									let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
+										"Solve RSA puzzle", logger.clone(),
+										::slog::Level::Info);
+									time_reporter.start("");
 
-                                    // Use gmp for faster computations if it is
-                                    // available.
-                                    #[cfg(feature = "rust-gmp")]
-                                    let y = {
-                                        let n = (&n as &[u8]).into();
-                                        let x: Mpz = (&x as &[u8]).into();
-                                        let mut e = Mpz::new();
-                                        e.setbit(level as usize);
-                                        let y = x.powm(&e, &n);
-                                        time_reporter.finish();
-                                        info!(logger, "Solve RSA puzzle";
-                                              "level" => level);
-                                        let ys = y.to_str_radix(10);
-                                        let yi = ys.parse().unwrap();
-                                        algs::biguint_to_array(&yi)
-                                    };
+									// Use gmp for faster computations if it is
+									// available.
+									#[cfg(feature = "rust-gmp")]
+									let y = {
+										let n = (&n as &[u8]).into();
+										let x: Mpz = (&x as &[u8]).into();
+										let mut e = Mpz::new();
+										e.setbit(level as usize);
+										let y = x.powm(&e, &n);
+										time_reporter.finish();
+										info!(logger, "Solve RSA puzzle";
+											  "level" => level);
+										let ys = y.to_str_radix(10);
+										let yi = ys.parse().unwrap();
+										algs::biguint_to_array(&yi)
+									};
 
-                                    #[cfg(not(feature = "rust-gmp"))]
-                                    let y = {
-                                        let xi = BigUint::from_bytes_be(&x);
-                                        let ni = BigUint::from_bytes_be(&n);
-                                        let mut e = BigUint::one();
-                                        e <<= level as usize;
-                                        let yi = xi.modpow(&e, &ni);
-                                        time_reporter.finish();
-                                        info!(logger, "Solve RSA puzzle";
-                                              "level" => level, "x" => %xi, "n" => %ni,
-                                              "y" => %yi);
-                                        algs::biguint_to_array(&yi)
-                                    };
-                                    y
-                                })
-                            }).map_err(|e| format_err!("Failed to start \
-                                blocking operation ({:?})", e).into())
-                            .and_then(move |y| {
-                                // Create the command string
-                                // omega is an ASN.1-DER encoded public key from
-                                // the ECDH parameters.
-                                let omega_s = private_key.to_pub().to_ts().unwrap();
-                                let mut command = Command::new("clientinitiv");
-                                command.push("alpha", alpha_s.clone());
-                                command.push("omega", omega_s);
-                                command.push("ot", "1");
-                                // Set ip always except if it is a local address
-                                if ::utils::is_global_ip(&ip) {
-                                    command.push("ip", ip.to_string());
-                                } else {
-                                    command.push("ip", "");
-                                }
+									#[cfg(not(feature = "rust-gmp"))]
+									let y = {
+										let xi = BigUint::from_bytes_be(&x);
+										let ni = BigUint::from_bytes_be(&n);
+										let mut e = BigUint::one();
+										e <<= level as usize;
+										let yi = xi.modpow(&e, &ni);
+										time_reporter.finish();
+										info!(logger, "Solve RSA puzzle";
+											  "level" => level, "x" => %xi, "n" => %ni,
+											  "y" => %yi);
+										algs::biguint_to_array(&yi)
+									};
+									y
+								})
+							}).map_err(|e| {
+								format_err!(
+									"Failed to start blocking operation ({:?})",
+									e
+								).into()
+							}).and_then(move |y| {
+								// Create the command string
+								// omega is an ASN.1-DER encoded public key from
+								// the ECDH parameters.
+								let omega_s =
+									private_key.to_pub().to_ts().unwrap();
+								let mut command = Command::new("clientinitiv");
+								command.push("alpha", alpha_s.clone());
+								command.push("omega", omega_s);
+								command.push("ot", "1");
+								// Set ip always except if it is a local address
+								if ::utils::is_global_ip(&ip) {
+									command.push("ip", ip.to_string());
+								} else {
+									command.push("ip", "");
+								}
 
-                                let cheader = create_init_header();
-                                let data = C2SInit::Init4 {
-                                    version,
-                                    x,
-                                    n,
-                                    level,
-                                    random2,
-                                    y,
-                                    command: command.clone(),
-                                };
+								let cheader = create_init_header();
+								let data = C2SInit::Init4 {
+									version,
+									x,
+									n,
+									level,
+									random2,
+									y,
+									command: command.clone(),
+								};
 
-                                let packet = Packet::new(cheader, packets::Data::C2SInit(data));
-                                con_value.as_packet_sink().send(packet)
-                                    .map(|_| ())
-                            })
-                        }).map(|_| ()).map_err(move |error|
-                            error!(logger2, "Cannot send packet";
-                                "error" => ?error));
+								let packet = Packet::new(
+									cheader,
+									packets::Data::C2SInit(data),
+								);
+								con_value
+									.as_packet_sink()
+									.send(packet)
+									.map(|_| ())
+							})
+						}).map(|_| ())
+						.map_err(move |error| {
+							error!(logger2, "Cannot send packet";
+								"error" => ?error)
+						});
 						tokio::spawn(fut);
 
 						let state =

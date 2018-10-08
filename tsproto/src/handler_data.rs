@@ -348,7 +348,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			stream
 				.map_err(move |e| {
 					error!(logger2, "Packet stream errored";
-                "error" => ?e)
+						"error" => ?e)
 				}).for_each(move |(p, a)| {
 					if log_udp.load(Ordering::Relaxed) {
 						::log::PacketLogger::log_udp_packet(

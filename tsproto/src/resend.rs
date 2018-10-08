@@ -179,7 +179,7 @@ impl DefaultResender {
 	/// Replaces the current state by a new state and return the old state.
 	fn set_state(&mut self, state: ResendStates) -> ResendStates {
 		info!(self.logger, "Changed state"; "old" => self.state.get_name(),
-            "new" => state.get_name());
+			"new" => state.get_name());
 		let old = mem::replace(&mut self.state, state);
 
 		// Notify the future
@@ -778,7 +778,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 			};
 			let mut data = data.lock().unwrap();
 			info!(self.logger, "Exiting connection because it is not responding";
-                "current state" => state);
+				"current state" => state);
 			data.remove_connection(&self.connection_key);
 			return Ok(futures::Async::NotReady);
 		}
@@ -883,15 +883,15 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 					if rec.tries != 1 {
 						let to_s = if self.is_client { "S" } else { "C" };
 						warn!(self.logger, "Resend";
-                            "p_type" => ?rec.id.0,
-                            "p_id" => rec.id.1,
-                            "tries" => rec.tries,
-                            "last" => %rec.last,
-                            "to" => to_s,
-                            "srtt" => %con.resender.srtt,
-                            "srtt_dev" => %con.resender.srtt_dev,
-                            "rto" => %rto,
-                        );
+							"p_type" => ?rec.id.0,
+							"p_id" => rec.id.1,
+							"tries" => rec.tries,
+							"last" => %rec.last,
+							"to" => to_s,
+							"srtt" => %con.resender.srtt,
+							"srtt_dev" => %con.resender.srtt_dev,
+							"rto" => %rto,
+						);
 					}
 				}
 
@@ -901,7 +901,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 
 				if is_normal_state && dur > con.resender.config.normal_timeout {
 					warn!(self.logger, "Max resend timeout exceeded";
-                          "p_id" => p_id);
+						"p_id" => p_id);
 					// Switch connection to stalling state
 					switch_to_stalling = true;
 					break;

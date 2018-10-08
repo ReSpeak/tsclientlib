@@ -112,7 +112,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				// Don't block if the queue is full
 				if sink.try_send((addr, udp_packet)).is_err() {
 					warn!(self.logger, "Unknown connection handler overloaded \
-                        – dropping udp packet");
+						– dropping udp packet");
 				}
 			} else {
 				warn!(
@@ -244,11 +244,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							PData::VoiceS2C { .. }
 							| PData::VoiceWhisperS2C { .. } => {
 								// Seems to work better without assembling the first 3 voice packets
-                                // Use handle_voice_packet to assemble fragmented voice packets
-                                /*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
-                                let res = res.drain(..).map(|p|
-                                    (con_key.clone(), p)).collect();
-                                Ok(res)*/
+								// Use handle_voice_packet to assemble fragmented voice packets
+								/*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
+								let res = res.drain(..).map(|p|
+									(con_key.clone(), p)).collect();
+								Ok(res)*/
 								Packet::new(header, p_data)
 							}
 							_ => Packet::new(header, p_data),
@@ -311,7 +311,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				// Send to packet handler
 				if let Err(e) = con.1.command_sink.unbounded_send(p) {
 					error!(logger, "Failed to send command packet to \
-                        handler"; "error" => ?e);
+					handler"; "error" => ?e);
 				}
 			}
 			return Ok(());
@@ -386,11 +386,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							frag_queue
 						};
 						/*if header.get_compressed() {
-                            debug!(logger, "Decompressed";
-                                "data" => ?::HexSlice(&decompressed),
-                                "string" => %String::from_utf8_lossy(&decompressed),
-                            );
-                        }*/
+							debug!(logger, "Decompressed";
+								"data" => ?::HexSlice(&decompressed),
+								"string" => %String::from_utf8_lossy(&decompressed),
+							);
+						}*/
 						let p_data = PData::read(
 							&header,
 							&mut Cursor::new(decompressed.as_slice()),
@@ -428,8 +428,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							.into_owned()
 					};
 					/*if header.get_compressed() {
-                        debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
-                    }*/
+						debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
+					}*/
 					let p_data = PData::read(
 						&header,
 						&mut Cursor::new(decompressed.as_slice()),
@@ -459,7 +459,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		} else {
 			// Out of order
 			warn!(logger, "Out of order command packet"; "got" => id,
-                "expected" => cur_next);
+				"expected" => cur_next);
 			let limit = ((u32::from(cur_next) + MAX_QUEUE_LEN as u32)
 				% u32::from(u16::MAX)) as u16;
 			if (cur_next < limit && id >= cur_next && id < limit)
@@ -474,57 +474,57 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	}
 
 	/*/// Handle `Voice` and `VoiceLow` packets.
-    ///
-    /// The first 3 packets for each audio transmission have the compressed flag
-    /// set, which means they are fragmented and should be concatenated.
-    fn handle_voice_packet(
-        logger: &slog::Logger,
-        params: &mut ConnectedParams,
-        header: &Header,
-        packet: PData,
-    ) -> Vec<Packet> {
-        let cmd_i = if header.get_type() == PacketType::Voice {
-            0
-        } else {
-            1
-        };
-        let frag_queue = &mut params.voice_fragmented_queue[cmd_i];
+	///
+	/// The first 3 packets for each audio transmission have the compressed flag
+	/// set, which means they are fragmented and should be concatenated.
+	fn handle_voice_packet(
+		logger: &slog::Logger,
+		params: &mut ConnectedParams,
+		header: &Header,
+		packet: PData,
+	) -> Vec<Packet> {
+		let cmd_i = if header.get_type() == PacketType::Voice {
+			0
+		} else {
+			1
+		};
+		let frag_queue = &mut params.voice_fragmented_queue[cmd_i];
 
-        let (id, from_id, codec_type, voice_data) = match packet {
-            PData::VoiceS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
-            PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
-            _ => unreachable!("handle_voice_packet did get an unknown voice packet"),
-        };
+		let (id, from_id, codec_type, voice_data) = match packet {
+			PData::VoiceS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
+			PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data } => (id, from_id, codec_type, voice_data),
+			_ => unreachable!("handle_voice_packet did get an unknown voice packet"),
+		};
 
-        if header.get_compressed() {
-            let queue = frag_queue.entry(from_id).or_insert_with(Vec::new);
-            // Append to fragments
-            if queue.len() < MAX_FRAGMENTS_LENGTH {
-                queue.extend_from_slice(&voice_data);
-                return Vec::new();
-            }
-            warn!(logger, "Length of voice fragment queue exceeded"; "len" => queue.len());
-        }
+		if header.get_compressed() {
+			let queue = frag_queue.entry(from_id).or_insert_with(Vec::new);
+			// Append to fragments
+			if queue.len() < MAX_FRAGMENTS_LENGTH {
+				queue.extend_from_slice(&voice_data);
+				return Vec::new();
+			}
+			warn!(logger, "Length of voice fragment queue exceeded"; "len" => queue.len());
+		}
 
-        let mut res = Vec::new();
-        if let Some(frags) = frag_queue.remove(&from_id) {
-            // We got two packets
-            let packet_data = if header.get_type() == PacketType::Voice {
-                PData::VoiceS2C { id, from_id, codec_type, voice_data: frags }
-            } else {
-                PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data: frags }
-            };
-            res.push(Packet::new(header.clone(), packet_data));
-        }
+		let mut res = Vec::new();
+		if let Some(frags) = frag_queue.remove(&from_id) {
+			// We got two packets
+			let packet_data = if header.get_type() == PacketType::Voice {
+				PData::VoiceS2C { id, from_id, codec_type, voice_data: frags }
+			} else {
+				PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data: frags }
+			};
+			res.push(Packet::new(header.clone(), packet_data));
+		}
 
-        let packet_data = if header.get_type() == PacketType::Voice {
-            PData::VoiceS2C { id, from_id, codec_type, voice_data }
-        } else {
-            PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data }
-        };
-        res.push(Packet::new(header.clone(), packet_data));
-        res
-    }*/
+		let packet_data = if header.get_type() == PacketType::Voice {
+			PData::VoiceS2C { id, from_id, codec_type, voice_data }
+		} else {
+			PData::VoiceWhisperS2C { id, from_id, codec_type, voice_data }
+		};
+		res.push(Packet::new(header.clone(), packet_data));
+		res
+	}*/
 }
 
 /// Encodes outgoing packets.

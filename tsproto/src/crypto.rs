@@ -552,8 +552,8 @@ mod tests {
 	use super::*;
 
 	const TEST_PRIV_KEY: &str = "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTA\
-            O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nmDB\
-            nmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI";
+		O2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nmDB\
+		nmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI";
 
 	#[test]
 	fn parse_p256_priv_key() {

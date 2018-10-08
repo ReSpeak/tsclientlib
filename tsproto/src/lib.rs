@@ -77,8 +77,8 @@ const ROOT_KEY: [u8; 32] = [
 ];
 /// Xored onto saved identities in the TeamSpeak client settings file.
 const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
-    e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
-    62a4a017bb394833aa0983e6e";
+	e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
+	62a4a017bb394833aa0983e6e";
 const UDP_SINK_CAPACITY: usize = 20;
 
 #[derive(Fail, Debug)]

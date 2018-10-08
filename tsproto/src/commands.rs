@@ -21,40 +21,40 @@ pub struct CanonicalCommand<'a> {
 }
 
 named!(command_arg(CompleteStr) -> (String, String), do_parse!(many0!(multispace) >>
-        name: many1!(map!(is_not!("\u{b}\u{c}\\\t\r\n| /="), |s| *s)) >> // Argument name
-        value: map!(opt!( // Argument value
-            preceded!(tag!("="),
-                many0!(alt!(
-                    map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
-                    map!(tag!("\\f"), |_| "\x0c") | // Form feed
-                    map!(tag!("\\\\"), |_| "\\") |
-                    map!(tag!("\\t"), |_| "\t") |
-                    map!(tag!("\\r"), |_| "\r") |
-                    map!(tag!("\\n"), |_| "\n") |
-                    map!(tag!("\\p"), |_| "|") |
-                    map!(tag!("\\s"), |_| " ") |
-                    map!(tag!("\\/"), |_| "/") |
-                    map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
-                ))
-            )), |o| o.unwrap_or_default())
-        >> (name.concat(), value.concat())
+	name: many1!(map!(is_not!("\u{b}\u{c}\\\t\r\n| /="), |s| *s)) >> // Argument name
+	value: map!(opt!( // Argument value
+		preceded!(tag!("="),
+			many0!(alt!(
+				map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
+				map!(tag!("\\f"), |_| "\x0c") | // Form feed
+				map!(tag!("\\\\"), |_| "\\") |
+				map!(tag!("\\t"), |_| "\t") |
+				map!(tag!("\\r"), |_| "\r") |
+				map!(tag!("\\n"), |_| "\n") |
+				map!(tag!("\\p"), |_| "|") |
+				map!(tag!("\\s"), |_| " ") |
+				map!(tag!("\\/"), |_| "/") |
+				map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
+			))
+		)), |o| o.unwrap_or_default())
+	>> (name.concat(), value.concat())
 ));
 
 named!(parse_command(CompleteStr) -> Command, do_parse!(
-    command: alphanumeric >> // Command
-    static_args: many0!(command_arg) >>
-    list_args: many0!(do_parse!(many0!(multispace) >>
-        tag!("|") >>
-        args: many1!(command_arg) >>
-        (args)
-    )) >>
-    many0!(multispace) >>
-    eof!() >>
-    (Command {
-        command: command.to_string(),
-        static_args,
-        list_args,
-    })
+	command: alphanumeric >> // Command
+	static_args: many0!(command_arg) >>
+	list_args: many0!(do_parse!(many0!(multispace) >>
+		tag!("|") >>
+		args: many1!(command_arg) >>
+		(args)
+	)) >>
+	many0!(multispace) >>
+	eof!() >>
+	(Command {
+		command: command.to_string(),
+		static_args,
+		list_args,
+	})
 ));
 
 impl Command {
