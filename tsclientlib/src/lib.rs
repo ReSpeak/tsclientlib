@@ -93,6 +93,8 @@ pub enum Error {
     #[fail(display = "{}", _0)]
     Reqwest(#[cause] reqwest::Error),
     #[fail(display = "{}", _0)]
+    ThreadpoolBlocking(#[cause] tokio_threadpool::BlockingError),
+    #[fail(display = "{}", _0)]
     Ts(#[cause] TsError),
     #[fail(display = "{}", _0)]
     Tsproto(#[cause] tsproto::Error),
@@ -148,6 +150,12 @@ impl From<trust_dns_resolver::error::ResolveError> for Error {
 impl From<reqwest::Error> for Error {
     fn from(e: reqwest::Error) -> Self {
         Error::Reqwest(e)
+    }
+}
+
+impl From<tokio_threadpool::BlockingError> for Error {
+    fn from(e: tokio_threadpool::BlockingError) -> Self {
+        Error::ThreadpoolBlocking(e)
     }
 }
 

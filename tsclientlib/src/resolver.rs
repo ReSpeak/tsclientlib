@@ -5,14 +5,11 @@
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::{self, FromStr};
 use std::time::Duration;
-use std::thread;
 
+use {reqwest, tokio, tokio_threadpool};
 use futures::{Async, future, Future, Poll, stream, Stream};
-use futures::sync::oneshot;
 use rand::{thread_rng, Rng};
-use reqwest;
 use slog::Logger;
-use tokio;
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio::util::StreamExt;
@@ -257,15 +254,15 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 }
 
 pub fn resolve_nickname(nickname: String) -> impl Stream<Item = SocketAddr, Error = Error> {
-	stream::futures_ordered(Some(blocking_to_future(move || {
-		let url = reqwest::Url::parse_with_params(NICKNAME_LOOKUP_ADDRESS, Some(("name", nickname)))
+	stream::futures_ordered(Some(future::poll_fn(move || tokio_threadpool::blocking(|| {
+		let url = reqwest::Url::parse_with_params(NICKNAME_LOOKUP_ADDRESS, Some(("name", &nickname)))
 			.map_err(|e| format_err!("Cannot parse nickname lookup address ({:?})", e))?;
 		let res = reqwest::get(url)?.text()?
 			.split(&['\r', '\n'][..])
 			.filter(|s| !s.is_empty())
 			.map(|s| s.to_string()).collect::<Vec<_>>();
 		Ok(res)
-	}).from_err().and_then(|r: Result<_>| r)
+	})).from_err().and_then(|r: Result<_>| r)
 		.map(|addrs| {
 			stream::futures_ordered(addrs.iter().map(|addr|
 				-> Result<Box<Stream<Item=_, Error=_> + Send>> { match parse_ip(addr) {
@@ -355,21 +352,10 @@ fn resolve_srv(resolver: AsyncResolver, addr: &Name)
 
 fn resolve_hostname(name: String, port: u16) -> impl Stream<Item = SocketAddr, Error = Error> {
 	stream::futures_ordered(Some(
-		blocking_to_future(move || (name.as_str(), port).to_socket_addrs().map_err(Error::from))
+		future::poll_fn(move || tokio_threadpool::blocking(|| (name.as_str(), port).to_socket_addrs().map_err(Error::from)))
 			.from_err::<Error>().flatten()))
 		.map(|addrs| stream::futures_ordered(addrs.map(Ok)))
 		.flatten()
-}
-
-fn blocking_to_future<R: 'static + Send, F: FnOnce() -> R + 'static + Send>(f: F)
-	-> impl Future<Item = R, Error = oneshot::Canceled> {
-	future::lazy(|| {
-		let (send, recv) = oneshot::channel();
-		thread::spawn(move || {
-			send.send(f())
-		});
-		recv
-	})
 }
 
 #[cfg(test)]

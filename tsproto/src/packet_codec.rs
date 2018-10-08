@@ -146,8 +146,7 @@ impl<CM: ConnectionManager + 'static>
                     // If it is the first ack packet of a
                     // client, try to fake decrypt it.
                     let decrypted = if header.get_type() == PacketType::Ack
-                        && header.p_id == 0 && is_client
-                    {
+                        && header.p_id == 0 && is_client {
                         if let Ok(dec) = algs::decrypt_fake(
                             &header,
                             udp_packet,
@@ -215,8 +214,11 @@ impl<CM: ConnectionManager + 'static>
                             ));
                         }
                         // Update packet ids
-                        let id = id.wrapping_add(1);
-                        params.incoming_p_ids[type_i] = (gen_id, id);
+                        let (id, next_gen) = id.overflowing_add(1);
+                        params.incoming_p_ids[type_i] = (
+                            if next_gen { gen_id + 1 } else { gen_id },
+                            id,
+                        );
 
                         let p_data = PData::read(
                             &header,
