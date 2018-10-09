@@ -1,10 +1,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use futures::{Future, Sink, Stream};
 use tokio;
-use tokio::timer::Delay;
 use tsproto::algorithms as algs;
 use tsproto::client::ServerConnectionData;
 use tsproto::crypto::EccKeyPrivP256;
@@ -75,11 +73,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error> {
 	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
-		.and_then(move |c| {
-		// Wait some time
-		// TODO Document in protocol paper
-		Delay::new(Instant::now() + Duration::from_millis(5)).from_err().map(move |_| c)
-	}).and_then(move |con| {
+	.and_then(move |con| {
 		let private_key = EccKeyPrivP256::from_ts(
 			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\

@@ -162,8 +162,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				|| in_recv_win
 			{
 				if !header.get_unencrypted() {
-					// If it is the first ack packet of a
-					// client, try to fake decrypt it.
+					// If it is the first ack packet of a client, try to fake
+					// decrypt it.
 					let decrypted = if header.get_type() == PacketType::Ack
 						&& header.p_id == 0
 						&& is_client
@@ -181,13 +181,21 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					};
 					if !decrypted {
 						// Decrypt the packet
-						dec_data1 = algs::decrypt(
+						let dec_res = algs::decrypt(
 							&header,
 							udp_packet,
 							gen_id,
 							&params.shared_iv,
 							&mut params.key_cache,
-						)?;
+						);
+						if dec_res.is_err() && header.get_type() ==
+							PacketType::Ack && header.p_id == 1 && is_client {
+							// Ignore error, this is the ack packet for the
+							// clientinit, we tak ethe initserver as ack anyway.
+							return Ok(());
+						}
+
+						dec_data1 = dec_res?;
 						udp_packet = &dec_data1;
 					}
 				} else if algs::must_encrypt(header.get_type()) {
@@ -289,14 +297,14 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		if let Some((ack_type, ack_packet)) = ack {
 			let mut ack_header = Header::default();
 			ack_header.set_type(ack_type);
-			let logger = logger.clone();
 			tokio::spawn(
 				con2.as_packet_sink()
 					.send(Packet::new(ack_header, ack_packet))
 					.map(|_| ())
-					.map_err(move |e| {
-						error!(logger, "Failed to send ack packet"; "error" => ?e);
-					}),
+					// Ignore errors, this can happen if the connection is
+					// already gone because we are disconnected.
+					// TODO Wait until the last ack is sent before disconnecting
+					.map_err(|_| ())
 			);
 		}
 

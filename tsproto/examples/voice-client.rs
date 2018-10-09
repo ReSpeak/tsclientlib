@@ -23,7 +23,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::sync::mpsc;
+use futures::sync::{mpsc, oneshot};
 use futures::{future, Future, Sink, Stream};
 use gst::prelude::*;
 use gst_audio::StreamVolumeExt;
@@ -211,46 +211,52 @@ fn main() {
 					tokio::spawn(audio);
 				}
 
-				// Pause or unpause sending on sighup
-				if let Some(pipeline) = &pipeline {
-					let pipe = pipeline.clone();
-					let logger2 = logger.clone();
-					let logger3 = logger.clone();
-					#[cfg(target_family = "unix")]
-					let sighup = Signal::new(SIGHUP)
-						.flatten_stream()
-						.for_each(move |_| {
-							// Switch state from playing to paused or reverse
-							// Returns (success, current state, pending state)
-							let state = pipe
-								.get_state(gst::ClockTime::from_mseconds(10));
-							if state.0 != gst::StateChangeReturn::Failure {
-								//debug!(logger2, "Got state"; "current" => ?state.1, "pending" => ?state.2);
-								if state.1 == gst::State::Playing {
-									debug!(logger2, "Change to paused");
-									if let Err(error) = pipe
-										.set_state(gst::State::Paused)
-										.into_result()
-									{
-										error!(logger2, "Failed to pause pipeline"; "error" => ?error);
+				let (disconnect_send, disconnect_recv) = oneshot::channel::<()>();
+				#[cfg(target_family = "unix")]
+				{
+					// Pause or unpause sending on sighup
+					if let Some(pipeline) = &pipeline {
+						let pipe = pipeline.clone();
+						let logger2 = logger.clone();
+						let logger3 = logger.clone();
+						// TODO End when disconnected
+						let sighup = Signal::new(SIGHUP)
+							.flatten_stream()
+							.for_each(move |_| {
+								// Switch state from playing to paused or reverse
+								// Returns (success, current state, pending state)
+								let state = pipe
+									.get_state(gst::ClockTime::from_mseconds(10));
+								if state.0 != gst::StateChangeReturn::Failure {
+									//debug!(logger2, "Got state"; "current" => ?state.1, "pending" => ?state.2);
+									if state.1 == gst::State::Playing {
+										debug!(logger2, "Change to paused");
+										if let Err(error) = pipe
+											.set_state(gst::State::Paused)
+											.into_result()
+										{
+											error!(logger2, "Failed to pause pipeline"; "error" => ?error);
+										}
+									} else if state.1 == gst::State::Paused {
+										debug!(logger2, "Change to playing");
+										if let Err(error) = pipe
+											.set_state(gst::State::Playing)
+											.into_result()
+										{
+											error!(logger2, "Failed to start pipeline"; "error" => ?error);
+										}
 									}
-								} else if state.1 == gst::State::Paused {
-									debug!(logger2, "Change to playing");
-									if let Err(error) = pipe
-										.set_state(gst::State::Playing)
-										.into_result()
-									{
-										error!(logger2, "Failed to start pipeline"; "error" => ?error);
-									}
+								} else {
+									error!(logger2, "Failed to get current state"; "result" => ?state);
 								}
-							} else {
-								error!(logger2, "Failed to get current state"; "result" => ?state);
-							}
-							future::ok(())
-						}).map_err(move |error| {
-							error!(logger3, "Error waiting for signal"; "error" => ?error);
-						});
-					tokio::spawn(sighup);
+								future::ok(())
+							}).map_err(move |error| {
+								error!(logger3, "Error waiting for signal"; "error" => ?error);
+							}).select2(disconnect_recv)
+							.map(|_| ())
+							.map_err(|_| ());
+						tokio::spawn(sighup);
+					}
 				}
 
 				// Stop with ctrl + c
@@ -265,6 +271,7 @@ fn main() {
 							disconnect(con)
 								.map(move |_| {
 									info!(logger, "Disconnected");
+									let _ = disconnect_send.send(());
 
 									// Cleanup gstreamer
 									if let Some(pipeline) = pipeline {
@@ -310,8 +317,7 @@ fn packet_sender(
 	let sink = con.as_packet_sink();
 	recv.forward(sink.sink_map_err(|error| {
 		println!("Error when forwarding: {:?}", error);
-		// TODO Sending is never done
-	})).map(|_| println!("SENDING DONE!"))
+	})).map(|_| ())
 	.map_err(|error| {
 		println!("Error when forwarding: {:?}", error);
 	})
@@ -775,7 +781,7 @@ fn main_loop(
 		use gst::MessageView;
 
 		let quit = match msg.view() {
-			MessageView::Eos(..) => {
+			MessageView::Eos(_) => {
 				debug!(logger, "Got end of playing stream");
 				true
 			}
@@ -787,6 +793,9 @@ fn main_loop(
 					"debug" => ?err.get_debug()
 				);
 				true
+			}
+			MessageView::StateChanged(change) => {
+				change.get_current() == gst::State::Null
 			}
 			_ => false,
 		};
