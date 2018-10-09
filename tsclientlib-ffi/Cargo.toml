@@ -1,0 +1,11 @@
+[package]
+name = "tsclientlib-ffi"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tokio = "0.1"
+tsclientlib = { path = "../tsclientlib" }

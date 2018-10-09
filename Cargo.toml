@@ -1,2 +1,2 @@
 [workspace]
-members = ["analyzer", "gst-plugin-ts3", "tsclientlib", "tsproto", "tsproto-commands", "tsproto-util"]
+members = ["analyzer", "gst-plugin-ts3", "tsclientlib", "tsclientlib-ffi", "tsproto", "tsproto-commands", "tsproto-util"]
