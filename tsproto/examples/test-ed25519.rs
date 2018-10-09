@@ -34,8 +34,8 @@ fn main() {
 	let mut privk = [0; 32];
 	privk.copy_from_slice(&priv_key);
 	/*privk[0] &= 248;
-    privk[31] &= 63;
-    privk[31] |= 64;*/
+	privk[31] &= 63;
+	privk[31] |= 64;*/
 
 	let priv_scal = Scalar::from_bytes_mod_order(privk);
 	//let priv_scal = Scalar::from_bytes_mod_order(privk);

@@ -659,7 +659,7 @@ fn create_audio_to_ts_pipeline(
 		let is_audio = src_pad.get_current_caps().and_then(|caps| {
 			caps.get_structure(0).map(|s| {
 				debug!(logger, "Capabilities"; "name" => src_pad.get_name(),
-                    "caps" => ?s);
+					"caps" => ?s);
 				s.get_name().starts_with("audio/")
 			})
 		});
@@ -781,11 +781,11 @@ fn main_loop(
 			}
 			MessageView::Error(err) => {
 				error!(logger,
-                    "gstreamer audio-to-ts pipeline error";
-                    "src" => ?err.get_src().map(|s| s.get_path_string()),
-                    "error" => %err.get_error(),
-                    "debug" => ?err.get_debug()
-                );
+					"gstreamer audio-to-ts pipeline error";
+					"src" => ?err.get_src().map(|s| s.get_path_string()),
+					"error" => %err.get_error(),
+					"debug" => ?err.get_debug()
+				);
 				true
 			}
 			_ => false,

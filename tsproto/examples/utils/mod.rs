@@ -46,9 +46,9 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 ) -> client::ClientDataM<PH> {
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::from_ts(
-        "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-        k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-        DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
+		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	let log_config = handler_data::LogConfig::new(log, log);
 	let c = client::ClientData::new(
@@ -75,55 +75,55 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error> {
 	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
-        .and_then(move |c| {
-        // Wait some time
-        // TODO Document in protocol paper
-        Delay::new(Instant::now() + Duration::from_millis(5)).from_err().map(move |_| c)
-    }).and_then(move |con| {
-        let private_key = EccKeyPrivP256::from_ts(
-            "MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-            k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-            DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+		.and_then(move |c| {
+		// Wait some time
+		// TODO Document in protocol paper
+		Delay::new(Instant::now() + Duration::from_millis(5)).from_err().map(move |_| c)
+	}).and_then(move |con| {
+		let private_key = EccKeyPrivP256::from_ts(
+			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
+			DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-        // Compute hash cash
-        let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-            "Compute public key hash cash level", logger.clone(),
-            slog::Level::Info);
-        time_reporter.start("Compute public key hash cash level");
-        let private_key_as_pub = private_key.to_pub();
-        let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
-        let omega = private_key_as_pub.to_ts().unwrap();
-        time_reporter.finish();
-        info!(logger, "Computed hash cash level";
-            "level" => algs::get_hash_cash_level(&omega, offset),
-            "offset" => offset);
+		// Compute hash cash
+		let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+			"Compute public key hash cash level", logger.clone(),
+			slog::Level::Info);
+		time_reporter.start("Compute public key hash cash level");
+		let private_key_as_pub = private_key.to_pub();
+		let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
+		let omega = private_key_as_pub.to_ts().unwrap();
+		time_reporter.finish();
+		info!(logger, "Computed hash cash level";
+			"level" => algs::get_hash_cash_level(&omega, offset),
+			"offset" => offset);
 
-        // Create clientinit packet
-        let header = Header::new(PacketType::Command);
-        let mut command = commands::Command::new("clientinit");
-        command.push("client_nickname", "Bot");
-        command.push("client_version", "3.1.8 [Build: 1516614607]");
-        command.push("client_platform", "Linux");
-        command.push("client_input_hardware", "1");
-        command.push("client_output_hardware", "1");
-        command.push("client_default_channel", "");
-        command.push("client_default_channel_password", "");
-        command.push("client_server_password", "");
-        command.push("client_meta_data", "");
-        command.push("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==");
-        command.push("client_key_offset", offset.to_string());
-        command.push("client_nickname_phonetic", "");
-        command.push("client_default_token", "");
-        command.push("client_badges", "Overwolf=0");
-        command.push("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
-        let p_data = packets::Data::Command(command);
-        let clientinit_packet = Packet::new(header, p_data);
+		// Create clientinit packet
+		let header = Header::new(PacketType::Command);
+		let mut command = commands::Command::new("clientinit");
+		command.push("client_nickname", "Bot");
+		command.push("client_version", "3.1.8 [Build: 1516614607]");
+		command.push("client_platform", "Linux");
+		command.push("client_input_hardware", "1");
+		command.push("client_output_hardware", "1");
+		command.push("client_default_channel", "");
+		command.push("client_default_channel_password", "");
+		command.push("client_server_password", "");
+		command.push("client_meta_data", "");
+		command.push("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==");
+		command.push("client_key_offset", offset.to_string());
+		command.push("client_nickname_phonetic", "");
+		command.push("client_default_token", "");
+		command.push("client_badges", "Overwolf=0");
+		command.push("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
+		let p_data = packets::Data::Command(command);
+		let clientinit_packet = Packet::new(header, p_data);
 
-        let con2 = con.clone();
-        con.as_packet_sink().send(clientinit_packet)
-            .and_then(move |_| client::wait_until_connected(&con))
-            .map(move |_| con2)
-    })
+		let con2 = con.clone();
+		con.as_packet_sink().send(clientinit_packet)
+			.and_then(move |_| client::wait_until_connected(&con))
+			.map(move |_| con2)
+	})
 }
 
 pub fn disconnect(

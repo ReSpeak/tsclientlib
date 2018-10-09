@@ -34,9 +34,9 @@ fn main() {
 	let signature = base64::decode(&args.signature).unwrap();
 	let key = EccKeyPubP256::from_ts(&args.key).unwrap();
 	/*let keyts = tomcrypt::P256EccKey::import(&base64::decode(&args.key).unwrap())
-        .unwrap();
-    let res = keyts.verify_hash(&data, &signature).unwrap();
-    println!("Res: {:?}", res);*/
+		.unwrap();
+	let res = keyts.verify_hash(&data, &signature).unwrap();
+	println!("Res: {:?}", res);*/
 
 	key.verify(&data, &signature).unwrap();
 }

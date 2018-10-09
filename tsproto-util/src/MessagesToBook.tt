@@ -1,90 +1,90 @@
 <#@ template cleanws="true" #>
 impl Connection {
-    fn handle_message_generated(&mut self, msg: &messages::Message) -> Result<()> {
-        // TODO Also raise events for changes, adds, removes
-        match *msg {
+	fn handle_message_generated(&mut self, msg: &messages::Message) -> Result<()> {
+		// TODO Also raise events for changes, adds, removes
+		match *msg {
 <# for event in &self.decls {
-    let enum_name = &event.msg.name;
+	let enum_name = &event.msg.name;
 #>
-            messages::Message::<#= enum_name #>(ref cmd) => {
-            <# if event.op == RuleOp::Remove {
-                let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name)); #>
-                self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
-            <# } else if event.op == RuleOp::Update { #>
-                <# // Update the object
-                // Functions first
-                for rule in &event.rules {
-                    if let RuleKind::Function { ref name, ref to } = *rule { #>
-                self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd);
-                    <# }
-                }
-                let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name)); #>
-                let mut r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
-                <#
-                for rule in &event.rules {
-                    match *rule {
-                        RuleKind::Map { ref from, ref to, op } => {
-                            // Put field from packet into bookkeeping struct
-                            match op {
-                                RuleOp::Update => { #>
-                r.<#= to_snake_case(&to.name) #> = cmd.<#= get_notification_field(from) #>;
-                                <# }
-                                // The field in the struct is a vector
-                                RuleOp::Add => { #>
-                r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
-                                <# }
-                                RuleOp::Remove => { #>
-                                    // Find index and remove
-                let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.get_rust_name() #>);
-                r.<#= to_snake_case(&to.name) #>.remove(i);
-                                <# }
-                            }
-                        }
+			messages::Message::<#= enum_name #>(ref cmd) => {
+			<# if event.op == RuleOp::Remove {
+				let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name)); #>
+				self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
+			<# } else if event.op == RuleOp::Update { #>
+				<# // Update the object
+				// Functions first
+				for rule in &event.rules {
+					if let RuleKind::Function { ref name, ref to } = *rule { #>
+				self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd);
+					<# }
+				}
+				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name)); #>
+				let mut r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
+				<#
+				for rule in &event.rules {
+					match *rule {
+						RuleKind::Map { ref from, ref to, op } => {
+							// Put field from packet into bookkeeping struct
+							match op {
+								RuleOp::Update => { #>
+				r.<#= to_snake_case(&to.name) #> = cmd.<#= get_notification_field(from) #>;
+								<# }
+								// The field in the struct is a vector
+								RuleOp::Add => { #>
+				r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
+								<# }
+								RuleOp::Remove => { #>
+									// Find index and remove
+				let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.get_rust_name() #>);
+				r.<#= to_snake_case(&to.name) #>.remove(i);
+								<# }
+							}
+						}
 
-                        RuleKind::Function { ref to, .. } => {}
-                    }
-                }
-            } else if event.op == RuleOp::Add {
-                // Create a new object
-                // First, call all functions
-                for fun in event.rules.iter().filter(|r| r.is_function()) {
-                    if let RuleKind::Function { ref name, ref to } = *fun { #>
-                let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
-                    <# }
-                } #>
-                let r = <#= event.book_struct.name #> {
-                <#
-                // Add ids
-                for (id, fld) in event.book_struct.id.iter().zip(event.id.iter()) { #>
-                    <#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld) #>,
-                <# }
+						RuleKind::Function { ref to, .. } => {}
+					}
+				}
+			} else if event.op == RuleOp::Add {
+				// Create a new object
+				// First, call all functions
+				for fun in event.rules.iter().filter(|r| r.is_function()) {
+					if let RuleKind::Function { ref name, ref to } = *fun { #>
+				let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
+					<# }
+				} #>
+				let r = <#= event.book_struct.name #> {
+				<#
+				// Add ids
+				for (id, fld) in event.book_struct.id.iter().zip(event.id.iter()) { #>
+					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld) #>,
+				<# }
 
-                let v = vec![];
-                // Function return values
-                for p in event.rules.iter()
-                    .flat_map(|f| if let RuleKind::Function { ref to, .. } = *f {
-                        to
-                    } else {
-                        &v
-                    }) { #>
-                    <#= to_snake_case(&p.name) #>,
-                <# }
-                for p in event.rules.iter() {
-                    if let RuleKind::Map { from, to, op } = *p {
-                        if op != RuleOp::Update {
-                            panic!("Cannot add or remove when adding a new struct");
-                        } #>
-                    <#= to_snake_case(&to.name) #>: cmd.<#= get_notification_field(from) #>,
-                    <# }
-                }
-                let function_name = format!("add_{}", to_snake_case(&event.book_struct.name)); #>
-                };
-                self.<#= function_name #>(<#= get_id_args(event) #>, r)<#= try_result(&function_name) #>;
-            <# } #>
-            }
+				let v = vec![];
+				// Function return values
+				for p in event.rules.iter()
+					.flat_map(|f| if let RuleKind::Function { ref to, .. } = *f {
+						to
+					} else {
+						&v
+					}) { #>
+					<#= to_snake_case(&p.name) #>,
+				<# }
+				for p in event.rules.iter() {
+					if let RuleKind::Map { from, to, op } = *p {
+						if op != RuleOp::Update {
+							panic!("Cannot add or remove when adding a new struct");
+						} #>
+					<#= to_snake_case(&to.name) #>: cmd.<#= get_notification_field(from) #>,
+					<# }
+				}
+				let function_name = format!("add_{}", to_snake_case(&event.book_struct.name)); #>
+				};
+				self.<#= function_name #>(<#= get_id_args(event) #>, r)<#= try_result(&function_name) #>;
+			<# } #>
+			}
 <# } #>
-            _ => {} // Ignore unmentioned messages
-        }
-        Ok(())
-    }
+			_ => {} // Ignore unmentioned messages
+		}
+		Ok(())
+	}
 }
