@@ -21,6 +21,7 @@ extern crate chashmap;
 extern crate chrono;
 #[macro_use]
 extern crate failure;
+#[macro_use]
 extern crate futures;
 extern crate num;
 extern crate rand;
@@ -41,10 +42,11 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::{Arc, Mutex, MutexGuard, Once, ONCE_INIT};
+use std::sync::atomic::AtomicBool;
 
 use chrono::{DateTime, Utc};
 use failure::ResultExt;
-use futures::sync::mpsc;
+use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
 use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
@@ -71,7 +73,7 @@ pub mod resolver;
 // Reexports
 pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;
-pub use tsproto_commands::{messages, Reason, Uid};
+pub use tsproto_commands::{messages, ChannelId, Reason, Uid};
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
@@ -328,37 +330,39 @@ impl Connection {
 				move |addr| -> Box<Future<Item = _, Error = _> + Send> {
 					let log_config = tsproto::handler_data::LogConfig::new(
 						options.log_packets,
-						options.log_packets,
+						options.log_udp_packets,
 					);
-					let mut packet_handler =
-						SimplePacketHandler::new(logger.clone());
+					let (initserver_send, initserver_recv) = oneshot::channel();
+					let (connection_send, connection_recv) = oneshot::channel();
+					let ph: Option<PHBox> = options.handle_packets.as_ref().map(|h| (*h).clone());
+					let packet_handler = SimplePacketHandler::new(
+						logger.clone(),
+						Arc::new(AtomicBool::new(options.log_commands)),
+						ph,
+						initserver_send,
+						connection_recv,
+					);
 					let return_code_handler =
 						packet_handler.return_codes.clone();
-					let (initserver_send, initserver_recv) = mpsc::channel(0);
-					packet_handler.initserver_sender = Some(initserver_send);
-					if let Some(h) = &options.handle_packets {
-						packet_handler.handle_packets =
-							Some(h.as_ref().clone());
-					}
 					let packet_handler =
 						client::DefaultPacketHandler::new(packet_handler);
 					let client = match client::ClientData::new(
-				options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
-					"0.0.0.0:0".parse().unwrap()
-				} else {
-					"[::]:0".parse().unwrap()
-				}),
-				private_key.clone(),
-				true,
-				None,
-				packet_handler,
-				tsproto::connectionmanager::SocketConnectionManager::new(),
-				logger.clone(),
-				log_config,
-			) {
-				Ok(client) => client,
-				Err(error) => return Box::new(future::err(error.into())),
-			};
+						options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
+							"0.0.0.0:0".parse().unwrap()
+						} else {
+							"[::]:0".parse().unwrap()
+						}),
+						private_key.clone(),
+						true,
+						None,
+						packet_handler,
+						tsproto::connectionmanager::SocketConnectionManager::new(),
+						logger.clone(),
+						log_config,
+					) {
+						Ok(client) => client,
+						Err(error) => return Box::new(future::err(error.into())),
+					};
 
 					// Set the data reference
 					let client2 = Arc::downgrade(&client);
@@ -378,21 +382,12 @@ impl Connection {
 					).from_err();
 
 					let initserver_poll = initserver_recv
-						.into_future()
 						.map_err(|e| {
 							format_err!(
 								"Error while waiting for initserver ({:?})",
 								e
 							).into()
-						}).and_then(move |(cmd, _)| {
-							let cmd = match cmd {
-								Some(c) => c,
-								None => {
-									return Err(Error::ConnectionFailed(
-										String::from("Got no initserver"),
-									))
-								}
-							};
+						}).and_then(move |cmd| {
 							let cmd = cmd.get_commands().remove(0);
 							let notif = Message::parse(cmd)?;
 							if let Message::InitServer(p) = notif {
@@ -483,6 +478,12 @@ impl Connection {
 						client_connection: con,
 						return_code_handler,
 					};
+
+					// Send connection to packet handler
+					connection_send.send(con.connection.clone()).map_err(|_|
+						format_err!("Failed to send connection to packet \
+							handler"))?;
+
 					Ok(Connection { inner: con })
 				}),
 					)
@@ -762,7 +763,9 @@ pub struct ConnectOptions {
 	name: String,
 	version: Version,
 	logger: Option<Logger>,
+	log_commands: bool,
 	log_packets: bool,
+	log_udp_packets: bool,
 	handle_packets: Option<PHBox>,
 }
 
@@ -788,7 +791,9 @@ impl ConnectOptions {
 			name: String::from("TeamSpeakUser"),
 			version: Version::Linux_3_2_1,
 			logger: None,
+			log_commands: false,
 			log_packets: false,
+			log_udp_packets: false,
 			handle_packets: None,
 		}
 	}
@@ -849,14 +854,35 @@ impl ConnectOptions {
 		self
 	}
 
-	/// If the content of all packets in high-level and byte-array form should
-	/// be written to the logger.
+	/// If the content of all commands should be written to the logger.
+	///
+	/// # Default
+	/// `false`
+	#[inline]
+	pub fn log_commands(mut self, log_commands: bool) -> Self {
+		self.log_commands = log_commands;
+		self
+	}
+
+	/// If the content of all packets in high-level form should be written to
+	/// the logger.
 	///
 	/// # Default
 	/// `false`
 	#[inline]
 	pub fn log_packets(mut self, log_packets: bool) -> Self {
 		self.log_packets = log_packets;
+		self
+	}
+
+	/// If the content of all udp packets in byte-array form should be written
+	/// to the logger.
+	///
+	/// # Default
+	/// `false`
+	#[inline]
+	pub fn log_udp_packets(mut self, log_udp_packets: bool) -> Self {
+		self.log_udp_packets = log_udp_packets;
 		self
 	}
 
@@ -895,21 +921,25 @@ impl fmt::Debug for ConnectOptions {
 			name,
 			version,
 			logger,
+			log_commands,
 			log_packets,
+			log_udp_packets,
 			handle_packets: _,
 		} = self;
 		write!(
 			f,
 			"ConnectOptions {{ address: {:?}, local_address: {:?}, \
 			 private_key: {:?}, name: {}, version: {}, logger: {:?}, \
-			 log_packets: {}, }}",
+			 log_commands: {}, log_packets: {}, log_udp_packets: {} }}",
 			address,
 			local_address,
 			private_key,
 			name,
 			version,
 			logger,
-			log_packets
+			log_commands,
+			log_packets,
+			log_udp_packets,
 		)?;
 		Ok(())
 	}
@@ -924,7 +954,9 @@ impl Clone for ConnectOptions {
 			name: self.name.clone(),
 			version: self.version.clone(),
 			logger: self.logger.clone(),
+			log_commands: self.log_commands.clone(),
 			log_packets: self.log_packets.clone(),
+			log_udp_packets: self.log_udp_packets.clone(),
 			handle_packets: self
 				.handle_packets
 				.as_ref()

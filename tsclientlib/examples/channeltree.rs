@@ -4,15 +4,19 @@ extern crate futures;
 extern crate structopt;
 extern crate tokio;
 extern crate tsclientlib;
+extern crate tsproto;
 
 use std::time::{Duration, Instant};
 
-use futures::Future;
+use futures::{Future, Sink};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Reason};
+use tsclientlib::{ChannelId, ConnectOptions, Connection, DisconnectOptions, Reason};
+use tsclientlib::data::{Channel, Client};
+use tsproto::commands::Command;
+use tsproto::packets::{self, Header, PacketType};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(
@@ -40,6 +44,24 @@ struct Args {
 	// 3. Print udp packets
 }
 
+/// `channels` have to be ordered.
+fn print_channels(clients: &[&Client], channels: &[&Channel], parent: ChannelId, depth: usize) {
+	let indention = "  ".repeat(depth);
+	for channel in channels {
+		if channel.parent == parent {
+			println!("{}- {}", indention, channel.name);
+			// Print all clients in this channel
+			for client in clients {
+				if client.channel == channel.id {
+					println!("{}  {}", indention, client.name);
+				}
+			}
+
+			print_channels(clients, channels, channel.id, depth + 1);
+		}
+	}
+}
+
 fn main() -> Result<(), failure::Error> {
 	// Parse command line options
 	let args = Args::from_args();
@@ -47,6 +69,7 @@ fn main() -> Result<(), failure::Error> {
 	tokio::run(
 		futures::lazy(|| {
 			let con_config = ConnectOptions::new(args.address)
+				// TODO log commands in tsproto
 				.log_commands(args.verbose >= 1)
 				.log_packets(args.verbose >= 2)
 				.log_udp_packets(args.verbose >= 3);
@@ -67,12 +90,31 @@ fn main() -> Result<(), failure::Error> {
 					sanitize(&con.server.welcome_message)
 				);
 			}
+			let cmd = Command::new("channelsubscribeall");
+			let header = Header::new(PacketType::Command);
+			let data = packets::Data::Command(cmd);
+			let packet = packets::Packet::new(header, data);
+
+			// Send a message and wait until we get an answer for the return code
+			con.get_packet_sink().send(packet).map(|_| con)
+		}).and_then(|con| {
 
 			// Wait some time
 			Delay::new(Instant::now() + Duration::from_secs(1))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		}).and_then(|con| {
+			// Print channel tree
+			{
+				let con = con.lock();
+				let mut channels: Vec<_> = con.server.channels.values().collect();
+				let mut clients: Vec<_> = con.server.clients.values().collect();
+				channels.sort_by_key(|ch| ch.order);
+				clients.sort_by_key(|c| c.talk_power);
+				println!("{}", con.server.name);
+				print_channels(&clients, &channels, ChannelId(0), 0);
+			}
+
 			// Disconnect
 			con.disconnect(
 				DisconnectOptions::new()

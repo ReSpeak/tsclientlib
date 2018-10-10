@@ -88,7 +88,7 @@ impl Connection {
 		}
 	}
 
-	fn handle_message(&mut self, msg: &Message) -> Result<()> {
+	pub(crate) fn handle_message(&mut self, msg: &Message) -> Result<()> {
 		self.handle_message_generated(msg)?;
 
 		// Also raise events
