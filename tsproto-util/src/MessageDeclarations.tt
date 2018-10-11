@@ -40,7 +40,7 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
-			}})? as i32)", field.pretty),
+			}})? as u32)", field.pretty),
 		"ClientId" |
 		"ClientDbId" |
 		"ChannelId" |

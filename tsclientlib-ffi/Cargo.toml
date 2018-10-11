@@ -2,6 +2,7 @@
 name = "tsclientlib-ffi"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
+build = "build/build.rs"
 
 [lib]
 crate-type = ["cdylib"]
@@ -10,5 +11,9 @@ crate-type = ["cdylib"]
 chashmap = "2"
 failure = "0.1"
 lazy_static = "1"
+num = "0.2"
 tokio = "0.1"
 tsclientlib = { path = "../tsclientlib" }
+
+[build-dependencies]
+tsproto-util = { path = "../tsproto-util" }

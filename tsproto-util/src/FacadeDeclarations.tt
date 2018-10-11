@@ -1,6 +1,6 @@
 <#@ template cleanws="true" #>
 <#
-fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
+/*fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
 	struc: &Struct, p: &Property, ids: &[Id]) -> ::std::fmt::Result {
 	let pi = PropId::from(p);
 	let name = pi.get_attr_name(struc); #>
@@ -34,7 +34,7 @@ fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
 	}
 <#
 	Ok(())
-}
+}*/
 
 
 #>

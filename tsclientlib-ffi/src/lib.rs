@@ -3,20 +3,21 @@ extern crate chashmap;
 extern crate failure;
 #[macro_use]
 extern crate lazy_static;
+extern crate num;
 extern crate tokio;
 extern crate tsclientlib;
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
 
 use chashmap::CHashMap;
+use num::ToPrimitive;
 use tokio::prelude::{future, Future};
-use tokio::timer::Delay;
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Reason};
+use tsclientlib::{ChannelId, ClientId, ConnectOptions, Connection,
+	ServerGroupId};
 
 type Result<T> = std::result::Result<T, tsclientlib::Error>;
 
@@ -37,6 +38,8 @@ lazy_static! {
 		(send, Mutex::new(recv))
 	};
 }
+
+include!(concat!(env!("OUT_DIR"), "/book_ffi.rs"));
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 #[repr(transparent)]
@@ -73,6 +76,65 @@ impl Event {
 impl fmt::Display for ConnectionId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{:?}", self)
+	}
+}
+
+trait ConnectionExt {
+	fn get_connection(&self) -> &tsclientlib::data::Connection;
+
+	fn get_server(&self) -> &tsclientlib::data::Server;
+	fn get_connection_server_data(&self) -> &tsclientlib::data::ConnectionServerData;
+	fn get_optional_server_data(&self) -> &tsclientlib::data::OptionalServerData;
+	fn get_server_group(&self, id: u64) -> &tsclientlib::data::ServerGroup;
+
+	fn get_client(&self, id: u16) -> &tsclientlib::data::Client;
+	fn get_connection_client_data(&self, id: u16) -> &tsclientlib::data::ConnectionClientData;
+	fn get_optional_client_data(&self, id: u16) -> &tsclientlib::data::OptionalClientData;
+
+	fn get_channel(&self, id: u64) -> &tsclientlib::data::Channel;
+	fn get_optional_channel_data(&self, id: u64) -> &tsclientlib::data::OptionalChannelData;
+
+	fn get_chat_entry(&self, sender_client: u16) -> &tsclientlib::data::ChatEntry;
+	fn get_file(&self, id: u64, path: *const c_char, name: *const c_char) -> &tsclientlib::data::File;
+}
+
+// TODO Don't unwrap
+impl ConnectionExt for tsclientlib::data::Connection {
+	fn get_connection(&self) -> &tsclientlib::data::Connection { self }
+
+	fn get_server(&self) -> &tsclientlib::data::Server { &self.server }
+	fn get_connection_server_data(&self) -> &tsclientlib::data::ConnectionServerData {
+		self.server.connection_data.as_ref().unwrap()
+	}
+	fn get_optional_server_data(&self) -> &tsclientlib::data::OptionalServerData {
+		self.server.optional_data.as_ref().unwrap()
+	}
+	fn get_server_group(&self, id: u64) -> &tsclientlib::data::ServerGroup {
+		self.server.groups.get(&ServerGroupId(id)).unwrap()
+	}
+
+	fn get_client(&self, id: u16) -> &tsclientlib::data::Client {
+		self.server.clients.get(&ClientId(id)).unwrap()
+	}
+	fn get_connection_client_data(&self, id: u16) -> &tsclientlib::data::ConnectionClientData {
+		self.server.clients.get(&ClientId(id)).unwrap().connection_data.as_ref().unwrap()
+	}
+	fn get_optional_client_data(&self, id: u16) -> &tsclientlib::data::OptionalClientData {
+		self.server.clients.get(&ClientId(id)).unwrap().optional_data.as_ref().unwrap()
+	}
+
+	fn get_channel(&self, id: u64) -> &tsclientlib::data::Channel {
+		self.server.channels.get(&ChannelId(id)).unwrap()
+	}
+	fn get_optional_channel_data(&self, id: u64) -> &tsclientlib::data::OptionalChannelData {
+		self.server.channels.get(&ChannelId(id)).unwrap().optional_data.as_ref().unwrap()
+	}
+
+	fn get_chat_entry(&self, _sender_client: u16) -> &tsclientlib::data::ChatEntry {
+		unimplemented!("TODO Chat entries are not implemented")
+	}
+	fn get_file(&self, _id: u64, _path: *const c_char, _name: *const c_char) -> &tsclientlib::data::File {
+		unimplemented!("TODO Files are not implemented")
 	}
 }
 
@@ -116,4 +178,9 @@ pub extern "C" fn next_event(ev: *mut FfiEvent) {
 		},
 		typ: event.get_type(),
 	} };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_str(s: *mut c_char) {
+	drop(CString::from_raw(s));
 }

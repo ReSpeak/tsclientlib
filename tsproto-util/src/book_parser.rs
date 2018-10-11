@@ -76,7 +76,8 @@ pub struct Struct {
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
 pub struct Property {
-	/// The name of this property (in PascalCase) which can be called from rust when generated.
+	/// The name of this property (in PascalCase) which can be called from rust
+	/// when generated.
 	pub name: String,
 	/// The rust declaration type.
 	#[serde(rename = "type")]

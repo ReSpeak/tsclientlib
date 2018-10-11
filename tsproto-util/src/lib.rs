@@ -12,6 +12,7 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::io::Cursor;
 
+mod book_ffi;
 mod book_parser;
 mod error_parser;
 mod facade_parser;
@@ -21,6 +22,7 @@ mod packets_parser;
 mod permission_parser;
 mod version_parser;
 
+pub use book_ffi::BookFfi;
 pub use book_parser::BookDeclarations;
 pub use error_parser::Errors;
 pub use facade_parser::FacadeDeclarations;

@@ -24,6 +24,8 @@ extern crate failure;
 #[macro_use]
 extern crate futures;
 extern crate num;
+#[macro_use]
+extern crate num_derive;
 extern crate rand;
 extern crate reqwest;
 #[macro_use]
@@ -73,7 +75,8 @@ pub mod resolver;
 // Reexports
 pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;
-pub use tsproto_commands::{messages, ChannelId, Reason, Uid};
+pub use tsproto_commands::{messages, ChannelId, ClientId, Reason, ServerGroupId,
+	Uid};
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
@@ -186,7 +189,7 @@ impl From<failure::Error> for Error {
 	}
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
 pub enum ChannelType {
 	Permanent,
 	SemiPermanent,

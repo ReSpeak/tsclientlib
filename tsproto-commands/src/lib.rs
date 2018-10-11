@@ -45,7 +45,7 @@ pub struct ServerGroupId(pub u64);
 pub struct ChannelGroupId(pub u64);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct IconHash(pub i32);
+pub struct IconHash(pub u32);
 
 #[derive(
 	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,

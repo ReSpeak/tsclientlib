@@ -204,7 +204,7 @@ impl<'a> Declaration for MessagesToBookDeclarations<'a> {
 				let mut used_props = vec![];
 				for rule in &ev.rules {
 					match rule {
-						&RuleKind::Function { ref to, .. } => {
+						RuleKind::Function { to, .. } => {
 							for p in to {
 								used_props.push(p.name.clone());
 							}
