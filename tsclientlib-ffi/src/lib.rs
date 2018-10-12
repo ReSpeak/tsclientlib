@@ -182,5 +182,10 @@ pub extern "C" fn next_event(ev: *mut FfiEvent) {
 
 #[no_mangle]
 pub unsafe extern "C" fn free_str(s: *mut c_char) {
-	drop(CString::from_raw(s));
+	CString::from_raw(s);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn free_u64s(ptr: *mut u64, len: usize) {
+	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 }
