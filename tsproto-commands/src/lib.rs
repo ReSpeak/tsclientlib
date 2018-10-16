@@ -14,6 +14,8 @@ pub mod versions;
 
 use std::fmt;
 
+use chrono::{DateTime, Utc};
+
 /// A `ClientId` identifies a client which is connected to a server.
 ///
 /// Every client that we see on a server has a `ClientId`, even our own
@@ -176,20 +178,71 @@ pub enum GroupType {
 	Query,
 }
 
-#[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
-)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
 pub enum LicenseType {
 	/// No licence
-	NoLicense = 0,
+	NoLicense,
 	/// Authorised TeamSpeak Host Provider License (ATHP)
-	Athp = 1,
+	Athp,
 	/// Offline/LAN License
-	Lan = 2,
+	Lan,
 	/// Non-Profit License (NPL)
-	Npl = 3,
+	Npl,
 	/// Unknown License
-	Unknown = 4,
+	Unknown,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+pub enum ChannelType {
+	Permanent,
+	SemiPermanent,
+	Temporary,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+pub enum TokenType {
+	/// Server group token (`id1={groupId}, id2=0`)
+	ServerGroup,
+	/// Channel group token (`id1={groupId}, id2={channelId}`)
+	ChannelGroup,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+pub enum PluginTargetMode {
+	/// Send to all clients in the current channel.
+	CurrentChannel,
+	/// Send to all clients on the server.
+	Server,
+	/// Send to all given clients ids.
+	Client,
+	/// Send to all given clients which are subscribed to the current channel
+	/// (i.e. which see the this client).
+	CurrentChannelSubsribedClients,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+pub enum LogLevel {
+	/// Everything that is really bad.
+	Error = 1,
+	/// Everything that might be bad.
+	Warning,
+	/// Output that might help find a problem.
+	Debug,
+	/// Informational output.
+	Info,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum MaxFamilyClients {
+	Unlimited,
+	Inherited,
+	Limited(u16),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct TalkPowerRequest {
+	pub time: DateTime<Utc>,
+	pub message: String,
 }
 
 impl fmt::Display for ClientId {

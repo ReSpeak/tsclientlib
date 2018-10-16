@@ -8,9 +8,7 @@ use chrono::{DateTime, Duration, Utc};
 use tsproto_commands::messages::*;
 use tsproto_commands::*;
 
-use {
-	ChannelType, InnerConnection, MaxFamilyClients, Result, TalkPowerRequest,
-};
+use {InnerConnection, Result};
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
@@ -18,26 +16,27 @@ include!(concat!(env!("OUT_DIR"), "/facades.rs"));
 
 macro_rules! max_clients {
 	($cmd:ident) => {{
-		let ch = if $cmd.is_max_clients_unlimited {
+		let ch = if $cmd.is_max_clients_unlimited.unwrap_or(false)
+			|| $cmd.max_clients.is_none() {
 			None
-		} else if $cmd.max_clients >= 0 && $cmd.max_clients <= u16::MAX as i32 {
-			Some($cmd.max_clients as u16)
+		} else if $cmd.max_clients.unwrap() >= 0 && $cmd.max_clients.unwrap() <= u16::MAX as i32 {
+			Some($cmd.max_clients.unwrap() as u16)
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
-			};
-		let ch_fam = if $cmd.is_max_family_clients_unlimited {
+		};
+		let ch_fam = if $cmd.is_max_family_clients_unlimited.unwrap_or(false)
+			|| $cmd.max_family_clients.is_none() {
 			MaxFamilyClients::Unlimited
-		} else if $cmd.inherits_max_family_clients {
+		} else if $cmd.inherits_max_family_clients.unwrap_or(false) {
 			MaxFamilyClients::Inherited
-		} else if $cmd.max_family_clients >= 0
-			&& $cmd.max_family_clients <= u16::MAX as i32
-			{
-			MaxFamilyClients::Limited($cmd.max_family_clients as u16)
+		} else if $cmd.max_family_clients.unwrap() >= 0
+			&& $cmd.max_family_clients.unwrap() <= u16::MAX as i32 {
+			MaxFamilyClients::Limited($cmd.max_family_clients.unwrap() as u16)
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			MaxFamilyClients::Unlimited
-			};
+		};
 		(ch, ch_fam)
 		}};
 }
@@ -181,13 +180,32 @@ impl Connection {
 		&self,
 		cmd: &ChannelList,
 	) -> (Option<u16>, MaxFamilyClients) {
-		max_clients!(cmd)
+		let ch = if cmd.is_max_clients_unlimited {
+			None
+		} else if cmd.max_clients >= 0 && cmd.max_clients <= u16::MAX as i32 {
+			Some(cmd.max_clients as u16)
+		} else {
+			// Max clients is less than zero or too high so ignore it
+			None
+		};
+		let ch_fam = if cmd.is_max_family_clients_unlimited {
+			MaxFamilyClients::Unlimited
+		} else if cmd.inherits_max_family_clients {
+			MaxFamilyClients::Inherited
+		} else if cmd.max_family_clients >= 0
+			&& cmd.max_family_clients <= u16::MAX as i32 {
+			MaxFamilyClients::Limited(cmd.max_family_clients as u16)
+		} else {
+			// Max clients is less than zero or too high so ignore it
+			MaxFamilyClients::Unlimited
+		};
+		(ch, ch_fam)
 	}
 
 	fn channel_type_cc_fun(&self, cmd: &ChannelCreated) -> ChannelType {
-		if cmd.is_permanent {
+		if cmd.is_permanent == Some(true) {
 			ChannelType::Permanent
-		} else if cmd.is_semi_permanent {
+		} else if cmd.is_semi_permanent == Some(true) {
 			ChannelType::SemiPermanent
 		} else {
 			ChannelType::Temporary
@@ -200,9 +218,9 @@ impl Connection {
 		cmd: &ChannelEdited,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			let typ = if cmd.is_permanent {
+			let typ = if cmd.is_permanent == Some(true) {
 				ChannelType::Permanent
-			} else if cmd.is_semi_permanent {
+			} else if cmd.is_semi_permanent == Some(true) {
 				ChannelType::SemiPermanent
 			} else {
 				ChannelType::Temporary
@@ -247,7 +265,7 @@ impl Connection {
 		Vec::new() // TODO
 	}
 
-	fn address_fun(&self, cmd: &ConnectionInfo) -> Option<SocketAddr> {
+	fn address_fun(&self, cmd: &ClientConnectionInfo) -> Option<SocketAddr> {
 		let ip = if let Ok(ip) = cmd.ip.parse() {
 			ip
 		} else {

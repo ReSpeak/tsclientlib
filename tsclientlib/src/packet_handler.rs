@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use chashmap::CHashMap;
@@ -45,7 +45,7 @@ pub(crate) struct SimplePacketHandler {
 	log_commands: Arc<AtomicBool>,
 	handle_packets: Option<PHBox>,
 	initserver_sender: Option<oneshot::Sender<Command>>,
-	connection_recv: Option<oneshot::Receiver<Arc<Mutex<Connection>>>>,
+	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
 	pub(crate) return_codes: Arc<ReturnCodeHandler>,
 }
 
@@ -54,8 +54,8 @@ struct SimplePacketStreamHandler<Inner: Stream<Item=Packet, Error=tsproto::Error
 	logger: Logger,
 	log_commands: Arc<AtomicBool>,
 	initserver_sender: Option<oneshot::Sender<Command>>,
-	connection_recv: Option<oneshot::Receiver<Arc<Mutex<Connection>>>>,
-	connection: Option<Arc<Mutex<Connection>>>,
+	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
+	connection: Option<Arc<RwLock<Connection>>>,
 	return_codes: Arc<ReturnCodeHandler>,
 }
 
@@ -65,7 +65,7 @@ impl SimplePacketHandler {
 		log_commands: Arc<AtomicBool>,
 		handle_packets: Option<PHBox>,
 		initserver_sender: oneshot::Sender<Command>,
-		connection_recv: oneshot::Receiver<Arc<Mutex<Connection>>>,
+		connection_recv: oneshot::Receiver<Arc<RwLock<Connection>>>,
 	) -> Self {
 		Self {
 			logger,
@@ -163,7 +163,7 @@ impl<Inner: Stream<Item=Packet, Error=tsproto::Error>> Stream for SimplePacketSt
 							::std::str::from_utf8(&v).unwrap());
 					}
 					// 3.
-					let mut con = con.lock().unwrap();
+					let mut con = con.write().unwrap();
 					let mut handled = true;
 					// Split into messages
 					for cmd in cmd.get_commands() {

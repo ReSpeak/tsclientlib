@@ -54,6 +54,7 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 		"HostMessageMode" |
 		"HostBannerMode" |
 		"LicenseType" |
+		"LogLevel" |
 		"Codec" |
 		"CodecEncryptionMode" |
 		"Reason" |
@@ -61,6 +62,8 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 		"GroupNamingMode" |
 		"GroupType" |
 		"Permission" |
+		"TokenType" |
+		"PluginTargetMode" |
 		"Error" => format!("{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
@@ -139,6 +142,7 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
 		"HostMessageMode" |
 		"HostBannerMode" |
 		"LicenseType" |
+		"LogLevel" |
 		"Codec" |
 		"CodecEncryptionMode" |
 		"Reason" |
@@ -146,6 +150,8 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
 		"GroupNamingMode" |
 		"GroupType" |
 		"Permission" |
+		"TokenType" |
+		"PluginTargetMode" |
 		"Error" => "val.to_u32().unwrap().to_string()",
 		"Duration" =>
 			if field.type_s == "DurationSeconds" {

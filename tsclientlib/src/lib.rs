@@ -23,9 +23,6 @@ extern crate chrono;
 extern crate failure;
 #[macro_use]
 extern crate futures;
-extern crate num;
-#[macro_use]
-extern crate num_derive;
 extern crate rand;
 extern crate reqwest;
 #[macro_use]
@@ -43,10 +40,9 @@ extern crate tsproto_commands;
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex, MutexGuard, Once, ONCE_INIT};
+use std::sync::{Arc, Once, ONCE_INIT, RwLock, RwLockReadGuard};
 use std::sync::atomic::AtomicBool;
 
-use chrono::{DateTime, Utc};
 use failure::ResultExt;
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
@@ -189,26 +185,6 @@ impl From<failure::Error> for Error {
 	}
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
-pub enum ChannelType {
-	Permanent,
-	SemiPermanent,
-	Temporary,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum MaxFamilyClients {
-	Unlimited,
-	Inherited,
-	Limited(u16),
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct TalkPowerRequest {
-	pub time: DateTime<Utc>,
-	pub message: String,
-}
-
 type PHBox = Box<PacketHandler + Send>;
 pub trait PacketHandler {
 	fn new_connection(
@@ -223,7 +199,7 @@ pub trait PacketHandler {
 }
 
 pub struct ConnectionLock<'a> {
-	guard: MutexGuard<'a, data::Connection>,
+	guard: RwLockReadGuard<'a, data::Connection>,
 }
 
 impl<'a> Deref for ConnectionLock<'a> {
@@ -236,7 +212,7 @@ impl<'a> Deref for ConnectionLock<'a> {
 
 #[derive(Clone)]
 struct InnerConnection {
-	connection: Arc<Mutex<data::Connection>>,
+	connection: Arc<RwLock<data::Connection>>,
 	client_data: client::ClientDataM<SimplePacketHandler>,
 	client_connection: client::ClientConVal,
 	return_code_handler: Arc<ReturnCodeHandler>,
@@ -476,7 +452,7 @@ impl Connection {
 					let data = data::Connection::new(Uid(uid),
 						&initserver);
 					let con = InnerConnection {
-						connection: Arc::new(Mutex::new(data)),
+						connection: Arc::new(RwLock::new(data)),
 						client_data: client2,
 						client_connection: con,
 						return_code_handler,
@@ -585,8 +561,9 @@ impl Connection {
 			})
 	}
 
+	// TODO Rename to read and create write?
 	pub fn lock(&self) -> ConnectionLock {
-		ConnectionLock::new(self.inner.connection.lock().unwrap())
+		ConnectionLock::new(self.inner.connection.read().unwrap())
 	}
 
 	pub fn to_mut<'a>(
@@ -687,8 +664,22 @@ impl Connection {
 	}
 }
 
+impl Drop for Connection {
+	fn drop(&mut self) {
+		println!("Count: {}", Arc::strong_count(&self.inner.connection));
+		if Arc::strong_count(&self.inner.connection) <= 2 {
+			// The last 2 references are in the packet handler and this one
+			// Disconnect
+			// TODO Now disconnects more often
+			let logger = self.inner.client_data.lock().unwrap().logger.clone();
+			tokio::spawn(self.clone().disconnect(None).map_err(move |e|
+				error!(logger, "Failed to disconnect"; "error" => ?e)));
+		}
+	}
+}
+
 impl<'a> ConnectionLock<'a> {
-	fn new(guard: MutexGuard<'a, data::Connection>) -> Self {
+	fn new(guard: RwLockReadGuard<'a, data::Connection>) -> Self {
 		Self { guard }
 	}
 }

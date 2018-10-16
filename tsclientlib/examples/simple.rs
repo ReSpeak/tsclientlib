@@ -74,11 +74,13 @@ fn main() -> Result<(), failure::Error> {
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		}).and_then(|con| {
 			// Disconnect
-			con.disconnect(
+			/*con.disconnect(
 				DisconnectOptions::new()
 					.reason(Reason::Clientdisconnect)
 					.message("Is this the real world?"),
-			)
+			)*/
+			drop(con);
+			Ok(())
 		}).map_err(|e| panic!("An error occurred {:?}", e)),
 	);
 
