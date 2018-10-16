@@ -16,23 +16,21 @@ include!(concat!(env!("OUT_DIR"), "/facades.rs"));
 
 macro_rules! max_clients {
 	($cmd:ident) => {{
-		let ch = if $cmd.is_max_clients_unlimited.unwrap_or(false)
-			|| $cmd.max_clients.is_none() {
+		let ch = if $cmd.is_max_clients_unlimited {
 			None
-		} else if $cmd.max_clients.unwrap() >= 0 && $cmd.max_clients.unwrap() <= u16::MAX as i32 {
-			Some($cmd.max_clients.unwrap() as u16)
+		} else if $cmd.max_clients >= 0 && $cmd.max_clients <= u16::MAX as i32 {
+			Some($cmd.max_clients as u16)
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
 		};
-		let ch_fam = if $cmd.is_max_family_clients_unlimited.unwrap_or(false)
-			|| $cmd.max_family_clients.is_none() {
+		let ch_fam = if $cmd.is_max_family_clients_unlimited {
 			MaxFamilyClients::Unlimited
-		} else if $cmd.inherits_max_family_clients.unwrap_or(false) {
+		} else if $cmd.inherits_max_family_clients {
 			MaxFamilyClients::Inherited
-		} else if $cmd.max_family_clients.unwrap() >= 0
-			&& $cmd.max_family_clients.unwrap() <= u16::MAX as i32 {
-			MaxFamilyClients::Limited($cmd.max_family_clients.unwrap() as u16)
+		} else if $cmd.max_family_clients >= 0
+			&& $cmd.max_family_clients <= u16::MAX as i32 {
+			MaxFamilyClients::Limited($cmd.max_family_clients as u16)
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			MaxFamilyClients::Unlimited

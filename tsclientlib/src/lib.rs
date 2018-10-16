@@ -284,7 +284,7 @@ impl Connection {
 
 		let logger = options.logger.take().unwrap_or_else(|| {
 			let decorator = slog_term::TermDecorator::new().build();
-			let drain = slog_term::FullFormat::new(decorator).build().fuse();
+			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
 			let drain = slog_async::Async::new(drain).build().fuse();
 
 			slog::Logger::root(drain, o!())
@@ -626,7 +626,7 @@ impl Connection {
 	/// # }
 	/// ```
 	pub fn disconnect<O: Into<Option<DisconnectOptions>>>(
-		self,
+		&self,
 		options: O,
 	) -> BoxFuture<()> {
 		let options = options.into().unwrap_or_default();
@@ -652,6 +652,7 @@ impl Connection {
 					false
 				}
 			});
+		let inner = self.inner.clone();
 		Box::new(
 			self.inner
 				.client_connection
@@ -659,20 +660,19 @@ impl Connection {
 				.send(packet)
 				.and_then(move |_| wait_for_state)
 				.from_err()
-				.map(move |_| drop(self)),
+				// Make sure that the last reference lives long enough
+				.map(move |_| drop(inner)),
 		)
 	}
 }
 
 impl Drop for Connection {
 	fn drop(&mut self) {
-		println!("Count: {}", Arc::strong_count(&self.inner.connection));
 		if Arc::strong_count(&self.inner.connection) <= 2 {
 			// The last 2 references are in the packet handler and this one
 			// Disconnect
-			// TODO Now disconnects more often
 			let logger = self.inner.client_data.lock().unwrap().logger.clone();
-			tokio::spawn(self.clone().disconnect(None).map_err(move |e|
+			tokio::spawn(self.disconnect(None).map_err(move |e|
 				error!(logger, "Failed to disconnect"; "error" => ?e)));
 		}
 	}

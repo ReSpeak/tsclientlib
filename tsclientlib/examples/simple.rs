@@ -12,7 +12,7 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Reason};
+use tsclientlib::{ConnectOptions, Connection};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(
@@ -74,11 +74,6 @@ fn main() -> Result<(), failure::Error> {
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		}).and_then(|con| {
 			// Disconnect
-			/*con.disconnect(
-				DisconnectOptions::new()
-					.reason(Reason::Clientdisconnect)
-					.message("Is this the real world?"),
-			)*/
 			drop(con);
 			Ok(())
 		}).map_err(|e| panic!("An error occurred {:?}", e)),
