@@ -1,5 +1,5 @@
-use book_parser::{PropId, Property, Struct};
-use message_parser::{Field, Message};
+use tsproto_structs::book::{BookDeclarations, PropId, Property, Struct};
+use tsproto_structs::messages::{MessageDeclarations, Field, Message};
 use *;
 
 use std::str::FromStr;

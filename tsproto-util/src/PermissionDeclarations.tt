@@ -2,7 +2,7 @@
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 #[allow(non_camel_case_types)]
 pub enum Permission {
-<# for e in &self.0 { #>
+<# for e in &**self { #>
 	<# if !e.doc.is_empty() { #>
 <#= indent(&doc_comment(&e.doc), 1) #>
 	<# } #>

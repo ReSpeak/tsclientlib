@@ -10,7 +10,7 @@ pub enum VersionChannel {
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(non_camel_case_types)]
 pub enum Version {
-<# for v in &self.0 { #>
+<# for v in &**self { #>
 	<#= v.get_enum_name() #>,
 <# } #>
 	Custom { platform: String, version: String, signature: Vec<u8>, channel: VersionChannel },
@@ -19,7 +19,7 @@ pub enum Version {
 impl Version {
 	pub fn get_platform(&self) -> &str {
 		match *self {
-		<# for v in &self.0 { #>
+		<# for v in &**self { #>
 			Version::<#= v.get_enum_name() #> => "<#= v.platform #>",
 		<# } #>
 			Version::Custom { ref platform, .. } => platform,
@@ -28,7 +28,7 @@ impl Version {
 
 	pub fn get_version_string(&self) -> &str {
 		match *self {
-		<# for v in &self.0 { #>
+		<# for v in &**self { #>
 			Version::<#= v.get_enum_name() #> => "<#= v.version #>",
 		<# } #>
 			Version::Custom { ref version, .. } => version,
@@ -37,7 +37,7 @@ impl Version {
 
 	pub fn get_signature(&self) -> &[u8] {
 		match *self {
-		<# for v in &self.0 { #>
+		<# for v in &**self { #>
 			Version::<#= v.get_enum_name() #> => &[<#= v.get_sign_array() #>],
 		<# } #>
 			Version::Custom { ref signature, .. } => signature,
@@ -46,7 +46,7 @@ impl Version {
 
 	pub fn get_channel(&self) -> VersionChannel {
 		match *self {
-		<# for v in &self.0 { #>
+		<# for v in &**self { #>
 			Version::<#= v.get_enum_name() #> => VersionChannel::<#= v.channel #>,
 		<# } #>
 			Version::Custom { channel, .. } => channel,

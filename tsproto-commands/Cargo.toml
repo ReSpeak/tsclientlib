@@ -12,6 +12,7 @@ num = "0.1"
 num-traits = "0.2"
 num-derive = "0.2"
 tsproto = { path = "../tsproto" }
+tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools" }
 
 [build-dependencies]
 tsproto-util = { path = "../tsproto-util" }

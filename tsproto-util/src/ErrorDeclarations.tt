@@ -1,7 +1,7 @@
 <#@ template cleanws="true" #>
 #[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
 pub enum Error {
-<# for e in &self.0 { #>
+<# for e in &**self { #>
 	<# if !e.doc.is_empty() { #>
 <#= indent(&doc_comment(&e.doc), 1) #>
 	<# } #>

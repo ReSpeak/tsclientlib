@@ -4,9 +4,10 @@ extern crate regex;
 #[macro_use]
 extern crate t4rust_derive;
 extern crate serde;
-extern crate toml;
 #[macro_use]
 extern crate serde_derive;
+extern crate toml;
+extern crate tsproto_structs;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -22,6 +23,8 @@ mod packets_parser;
 mod permission_parser;
 mod version_parser;
 
+pub use tsproto_structs::EnumValue;
+
 pub use book_ffi::BookFfi;
 pub use book_parser::BookDeclarations;
 pub use error_parser::Errors;
@@ -31,13 +34,6 @@ pub use messages_to_book_parser::MessagesToBookDeclarations;
 pub use packets_parser::Packets;
 pub use permission_parser::Permissions;
 pub use version_parser::Versions;
-
-#[derive(Debug, Deserialize)]
-pub struct EnumValue {
-	pub name: String,
-	pub doc: String,
-	pub num: String,
-}
 
 pub trait Declaration {
 	type Dep;

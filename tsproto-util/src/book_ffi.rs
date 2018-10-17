@@ -1,4 +1,4 @@
-use book_parser::Struct;
+use tsproto_structs::book::{BookDeclarations, Struct};
 use *;
 
 #[derive(Template)]
