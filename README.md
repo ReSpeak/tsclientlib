@@ -4,7 +4,7 @@ The various libraries in this repository are currently a work in progress so don
 
 This repository implements the TeamSpeak3 protocol for usage in clients and bots.
 
-If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint) is a cross-platform TeamSpeak client, which ~~is~~ will be using this library.
+If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint) is a cross-platform TeamSpeak client, which is using this library.
 
 ## Projects
 

@@ -246,7 +246,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				let mut con = con_val.mutex.lock().unwrap();
 				let mut ignore_packet = true;
 				let mut is_end = false;
-				let handle_res = Self::handle_packet(
+				let handle_res = match Self::handle_packet(
 					&con_val3,
 					&mut *con,
 					&p,
@@ -254,7 +254,15 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					&mut is_end,
 					key,
 					&logger,
-				)?;
+				) {
+					Ok(r) => r,
+					Err(e) => {
+						error!(logger, "Error handling client packet";
+							"error" => ?e);
+						// Ignore packet, it is probably malformed
+						return Ok(None);
+					}
+				};
 
 				if let Some((s, packet)) = handle_res {
 					con.0.state = s;
