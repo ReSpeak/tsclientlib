@@ -1,3 +1,4 @@
+use std::default::Default;
 use tsproto_structs::book::{BookDeclarations, Struct};
 use *;
 
@@ -5,6 +6,12 @@ use *;
 #[TemplatePath = "src/BookFfi.tt"]
 #[derive(Debug)]
 pub struct BookFfi<'a>(pub &'a BookDeclarations);
+
+impl Default for BookFfi<'static> {
+	fn default() -> Self {
+		BookFfi(&tsproto_structs::book::DATA)
+	}
+}
 
 /// If the type is a more complex struct which cannot be returned easily.
 fn is_special_type(s: &str) -> bool {

@@ -1,6 +1,8 @@
+// TODO The parsing is outdated, it should be migrated to tsproto_structs.
 use std::io;
 use std::mem;
 use std::str;
+use tsproto_structs::unindent;
 use *;
 
 type Result<T> = ::std::result::Result<T, io::Error>;

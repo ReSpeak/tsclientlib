@@ -1,12 +1,5 @@
-extern crate base64;
-extern crate csv;
-extern crate regex;
 #[macro_use]
 extern crate t4rust_derive;
-extern crate serde;
-#[macro_use]
-extern crate serde_derive;
-extern crate toml;
 extern crate tsproto_structs;
 
 use std::fs::File;
@@ -35,6 +28,7 @@ pub use packets_parser::Packets;
 pub use permission_parser::Permissions;
 pub use version_parser::Versions;
 
+// TODO Outdated, only here for the packet parser
 pub trait Declaration {
 	type Dep;
 
@@ -77,13 +71,11 @@ pub fn to_pascal_case<S: AsRef<str>>(text: S) -> String {
 	for c in sref.chars() {
 		if c == '_' {
 			uppercase = true;
+		} else if uppercase {
+			s.push(c.to_uppercase().next().unwrap());
+			uppercase = false;
 		} else {
-			if uppercase {
-				s.push(c.to_uppercase().next().unwrap());
-				uppercase = false;
-			} else {
-				s.push(c);
-			}
+			s.push(c);
 		}
 	}
 	s
@@ -144,14 +136,6 @@ pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
 	result
 }
 
-/// Unindent a string by a given count of tabs.
-fn unindent(mut s: &mut String) {
-	std::mem::swap(&mut s.replace("\n\t", "\n"), &mut s);
-	if s.get(0..1) == Some("\t") {
-		s.remove(0);
-	}
-}
-
 pub fn join<S: AsRef<str>, S2: AsRef<str>, I: Iterator<Item = S>>(
 	i: I,
 	joiner: S2,
@@ -175,8 +159,4 @@ pub fn unquote(s: &str) -> String {
 	s.replace("\\n", "\n")
 		.replace("\\\"", "\"")
 		.replace("\\\\", "\\")
-}
-
-pub fn get_false() -> bool {
-	false
 }

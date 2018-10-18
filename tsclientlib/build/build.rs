@@ -6,35 +6,22 @@ use std::io::prelude::*;
 use std::path::Path;
 
 use tsproto_util::{
-	BookDeclarations, Declaration, FacadeDeclarations, MessageDeclarations,
-	MessagesToBookDeclarations,
+	BookDeclarations, FacadeDeclarations, MessagesToBookDeclarations,
 };
 
 fn main() {
-	let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-	let base_dir = format!("{}/..", manifest_dir);
 	let out_dir = env::var("OUT_DIR").unwrap();
 
-	// Read declarations
-	let decls = BookDeclarations::from_file(&base_dir, ());
-
-	// Write declarations
+	// Book declarations
 	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("structs.rs")).unwrap();
-	write!(&mut structs, "{}", decls).unwrap();
+	write!(&mut structs, "{}", BookDeclarations::default()).unwrap();
 
-	let messages = MessageDeclarations::from_file(&base_dir, ());
+	// Messages to book
+	let mut structs = File::create(&path.join("m2bdecls.rs")).unwrap();
+	write!(&mut structs, "{}", MessagesToBookDeclarations::default()).unwrap();
 
-	{
-		let m2bdecls = MessagesToBookDeclarations::from_file(
-			&base_dir,
-			(&decls, &messages),
-		);
-		let mut structs = File::create(&path.join("m2bdecls.rs")).unwrap();
-		write!(&mut structs, "{}", m2bdecls).unwrap();
-	}
-
-	// Write facades
+	// Facades
 	let mut structs = File::create(&path.join("facades.rs")).unwrap();
-	write!(&mut structs, "{}", FacadeDeclarations(decls)).unwrap();
+	write!(&mut structs, "{}", FacadeDeclarations::default()).unwrap();
 }

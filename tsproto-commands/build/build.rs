@@ -5,44 +5,25 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-use tsproto_util::{
-	Declaration, Errors, MessageDeclarations, Permissions, Versions,
-};
+use tsproto_util::{Errors, MessageDeclarations, Permissions, Versions};
 
 fn main() {
-	let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-	let base_dir = format!("{}/..", manifest_dir);
 	let out_dir = env::var("OUT_DIR").unwrap();
 
-	// Read errors
-	let decls = Errors::from_file(&base_dir, ());
-
-	// Write errors
+	// Error declarations
 	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("errors.rs")).unwrap();
-	write!(&mut structs, "{}", decls).unwrap();
+	write!(&mut structs, "{}", Errors::default()).unwrap();
 
-	// Read permissions
-	let decls = Permissions::from_file(&base_dir, ());
-
-	// Write permissions
-	let path = Path::new(&out_dir);
+	// Permissions
 	let mut structs = File::create(&path.join("permissions.rs")).unwrap();
-	write!(&mut structs, "{}", decls).unwrap();
-
-	// Read messages
-	let decls = MessageDeclarations::from_file(&base_dir, ());
+	write!(&mut structs, "{}", Permissions::default()).unwrap();
 
 	// Write messages
-	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("messages.rs")).unwrap();
-	write!(&mut structs, "{}", decls).unwrap();
-
-	// Read versions
-	let decls = Versions::from_file(&base_dir, ());
+	write!(&mut structs, "{}", MessageDeclarations::default()).unwrap();
 
 	// Write versions
-	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("versions.rs")).unwrap();
-	write!(&mut structs, "{}", decls).unwrap();
+	write!(&mut structs, "{}", Versions::default()).unwrap();
 }

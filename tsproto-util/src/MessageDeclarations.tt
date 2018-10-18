@@ -178,7 +178,7 @@ fn vector_value_serializer(field: &Field, can_move: bool) -> String {
 
 #>
 
-<# for msg_group in &self.msg_group {
+<# for msg_group in &self.0.msg_group {
 	let defs = &msg_group.default;
 	for msg in &msg_group.msg { #>
 #[derive(Debug, Clone)]
@@ -189,7 +189,7 @@ pub struct <#= msg.name #> {
 
 	// Attributes
 	for a in &msg.attributes {
-		let field = self.get_field(a);
+		let field = self.0.get_field(a);
 #>
 	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a) #>,
 <# } #>
@@ -214,7 +214,7 @@ impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.name #> {
 		Ok(<#= msg.name #> {
 <#
 	for a in &msg.attributes {
-		let field = self.get_field(a);
+		let field = self.0.get_field(a);
 #>
 			<#= field.get_rust_name() #>: {
 				<# if !a.ends_with('?') { /* is not optional */ #>
@@ -244,7 +244,7 @@ impl<'a> Into<Command> for &'a <#= msg.name #> {
 			if a.ends_with('?') {
 				continue;
 			}
-			let field = self.get_field(a); #>
+			let field = self.0.get_field(a); #>
 			(String::from("<#= field.ts #>"), { let val = &self.<#= field.get_rust_name() #>; <#= generate_serializer(field, false) #> } ),
 <# } #>
 		];
@@ -255,7 +255,7 @@ impl<'a> Into<Command> for &'a <#= msg.name #> {
 			if !a.ends_with('?') {
 				continue;
 			}
-			let field = self.get_field(a); #>
+			let field = self.0.get_field(a); #>
 		if let Some(ref val) = self.<#= field.get_rust_name() #> {
 			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field, false) #> }));
 		}
@@ -277,7 +277,7 @@ impl Into<Command> for <#= msg.name #> {
 			if a.ends_with('?') {
 				continue;
 			}
-			let field = self.get_field(a); #>
+			let field = self.0.get_field(a); #>
 			(String::from("<#= field.ts #>"), { let val = self.<#= field.get_rust_name() #>; <#= generate_serializer(field, true) #> } ),
 <# } #>
 		];
@@ -288,7 +288,7 @@ impl Into<Command> for <#= msg.name #> {
 			if !a.ends_with('?') {
 				continue;
 			}
-			let field = self.get_field(a); #>
+			let field = self.0.get_field(a); #>
 		if let Some(val) = self.<#= field.get_rust_name() #> {
 			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field, true) #> }));
 		}
@@ -308,7 +308,7 @@ impl Into<Command> for <#= msg.name #> {
 #>
 #[derive(Debug, Clone)]
 pub enum Message {
-<# for msg_group in &self.msg_group {
+<# for msg_group in &self.0.msg_group {
 	for msg in &msg_group.msg { #>
 	<#= msg.name #>(<#= msg.name #>),
 <# }
@@ -318,7 +318,7 @@ pub enum Message {
 impl Message {
 	pub fn parse(cmd: CanonicalCommand) -> Result<Self, ParseError> {
 		match cmd.command {
-			<# for msg_group in &self.msg_group {
+			<# for msg_group in &self.0.msg_group {
 				for msg in msg_group.msg.iter().filter(|m| m.notify.is_some()) { #>
 			"<#= msg.notify.as_ref().unwrap() #>" => Ok(Message::<#= msg.name #>(<#= msg.name #>::try_from(&cmd)?)),
 			<# }
@@ -329,7 +329,7 @@ impl Message {
 
 	pub fn get_commandlow(&self) -> bool {
 		match self {
-			<# for msg_group in &self.msg_group {
+			<# for msg_group in &self.0.msg_group {
 				for msg in &msg_group.msg { #>
 			Message::<#= msg.name #>(_) => <#= msg_group.default.low #>,
 			<# }
@@ -339,7 +339,7 @@ impl Message {
 
 	pub fn get_newprotocol(&self) -> bool {
 		match self {
-			<# for msg_group in &self.msg_group {
+			<# for msg_group in &self.0.msg_group {
 				for msg in &msg_group.msg { #>
 			Message::<#= msg.name #>(_) => <#= msg_group.default.np #>,
 			<# }
@@ -351,7 +351,7 @@ impl Message {
 impl Into<Command> for Message {
 	fn into(self) -> Command {
 		match self {
-			<# for msg_group in &self.msg_group {
+			<# for msg_group in &self.0.msg_group {
 				for msg in &msg_group.msg { #>
 			Message::<#= msg.name #>(cmd) => cmd.into(),
 			<# }
@@ -363,7 +363,7 @@ impl Into<Command> for Message {
 impl<'a> Into<Command> for &'a Message {
 	fn into(self) -> Command {
 		match *self {
-			<# for msg_group in &self.msg_group {
+			<# for msg_group in &self.0.msg_group {
 				for msg in &msg_group.msg { #>
 			Message::<#= msg.name #>(ref cmd) => cmd.into(),
 			<# }
