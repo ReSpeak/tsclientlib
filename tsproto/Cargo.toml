@@ -40,8 +40,7 @@ slog-perf = "0.2"
 slog-term = "2"
 tokio = "0.1"
 tokio-threadpool = "0.1"
-#quicklz = "0.1"
-quicklz = { git = "https://github.com/ReSpeak/quicklz.git" }
+quicklz = "0.2"
 yasna = "0.1"
 
 [dependencies.slog]

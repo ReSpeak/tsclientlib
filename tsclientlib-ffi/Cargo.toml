@@ -16,4 +16,5 @@ tokio = "0.1"
 tsclientlib = { path = "../tsclientlib" }
 
 [build-dependencies]
+tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
 tsproto-util = { path = "../tsproto-util" }

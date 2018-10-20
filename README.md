@@ -18,9 +18,13 @@ If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint
 git clone --recurse-submodules https://github.com/ReSpeak/tsclientlib.git
 ```
 
-## Build and run the example client
+## Dependencies
 
-You need to install rust (preferred installation method is [rustup](https://rustup.rs/)) to build these projects.
+- OpenSSL 1.1
+- GStreamer
+- Rust (preferred installation method is [rustup](https://rustup.rs))
+
+## Build and run the example client
 
 ```
 cd tsclientlib
