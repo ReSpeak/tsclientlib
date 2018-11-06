@@ -19,7 +19,7 @@ travis-ci = { repository = "ReSpeak/tsclientlib" }
 default = ["rust-gmp"]
 
 [dependencies]
-base64 = "0.9"
+base64 = "0.10"
 byteorder = "1"
 bytes = "0.4"
 chrono = "0.4"

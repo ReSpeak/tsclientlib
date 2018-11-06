@@ -223,6 +223,7 @@ impl<Inner: Stream<Item=Packet, Error=tsproto::Error>> Stream for SimplePacketSt
 									from the packet handler failed");
 							}
 						}
+						// TODO Not unreachable??
 						_ => unreachable!("Got wrong packet type in command handler"),
 					}
 					task::current().notify();

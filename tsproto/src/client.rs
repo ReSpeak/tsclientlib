@@ -27,9 +27,9 @@ use license::Licenses;
 use packets::*;
 use {packets, Error, Result};
 
-/// The data of our client.
 pub type CM<PH> =
 	SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
+/// The data of our client.
 pub type ClientData<PH> = Data<CM<PH>>;
 pub type ClientDataM<PH> = DataM<CM<PH>>;
 /// Connections from a client to a server.

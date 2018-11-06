@@ -62,7 +62,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 
 	// Set the data reference
 	let c2 = Arc::downgrade(&c);
-	c.try_lock().unwrap().packet_handler.complete(c2);
+	c.lock().unwrap().packet_handler.complete(c2);
 
 	c
 }

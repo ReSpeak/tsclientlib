@@ -385,4 +385,10 @@ mod tests {
 		let s = b"notifychannelsubscribed cid=2|cid=4 es=3867|cid=5 es=18694|cid=6 es=18694|cid=7 es=18694|cid=11 es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
 		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
 	}
+
+	#[test]
+	fn permissionlist() {
+		let s = b"notifypermissionlist group_id_end=0|group_id_end=7|group_id_end=13|group_id_end=18|group_id_end=21|group_id_end=21|group_id_end=33|group_id_end=47|group_id_end=77|group_id_end=82|group_id_end=83|group_id_end=106|group_id_end=126|group_id_end=132|group_id_end=143|group_id_end=151|group_id_end=160|group_id_end=162|group_id_end=170|group_id_end=172|group_id_end=190|group_id_end=197|group_id_end=215|group_id_end=227|group_id_end=232|group_id_end=248|permname=b_serverinstance_help_view permdesc=Retrieve\\sinformation\\sabout\\sServerQuery\\scommands|permname=b_serverinstance_version_view permdesc=Retrieve\\sglobal\\sserver\\sversion\\s(including\\splatform\\sand\\sbuild\\snumber)|permname=b_serverinstance_info_view permdesc=Retrieve\\sglobal\\sserver\\sinformation|permname=b_serverinstance_virtualserver_list permdesc=List\\svirtual\\sservers\\sstored\\sin\\sthe\\sdatabase";
+		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+	}
 }

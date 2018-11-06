@@ -269,6 +269,9 @@ impl License {
 				)
 			}
 			2 => {
+				if data.len() < 47 {
+					return Err(format_err!("License too short").into());
+				}
 				let license_type =
 					LicenseType::from_u8(data[42]).ok_or_else(|| {
 						format_err!("Unknown license type {}", data[42])
@@ -281,6 +284,9 @@ impl License {
 				} else {
 					return Err(format_err!("Non-null-terminated string").into());
 				};
+				if data.len() < 47 + len {
+					return Err(format_err!("License too short").into());
+				}
 				let issuer = str::from_utf8(&data[47..47 + len])?.to_string();
 				(
 					InnerLicense::Server {
