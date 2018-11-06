@@ -100,7 +100,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						header,
 						pos,
 					) {
-						error!(logger, "Error handling udp packed"; "error" => ?e);
+						error!(logger, "Error handling udp packet"; "error" => ?e);
 					}
 					Ok(())
 				}));
@@ -191,7 +191,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						if dec_res.is_err() && header.get_type() ==
 							PacketType::Ack && header.p_id == 1 && is_client {
 							// Ignore error, this is the ack packet for the
-							// clientinit, we tak ethe initserver as ack anyway.
+							// clientinit, we take the initserver as ack anyway.
 							return Ok(());
 						}
 
@@ -247,6 +247,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 										PacketType::CommandLow
 									};
 								con.1.resender.ack_packet(p_type, p_id);
+								if log_packets {
+									let p = Packet::new(header, p_data);
+									::log::PacketLogger::log_packet(
+										&logger, is_client, true, &p);
+								}
 								return Ok(());
 							}
 							PData::VoiceS2C { .. }
@@ -314,7 +319,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// we hold a lock on the connection.
 			for p in packets {
 				if log_packets {
-					::log::PacketLogger::log_packet(&logger, is_client, &p);
+					::log::PacketLogger::log_packet(&logger, is_client, true, &p);
 				}
 				// Send to packet handler
 				if let Err(e) = con.1.command_sink.unbounded_send(p) {
@@ -327,7 +332,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 
 		let packet = packet?;
 		if log_packets {
-			::log::PacketLogger::log_packet(&logger, is_client, &packet);
+			::log::PacketLogger::log_packet(&logger, is_client, true, &packet);
 		}
 
 		let sink = match packet.data {

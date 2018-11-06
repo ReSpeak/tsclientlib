@@ -347,7 +347,6 @@ impl Connection {
 					let client2 = Arc::downgrade(&client);
 					client.try_lock().unwrap().packet_handler.complete(client2);
 
-					let logger = logger.clone();
 					let client = client.clone();
 					let client2 = client.clone();
 					let options = options.clone();
@@ -378,31 +377,43 @@ impl Connection {
 							}
 						});
 
-					let logger2 = logger.clone();
 					Box::new(
 						connect_fut
-				.and_then(move |con| {
+				.and_then(move |con| -> Box<Future<Item=_, Error=_> + Send> {
+					let logger = {
+						let mutex = match con.upgrade().ok_or_else(||
+							format_err!("Connection does not exist anymore")) {
+							Ok(r) => r.mutex,
+							Err(e) => return Box::new(future::err(e.into())),
+						};
+						let con = mutex.lock().unwrap();
+						con.1.logger.clone()
+					};
 					// TODO Add possibility to specify offset and level in ConnectOptions
 					// Compute hash cash
 					let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-						"Compute public key hash cash level", logger2.clone(),
+						"Compute public key hash cash level", logger.clone(),
 						slog::Level::Info);
 					time_reporter.start("Compute public key hash cash level");
 					let pub_k = {
 						let mut c = client.lock().unwrap();
 						c.private_key.to_pub()
 					};
-					future::poll_fn(move || {
+					Box::new(future::poll_fn(move || {
 						tokio_threadpool::blocking(|| {
-							let res = (con.clone(), algs::hash_cash(&pub_k, 8).unwrap(),
-								pub_k.to_ts().unwrap());
+							let res = (
+								con.clone(),
+								algs::hash_cash(&pub_k, 8).unwrap(),
+								pub_k.to_ts().unwrap(),
+								logger.clone(),
+							);
 							res
 						})
 					}).map(|r| { time_reporter.finish(); r })
 					.map_err(|e| format_err!("Failed to start \
-						blocking operation ({:?})", e).into())
+						blocking operation ({:?})", e).into()))
 				})
-				.and_then(move |(con, offset, omega)| {
+				.and_then(move |(con, offset, omega, logger)| {
 					info!(logger, "Computed hash cash level";
 						"level" => algs::get_hash_cash_level(&omega, offset),
 						"offset" => offset);

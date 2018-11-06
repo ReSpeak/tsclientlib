@@ -40,12 +40,15 @@ impl PacketLogger {
 		debug!(logger, "UdpPacket"; "content" => ?packet);
 	}
 
-	pub fn log_packet(logger: &Logger, is_client: bool, packet: &Packet) {
-		let logger = Self::prepare_logger(
-			logger,
-			is_client,
-			is_client != packet.header.c_id.is_some(),
-		);
+	pub fn log_packet(
+		logger: &Logger,
+		is_client: bool,
+		incoming: bool,
+		packet: &Packet,
+	) {
+		// packet.header.c_id is not set for newly created packets so we cannot
+		// detect if a packet is incoming or not.
+		let logger = Self::prepare_logger(logger, is_client, incoming);
 		debug!(logger, "Packet"; "content" => ?packet);
 	}
 }

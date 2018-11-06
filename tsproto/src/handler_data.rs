@@ -108,6 +108,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 			::log::PacketLogger::log_packet(
 				&con.1.logger,
 				con.1.is_client,
+				false,
 				&packet,
 			);
 		}

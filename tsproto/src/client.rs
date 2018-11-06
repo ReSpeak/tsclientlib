@@ -225,7 +225,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				}
 
 				// Get private key
-				let (key, logger) = {
+				let key = {
 					let d = if let Some(d) = data.upgrade() {
 						d
 					} else {
@@ -235,7 +235,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						).into());
 					};
 					let d = d.lock().unwrap();
-					(d.private_key.clone(), d.logger.clone())
+					d.private_key.clone()
 				};
 
 				let con_val_weak = con_val2.clone();
@@ -244,6 +244,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					.ok_or_else(|| format_err!("Connection is gone"))?;
 				let con_val3 = con_val.clone();
 				let mut con = con_val.mutex.lock().unwrap();
+				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
 				let mut is_end = false;
 				let handle_res = match Self::handle_packet(
@@ -653,7 +654,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 								params.incoming_p_ids
 									[PacketType::Command.to_usize().unwrap()].1 = 1;
 								// And we sent an ack.
-								params.incoming_p_ids
+								params.outgoing_p_ids
 									[PacketType::Ack.to_usize().unwrap()].1 = 1;
 								*con_params = Some(params);
 
