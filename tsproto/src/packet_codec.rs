@@ -14,7 +14,7 @@ use slog::Logger;
 use {evmap, tokio};
 
 use algorithms as algs;
-use connection::{ConnectedParams, Connection};
+use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender};
 use handler_data::{ConnectionValue, Data};
 use packets::Data as PData;
@@ -143,43 +143,47 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		let con = &mut *con;
 		let dec_data;
 		let dec_data1;
+		let packet;
 		let mut udp_packet = &udp_packet[pos..];
 		let mut ack = None;
 		let mut packets = None;
-		let packet = if let Some(ref mut params) = con.1.params {
-			if header.get_type() == PacketType::Init {
-				return Err(Error::UnexpectedInitPacket);
-			}
-			let p_type = header.get_type();
-			let type_i = p_type.to_usize().unwrap();
-			let id = header.p_id;
 
-			let (in_recv_win, gen_id, cur_next, limit) =
-				params.in_receive_window(p_type, id);
-			// Ignore range for acks
-			let res = if p_type == PacketType::Ack
-				|| p_type == PacketType::AckLow
-				|| in_recv_win
-			{
-				if !header.get_unencrypted() {
-					// If it is the first ack packet of a client, try to fake
-					// decrypt it.
-					let decrypted = if header.get_type() == PacketType::Ack
-						&& header.p_id == 0
-						&& is_client
+		let p_type = header.get_type();
+		let type_i = p_type.to_usize().unwrap();
+		let id = header.p_id;
+		let (in_recv_win, gen_id, cur_next, limit) =
+			con.1.in_receive_window(p_type, id);
+		let r_queue = &mut con.1.receive_queue;
+		let frag_queue = &mut con.1.fragmented_queue;
+		let in_ids = &mut con.1.incoming_p_ids;
+
+		if con.1.params.is_some() && p_type == PacketType::Init {
+			return Err(Error::UnexpectedInitPacket);
+		}
+
+		// Ignore range for acks
+		if p_type == PacketType::Ack || p_type == PacketType::AckLow
+			|| in_recv_win
+		{
+			if !header.get_unencrypted() {
+				// If it is the first ack packet of a client, try to fake
+				// decrypt it.
+				let decrypted = if (p_type == PacketType::Ack
+					&& id <= 1
+					&& is_client) || con.1.params.is_none() {
+					if let Ok(dec) = algs::decrypt_fake(&header, udp_packet)
 					{
-						if let Ok(dec) = algs::decrypt_fake(&header, udp_packet)
-						{
-							dec_data = dec;
-							udp_packet = &dec_data;
-							true
-						} else {
-							false
-						}
+						dec_data = dec;
+						udp_packet = &dec_data;
+						true
 					} else {
 						false
-					};
-					if !decrypted {
+					}
+				} else {
+					false
+				};
+				if !decrypted {
+					if let Some(params) = &mut con.1.params {
 						// Decrypt the packet
 						let dec_res = algs::decrypt(
 							&header,
@@ -188,8 +192,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							&params.shared_iv,
 							&mut params.key_cache,
 						);
-						if dec_res.is_err() && header.get_type() ==
-							PacketType::Ack && header.p_id == 1 && is_client {
+						if dec_res.is_err() && p_type == PacketType::Ack
+							&& id == 1 && is_client {
 							// Ignore error, this is the ack packet for the
 							// clientinit, we take the initserver as ack anyway.
 							return Ok(());
@@ -197,105 +201,97 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 
 						dec_data1 = dec_res?;
 						udp_packet = &dec_data1;
+					} else {
+						// Failed to fake decrypt the packet
+						return Err(Error::WrongMac);
 					}
-				} else if algs::must_encrypt(header.get_type()) {
-					// Check if it is ok for the packet to be unencrypted
-					return Err(Error::UnallowedUnencryptedPacket);
 				}
-				match header.get_type() {
-					PacketType::Command | PacketType::CommandLow => {
-						if header.get_type() == PacketType::Command {
-							ack = Some((
-								PacketType::Ack,
-								PData::Ack(header.p_id),
-							));
-						} else if header.get_type() == PacketType::CommandLow {
-							ack = Some((
-								PacketType::AckLow,
-								PData::AckLow(header.p_id),
-							));
-						}
-						packets = Some(Self::handle_command_packet(
-							logger, params, header, udp_packet,
-						)?);
-
-						Err(Error::UnallowedUnencryptedPacket)
-					}
-					_ => Ok({
-						if header.get_type() == PacketType::Ping {
-							ack = Some((
-								PacketType::Pong,
-								PData::Pong(header.p_id),
-							));
-						}
-						// Update packet ids
-						let (id, next_gen) = id.overflowing_add(1);
-						params.incoming_p_ids[type_i] =
-							(if next_gen { gen_id + 1 } else { gen_id }, id);
-
-						let p_data = PData::read(
-							&header,
-							&mut Cursor::new(&udp_packet),
-						)?;
-						match p_data {
-							PData::Ack(p_id) | PData::AckLow(p_id) => {
-								// Remove command packet from send queue if the fitting ack is received.
-								let p_type =
-									if header.get_type() == PacketType::Ack {
-										PacketType::Command
-									} else {
-										PacketType::CommandLow
-									};
-								con.1.resender.ack_packet(p_type, p_id);
-								if log_packets {
-									let p = Packet::new(header, p_data);
-									::log::PacketLogger::log_packet(
-										&logger, is_client, true, &p);
-								}
-								return Ok(());
-							}
-							PData::VoiceS2C { .. }
-							| PData::VoiceWhisperS2C { .. } => {
-								// Seems to work better without assembling the first 3 voice packets
-								// Use handle_voice_packet to assemble fragmented voice packets
-								/*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
-								let res = res.drain(..).map(|p|
-									(con_key.clone(), p)).collect();
-								Ok(res)*/
-								Packet::new(header, p_data)
-							}
-							_ => Packet::new(header, p_data),
-						}
-					}),
-				}
-			} else {
-				// Send an ack for the case when it was lost
-				if header.get_type() == PacketType::Command {
-					ack = Some((PacketType::Ack, PData::Ack(header.p_id)));
-				} else if header.get_type() == PacketType::CommandLow {
-					ack =
-						Some((PacketType::AckLow, PData::AckLow(header.p_id)));
-				}
-				Err(Error::NotInReceiveWindow {
-					id,
-					next: cur_next,
-					limit,
-					p_type: header.get_type(),
-				})
-			};
-			res
-		} else {
-			// Try to fake decrypt the packet
-			if let Ok(dec) = algs::decrypt_fake(&header, &udp_packet) {
-				dec_data = dec;
-				udp_packet = &dec_data;
-				// Send ack
-				if header.get_type() == PacketType::Command {
-					ack = Some((PacketType::Ack, PData::Ack(header.p_id)));
-				}
+			} else if algs::must_encrypt(p_type) {
+				// Check if it is ok for the packet to be unencrypted
+				return Err(Error::UnallowedUnencryptedPacket);
 			}
-			let p_data = PData::read(&header, &mut Cursor::new(&*udp_packet))?;
-			Ok(Packet::new(header, p_data))
+			match p_type {
+				PacketType::Command | PacketType::CommandLow => {
+					if p_type == PacketType::Command {
+						ack = Some((
+							PacketType::Ack,
+							PData::Ack(id),
+						));
+					} else if p_type == PacketType::CommandLow {
+						ack = Some((
+							PacketType::AckLow,
+							PData::AckLow(id),
+						));
+					}
+					packets = Some(Self::handle_command_packet(
+						logger, r_queue, frag_queue, in_ids, header,
+						udp_packet,
+					)?);
+
+					// Dummy value
+					packet = Err(Error::UnallowedUnencryptedPacket);
+				}
+				_ => {
+					if p_type == PacketType::Ping {
+						ack = Some((
+							PacketType::Pong,
+							PData::Pong(id),
+						));
+					}
+					// Update packet ids
+					let (id, next_gen) = id.overflowing_add(1);
+					if p_type != PacketType::Init {
+						in_ids[type_i] = (if next_gen { gen_id + 1 } else { gen_id }, id);
+					}
+
+					let p_data = PData::read(
+						&header,
+						&mut Cursor::new(&udp_packet),
+					)?;
+					match p_data {
+						PData::Ack(p_id) | PData::AckLow(p_id) => {
+							// Remove command packet from send queue if the fitting ack is received.
+							let p_type =
+								if p_type == PacketType::Ack {
+									PacketType::Command
+								} else {
+									PacketType::CommandLow
+								};
+							con.1.resender.ack_packet(p_type, p_id);
+							if log_packets {
+								let p = Packet::new(header, p_data);
+								::log::PacketLogger::log_packet(
+									&logger, is_client, true, &p);
+							}
+							return Ok(());
+						}
+						PData::VoiceS2C { .. }
+						| PData::VoiceWhisperS2C { .. } => {
+							// Seems to work better without assembling the first 3 voice packets
+							// Use handle_voice_packet to assemble fragmented voice packets
+							/*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
+							let res = res.drain(..).map(|p|
+								(con_key.clone(), p)).collect();
+							Ok(res)*/
+							packet = Ok(Packet::new(header, p_data));
+						}
+						_ => packet = Ok(Packet::new(header, p_data)),
+					}
+				},
+			}
+		} else {
+			// Send an ack for the case when it was lost
+			if p_type == PacketType::Command {
+				ack = Some((PacketType::Ack, PData::Ack(id)));
+			} else if p_type == PacketType::CommandLow {
+				ack = Some((PacketType::AckLow, PData::AckLow(id)));
+			}
+			packet = Err(Error::NotInReceiveWindow {
+				id,
+				next: cur_next,
+				limit,
+				p_type,
+			});
 		};
 
 		// Send ack
@@ -356,7 +352,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	/// They have to be handled in the right order.
 	fn handle_command_packet(
 		logger: &Logger,
-		params: &mut ConnectedParams,
+		r_queue: &mut [Vec<(Header, Vec<u8>)>; 2],
+		frag_queue: &mut [Option<(Header, Vec<u8>)>; 2],
+		in_ids: &mut [(u32, u16); 8],
 		mut header: Header,
 		udp_packet: &[u8],
 	) -> Result<Vec<Packet>> {
@@ -368,9 +366,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		} else {
 			1
 		};
-		let r_queue = &mut params.receive_queue[cmd_i];
-		let frag_queue = &mut params.fragmented_queue[cmd_i];
-		let in_ids = &mut params.incoming_p_ids[type_i];
+		let r_queue = &mut r_queue[cmd_i];
+		let frag_queue = &mut frag_queue[cmd_i];
+		let in_ids = &mut in_ids[type_i];
 		let cur_next = in_ids.1;
 		if cur_next == id {
 			// In order
@@ -557,8 +555,11 @@ impl PacketCodecSender {
 		con: &mut Connection,
 		mut packet: Packet,
 	) -> Result<Vec<(u16, Bytes)>> {
-		let use_newprotocol = (packet.header.get_type() == PacketType::Command
-			|| packet.header.get_type() == PacketType::CommandLow)
+		let p_type = packet.header.get_type();
+		let type_i = p_type.to_usize().unwrap();
+
+		let use_newprotocol = (p_type == PacketType::Command
+			|| p_type == PacketType::CommandLow)
 			&& self.is_client;
 
 		// Change state on disconnect
@@ -570,134 +571,148 @@ impl PacketCodecSender {
 			}
 		}
 
-		// Get the connection parameters
-		if let Some(params) = con.params.as_mut() {
-			let p_type = packet.header.get_type();
-			let type_i = p_type.to_usize().unwrap();
-
-			let (gen, p_id) = params.outgoing_p_ids[type_i];
-			// We fake encrypt the first command packet of the
-			// server (id 0) and the first command packet of the
-			// client (id 1) if the client uses the new protocol
-			// (the packet is a clientek).
-			let fake_encrypt = p_type == PacketType::Command
-				&& gen == 0 && ((!self.is_client && p_id == 0)
-				|| (self.is_client && p_id == 1 && {
-					// Test if it is a clientek packet
-					if let PData::Command(ref cmd) = packet.data {
-						cmd.command == "clientek"
-					} else {
-						false
-					}
-				}));
-
-			// Compress and split packet
-			let mut packets = if p_type == PacketType::Command
-				|| p_type == PacketType::CommandLow
-			{
-				algs::compress_and_split(self.is_client, &packet)
-			} else {
-				// Set the inner packet id for voice packets
-				match packet.data {
-					PData::VoiceC2S { ref mut id, .. }
-					| PData::VoiceS2C { ref mut id, .. }
-					| PData::VoiceWhisperC2S { ref mut id, .. }
-					| PData::VoiceWhisperNewC2S { ref mut id, .. }
-					| PData::VoiceWhisperS2C { ref mut id, .. } => {
-						*id = params.outgoing_p_ids[type_i].1;
-					}
-					_ => {}
-				}
-
-				let mut data = Vec::new();
-				packet.data.write(&mut data).unwrap();
-				vec![(packet.header, data)]
-			};
-			let packets = packets
-				.drain(..)
-				.map(|(mut header, mut p_data)| -> Result<_> {
-					// Packet data (without header)
-					// Get packet id
-					let (mut gen, mut p_id) = params.outgoing_p_ids[type_i];
-					header.p_id = p_id;
-
-					// Client id for clients
-					if self.is_client {
-						header.c_id = Some(params.c_id);
-					} else {
-						header.c_id = None;
-					}
-
-					// Set newprotocol flag if needed
-					if use_newprotocol {
-						header.set_newprotocol(true);
-					}
-
-					// Encrypt if necessary, fake encrypt the initivexpand packet
-					if algs::should_encrypt(
-						header.get_type(),
-						params.voice_encryption,
-					) {
-						header.set_unencrypted(false);
-						if fake_encrypt {
-							p_data = algs::encrypt_fake(&mut header, &p_data)?;
-						} else {
-							p_data = algs::encrypt(
-								&mut header,
-								&p_data,
-								gen,
-								&params.shared_iv,
-								&mut params.key_cache,
-							)?;
-						}
-					} else {
-						header.set_unencrypted(true);
-						header.mac.copy_from_slice(&params.shared_mac);
-					};
-
-					// Increment outgoing_p_ids
-					p_id = p_id.wrapping_add(1);
-					if p_id == 0 {
-						gen = gen.wrapping_add(1);
-					}
-					params.outgoing_p_ids[type_i] = (gen, p_id);
-					let mut buf = Vec::new();
-					header.write(&mut buf)?;
-					buf.append(&mut p_data);
-					Ok((header.p_id, buf.into()))
-				}).collect::<Result<Vec<_>>>()?;
-			Ok(packets)
+		let (gen, p_id) = if p_type == PacketType::Init {
+			(0, 0)
 		} else {
-			// No connection params available
-			let mut p_data = Vec::new();
-			packet.data.write(&mut p_data).unwrap();
-			let mut header = packet.header;
-			// Client id for clients
-			if self.is_client {
-				header.c_id = Some(0);
-			} else {
-				header.c_id = None;
-			}
-			// Fake encrypt if needed
-			if algs::should_encrypt(header.get_type(), false) {
-				header.set_unencrypted(false);
-				p_data = algs::encrypt_fake(&mut header, &p_data)?;
+			con.outgoing_p_ids[type_i]
+		};
+		// We fake encrypt the first command packet of the
+		// server (id 0) and the first command packet of the
+		// client (id 1) if the client uses the new protocol
+		// (the packet is a clientek).
+		let mut fake_encrypt = p_type == PacketType::Command
+			&& gen == 0 && ((!self.is_client && p_id == 0)
+			|| (self.is_client && p_id == 1 && {
+				// Test if it is a clientek packet
+				if let PData::Command(ref cmd) = packet.data {
+					cmd.command == "clientek"
+				} else {
+					false
+				}
+			}));
+
+		// Compress and split packet
+		let packet_id;
+		let mut packets = if p_type == PacketType::Command
+			|| p_type == PacketType::CommandLow
+		{
+			packet_id = None;
+			algs::compress_and_split(self.is_client, &packet)
+		} else {
+			// Set the inner packet id for voice packets
+			match packet.data {
+				PData::VoiceC2S { ref mut id, .. }
+				| PData::VoiceS2C { ref mut id, .. }
+				| PData::VoiceWhisperC2S { ref mut id, .. }
+				| PData::VoiceWhisperNewC2S { ref mut id, .. }
+				| PData::VoiceWhisperS2C { ref mut id, .. } => {
+					*id = con.outgoing_p_ids[type_i].1;
+				}
+				_ => {}
 			}
 
 			// Identify init packets by their number
-			let p_id = match packet.data {
-				PData::C2SInit(C2SInit::Init0 { .. }) => 0,
-				PData::C2SInit(C2SInit::Init2 { .. }) => 2,
-				PData::C2SInit(C2SInit::Init4 { .. }) => 4,
-				PData::S2CInit(S2CInit::Init1 { .. }) => 1,
-				PData::S2CInit(S2CInit::Init3 { .. }) => 3,
-				_ => header.p_id,
+			packet_id = match packet.data {
+				PData::C2SInit(C2SInit::Init0 { .. }) => Some(0),
+				PData::C2SInit(C2SInit::Init2 { .. }) => Some(2),
+				PData::C2SInit(C2SInit::Init4 { .. }) => Some(4),
+				PData::S2CInit(S2CInit::Init1 { .. }) => Some(1),
+				PData::S2CInit(S2CInit::Init3 { .. }) => Some(3),
+				_ => None,
 			};
 
-			let mut buf = Vec::new();
-			header.write(&mut buf)?;
-			buf.append(&mut p_data);
-			Ok(vec![(p_id, buf.into())])
+			let mut data = Vec::new();
+			packet.data.write(&mut data).unwrap();
+			vec![(packet.header, data)]
+		};
+
+		// Get values from parameters
+		let should_encrypt;
+		let c_id;
+		if let Some(params) = con.params.as_mut() {
+			should_encrypt = algs::should_encrypt(
+				p_type,
+				params.voice_encryption,
+			);
+			c_id = params.c_id;
+		} else {
+			should_encrypt = algs::should_encrypt(
+				p_type,
+				false,
+			);
+			if should_encrypt {
+				fake_encrypt = true;
+			}
+			c_id = 0;
 		}
+
+		let packets = packets
+			.drain(..)
+			.map(|(mut header, mut p_data)| -> Result<_> {
+				// Packet data (without header)
+				// Get packet id
+				let (mut gen, mut p_id) = if p_type == PacketType::Init {
+					(0, 0)
+				} else {
+					con.outgoing_p_ids[type_i]
+				};
+				if p_type != PacketType::Init {
+					header.p_id = p_id;
+				}
+
+				// Identify init packets by their number
+				let packet_id = if let Some(id) = packet_id {
+					id
+				} else {
+					header.p_id
+				};
+
+				// Set newprotocol flag if needed
+				if use_newprotocol {
+					header.set_newprotocol(true);
+				}
+
+				// Client id for clients
+				if self.is_client {
+					header.c_id = Some(c_id);
+				} else {
+					header.c_id = None;
+				}
+
+				// Encrypt if necessary
+				header.set_unencrypted(false);
+				if fake_encrypt {
+					p_data = algs::encrypt_fake(&mut header, &p_data)?;
+				} else if should_encrypt {
+					// The params are set
+					let params = con.params.as_mut().unwrap();
+					p_data = algs::encrypt(
+						&mut header,
+						&p_data,
+						gen,
+						&params.shared_iv,
+						&mut params.key_cache,
+					)?;
+				} else {
+					header.set_unencrypted(true);
+					if let Some(params) = con.params.as_mut() {
+						header.mac.copy_from_slice(&params.shared_mac);
+					}
+				}
+
+				// Increment outgoing_p_ids
+				p_id = p_id.wrapping_add(1);
+				if p_id == 0 {
+					gen = gen.wrapping_add(1);
+				}
+				if p_type != PacketType::Init {
+					con.outgoing_p_ids[type_i] = (gen, p_id);
+				}
+				let mut buf = Vec::new();
+				header.write(&mut buf)?;
+				buf.append(&mut p_data);
+				Ok((packet_id, buf.into()))
+			}).collect::<Result<Vec<_>>>()?;
+		Ok(packets)
 	}
 }

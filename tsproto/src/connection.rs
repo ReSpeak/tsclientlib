@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::u16;
@@ -62,34 +61,6 @@ impl fmt::Debug for SharedIv {
 /// Data that has to be stored for a connection when it is connected.
 #[derive(Debug)]
 pub struct ConnectedParams {
-	/// The next packet id that should be sent.
-	///
-	/// This list is indexed by the [`PacketType`], [`PacketType::Init`] is an
-	/// invalid index.
-	///
-	/// [`PacketType`]: udp/enum.PacketType.html
-	/// [`PacketType::Init`]: udp/enum.PacketType.html
-	pub outgoing_p_ids: [(u32, u16); 8],
-	/// Used for incoming out-of-order packets.
-	///
-	/// Only used for `Command` and `CommandLow` packets.
-	pub receive_queue: [Vec<(Header, Vec<u8>)>; 2],
-	/// Used for incoming fragmented packets.
-	///
-	/// Only used for `Command` and `CommandLow` packets.
-	pub fragmented_queue: [Option<(Header, Vec<u8>)>; 2],
-	/// Used for incoming fragmented packets.
-	///
-	/// Contains the audio initialization buffer for each client. These packets
-	/// are marked with the `compressed` flag. Usually 3 of them are sent at the
-	/// beginning of each transmission.
-	/// Only used for `Voice` and `VoiceWhisper` packets.
-	pub voice_fragmented_queue: [BTreeMap<u16, Vec<u8>>; 2],
-	/// The next packet id that is expected.
-	///
-	/// Works like the `outgoing_p_ids`.
-	pub incoming_p_ids: [(u32, u16); 8],
-
 	/// The client id of this connection.
 	pub c_id: u16,
 	/// If voice packets should be encrypted
@@ -113,11 +84,6 @@ impl ConnectedParams {
 		shared_mac: [u8; 8],
 	) -> Self {
 		Self {
-			outgoing_p_ids: Default::default(),
-			receive_queue: Default::default(),
-			fragmented_queue: Default::default(),
-			voice_fragmented_queue: Default::default(),
-			incoming_p_ids: Default::default(),
 			c_id: 0,
 			voice_encryption: true,
 			public_key,
@@ -125,33 +91,6 @@ impl ConnectedParams {
 			shared_mac,
 			key_cache: Default::default(),
 		}
-	}
-
-	/// Check if a given id is in the receive window.
-	///
-	/// Returns
-	/// 1. If the packet id is inside the receive window
-	/// 1. The generation of the packet
-	/// 1. The minimum accepted packet id
-	/// 1. The maximum accepted packet id
-	pub(crate) fn in_receive_window(
-		&self,
-		p_type: PacketType,
-		p_id: u16,
-	) -> (bool, u32, u16, u16) {
-		let type_i = p_type.to_usize().unwrap();
-		// Receive window is the next half of ids
-		let cur_next = self.incoming_p_ids[type_i].1;
-		let limit = ((u32::from(cur_next) + u32::from(u16::MAX) / 2)
-			% u32::from(u16::MAX)) as u16;
-		let gen = self.incoming_p_ids[type_i].0;
-		(
-			(cur_next < limit && p_id >= cur_next && p_id < limit)
-				|| (cur_next > limit && (p_id >= cur_next || p_id < limit)),
-			if p_id >= cur_next { gen } else { gen + 1 },
-			cur_next,
-			limit,
-		)
 	}
 }
 
@@ -171,6 +110,28 @@ pub struct Connection {
 	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
 	pub command_sink: mpsc::UnboundedSender<Packet>,
 	pub audio_sink: mpsc::UnboundedSender<Packet>,
+
+	/// The next packet id that should be sent.
+	///
+	/// This list is indexed by the [`PacketType`], [`PacketType::Init`] is an
+	/// invalid index.
+	///
+	/// [`PacketType`]: udp/enum.PacketType.html
+	/// [`PacketType::Init`]: udp/enum.PacketType.html
+	pub outgoing_p_ids: [(u32, u16); 8],
+	/// Used for incoming out-of-order packets.
+	///
+	/// Only used for `Command` and `CommandLow` packets.
+	pub receive_queue: [Vec<(Header, Vec<u8>)>; 2],
+	/// Used for incoming fragmented packets.
+	///
+	/// Only used for `Command` and `CommandLow` packets.
+	pub fragmented_queue: [Option<(Header, Vec<u8>)>; 2],
+	/// The next packet id that is expected.
+	///
+	/// Works like the `outgoing_p_ids`.
+	pub incoming_p_ids: [(u32, u16); 8],
+
 }
 
 impl Connection {
@@ -184,7 +145,7 @@ impl Connection {
 		command_sink: mpsc::UnboundedSender<Packet>,
 		audio_sink: mpsc::UnboundedSender<Packet>,
 	) -> Self {
-		Self {
+		let mut res = Self {
 			is_client,
 			logger,
 			params: None,
@@ -193,7 +154,50 @@ impl Connection {
 			udp_packet_sink,
 			command_sink,
 			audio_sink,
+
+			outgoing_p_ids: Default::default(),
+			receive_queue: Default::default(),
+			fragmented_queue: Default::default(),
+			incoming_p_ids: Default::default(),
+		};
+		if is_client {
+			// The first command is sent as part of the C2SInit::Init4 packet
+			// so it does not get registered automatically.
+			res.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
+		} else {
+			res.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
 		}
+		res
+	}
+
+	/// Check if a given id is in the receive window.
+	///
+	/// Returns
+	/// 1. If the packet id is inside the receive window
+	/// 1. The generation of the packet
+	/// 1. The minimum accepted packet id
+	/// 1. The maximum accepted packet id
+	pub(crate) fn in_receive_window(
+		&self,
+		p_type: PacketType,
+		p_id: u16,
+	) -> (bool, u32, u16, u16) {
+		if p_type == PacketType::Init {
+			return (true, 0, 0, 0);
+		}
+		let type_i = p_type.to_usize().unwrap();
+		// Receive window is the next half of ids
+		let cur_next = self.incoming_p_ids[type_i].1;
+		let limit = ((u32::from(cur_next) + u32::from(u16::MAX) / 2)
+			% u32::from(u16::MAX)) as u16;
+		let gen = self.incoming_p_ids[type_i].0;
+		(
+			(cur_next < limit && p_id >= cur_next && p_id < limit)
+				|| (cur_next > limit && (p_id >= cur_next || p_id < limit)),
+			if p_id >= cur_next { gen } else { gen + 1 },
+			cur_next,
+			limit,
+		)
 	}
 }
 

@@ -10,7 +10,6 @@ use gmp::mpz::Mpz;
 use num::bigint::BigUint;
 #[cfg(not(feature = "rust-gmp"))]
 use num::One;
-use num::ToPrimitive;
 use rand::{self, Rng};
 use slog::Logger;
 use {base64, tokio, tokio_threadpool};
@@ -593,23 +592,13 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									SharedIv::ProtocolOrig(iv),
 									mac,
 								);
-								// We already sent a command packet.
-								params.outgoing_p_ids
-									[PacketType::Command.to_usize().unwrap()].1 = 1;
-								// We received a command packet.
-								params.incoming_p_ids
-									[PacketType::Command.to_usize().unwrap()].1 = 1;
-								// And we sent an ack.
-								params.incoming_p_ids
-									[PacketType::Ack.to_usize().unwrap()].1 = 1;
 								*con_params = Some(params);
 								Ok(None)
 							} else if cmd.command == "initivexpand2"
 								&& cmd.has_arg("l") && cmd.has_arg("beta")
 								&& cmd.has_arg("omega") && cmd
 								.has_arg("ot") && cmd.args["ot"] == "1"
-								&& cmd.has_arg("time") && cmd
-								.has_arg("beta")
+								&& cmd.has_arg("time") && cmd.has_arg("beta")
 							{
 								resender.ack_packet(PacketType::Init, 4);
 
@@ -647,15 +636,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									SharedIv::Protocol31(iv),
 									mac,
 								);
-								// We already sent a command packet.
-								params.outgoing_p_ids
-									[PacketType::Command.to_usize().unwrap()].1 = 1;
-								// We received a command packet.
-								params.incoming_p_ids
-									[PacketType::Command.to_usize().unwrap()].1 = 1;
-								// And we sent an ack.
-								params.outgoing_p_ids
-									[PacketType::Ack.to_usize().unwrap()].1 = 1;
 								*con_params = Some(params);
 
 								// Send clientek
