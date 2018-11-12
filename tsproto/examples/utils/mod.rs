@@ -40,7 +40,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	local_address: SocketAddr,
 	logger: slog::Logger,
 	packet_handler: PH,
-	log: bool,
+	verbose: u8,
 ) -> client::ClientDataM<PH> {
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::from_ts(
@@ -48,7 +48,6 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-	let log_config = handler_data::LogConfig::new(log, log);
 	let c = client::ClientData::new(
 		local_address,
 		private_key,
@@ -57,12 +56,18 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		client::DefaultPacketHandler::new(packet_handler),
 		connectionmanager::SocketConnectionManager::new(),
 		logger,
-		log_config,
 	).unwrap();
 
 	// Set the data reference
 	let c2 = Arc::downgrade(&c);
-	c.lock().unwrap().packet_handler.complete(c2);
+	{
+		let mut c = c.lock().unwrap();
+		let c = &mut *c;
+		c.packet_handler.complete(c2);
+		if verbose > 0 { log::add_command_logger(c); }
+		if verbose > 1 { log::add_packet_logger(c); }
+		if verbose > 2 { log::add_udp_packet_logger(c); }
+	}
 
 	c
 }

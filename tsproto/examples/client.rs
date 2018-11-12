@@ -50,9 +50,14 @@ struct Args {
 	#[structopt(
 		short = "v",
 		long = "verbose",
-		help = "Display the content of all packets"
+		help = "Print the content of all packets",
+		parse(from_occurrences)
 	)]
-	verbose: bool,
+	verbose: u8,
+	// 0. Print nothing
+	// 1. Print command string
+	// 2. Print packets
+	// 3. Print udp packets
 }
 
 fn main() {

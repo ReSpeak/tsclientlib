@@ -857,6 +857,14 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 				let is_normal_state;
 				let p_id;
 				{
+					is_normal_state = if let ResendStates::Normal { .. } =
+						con.resender.state
+					{
+						true
+					} else {
+						false
+					};
+
 					let mut rec =
 						con.resender.state.peek_mut_next_record().unwrap();
 					p_id = rec.id.1;
@@ -867,14 +875,6 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 					{
 						con.resender.srtt = con.resender.srtt * 2;
 					}
-
-					is_normal_state = if let ResendStates::Normal { .. } =
-						con.resender.state
-					{
-						true
-					} else {
-						false
-					};
 
 					// Update record
 					rec.last = now;

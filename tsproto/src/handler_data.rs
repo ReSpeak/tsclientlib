@@ -1,9 +1,8 @@
 use std::mem;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::sync::{mpsc, oneshot};
 use futures::{stream, Future, Sink, Stream};
 use slog::Drain;
@@ -70,48 +69,75 @@ pub trait PacketHandler<T: 'static>: Send {
 		S2: Stream<Item = Packet, Error = Error> + Send + 'static;
 }
 
-#[derive(Clone, Debug, Default)]
-pub struct LogConfig {
-	pub log_packets: Arc<AtomicBool>,
-	pub log_udp_packets: Arc<AtomicBool>,
+/// The `observe` method is called on every incoming or outgoing packet.
+pub trait UdpPacketObserver: Send {
+	/// The `observe` method should not take too long, because it holds a lock.
+	/// It is possible to modify the given object, but that should only be done
+	/// in rare cases and if you know what you do.
+	fn observe(&self, addr: SocketAddr, udp_packet: &Bytes);
 }
 
-impl LogConfig {
-	pub fn new(log_packets: bool, log_udp_packets: bool) -> Self {
-		Self {
-			log_packets: Arc::new(AtomicBool::new(log_packets)),
-			log_udp_packets: Arc::new(AtomicBool::new(log_udp_packets)),
-		}
+/// The `observe` method is called on every incoming or outgoing packet.
+pub trait PacketObserver<T>: Send {
+	/// The `observe` method should not take too long, because it holds a lock.
+	/// It is possible to modify the given object, but that should only be done
+	/// in rare cases and if you know what you do.
+	fn observe(&self, connection: &mut (T, Connection), packet: &mut Packet);
+}
+
+pub(crate) struct UdpPacketObserverWrapper(pub(crate) Box<UdpPacketObserver>);
+impl PartialEq for UdpPacketObserverWrapper {
+	fn eq(&self, other: &Self) -> bool {
+		return self as *const UdpPacketObserverWrapper
+			== other as *const UdpPacketObserverWrapper;
+	}
+}
+impl Eq for UdpPacketObserverWrapper {}
+impl evmap::ShallowCopy for UdpPacketObserverWrapper {
+	unsafe fn shallow_copy(&mut self) -> Self {
+		UdpPacketObserverWrapper(self.0.shallow_copy())
 	}
 }
 
-#[derive(Debug)]
+pub(crate) struct PacketObserverWrapper<T>(pub(crate) Box<PacketObserver<T>>);
+impl<T> PartialEq for PacketObserverWrapper<T> {
+	fn eq(&self, other: &Self) -> bool {
+		return self as *const PacketObserverWrapper<T>
+			== other as *const PacketObserverWrapper<T>;
+	}
+}
+impl<T> Eq for PacketObserverWrapper<T> {}
+impl<T> evmap::ShallowCopy for PacketObserverWrapper<T> {
+	unsafe fn shallow_copy(&mut self) -> Self {
+		PacketObserverWrapper(self.0.shallow_copy())
+	}
+}
+
 pub struct ConnectionValue<T: 'static> {
 	pub mutex: Arc<Mutex<(T, Connection)>>,
-	pub log_packets: Arc<AtomicBool>,
+	pub(crate) out_packet_observer: evmap::ReadHandle<String, PacketObserverWrapper<T>>,
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
-	pub fn new(data: T, con: Connection, log_packets: Arc<AtomicBool>) -> Self {
+	pub(crate) fn new(data: T, con: Connection,
+		out_packet_observer: evmap::ReadHandle<String, PacketObserverWrapper<T>>) -> Self {
 		Self {
 			mutex: Arc::new(Mutex::new((data, con))),
-			log_packets,
+			out_packet_observer,
 		}
 	}
 
 	fn encode_packet(
 		&self,
-		packet: Packet,
+		mut packet: Packet,
 	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send> {
 		let mut con = self.mutex.lock().unwrap();
-		if self.log_packets.load(Ordering::Relaxed) {
-			::log::PacketLogger::log_packet(
-				&con.1.logger,
-				con.1.is_client,
-				false,
-				&packet,
-			);
-		}
+		// Call observer
+		self.out_packet_observer.for_each(|_, os| {
+			for o in os {
+				o.0.observe(&mut *con, &mut packet);
+			}
+		});
 
 		let codec = PacketCodecSender::new(con.1.is_client);
 		let p_type = packet.header.get_type();
@@ -131,7 +157,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 	pub fn downgrade(&self) -> ConnectionValueWeak<T> {
 		ConnectionValueWeak {
 			mutex: Arc::downgrade(&self.mutex),
-			log_packets: self.log_packets.clone(),
+			out_packet_observer: self.out_packet_observer.clone(),
 		}
 	}
 }
@@ -148,7 +174,7 @@ impl<T: 'static> Clone for ConnectionValue<T> {
 	fn clone(&self) -> Self {
 		Self {
 			mutex: self.mutex.clone(),
-			log_packets: self.log_packets.clone(),
+			out_packet_observer: self.out_packet_observer.clone(),
 		}
 	}
 }
@@ -156,27 +182,22 @@ impl<T: 'static> Clone for ConnectionValue<T> {
 impl<T: 'static> evmap::ShallowCopy for ConnectionValue<T> {
 	unsafe fn shallow_copy(&mut self) -> Self {
 		Self {
-			mutex: Arc::from_raw(&*self.mutex),
-			log_packets: Arc::from_raw(&*self.log_packets),
+			mutex: self.mutex.shallow_copy(),
+			out_packet_observer: self.out_packet_observer.shallow_copy(),
 		}
-		// Try to copy without generating memory leaks
-		//let mut r: Self = mem::uninitialized();
-		//ptr::copy_nonoverlapping(self, &mut r, 1);
-		//r
 	}
 }
 
-#[derive(Debug)]
 pub struct ConnectionValueWeak<T: Send + 'static> {
 	pub mutex: Weak<Mutex<(T, Connection)>>,
-	pub log_packets: Arc<AtomicBool>,
+	pub(crate) out_packet_observer: evmap::ReadHandle<String, PacketObserverWrapper<T>>,
 }
 
 impl<T: Send + 'static> ConnectionValueWeak<T> {
 	pub fn upgrade(&self) -> Option<ConnectionValue<T>> {
 		self.mutex.upgrade().map(|mutex| ConnectionValue {
 			mutex,
-			log_packets: self.log_packets.clone(),
+			out_packet_observer: self.out_packet_observer.clone(),
 		})
 	}
 
@@ -206,7 +227,7 @@ impl<T: Send + 'static> Clone for ConnectionValueWeak<T> {
 	fn clone(&self) -> Self {
 		Self {
 			mutex: self.mutex.clone(),
-			log_packets: self.log_packets.clone(),
+			out_packet_observer: self.out_packet_observer.clone(),
 		}
 	}
 }
@@ -227,7 +248,6 @@ pub struct Data<CM: ConnectionManager + 'static> {
 	/// The private key of this instance.
 	pub private_key: EccKeyPrivP256,
 	pub logger: slog::Logger,
-	pub log_config: LogConfig,
 
 	/// The sink of udp packets.
 	pub udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
@@ -237,10 +257,22 @@ pub struct Data<CM: ConnectionManager + 'static> {
 	resend_config: ::resend::ResendConfig,
 
 	pub connections:
-		evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
-	pub connections_writer:
 		evmap::WriteHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
 	pub packet_handler: CM::PacketHandler,
+
+	/// Observe incoming `UdpPacket`s.
+	pub(crate) in_udp_packet_observer:
+		evmap::WriteHandle<String, UdpPacketObserverWrapper>,
+	/// Observe outgoing `UdpPacket`s.
+	pub(crate) out_udp_packet_observer:
+		evmap::WriteHandle<String, UdpPacketObserverWrapper>,
+
+	/// Observe incoming `Packet`s.
+	pub(crate) in_packet_observer:
+		evmap::WriteHandle<String, PacketObserverWrapper<CM::AssociatedData>>,
+	/// Observe outgoing `Packet`s.
+	pub(crate) out_packet_observer:
+		evmap::WriteHandle<String, PacketObserverWrapper<CM::AssociatedData>>,
 
 	/// A list of all connected clients or servers
 	///
@@ -271,11 +303,10 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		local_addr: SocketAddr,
 		private_key: EccKeyPrivP256,
 		is_client: bool,
-		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, Bytes)>>,
 		packet_handler: CM::PacketHandler,
 		connection_manager: CM,
 		logger: L,
-		log_config: LogConfig,
 	) -> Result<Arc<Mutex<Self>>> {
 		let logger = logger.into().unwrap_or_else(|| {
 			let decorator = slog_term::TermDecorator::new().build();
@@ -296,38 +327,41 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			mpsc::channel(::UDP_SINK_CAPACITY);
 		let logger2 = logger.clone();
 
-		let (connections, connections_writer) = evmap::new();
+		let (_, connections) = evmap::new();
+		let (_, in_udp_packet_observer) = evmap::new();
+		let (_, out_udp_packet_observer) = evmap::new();
+		let (_, in_packet_observer) = evmap::new();
+		let (_, out_packet_observer) = evmap::new();
 
 		let data = Self {
 			is_client,
 			local_addr,
 			private_key,
 			logger,
-			log_config,
 			udp_packet_sink,
 			exit_send,
 			resend_config: Default::default(),
 			connections,
-			connections_writer,
+
+			in_udp_packet_observer,
+			out_udp_packet_observer,
+			in_packet_observer,
+			out_packet_observer,
+
 			packet_handler,
 			connection_manager,
 			connection_listeners: Vec::new(),
 		};
 
-		let logger = data.logger.clone();
-		let is_client = data.is_client;
-		let log_udp = data.log_config.log_udp_packets.clone();
+		let out_udp_packet_observer = data.out_udp_packet_observer.clone();
 		tokio::spawn(
 			udp_packet_sink_sender
 				.map(move |(addr, p)| {
-					if log_udp.load(Ordering::Relaxed) {
-						::log::PacketLogger::log_udp_packet(
-							&logger,
-							addr,
-							is_client,
-							&::packets::UdpPacket::new(&p, is_client),
-						);
-					}
+					out_udp_packet_observer.for_each(|_, os| {
+						for o in os {
+							o.0.observe(addr, &p);
+						}
+					});
 					(p, addr)
 				}).forward(sink.sink_map_err(
 					move |e| error!(logger2, "Failed to send udp packet"; "error" => ?e),
@@ -337,23 +371,20 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		// Handle incoming packets
 		let logger = data.logger.clone();
 		let logger2 = logger.clone();
-		let log_udp = data.log_config.log_udp_packets.clone();
-		let mut codec =
-			PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
+		let in_udp_packet_observer = data.in_udp_packet_observer.clone();
+		let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
 		tokio::spawn(
 			stream
 				.map_err(move |e| {
 					error!(logger2, "Packet stream errored";
 						"error" => ?e)
 				}).for_each(move |(p, a)| {
-					if log_udp.load(Ordering::Relaxed) {
-						::log::PacketLogger::log_udp_packet(
-							&logger,
-							a,
-							is_client,
-							&::packets::UdpPacket::new(&p, !is_client),
-						);
-					}
+					let p = p.freeze();
+					in_udp_packet_observer.for_each(|_, os| {
+						for o in os {
+							o.0.observe(a, &p);
+						}
+					});
 
 					let logger = logger.clone();
 					codec.handle_udp_packet((a, p)).then(move |r| {
@@ -412,7 +443,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let con_val = ConnectionValue::new(
 			data,
 			con,
-			self.log_config.log_packets.clone(),
+			self.out_packet_observer.clone(),
 		);
 		self.packet_handler.new_connection(
 			&con_val,
@@ -421,8 +452,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		);
 
 		// Add connection
-		self.connections_writer.insert(key.clone(), con_val);
-		self.connections_writer.refresh();
+		self.connections.insert(key.clone(), con_val);
+		self.connections.refresh();
 
 		// Start resender
 		let resend_fut =
@@ -442,8 +473,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let mut res = self.get_connection(key);
 		if let Some(con) = &mut res {
 			// Remove connection
-			self.connections_writer.empty(key.clone());
-			self.connections_writer.refresh();
+			self.connections.empty(key.clone());
+			self.connections.refresh();
 
 			// Call listeners
 			let mut i = 0;
@@ -464,5 +495,31 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		key: &CM::Key,
 	) -> Option<ConnectionValue<CM::AssociatedData>> {
 		self.connections.get_and(&key, |v| v[0].clone())
+	}
+
+	pub fn add_udp_packet_observer(&mut self, incoming: bool, key: String, o: Box<UdpPacketObserver>) {
+		let os = if incoming { &mut self.in_udp_packet_observer }
+			else { &mut self.out_udp_packet_observer };
+		os.insert(key, UdpPacketObserverWrapper(o));
+		os.refresh();
+	}
+	pub fn remove_udp_packet_observer(&mut self, incoming: bool, key: String) {
+		let os = if incoming { &mut self.in_udp_packet_observer }
+			else { &mut self.out_udp_packet_observer };
+		os.empty(key);
+		os.refresh();
+	}
+
+	pub fn add_packet_observer(&mut self, incoming: bool, key: String, o: Box<PacketObserver<CM::AssociatedData>>) {
+		let os = if incoming { &mut self.in_packet_observer }
+			else { &mut self.out_packet_observer };
+		os.insert(key, PacketObserverWrapper(o));
+		os.refresh();
+	}
+	pub fn remove_packet_observer(&mut self, incoming: bool, key: String) {
+		let os = if incoming { &mut self.in_packet_observer }
+			else { &mut self.out_packet_observer };
+		os.empty(key);
+		os.refresh();
 	}
 }

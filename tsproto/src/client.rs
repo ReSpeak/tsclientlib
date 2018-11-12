@@ -49,7 +49,7 @@ pub struct ServerConnectionData {
 #[derive(Debug)]
 pub enum ServerConnectionState {
 	/// After `Init0` was sent.
-	Init0 { version: u32, random0: [u8; 4] },
+	Init0 { version: u32 },
 	/// After `Init2` was sent.
 	Init2 { version: u32 },
 	/// After `Init4` was sent.
@@ -158,7 +158,6 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 		state_change_listener: Vec::new(),
 		state: ServerConnectionState::Init0 {
 			version: timestamp,
-			random0,
 		},
 	};
 	// Add the connection to the connection list
@@ -372,44 +371,38 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		let res = match state.state {
 			ServerConnectionState::Init0 {
 				version,
-				ref random0,
 			} => {
 				// Handle an Init1
 				if let Packet {
-					data:
-						packets::Data::S2CInit(S2CInit::Init1 {
-							ref random1,
-							ref random0_r,
-						}),
-					..
+					data: packets::Data::S2CInit(S2CInit::Init1 {
+						ref random1,
+						ref random0_r,
+					}), ..
 				} = *packet
 				{
 					// Check the response
-					if random0.as_ref().iter().rev().eq(random0_r.as_ref()) {
-						con.resender.ack_packet(PacketType::Init, 0);
-						// The packet is correct.
-						// Send next init packet
-						let cheader = create_init_header();
-						let data = C2SInit::Init2 {
-							version,
-							random1: *random1,
-							random0_r: *random0_r,
-						};
+					// Most of the time, random0_r is the reversed random0, but
+					// sometimes it isn't so do not check it.
+					// random0.as_ref().iter().rev().eq(random0_r.as_ref())
+					con.resender.ack_packet(PacketType::Init, 0);
+					// The packet is correct.
+					// Send next init packet
+					let cheader = create_init_header();
+					let data = C2SInit::Init2 {
+						version,
+						random1: *random1,
+						random0_r: *random0_r,
+					};
 
-						let state = ServerConnectionState::Init2 { version };
+					let state = ServerConnectionState::Init2 { version };
 
-						Some((
-							state,
-							Some(Packet::new(
-								cheader,
-								packets::Data::C2SInit(data),
-							)),
-						))
-					} else {
-						return Err(format_err!(
-							"Init: Got wrong data in the Init1 response packet"
-						).into());
-					}
+					Some((
+						state,
+						Some(Packet::new(
+							cheader,
+							packets::Data::C2SInit(data),
+						)),
+					))
 				} else {
 					None
 				}
@@ -578,7 +571,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 
 								let mut beta = [0; 10];
 								beta.copy_from_slice(&beta_vec);
-								let mut server_key =
+								let server_key =
 									EccKeyPubP256::from_ts(cmd.args["omega"])?;
 
 								let (iv, mac) = algs::compute_iv_mac(
@@ -587,7 +580,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									private_key.clone(),
 									server_key.clone(),
 								)?;
-								let mut params = ConnectedParams::new(
+								let params = ConnectedParams::new(
 									server_key,
 									SharedIv::ProtocolOrig(iv),
 									mac,
@@ -602,7 +595,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							{
 								resender.ack_packet(PacketType::Init, 4);
 
-								let mut server_key =
+								let server_key =
 									EccKeyPubP256::from_ts(cmd.args["omega"])?;
 								let l = base64::decode(cmd.args["l"])?;
 								let proof = base64::decode(cmd.args["proof"])?;
@@ -631,7 +624,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 								let (iv, mac) = algs::compute_iv_mac31(
 									alpha, &beta, &ek, &server_ek,
 								)?;
-								let mut params = ConnectedParams::new(
+								let params = ConnectedParams::new(
 									server_key,
 									SharedIv::Protocol31(iv),
 									mac,
@@ -653,11 +646,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 								command.push("ek", ek_s);
 								command.push("proof", proof_s);
 
-								let mut cheader =
-									Header::new(PacketType::Command);
-
 								Ok(Some(Packet::new(
-									cheader,
+									Header::new(PacketType::Command),
 									packets::Data::Command(command),
 								)))
 							} else {

@@ -2,11 +2,9 @@ use std::borrow::Cow;
 use std::io::Cursor;
 use std::mem;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::u16;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::sync::mpsc;
 use futures::{future, Future, IntoFuture, Sink};
 use num::ToPrimitive;
@@ -16,7 +14,7 @@ use {evmap, tokio};
 use algorithms as algs;
 use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data};
+use handler_data::{ConnectionValue, Data, PacketObserverWrapper};
 use packets::Data as PData;
 use packets::*;
 use {packets, Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
@@ -29,31 +27,32 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
 		evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
 	is_client: bool,
 	logger: Logger,
-	log_packets: Arc<AtomicBool>,
+	in_packet_observer: evmap::ReadHandle<String,
+		PacketObserverWrapper<CM::AssociatedData>>,
 
 	/// The sink for `UdpPacket`s with no known connection.
 	///
 	/// This can stay `None` so all packets without connection will be dropped.
-	unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+	unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, Bytes)>>,
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	pub fn new(
 		data: &Data<CM>,
-		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, BytesMut)>>,
+		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, Bytes)>>,
 	) -> Self {
 		Self {
 			connections: data.connections.clone(),
 			is_client: data.is_client,
 			logger: data.logger.clone(),
-			log_packets: data.log_config.log_packets.clone(),
+			in_packet_observer: data.in_packet_observer.clone(),
 			unknown_udp_packet_sink,
 		}
 	}
 
 	pub fn handle_udp_packet(
 		&mut self,
-		(addr, udp_packet): (SocketAddr, BytesMut),
+		(addr, udp_packet): (SocketAddr, Bytes),
 	) -> impl Future<Item = (), Error = Error> {
 		// Parse header
 		let (header, pos) = {
@@ -75,11 +74,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// If we are a client and have only a single connection, we will do the
 			// work inside this future and not spawn a new one.
 			let logger = self.logger.new(o!("addr" => addr));
-			let log_packets = self.log_packets.load(Ordering::Relaxed);
+			let in_packet_observer = self.in_packet_observer.clone();
 			if self.is_client && self.connections.len() == 1 {
 				Self::connection_handle_udp_packet(
 					&logger,
-					log_packets,
+					in_packet_observer,
 					self.is_client,
 					&con,
 					addr,
@@ -92,7 +91,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				tokio::spawn(future::lazy(move || {
 					if let Err(e) = Self::connection_handle_udp_packet(
 						&logger,
-						log_packets,
+						in_packet_observer,
 						is_client,
 						&con,
 						addr,
@@ -128,13 +127,14 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	/// Handle a packet for a specific connection.
 	///
 	/// This part does the defragmentation, decryption and decompression.
-	pub fn connection_handle_udp_packet(
+	fn connection_handle_udp_packet(
 		logger: &Logger,
-		log_packets: bool,
+		in_packet_observer: evmap::ReadHandle<String,
+			PacketObserverWrapper<CM::AssociatedData>>,
 		is_client: bool,
 		connection: &ConnectionValue<CM::AssociatedData>,
 		_: SocketAddr,
-		udp_packet: &BytesMut,
+		udp_packet: &Bytes,
 		header: packets::Header,
 		pos: usize,
 	) -> Result<()> {
@@ -258,11 +258,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 									PacketType::CommandLow
 								};
 							con.1.resender.ack_packet(p_type, p_id);
-							if log_packets {
-								let p = Packet::new(header, p_data);
-								::log::PacketLogger::log_packet(
-									&logger, is_client, true, &p);
-							}
+							let mut p = Packet::new(header, p_data);
+							in_packet_observer.for_each(|_, os| {
+								for o in os {
+									o.0.observe(con, &mut p);
+								}
+							});
 							return Ok(());
 						}
 						PData::VoiceS2C { .. }
@@ -313,10 +314,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// Be careful with command packets, they are
 			// guaranteed to be in the right order now, because
 			// we hold a lock on the connection.
-			for p in packets {
-				if log_packets {
-					::log::PacketLogger::log_packet(&logger, is_client, true, &p);
-				}
+			for mut p in packets {
+				in_packet_observer.for_each(|_, os| {
+					for o in os {
+						o.0.observe(con, &mut p);
+					}
+				});
 				// Send to packet handler
 				if let Err(e) = con.1.command_sink.unbounded_send(p) {
 					error!(logger, "Failed to send command packet to \
@@ -326,10 +329,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			return Ok(());
 		}
 
-		let packet = packet?;
-		if log_packets {
-			::log::PacketLogger::log_packet(&logger, is_client, true, &packet);
-		}
+		let mut packet = packet?;
+		in_packet_observer.for_each(|_, os| {
+			for o in os {
+				o.0.observe(con, &mut packet);
+			}
+		});
 
 		let sink = match packet.data {
 			PData::VoiceS2C { .. } | PData::VoiceWhisperS2C { .. } => {
