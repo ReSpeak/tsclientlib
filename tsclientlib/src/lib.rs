@@ -41,7 +41,6 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::{Arc, Once, ONCE_INIT, RwLock, RwLockReadGuard};
-use std::sync::atomic::AtomicBool;
 
 use failure::ResultExt;
 use futures::sync::oneshot;
@@ -50,7 +49,7 @@ use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::commands::Command;
 use tsproto::packets::{Header, Packet, PacketType};
-use tsproto::{client, commands, crypto, packets};
+use tsproto::{client, commands, crypto, log, packets};
 use tsproto_commands::messages::Message;
 
 use packet_handler::{ReturnCodeHandler, SimplePacketHandler};
@@ -307,16 +306,11 @@ impl Connection {
 		Box::new(
 			addr.and_then(
 				move |addr| -> Box<Future<Item = _, Error = _> + Send> {
-					let log_config = tsproto::handler_data::LogConfig::new(
-						options.log_packets,
-						options.log_udp_packets,
-					);
 					let (initserver_send, initserver_recv) = oneshot::channel();
 					let (connection_send, connection_recv) = oneshot::channel();
 					let ph: Option<PHBox> = options.handle_packets.as_ref().map(|h| (*h).clone());
 					let packet_handler = SimplePacketHandler::new(
 						logger.clone(),
-						Arc::new(AtomicBool::new(options.log_commands)),
 						ph,
 						initserver_send,
 						connection_recv,
@@ -337,7 +331,6 @@ impl Connection {
 						packet_handler,
 						tsproto::connectionmanager::SocketConnectionManager::new(),
 						logger.clone(),
-						log_config,
 					) {
 						Ok(client) => client,
 						Err(error) => return Box::new(future::err(error.into())),
@@ -345,7 +338,14 @@ impl Connection {
 
 					// Set the data reference
 					let client2 = Arc::downgrade(&client);
-					client.try_lock().unwrap().packet_handler.complete(client2);
+					{
+						let mut c = client.try_lock().unwrap();
+						let c = &mut *c;
+						c.packet_handler.complete(client2);
+						if options.log_commands { log::add_command_logger(c); }
+						if options.log_packets { log::add_packet_logger(c); }
+						if options.log_udp_packets { log::add_udp_packet_logger(c); }
+					}
 
 					let client = client.clone();
 					let client2 = client.clone();

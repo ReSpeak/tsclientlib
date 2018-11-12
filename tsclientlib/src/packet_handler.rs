@@ -1,5 +1,5 @@
 use std::sync::{Arc, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chashmap::CHashMap;
 use futures::sync::oneshot;
@@ -42,7 +42,6 @@ pub(crate) struct ReturnCodeHandler {
 
 pub(crate) struct SimplePacketHandler {
 	logger: Logger,
-	log_commands: Arc<AtomicBool>,
 	handle_packets: Option<PHBox>,
 	initserver_sender: Option<oneshot::Sender<Command>>,
 	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
@@ -52,7 +51,6 @@ pub(crate) struct SimplePacketHandler {
 struct SimplePacketStreamHandler<Inner: Stream<Item=Packet, Error=tsproto::Error>> {
 	inner: Inner,
 	logger: Logger,
-	log_commands: Arc<AtomicBool>,
 	initserver_sender: Option<oneshot::Sender<Command>>,
 	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
 	connection: Option<Arc<RwLock<Connection>>>,
@@ -62,14 +60,12 @@ struct SimplePacketStreamHandler<Inner: Stream<Item=Packet, Error=tsproto::Error
 impl SimplePacketHandler {
 	pub(crate) fn new(
 		logger: Logger,
-		log_commands: Arc<AtomicBool>,
 		handle_packets: Option<PHBox>,
 		initserver_sender: oneshot::Sender<Command>,
 		connection_recv: oneshot::Receiver<Arc<RwLock<Connection>>>,
 	) -> Self {
 		Self {
 			logger,
-			log_commands,
 			handle_packets,
 			initserver_sender: Some(initserver_sender),
 			connection_recv: Some(connection_recv),
@@ -111,7 +107,6 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 		let handler = SimplePacketStreamHandler {
 			inner: command_stream,
 			logger: self.logger.clone(),
-			log_commands: self.log_commands.clone(),
 			initserver_sender: self.initserver_sender.take(),
 			connection_recv: self.connection_recv.take(),
 			connection: None,
@@ -156,12 +151,6 @@ impl<Inner: Stream<Item=Packet, Error=tsproto::Error>> Stream for SimplePacketSt
 
 			match &packet.data {
 				Data::Command(cmd) | Data::CommandLow(cmd) => {
-					if self.log_commands.load(Ordering::Relaxed) {
-						let mut v = Vec::new();
-						cmd.write(&mut v).unwrap();
-						debug!(self.logger, "Command"; "cmd" =>
-							::std::str::from_utf8(&v).unwrap());
-					}
 					// 3.
 					let mut con = con.write().unwrap();
 					let mut handled = true;
