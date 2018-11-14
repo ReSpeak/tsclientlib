@@ -17,9 +17,7 @@ use {reqwest, tokio, tokio_threadpool};
 
 use {Error, Result};
 
-const RESOLVER_ADDR: ([u8; 4], u16) = ([8, 8, 8, 8], 53);
 const DEFAULT_PORT: u16 = 9987;
-const TSDNS_DEFAULT_PORT: u16 = 41144;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
 const DNS_PREFIX_UDP: &str = "_ts3._udp.";
 const NICKNAME_LOOKUP_ADDRESS: &str = "https://named.myteamspeak.com/lookup";

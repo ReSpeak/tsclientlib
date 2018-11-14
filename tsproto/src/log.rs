@@ -1,7 +1,5 @@
-use std::marker::PhantomData;
 use std::net::SocketAddr;
 
-use bytes;
 use slog::Logger;
 
 use commands::Command;
@@ -83,7 +81,7 @@ struct UdpPacketLogger {
 	incoming: bool,
 }
 impl UdpPacketObserver for UdpPacketLogger {
-	fn observe(&self, addr: SocketAddr, udp_packet: &bytes::Bytes) {
+	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]) {
 		let udp_packet = UdpPacket::new(&*udp_packet,
 			// from_client
 			self.is_client != self.incoming);
@@ -92,24 +90,22 @@ impl UdpPacketObserver for UdpPacketLogger {
 }
 
 #[derive(Clone, Debug)]
-struct PacketLogger<T: Send> {
+struct PacketLogger {
 	is_client: bool,
 	incoming: bool,
-	phantom_data: PhantomData<T>,
 }
-impl<T: Send> PacketObserver<T> for PacketLogger<T> {
+impl<T: Send> PacketObserver<T> for PacketLogger {
 	fn observe(&self, con: &mut (T, Connection), packet: &mut Packet) {
 		log_packet(&con.1.logger, self.is_client, self.incoming, packet);
 	}
 }
 
 #[derive(Clone, Debug)]
-struct CommandLogger<T: Send> {
+struct CommandLogger {
 	is_client: bool,
 	incoming: bool,
-	phantom_data: PhantomData<T>,
 }
-impl<T: Send> PacketObserver<T> for CommandLogger<T> {
+impl<T: Send> PacketObserver<T> for CommandLogger {
 	fn observe(&self, con: &mut (T, Connection), packet: &mut Packet) {
 		match &packet.data {
 			packets::Data::Command(cmd) | packets::Data::CommandLow(cmd) => {
@@ -138,12 +134,10 @@ pub fn add_packet_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
 	data.add_packet_observer(true, "log".into(), Box::new(PacketLogger {
 		is_client: data.is_client,
 		incoming: true,
-		phantom_data: PhantomData,
 	}));
 	data.add_packet_observer(false, "log".into(), Box::new(PacketLogger {
 		is_client: data.is_client,
 		incoming: false,
-		phantom_data: PhantomData,
 	}));
 }
 
@@ -151,11 +145,9 @@ pub fn add_command_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) 
 	data.add_packet_observer(true, "cmdlog".into(), Box::new(CommandLogger {
 		is_client: data.is_client,
 		incoming: true,
-		phantom_data: PhantomData,
 	}));
 	data.add_packet_observer(false, "cmdlog".into(), Box::new(CommandLogger {
 		is_client: data.is_client,
 		incoming: false,
-		phantom_data: PhantomData,
 	}));
 }

@@ -74,7 +74,7 @@ pub trait UdpPacketObserver: Send {
 	/// The `observe` method should not take too long, because it holds a lock.
 	/// It is possible to modify the given object, but that should only be done
 	/// in rare cases and if you know what you do.
-	fn observe(&self, addr: SocketAddr, udp_packet: &Bytes);
+	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]);
 }
 
 /// The `observe` method is called on every incoming or outgoing packet.

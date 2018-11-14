@@ -13,8 +13,6 @@
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 
-#![allow(dead_code)] // TODO
-
 extern crate base64;
 extern crate bytes;
 extern crate chashmap;
@@ -184,7 +182,7 @@ impl From<failure::Error> for Error {
 	}
 }
 
-type PHBox = Box<PacketHandler + Send>;
+type PHBox = Box<PacketHandler + Send + Sync>;
 pub trait PacketHandler {
 	fn new_connection(
 		&mut self,
@@ -302,6 +300,8 @@ impl Connection {
 				Err(e) => return Box::new(future::err(e.into())),
 			};
 
+		// Make options clonable
+		let options = Arc::new(options);
 		let logger2 = logger.clone();
 		Box::new(
 			addr.and_then(
@@ -345,6 +345,10 @@ impl Connection {
 						if options.log_commands { log::add_command_logger(c); }
 						if options.log_packets { log::add_packet_logger(c); }
 						if options.log_udp_packets { log::add_udp_packet_logger(c); }
+					}
+
+					if let Some(prepare_client) = &options.prepare_client {
+						prepare_client(&client);
 					}
 
 					let client = client.clone();
@@ -421,7 +425,7 @@ impl Connection {
 					// Create clientinit packet
 					let header = Header::new(PacketType::Command);
 					let mut command = commands::Command::new("clientinit");
-					command.push("client_nickname", options.name);
+					command.push("client_nickname", options.name.clone());
 					command.push("client_version", options.version.get_version_string());
 					command.push("client_platform", options.version.get_platform());
 					command.push("client_input_hardware", "1");
@@ -772,6 +776,7 @@ pub struct ConnectOptions {
 	log_packets: bool,
 	log_udp_packets: bool,
 	handle_packets: Option<PHBox>,
+	prepare_client: Option<Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>>,
 }
 
 impl ConnectOptions {
@@ -800,6 +805,7 @@ impl ConnectOptions {
 			log_packets: false,
 			log_udp_packets: false,
 			handle_packets: None,
+			prepare_client: None,
 		}
 	}
 
@@ -914,6 +920,27 @@ impl ConnectOptions {
 		self.handle_packets = Some(handle_packets);
 		self
 	}
+
+	/// **This is part of the unstable interface.**
+	///
+	/// You can use it if you need access to lower level functions, but this
+	/// interface may change on any version changes.
+	///
+	/// This can be used to access the underlying client before it is used to
+	/// connect to a server.
+	///
+	/// The given function is called with the client as an argument. This may
+	/// happen more than one time, if different ip addresses of the server are
+	/// tried.
+	///
+	/// # Default
+	/// The client is setup the default way.
+	#[inline]
+	pub fn prepare_client(mut self, prepare_client:
+		Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>) -> Self {
+		self.prepare_client = Some(prepare_client);
+		self
+	}
 }
 
 impl fmt::Debug for ConnectOptions {
@@ -930,6 +957,7 @@ impl fmt::Debug for ConnectOptions {
 			log_packets,
 			log_udp_packets,
 			handle_packets: _,
+			prepare_client: _,
 		} = self;
 		write!(
 			f,
@@ -947,26 +975,6 @@ impl fmt::Debug for ConnectOptions {
 			log_udp_packets,
 		)?;
 		Ok(())
-	}
-}
-
-impl Clone for ConnectOptions {
-	fn clone(&self) -> Self {
-		ConnectOptions {
-			address: self.address.clone(),
-			local_address: self.local_address.clone(),
-			private_key: self.private_key.clone(),
-			name: self.name.clone(),
-			version: self.version.clone(),
-			logger: self.logger.clone(),
-			log_commands: self.log_commands.clone(),
-			log_packets: self.log_packets.clone(),
-			log_udp_packets: self.log_udp_packets.clone(),
-			handle_packets: self
-				.handle_packets
-				.as_ref()
-				.map(|h| h.as_ref().clone()),
-		}
 	}
 }
 

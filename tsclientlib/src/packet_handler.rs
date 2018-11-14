@@ -13,34 +13,17 @@ use {tokio, tsproto, PHBox, TsError};
 
 use data::Connection;
 
-fn packet2msg(logger: Logger, packet: Packet) -> Vec<Message> {
-	match packet.data {
-		Data::Command(cmd) | Data::CommandLow(cmd) => {
-			let mut cmds = cmd.get_commands();
-			let res = cmds
-				.drain(..)
-				.flat_map(|c| match Message::parse(c) {
-					Ok(n) => Some(n),
-					Err(e) => {
-						warn!(logger, "Error parsing command";
-							"command" => %cmd.command,
-							"error" => ?e,
-						);
-						None
-					}
-				}).collect();
-			res
-		}
-		_ => Vec::new(),
-	}
-}
-
 pub(crate) struct ReturnCodeHandler {
 	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,
 	cur_return_code: AtomicUsize,
 }
 
-pub(crate) struct SimplePacketHandler {
+/// **This is part of the unstable interface.**
+///
+/// You can use it if you need access to lower level functions, but this
+/// interface may change on any version changes.
+#[doc(hidden)]
+pub struct SimplePacketHandler {
 	logger: Logger,
 	handle_packets: Option<PHBox>,
 	initserver_sender: Option<oneshot::Sender<Command>>,
@@ -155,10 +138,11 @@ impl<Inner: Stream<Item=Packet, Error=tsproto::Error>> Stream for SimplePacketSt
 					let mut con = con.write().unwrap();
 					let mut handled = true;
 					// Split into messages
-					for cmd in cmd.get_commands() {
-						match Message::parse(cmd) {
+					for c in cmd.get_commands() {
+						match Message::parse(c) {
 							Err(e) => {
 								warn!(self.logger, "Failed to parse message";
+									"command" => %cmd.command,
 									"error" => ?e);
 								handled = false;
 							}
@@ -178,6 +162,7 @@ impl<Inner: Stream<Item=Packet, Error=tsproto::Error>> Stream for SimplePacketSt
 								// Apply
 								if let Err(e) = con.handle_message(&msg) {
 									warn!(self.logger, "Failed to handle message";
+										"command" => %cmd.command,
 										"error" => ?e);
 								}
 								handled = false;

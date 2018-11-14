@@ -1,3 +1,5 @@
+#![allow(dead_code)] // TODO
+
 use std::collections::HashMap;
 use std::mem;
 use std::net::SocketAddr;
