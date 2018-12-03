@@ -15,7 +15,6 @@ extern crate byteorder;
 extern crate bytes;
 extern crate chrono;
 extern crate curve25519_dalek;
-extern crate evmap;
 #[macro_use]
 extern crate failure;
 extern crate futures;
@@ -58,6 +57,7 @@ pub mod resend;
 pub mod utils;
 
 type Result<T> = std::result::Result<T, Error>;
+type LockedHashMap<K, V> = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<K, V>>>;
 
 /// The maximum number of bytes for a fragmented packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]

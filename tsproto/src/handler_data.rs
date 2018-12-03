@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::mem;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use bytes::Bytes;
 use futures::sync::{mpsc, oneshot};
@@ -8,7 +9,7 @@ use futures::{stream, Future, Sink, Stream};
 use slog::Drain;
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
-use {evmap, slog, slog_async, slog_term, tokio};
+use {slog, slog_async, slog_term, tokio};
 
 use connection::*;
 use connectionmanager::ConnectionManager;
@@ -16,7 +17,7 @@ use crypto::EccKeyPrivP256;
 use packet_codec::{PacketCodecReceiver, PacketCodecSender};
 use packets::{Packet, PacketType};
 use resend::DefaultResender;
-use {Error, Result};
+use {Error, LockedHashMap, Result};
 
 pub type DataM<CM> = Arc<Mutex<Data<CM>>>;
 
@@ -70,7 +71,7 @@ pub trait PacketHandler<T: 'static>: Send {
 }
 
 /// The `observe` method is called on every incoming or outgoing packet.
-pub trait UdpPacketObserver: Send {
+pub trait UdpPacketObserver: Send + Sync {
 	/// The `observe` method should not take too long, because it holds a lock.
 	/// It is possible to modify the given object, but that should only be done
 	/// in rare cases and if you know what you do.
@@ -78,49 +79,22 @@ pub trait UdpPacketObserver: Send {
 }
 
 /// The `observe` method is called on every incoming or outgoing packet.
-pub trait PacketObserver<T>: Send {
+pub trait PacketObserver<T>: Send + Sync {
 	/// The `observe` method should not take too long, because it holds a lock.
 	/// It is possible to modify the given object, but that should only be done
 	/// in rare cases and if you know what you do.
 	fn observe(&self, connection: &mut (T, Connection), packet: &mut Packet);
 }
 
-pub(crate) struct UdpPacketObserverWrapper(pub(crate) Box<UdpPacketObserver>);
-impl PartialEq for UdpPacketObserverWrapper {
-	fn eq(&self, other: &Self) -> bool {
-		return self as *const UdpPacketObserverWrapper
-			== other as *const UdpPacketObserverWrapper;
-	}
-}
-impl Eq for UdpPacketObserverWrapper {}
-impl evmap::ShallowCopy for UdpPacketObserverWrapper {
-	unsafe fn shallow_copy(&mut self) -> Self {
-		UdpPacketObserverWrapper(self.0.shallow_copy())
-	}
-}
-
-pub(crate) struct PacketObserverWrapper<T>(pub(crate) Box<PacketObserver<T>>);
-impl<T> PartialEq for PacketObserverWrapper<T> {
-	fn eq(&self, other: &Self) -> bool {
-		return self as *const PacketObserverWrapper<T>
-			== other as *const PacketObserverWrapper<T>;
-	}
-}
-impl<T> Eq for PacketObserverWrapper<T> {}
-impl<T> evmap::ShallowCopy for PacketObserverWrapper<T> {
-	unsafe fn shallow_copy(&mut self) -> Self {
-		PacketObserverWrapper(self.0.shallow_copy())
-	}
-}
-
 pub struct ConnectionValue<T: 'static> {
 	pub mutex: Arc<Mutex<(T, Connection)>>,
-	pub(crate) out_packet_observer: evmap::ReadHandle<String, PacketObserverWrapper<T>>,
+	pub(crate) out_packet_observer:
+		LockedHashMap<String, Box<PacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
 	pub(crate) fn new(data: T, con: Connection,
-		out_packet_observer: evmap::ReadHandle<String, PacketObserverWrapper<T>>) -> Self {
+		out_packet_observer: LockedHashMap<String, Box<PacketObserver<T>>>) -> Self {
 		Self {
 			mutex: Arc::new(Mutex::new((data, con))),
 			out_packet_observer,
@@ -132,12 +106,11 @@ impl<T: Send + 'static> ConnectionValue<T> {
 		mut packet: Packet,
 	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send> {
 		let mut con = self.mutex.lock().unwrap();
+		let con = &mut *con;
 		// Call observer
-		self.out_packet_observer.for_each(|_, os| {
-			for o in os {
-				o.0.observe(&mut *con, &mut packet);
-			}
-		});
+		for o in self.out_packet_observer.read().unwrap().values() {
+			o.observe(con, &mut packet);
+		}
 
 		let codec = PacketCodecSender::new(con.1.is_client);
 		let p_type = packet.header.get_type();
@@ -179,18 +152,9 @@ impl<T: 'static> Clone for ConnectionValue<T> {
 	}
 }
 
-impl<T: 'static> evmap::ShallowCopy for ConnectionValue<T> {
-	unsafe fn shallow_copy(&mut self) -> Self {
-		Self {
-			mutex: self.mutex.shallow_copy(),
-			out_packet_observer: self.out_packet_observer.shallow_copy(),
-		}
-	}
-}
-
 pub struct ConnectionValueWeak<T: Send + 'static> {
 	pub mutex: Weak<Mutex<(T, Connection)>>,
-	pub(crate) out_packet_observer: evmap::ReadHandle<String, PacketObserverWrapper<T>>,
+	pub(crate) out_packet_observer: LockedHashMap<String, Box<PacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValueWeak<T> {
@@ -257,22 +221,22 @@ pub struct Data<CM: ConnectionManager + 'static> {
 	resend_config: ::resend::ResendConfig,
 
 	pub connections:
-		evmap::WriteHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+		LockedHashMap<CM::Key, ConnectionValue<CM::AssociatedData>>,
 	pub packet_handler: CM::PacketHandler,
 
 	/// Observe incoming `UdpPacket`s.
 	pub(crate) in_udp_packet_observer:
-		evmap::WriteHandle<String, UdpPacketObserverWrapper>,
+		LockedHashMap<String, Box<UdpPacketObserver>>,
 	/// Observe outgoing `UdpPacket`s.
 	pub(crate) out_udp_packet_observer:
-		evmap::WriteHandle<String, UdpPacketObserverWrapper>,
+		LockedHashMap<String, Box<UdpPacketObserver>>,
 
 	/// Observe incoming `Packet`s.
 	pub(crate) in_packet_observer:
-		evmap::WriteHandle<String, PacketObserverWrapper<CM::AssociatedData>>,
+		LockedHashMap<String, Box<PacketObserver<CM::AssociatedData>>>,
 	/// Observe outgoing `Packet`s.
 	pub(crate) out_packet_observer:
-		evmap::WriteHandle<String, PacketObserverWrapper<CM::AssociatedData>>,
+		LockedHashMap<String, Box<PacketObserver<CM::AssociatedData>>>,
 
 	/// A list of all connected clients or servers
 	///
@@ -327,11 +291,11 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			mpsc::channel(::UDP_SINK_CAPACITY);
 		let logger2 = logger.clone();
 
-		let (_, connections) = evmap::new();
-		let (_, in_udp_packet_observer) = evmap::new();
-		let (_, out_udp_packet_observer) = evmap::new();
-		let (_, in_packet_observer) = evmap::new();
-		let (_, out_packet_observer) = evmap::new();
+		let connections = Arc::new(RwLock::new(HashMap::new()));
+		let in_udp_packet_observer = Arc::new(RwLock::new(HashMap::new()));
+		let out_udp_packet_observer = Arc::new(RwLock::new(HashMap::new()));
+		let in_packet_observer = Arc::new(RwLock::new(HashMap::new()));
+		let out_packet_observer = Arc::new(RwLock::new(HashMap::new()));
 
 		let data = Self {
 			is_client,
@@ -357,11 +321,9 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		tokio::spawn(
 			udp_packet_sink_sender
 				.map(move |(addr, p)| {
-					out_udp_packet_observer.for_each(|_, os| {
-						for o in os {
-							o.0.observe(addr, &p);
-						}
-					});
+					for o in out_udp_packet_observer.read().unwrap().values() {
+						o.observe(addr, &p);
+					}
 					(p, addr)
 				}).forward(sink.sink_map_err(
 					move |e| error!(logger2, "Failed to send udp packet"; "error" => ?e),
@@ -380,11 +342,9 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 						"error" => ?e)
 				}).for_each(move |(p, a)| {
 					let p = p.freeze();
-					in_udp_packet_observer.for_each(|_, os| {
-						for o in os {
-							o.0.observe(a, &p);
-						}
-					});
+					for o in in_udp_packet_observer.read().unwrap().values() {
+						o.observe(a, &p);
+					}
 
 					let logger = logger.clone();
 					codec.handle_udp_packet((a, p)).then(move |r| {
@@ -452,8 +412,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		);
 
 		// Add connection
-		self.connections.insert(key.clone(), con_val);
-		self.connections.refresh();
+		self.connections.write().unwrap().insert(key.clone(), con_val);
 
 		// Start resender
 		let resend_fut =
@@ -473,8 +432,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let mut res = self.get_connection(key);
 		if let Some(con) = &mut res {
 			// Remove connection
-			self.connections.empty(key.clone());
-			self.connections.refresh();
+			self.connections.write().unwrap().remove(key);
 
 			// Call listeners
 			let mut i = 0;
@@ -494,32 +452,28 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		&self,
 		key: &CM::Key,
 	) -> Option<ConnectionValue<CM::AssociatedData>> {
-		self.connections.get_and(&key, |v| v[0].clone())
+		self.connections.read().unwrap().get(key).map(|v| v.clone())
 	}
 
 	pub fn add_udp_packet_observer(&mut self, incoming: bool, key: String, o: Box<UdpPacketObserver>) {
 		let os = if incoming { &mut self.in_udp_packet_observer }
 			else { &mut self.out_udp_packet_observer };
-		os.insert(key, UdpPacketObserverWrapper(o));
-		os.refresh();
+		os.write().unwrap().insert(key, o);
 	}
-	pub fn remove_udp_packet_observer(&mut self, incoming: bool, key: String) {
+	pub fn remove_udp_packet_observer(&mut self, incoming: bool, key: &String) {
 		let os = if incoming { &mut self.in_udp_packet_observer }
 			else { &mut self.out_udp_packet_observer };
-		os.empty(key);
-		os.refresh();
+		os.write().unwrap().remove(key);
 	}
 
 	pub fn add_packet_observer(&mut self, incoming: bool, key: String, o: Box<PacketObserver<CM::AssociatedData>>) {
 		let os = if incoming { &mut self.in_packet_observer }
 			else { &mut self.out_packet_observer };
-		os.insert(key, PacketObserverWrapper(o));
-		os.refresh();
+		os.write().unwrap().insert(key, o);
 	}
-	pub fn remove_packet_observer(&mut self, incoming: bool, key: String) {
+	pub fn remove_packet_observer(&mut self, incoming: bool, key: &String) {
 		let os = if incoming { &mut self.in_packet_observer }
 			else { &mut self.out_packet_observer };
-		os.empty(key);
-		os.refresh();
+		os.write().unwrap().remove(key);
 	}
 }

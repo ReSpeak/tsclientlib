@@ -19,7 +19,7 @@ use tokio::timer::Delay;
 use connectionmanager::{ConnectionManager, Resender, ResenderEvent};
 use handler_data::{ConnectionValue, ConnectionValueWeak, Data};
 use packets::*;
-use Error;
+use {Error, LockedHashMap};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct PacketId(PacketType, u16);
@@ -588,8 +588,7 @@ pub struct ResendFuture<CM: ConnectionManager + 'static> {
 	data: Weak<Mutex<Data<CM>>>,
 	is_client: bool,
 	logger: Logger,
-	connections:
-		::evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+	connections: LockedHashMap<CM::Key, ConnectionValue<CM::AssociatedData>>,
 	connection_key: CM::Key,
 	connection: ConnectionValueWeak<CM::AssociatedData>,
 	sink: mpsc::Sender<(SocketAddr, Bytes)>,
@@ -633,7 +632,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 	type Error = Error;
 
 	fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-		if !self.connections.contains_key(&self.connection_key) {
+		if !self.connections.read().unwrap().contains_key(&self.connection_key) {
 			// Quit if the connection does not exist anymore
 			return Ok(futures::Async::Ready(()));
 		}

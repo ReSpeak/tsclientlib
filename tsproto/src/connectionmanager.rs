@@ -13,7 +13,7 @@ use Error;
 /// The unique identification of a connection is handled by the implementation.
 pub trait ConnectionManager: Send {
 	/// The key wihch identifies a connection.
-	type Key: Clone + Eq + Hash + Send;
+	type Key: Clone + Eq + Hash + Send + Sync;
 
 	/// Data which is associated with each connection. This can be used to store
 	/// additional connection information.

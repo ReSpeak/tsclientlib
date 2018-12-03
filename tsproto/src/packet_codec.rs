@@ -9,26 +9,25 @@ use futures::sync::mpsc;
 use futures::{future, Future, IntoFuture, Sink};
 use num::ToPrimitive;
 use slog::Logger;
-use {evmap, tokio};
+use tokio;
 
 use algorithms as algs;
 use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data, PacketObserverWrapper};
+use handler_data::{ConnectionValue, Data, PacketObserver};
 use packets::Data as PData;
 use packets::*;
-use {packets, Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
+use {packets, Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
 
 /// Decodes incoming udp packets.
 ///
 /// This part does the defragmentation, decryption and decompression.
 pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
-	connections:
-		evmap::ReadHandle<CM::Key, ConnectionValue<CM::AssociatedData>>,
+	connections: LockedHashMap<CM::Key, ConnectionValue<CM::AssociatedData>>,
 	is_client: bool,
 	logger: Logger,
-	in_packet_observer: evmap::ReadHandle<String,
-		PacketObserverWrapper<CM::AssociatedData>>,
+	in_packet_observer: LockedHashMap<String,
+		Box<PacketObserver<CM::AssociatedData>>>,
 
 	/// The sink for `UdpPacket`s with no known connection.
 	///
@@ -67,15 +66,15 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		};
 
 		// Find the right connection
-		if let Some(con) = self
-			.connections
-			.get_and(&CM::get_connection_key(addr, &header), |vs| vs[0].clone())
+		let cons = self.connections.read().unwrap();
+		if let Some(con) = cons.get(&CM::get_connection_key(addr, &header)).map(|vs| vs.clone())
 		{
 			// If we are a client and have only a single connection, we will do the
 			// work inside this future and not spawn a new one.
 			let logger = self.logger.new(o!("addr" => addr));
 			let in_packet_observer = self.in_packet_observer.clone();
-			if self.is_client && self.connections.len() == 1 {
+			if self.is_client && cons.len() == 1 {
+				drop(cons);
 				Self::connection_handle_udp_packet(
 					&logger,
 					in_packet_observer,
@@ -87,6 +86,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					pos,
 				).into_future()
 			} else {
+				drop(cons);
 				let is_client = self.is_client;
 				tokio::spawn(future::lazy(move || {
 					if let Err(e) = Self::connection_handle_udp_packet(
@@ -106,6 +106,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				future::ok(())
 			}
 		} else {
+			drop(cons);
 			// Unknown connection
 			if let Some(sink) = &mut self.unknown_udp_packet_sink {
 				// Don't block if the queue is full
@@ -129,8 +130,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	/// This part does the defragmentation, decryption and decompression.
 	fn connection_handle_udp_packet(
 		logger: &Logger,
-		in_packet_observer: evmap::ReadHandle<String,
-			PacketObserverWrapper<CM::AssociatedData>>,
+		in_packet_observer: LockedHashMap<String,
+			Box<PacketObserver<CM::AssociatedData>>>,
 		is_client: bool,
 		connection: &ConnectionValue<CM::AssociatedData>,
 		_: SocketAddr,
@@ -259,11 +260,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 								};
 							con.1.resender.ack_packet(p_type, p_id);
 							let mut p = Packet::new(header, p_data);
-							in_packet_observer.for_each(|_, os| {
-								for o in os {
-									o.0.observe(con, &mut p);
-								}
-							});
+							for o in in_packet_observer.read().unwrap().values() {
+								o.observe(con, &mut p);
+							}
 							return Ok(());
 						}
 						PData::VoiceS2C { .. }
@@ -315,11 +314,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// guaranteed to be in the right order now, because
 			// we hold a lock on the connection.
 			for mut p in packets {
-				in_packet_observer.for_each(|_, os| {
-					for o in os {
-						o.0.observe(con, &mut p);
-					}
-				});
+				for o in in_packet_observer.read().unwrap().values() {
+					o.observe(con, &mut p);
+				}
 				// Send to packet handler
 				if let Err(e) = con.1.command_sink.unbounded_send(p) {
 					error!(logger, "Failed to send command packet to \
@@ -330,11 +327,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		}
 
 		let mut packet = packet?;
-		in_packet_observer.for_each(|_, os| {
-			for o in os {
-				o.0.observe(con, &mut packet);
-			}
-		});
+		for o in in_packet_observer.read().unwrap().values() {
+			o.observe(con, &mut packet);
+		}
 
 		let sink = match packet.data {
 			PData::VoiceS2C { .. } | PData::VoiceWhisperS2C { .. } => {
