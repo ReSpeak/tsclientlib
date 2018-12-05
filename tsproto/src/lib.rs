@@ -10,7 +10,11 @@
 	)
 )]
 
+#[macro_use]
+extern crate arrayref;
 extern crate base64;
+#[macro_use]
+extern crate bitflags;
 extern crate byteorder;
 extern crate bytes;
 extern crate chrono;
@@ -28,6 +32,8 @@ extern crate num_derive;
 extern crate openssl;
 extern crate quicklz;
 extern crate rand;
+#[macro_use]
+extern crate rental;
 extern crate ring;
 #[macro_use]
 extern crate slog;
@@ -81,6 +87,8 @@ const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
 	e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
 	62a4a017bb394833aa0983e6e";
 const UDP_SINK_CAPACITY: usize = 20;
+const S2C_HEADER_LEN: usize = 11;
+const C2S_HEADER_LEN: usize = 13;
 
 #[derive(Fail, Debug)]
 pub enum Error {

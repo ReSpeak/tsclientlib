@@ -1,4 +1,5 @@
 #![allow(unused_variables)]
+use std::borrow::Cow;
 use std::fmt;
 use std::io::prelude::*;
 use std::io::Cursor;
@@ -26,6 +27,23 @@ pub enum PacketType {
 	Ack,
 	AckLow,
 	Init,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum Direction {
+	/// Going from the server to the client.
+	S2C,
+	/// Going from the client to the server.
+	C2S,
+}
+
+bitflags! {
+	pub struct Flags: u8 {
+		const UNENCRYPTED = 0x80;
+		const COMPRESSED  = 0x40;
+		const NEWPROTOCOL = 0x20;
+		const FRAGMENTED  = 0x10;
+	}
 }
 
 impl PacketType {
@@ -79,6 +97,168 @@ impl<'a> fmt::Debug for UdpPacket<'a> {
 
 		write!(f, ", raw: {:?} }}", HexSlice(self.data))?;
 		Ok(())
+	}
+}
+
+rental! {
+	mod rentals {
+		use std::borrow::Cow;
+		use super::*;
+
+		#[rental(covariant)]
+		pub struct Packet {
+			header: Vec<u8>,
+			content: Cow<'header, [u8]>,
+		}
+
+		#[rental]
+		pub struct Command {
+			#[subrental = 2]
+			packet: Box<Packet>,
+			name: &'packet_1 str,
+			static_args: Vec<Cow<'packet_1, str>>,
+			dynamic_args: Vec<Vec<Cow<'packet_1, str>>>,
+		}
+
+		#[rental]
+		pub struct C2SInit {
+			#[subrental = 2]
+			packet: Box<Packet>,
+			data: C2SInitData<'packet_1>,
+		}
+	}
+}
+
+pub struct Packet2 {
+	inner: rentals::Packet,
+	dir: Direction,
+}
+
+pub struct PacketMut {
+	data: Vec<u8>,
+	dir: Direction,
+}
+
+pub struct Header2<'a>(&'a [u8], Direction);
+pub struct HeaderMut<'a>(&'a mut [u8], Direction);
+
+pub struct Command2 {
+	inner: rentals::Command,
+	dir: Direction,
+}
+
+pub enum C2SInitData<'a> {
+	Init0 { version: u32, timestamp: u32, random0: &'a [u8; 4] },
+}
+
+pub struct C2SInit2 {
+	inner: rentals::C2SInit,
+}
+
+impl Packet2 {
+	/// Do some sanity checks before creating the object.
+	pub fn try_new(data: Vec<u8>, dir: Direction) -> Result<Self> {
+		let header_len = if dir == Direction::S2C { ::S2C_HEADER_LEN }
+			else { ::C2S_HEADER_LEN };
+		if data.len() < header_len {
+			return Err(format_err!("Packet too short").into());
+		}
+
+		// Check packet type
+		if (data[header_len - 1] & 0xf) > 8 {
+			return Err(format_err!("Invalid packet type").into());
+		}
+
+		Ok(Self {
+			inner: rentals::Packet::new(data,
+				|data| if dir == Direction::S2C {
+					Cow::Borrowed(&data[header_len..])
+				} else {
+					Cow::Borrowed(&data[header_len..])
+				}),
+			dir,
+		})
+	}
+
+	/// This method expects that `data` holds a valid packet.
+	///
+	/// If not, further function calls may panic.
+	pub fn new(data: Vec<u8>, dir: Direction) -> Self {
+		Self {
+			inner: rentals::Packet::new(data,
+				|data| if dir == Direction::S2C {
+					Cow::Borrowed(&data[::S2C_HEADER_LEN..])
+				} else {
+					Cow::Borrowed(&data[::C2S_HEADER_LEN..])
+				}),
+			dir,
+		}
+	}
+
+	#[inline]
+	pub fn header(&self) -> Header2 { Header2(self.inner.head(), self.dir) }
+
+	#[inline]
+	pub fn voice_data(&self) -> Option<&[u8]> {
+		let p_type = self.header().packet_type();
+		let offset = if p_type == PacketType::Voice {
+			if self.dir == Direction::S2C {
+				5
+			} else {
+				3
+			}
+		} else if p_type == PacketType::VoiceWhisper {
+			if self.dir == Direction::S2C {
+				5
+			} else if self.header().flags().contains(Flags::NEWPROTOCOL) {
+				13
+			} else {
+				5 + self.inner.rent(|c| c[4] * 8 + c[5] * 2) as usize
+			}
+		} else {
+			return None;
+		};
+		Some(self.inner.ref_rent(|d| &d[offset..]))
+	}
+}
+
+impl<'a> Header2<'a> {
+	#[inline]
+	pub fn mac(&self) -> &[u8; 8] {
+		array_ref![self.0, 0, 8]
+	}
+
+	#[inline]
+	pub fn packet_id(&self) -> u16 {
+		(&self.0[8..10]).read_u16::<NetworkEndian>().unwrap()
+	}
+
+	#[inline]
+	pub fn client_id(&self) -> Option<u16> {
+		if self.1 == Direction::S2C {
+			None
+		} else {
+			Some((&self.0[10..12]).read_u16::<NetworkEndian>().unwrap())
+		}
+	}
+
+	#[inline]
+	pub fn flags(&self) -> Flags {
+		let off = if self.1 == Direction::S2C { 10 } else { 12 };
+		Flags::from_bits(self.0[off] & 0xf0).unwrap()
+	}
+
+	#[inline]
+	pub fn packet_type(&self) -> PacketType {
+		let off = if self.1 == Direction::S2C { 10 } else { 12 };
+		PacketType::from_u8(self.0[off] & 0xf0).unwrap()
+	}
+}
+
+impl<'a> HeaderMut<'a> {
+	#[inline]
+	fn header<'b: 'a>(&'b self) -> Header2<'a> {
+		Header2(self.0, self.1)
 	}
 }
 
