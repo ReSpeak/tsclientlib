@@ -115,9 +115,7 @@ rental! {
 		pub struct Command {
 			#[subrental = 2]
 			packet: Box<Packet>,
-			name: &'packet_1 str,
-			static_args: Vec<Cow<'packet_1, str>>,
-			dynamic_args: Vec<Vec<Cow<'packet_1, str>>>,
+			data: CommandData<'packet_1>,
 		}
 
 		#[rental]
@@ -126,7 +124,27 @@ rental! {
 			packet: Box<Packet>,
 			data: C2SInitData<'packet_1>,
 		}
+
+		#[rental]
+		pub struct S2CInit {
+			#[subrental = 2]
+			packet: Box<Packet>,
+			data: S2CInitData<'packet_1>,
+		}
+
+		#[rental]
+		pub struct Voice {
+			#[subrental = 2]
+			packet: Box<Packet>,
+			data: VoiceData<'packet_1>,
+		}
 	}
+}
+
+pub struct CommandData<'a> {
+	name: &'a str,
+	static_args: Vec<Cow<'a, str>>,
+	dynamic_args: Vec<Vec<Cow<'a, str>>>,
 }
 
 pub struct Packet2 {
@@ -147,13 +165,61 @@ pub struct Command2 {
 	dir: Direction,
 }
 
+/// The mac has to be `b"TS3INIT1"`.
+///
+/// `version` always contains the Teamspeak version as timestamp.
+///
+/// `timestamp` contains a current timestamp.
 pub enum C2SInitData<'a> {
 	Init0 { version: u32, timestamp: u32, random0: &'a [u8; 4] },
+	Init2 { version: u32, random1: &'a [u8; 16], random0_r: &'a [u8; 4] },
+	Init4 {
+		version: u32,
+		x: &'a [u8; 64],
+		n: &'a [u8; 64],
+		level: u32,
+		random2: &'a [u8; 100],
+		/// y = x ^ (2 ^ level) % n
+		y: &'a [u8; 64],
+		/// Has to be a `clientinitiv alpha=… beta=…` command.
+		command: CommandData<'a>,
+	},
+}
+
+pub enum S2CInitData<'a> {
+	Init1 { random1: &'a [u8; 16], random0_r: &'a [u8; 4] },
+	Init3 {
+		x: &'a [u8; 64],
+		n: &'a [u8; 64],
+		level: u32,
+		random2: &'a [u8; 100],
+	},
 }
 
 pub struct C2SInit2 {
 	inner: rentals::C2SInit,
 }
+
+pub enum VoiceData<'a> {
+	C2S { id: u16, data: &'a [u8] },
+	C2SWhisper {
+		id: u16,
+		channels: Vec<u64>,
+		clients: Vec<u16>,
+		data: &'a [u8],
+	},
+	/// When the `Flags::NEWPROTOCOL` is set.
+	C2SWhisperNew {
+		id: u16,
+		target: u64,
+		data: &'a [u8],
+	},
+
+	S2C { id: u16, from: u16, data: &'a [u8] },
+	S2CWhisper { id: u16, from: u16, data: &'a [u8] },
+}
+
+pub struct Voice(rentals::Voice);
 
 impl Packet2 {
 	/// Do some sanity checks before creating the object.
