@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::prelude::*;
 use std::str;
@@ -19,6 +20,48 @@ pub struct CanonicalCommand<'a> {
 	pub command: &'a str,
 	pub args: HashMap<&'a str, &'a str>,
 }
+
+named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace) >>
+	name: is_not!("\u{b}\u{c}\\\t\r\n| /=") >> // Argument name
+	value: map!(opt!( // Argument value
+		preceded!(tag!("="),
+			do_parse!(
+				// Try to parse the value without escaped characters
+				prefix: is_not!("\u{b}\u{c}\\\t\r\n| /") >>
+				rest: many0!(alt!(
+					map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
+					map!(tag!("\\f"), |_| "\x0c") | // Form feed
+					map!(tag!("\\\\"), |_| "\\") |
+					map!(tag!("\\t"), |_| "\t") |
+					map!(tag!("\\r"), |_| "\r") |
+					map!(tag!("\\n"), |_| "\n") |
+					map!(tag!("\\p"), |_| "|") |
+					map!(tag!("\\s"), |_| " ") |
+					map!(tag!("\\/"), |_| "/") |
+					map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
+				)) >> (if rest.is_empty() { Cow::Borrowed(*prefix) }
+					else { Cow::Owned(format!("{}{}", prefix, rest.concat())) })
+			)
+		)), |o| o.unwrap_or(Cow::Borrowed("")))
+	>> (*name, value)
+));
+
+named!(inner_parse_command(CompleteStr) -> ::packets::CommandData, do_parse!(
+	name: alphanumeric >> // Command
+	static_args: many0!(command_arg2) >>
+	list_args: many0!(do_parse!(many0!(multispace) >>
+		tag!("|") >>
+		args: many1!(command_arg2) >>
+		(args)
+	)) >>
+	many0!(multispace) >>
+	eof!() >>
+	(::packets::CommandData {
+		name: *name,
+		static_args,
+		list_args,
+	})
+));
 
 named!(command_arg(CompleteStr) -> (String, String), do_parse!(many0!(multispace) >>
 	name: many1!(map!(is_not!("\u{b}\u{c}\\\t\r\n| /="), |s| *s)) >> // Argument name
@@ -56,6 +99,40 @@ named!(parse_command(CompleteStr) -> Command, do_parse!(
 		list_args,
 	})
 ));
+
+pub fn parse_command2(s: &str) -> Result<::packets::CommandData> {
+	match inner_parse_command(CompleteStr(s)) {
+		Ok((rest, mut cmd)) => {
+			// Error if rest contains something
+			if !rest.is_empty() {
+				return Err(::Error::ParseCommand(format!(
+					"Command was not parsed completely {:?}",
+					rest
+				)));
+			}
+
+			// Some of the static args are variable so move the to the right
+			// category.
+			if !cmd.list_args.is_empty() {
+				let mut la = Vec::new();
+				for &(ref arg, _) in &cmd.list_args[0] {
+					if let Some(i) = cmd
+						.static_args
+						.iter()
+						.position(|&(ref k, _)| k == arg)
+					{
+						la.push(cmd.static_args.remove(i));
+					} else {
+						// Not a valid command list, but ignore it
+					}
+				}
+				cmd.list_args.insert(0, la);
+			}
+			Ok(cmd)
+		}
+		Err(e) => Err(::Error::ParseCommand(format!("{:?}", e))),
+	}
+}
 
 impl Command {
 	pub fn new<T: Into<String>>(command: T) -> Command {

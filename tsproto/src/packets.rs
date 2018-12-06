@@ -142,9 +142,9 @@ rental! {
 }
 
 pub struct CommandData<'a> {
-	name: &'a str,
-	static_args: Vec<(&'a str, Cow<'a, str>)>,
-	dynamic_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
+	pub name: &'a str,
+	pub static_args: Vec<(&'a str, Cow<'a, str>)>,
+	pub list_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
 }
 
 pub struct Packet2 {
@@ -275,11 +275,7 @@ impl Packet2 {
 		Ok(Command2 {
 			inner: rentals::Command::try_new(Box::new(self.inner), |p| {
 				let s = ::std::str::from_utf8(&p.content)?;
-				Ok(CommandData {
-					name: s,
-					static_args: panic!(),
-					dynamic_args: panic!(),
-				})
+				::commands::parse_command2(s)
 			}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?,
 			dir,
 		})
