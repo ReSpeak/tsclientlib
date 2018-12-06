@@ -143,8 +143,8 @@ rental! {
 
 pub struct CommandData<'a> {
 	name: &'a str,
-	static_args: Vec<Cow<'a, str>>,
-	dynamic_args: Vec<Vec<Cow<'a, str>>>,
+	static_args: Vec<(&'a str, Cow<'a, str>)>,
+	dynamic_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
 }
 
 pub struct Packet2 {
@@ -201,9 +201,10 @@ pub struct C2SInit2 {
 }
 
 pub enum VoiceData<'a> {
-	C2S { id: u16, data: &'a [u8] },
+	C2S { id: u16, codec: CodecType, data: &'a [u8] },
 	C2SWhisper {
 		id: u16,
+		codec: CodecType,
 		channels: Vec<u64>,
 		clients: Vec<u16>,
 		data: &'a [u8],
@@ -211,12 +212,15 @@ pub enum VoiceData<'a> {
 	/// When the `Flags::NEWPROTOCOL` is set.
 	C2SWhisperNew {
 		id: u16,
-		target: u64,
+		codec: CodecType,
+		whisper_type: u8,
+		target: u8,
+		target_id: u64,
 		data: &'a [u8],
 	},
 
-	S2C { id: u16, from: u16, data: &'a [u8] },
-	S2CWhisper { id: u16, from: u16, data: &'a [u8] },
+	S2C { id: u16, from: u16, codec: CodecType, data: &'a [u8] },
+	S2CWhisper { id: u16, from: u16, codec: CodecType, data: &'a [u8] },
 }
 
 pub struct Voice(rentals::Voice);
@@ -264,27 +268,115 @@ impl Packet2 {
 	#[inline]
 	pub fn header(&self) -> Header2 { Header2(self.inner.head(), self.dir) }
 
-	#[inline]
-	pub fn voice_data(&self) -> Option<&[u8]> {
+	pub fn into_command(self) -> Result<Command2> {
 		let p_type = self.header().packet_type();
-		let offset = if p_type == PacketType::Voice {
-			if self.dir == Direction::S2C {
-				5
-			} else {
-				3
+		let dir = self.dir;
+
+		Ok(Command2 {
+			inner: rentals::Command::try_new(Box::new(self.inner), |p| {
+				let s = ::std::str::from_utf8(&p.content)?;
+				Ok(CommandData {
+					name: s,
+					static_args: panic!(),
+					dynamic_args: panic!(),
+				})
+			}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?,
+			dir,
+		})
+	}
+
+	/// Parse this packet into a voice packet.
+	pub fn into_voice(self) -> Result<Voice> {
+		let p_type = self.header().packet_type();
+		let newprotocol = self.header().flags().contains(Flags::NEWPROTOCOL);
+		let dir = self.dir;
+		let id = self.content().read_u16::<NetworkEndian>()?;
+
+		Ok(Voice(rentals::Voice::try_new(Box::new(self.inner), |p| {
+			let content = p.content;
+			if content.len() < 5 {
+				return Err(format_err!("Voice packet too short").into());
 			}
-		} else if p_type == PacketType::VoiceWhisper {
-			if self.dir == Direction::S2C {
-				5
-			} else if self.header().flags().contains(Flags::NEWPROTOCOL) {
-				13
+			if p_type == PacketType::Voice {
+				if dir == Direction::S2C {
+					Ok(VoiceData::S2C {
+						id,
+						from: (&content[2..]).read_u16::<NetworkEndian>()?,
+						codec: CodecType::from_u8(content[4])
+							.ok_or_else::<Error, _>(||
+								format_err!("Invalid codec").into())?,
+						data: &content[5..],
+					})
+				} else {
+					Ok(VoiceData::C2S {
+						id,
+						codec: CodecType::from_u8(content[3])
+							.ok_or_else::<Error, _>(||
+								format_err!("Invalid codec").into())?,
+						data: &content[4..],
+					})
+				}
 			} else {
-				5 + self.inner.rent(|c| c[4] * 8 + c[5] * 2) as usize
+				if dir == Direction::S2C {
+					Ok(VoiceData::S2CWhisper {
+						id,
+						from: (&content[2..]).read_u16::<NetworkEndian>()?,
+						codec: CodecType::from_u8(content[4])
+							.ok_or_else::<Error, _>(||
+								format_err!("Invalid codec").into())?,
+						data: &content[5..],
+					})
+				} else {
+					let codec = CodecType::from_u8(content[3])
+						.ok_or_else::<Error, _>(||
+							format_err!("Invalid codec").into())?;
+					if newprotocol {
+						if content.len() < 13 {
+							return Err(format_err!("Voice packet too short").into());
+						}
+						Ok(VoiceData::C2SWhisperNew {
+							id,
+							codec,
+							whisper_type: content[4],
+							target: content[5],
+							target_id: (&content[6..]).read_u64::<NetworkEndian>()?,
+							data: &content[13..],
+						})
+					} else {
+						if content.len() < 5 {
+							return Err(format_err!("Voice packet too short").into());
+						}
+						let channel_count = content[4] as usize;
+						let client_count = content[5] as usize;
+						let channel_off = 5;
+						let client_off = channel_off + channel_count * 8;
+						let off = client_off + client_count * 2;
+						if content.len() < off {
+							return Err(format_err!("Voice packet too short").into());
+						}
+
+						Ok(VoiceData::C2SWhisper {
+							id,
+							codec,
+							channels: (0..channel_count).map(|i| {
+								(&content[channel_off + i * 8..])
+									.read_u64::<NetworkEndian>()
+							}).collect::<::std::result::Result<Vec<_>, _>>()?,
+							clients: (0..client_count).map(|i| {
+								(&content[client_off + i * 2..])
+									.read_u16::<NetworkEndian>()
+							}).collect::<::std::result::Result<Vec<_>, _>>()?,
+							data: &content[off..],
+						})
+					}
+				}
 			}
-		} else {
-			return None;
-		};
-		Some(self.inner.ref_rent(|d| &d[offset..]))
+		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
+	}
+
+	#[inline]
+	pub fn content(&self) -> &[u8] {
+		self.inner.ref_rent(|d| &**d)
 	}
 }
 
