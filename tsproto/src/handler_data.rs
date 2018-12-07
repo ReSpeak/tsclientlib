@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use bytes::Bytes;
 use futures::sync::{mpsc, oneshot};
-use futures::{stream, Future, Sink, Stream};
+use futures::{future, Future, Sink, stream, Stream};
 use slog::Drain;
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
@@ -15,7 +15,7 @@ use connection::*;
 use connectionmanager::ConnectionManager;
 use crypto::EccKeyPrivP256;
 use packet_codec::{PacketCodecReceiver, PacketCodecSender};
-use packets::{Packet, PacketType};
+use packets::*;
 use resend::DefaultResender;
 use {Error, LockedHashMap, Result};
 
@@ -60,26 +60,40 @@ pub trait PacketHandler<T: 'static>: Send {
 	///
 	/// The `command_stream` gets all command and init packets.
 	/// The `audio_stream` gets all audio packets.
-	fn new_connection<S1, S2>(
+	fn new_connection<S1, S2, S3, S4>(
 		&mut self,
 		con_val: &ConnectionValue<T>,
-		command_stream: S1,
-		audio_stream: S2,
+		s2c_init_stream: S1,
+		c2s_init_stream: S2,
+		command_stream: S3,
+		audio_stream: S4,
 	) where
-		S1: Stream<Item = Packet, Error = Error> + Send + 'static,
-		S2: Stream<Item = Packet, Error = Error> + Send + 'static;
+		S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
+		S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
+		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
+		S4: Stream<Item = InAudio, Error = Error> + Send + 'static;
 }
 
-/// The `observe` method is called on every incoming or outgoing packet.
-pub trait UdpPacketObserver: Send + Sync {
+/// The `observe` method is called on every incoming packet.
+pub trait InUdpPacketObserver: Send + Sync {
 	/// The `observe` method should not take too long, because it holds a lock.
-	/// It is possible to modify the given object, but that should only be done
-	/// in rare cases and if you know what you do.
+	fn observe(&self, addr: SocketAddr, udp_packet: &InPacket);
+}
+
+/// The `observe` method is called on every outgoing packet.
+pub trait OutUdpPacketObserver: Send + Sync {
+	/// The `observe` method should not take too long, because it holds a lock.
 	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]);
 }
 
-/// The `observe` method is called on every incoming or outgoing packet.
-pub trait PacketObserver<T>: Send + Sync {
+/// The `observe` method is called on every incoming packet.
+pub trait InPacketObserver<T>: Send + Sync {
+	/// The `observe` method should not take too long, because it holds a lock.
+	fn observe(&self, connection: &mut (T, Connection), packet: &InPacket);
+}
+
+/// The `observe` method is called on every outgoing packet.
+pub trait OutPacketObserver<T>: Send + Sync {
 	/// The `observe` method should not take too long, because it holds a lock.
 	/// It is possible to modify the given object, but that should only be done
 	/// in rare cases and if you know what you do.
@@ -89,12 +103,12 @@ pub trait PacketObserver<T>: Send + Sync {
 pub struct ConnectionValue<T: 'static> {
 	pub mutex: Arc<Mutex<(T, Connection)>>,
 	pub(crate) out_packet_observer:
-		LockedHashMap<String, Box<PacketObserver<T>>>,
+		LockedHashMap<String, Box<OutPacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
 	pub(crate) fn new(data: T, con: Connection,
-		out_packet_observer: LockedHashMap<String, Box<PacketObserver<T>>>) -> Self {
+		out_packet_observer: LockedHashMap<String, Box<OutPacketObserver<T>>>) -> Self {
 		Self {
 			mutex: Arc::new(Mutex::new((data, con))),
 			out_packet_observer,
@@ -154,7 +168,7 @@ impl<T: 'static> Clone for ConnectionValue<T> {
 
 pub struct ConnectionValueWeak<T: Send + 'static> {
 	pub mutex: Weak<Mutex<(T, Connection)>>,
-	pub(crate) out_packet_observer: LockedHashMap<String, Box<PacketObserver<T>>>,
+	pub(crate) out_packet_observer: LockedHashMap<String, Box<OutPacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValueWeak<T> {
@@ -226,17 +240,17 @@ pub struct Data<CM: ConnectionManager + 'static> {
 
 	/// Observe incoming `UdpPacket`s.
 	pub(crate) in_udp_packet_observer:
-		LockedHashMap<String, Box<UdpPacketObserver>>,
+		LockedHashMap<String, Box<InUdpPacketObserver>>,
 	/// Observe outgoing `UdpPacket`s.
 	pub(crate) out_udp_packet_observer:
-		LockedHashMap<String, Box<UdpPacketObserver>>,
+		LockedHashMap<String, Box<OutUdpPacketObserver>>,
 
 	/// Observe incoming `Packet`s.
 	pub(crate) in_packet_observer:
-		LockedHashMap<String, Box<PacketObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<InPacketObserver<CM::AssociatedData>>>,
 	/// Observe outgoing `Packet`s.
 	pub(crate) out_packet_observer:
-		LockedHashMap<String, Box<PacketObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<OutPacketObserver<CM::AssociatedData>>>,
 
 	/// A list of all connected clients or servers
 	///
@@ -267,7 +281,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		local_addr: SocketAddr,
 		private_key: EccKeyPrivP256,
 		is_client: bool,
-		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, Bytes)>>,
+		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, InPacket)>>,
 		packet_handler: CM::PacketHandler,
 		connection_manager: CM,
 		logger: L,
@@ -340,20 +354,28 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 				.map_err(move |e| {
 					error!(logger2, "Packet stream errored";
 						"error" => ?e)
-				}).for_each(move |(p, a)| {
-					let p = p.freeze();
-					for o in in_udp_packet_observer.read().unwrap().values() {
-						o.observe(a, &p);
-					}
+				}).for_each(move |(p, a)| -> Box<Future<Item=_, Error=_> + Send> {
+					match InPacket::try_new(p.freeze(),
+						if is_client { Direction::S2C } else { Direction::C2S }) {
+						Ok(packet) => {
+							for o in in_udp_packet_observer.read().unwrap().values() {
+								o.observe(a, &packet);
+							}
 
-					let logger = logger.clone();
-					codec.handle_udp_packet((a, p)).then(move |r| {
-						if let Err(e) = r {
-							warn!(logger, "Packet receiver errored"; "error" => ?e);
+							let logger = logger.clone();
+							Box::new(codec.handle_udp_packet((a, packet)).then(move |r| {
+								if let Err(e) = r {
+									warn!(logger, "Packet receiver errored"; "error" => ?e);
+								}
+								// Ignore errors for one packet
+								Ok(())
+							}))
 						}
-						// Ignore errors for one packet
-						Ok(())
-					})
+						Err(e) => {
+							warn!(logger, "Packet parsing error"; "error" => ?e);
+							Box::new(future::ok(()))
+						}
+					}
 				}).select2(exit_recv)
 				.map_err(|_| ())
 				.map(|_| ()),
@@ -373,6 +395,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let resender =
 			DefaultResender::new(self.resend_config.clone(), logger.clone());
 		// Use an unbounded channel so try_send never fails
+		let (s2c_init_send, s2c_init_recv) = mpsc::unbounded();
+		let (c2s_init_send, c2s_init_recv) = mpsc::unbounded();
 		let (command_send, command_recv) = mpsc::unbounded();
 		let (audio_send, audio_recv) = mpsc::unbounded();
 		let mut con = Connection::new(
@@ -381,6 +405,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			logger.clone(),
 			self.udp_packet_sink.clone(),
 			self.is_client,
+			s2c_init_send,
+			c2s_init_send,
 			command_send,
 			audio_send,
 		);
@@ -407,6 +433,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		);
 		self.packet_handler.new_connection(
 			&con_val,
+			s2c_init_recv.map_err(|_| format_err!("Failed to receive").into()),
+			c2s_init_recv.map_err(|_| format_err!("Failed to receive").into()),
 			command_recv.map_err(|_| format_err!("Failed to receive").into()),
 			audio_recv.map_err(|_| format_err!("Failed to receive").into()),
 		);
@@ -455,25 +483,29 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		self.connections.read().unwrap().get(key).map(|v| v.clone())
 	}
 
-	pub fn add_udp_packet_observer(&mut self, incoming: bool, key: String, o: Box<UdpPacketObserver>) {
-		let os = if incoming { &mut self.in_udp_packet_observer }
-			else { &mut self.out_udp_packet_observer };
-		os.write().unwrap().insert(key, o);
+	pub fn add_in_udp_packet_observer(&mut self, key: String, o: Box<InUdpPacketObserver>) {
+		self.in_udp_packet_observer.write().unwrap().insert(key, o);
 	}
-	pub fn remove_udp_packet_observer(&mut self, incoming: bool, key: &String) {
-		let os = if incoming { &mut self.in_udp_packet_observer }
-			else { &mut self.out_udp_packet_observer };
-		os.write().unwrap().remove(key);
+	pub fn add_out_udp_packet_observer(&mut self, key: String, o: Box<OutUdpPacketObserver>) {
+		self.out_udp_packet_observer.write().unwrap().insert(key, o);
+	}
+	pub fn remove_in_udp_packet_observer(&mut self, key: &String) {
+		self.in_udp_packet_observer.write().unwrap().remove(key);
+	}
+	pub fn remove_out_udp_packet_observer(&mut self, key: &String) {
+		self.out_udp_packet_observer.write().unwrap().remove(key);
 	}
 
-	pub fn add_packet_observer(&mut self, incoming: bool, key: String, o: Box<PacketObserver<CM::AssociatedData>>) {
-		let os = if incoming { &mut self.in_packet_observer }
-			else { &mut self.out_packet_observer };
-		os.write().unwrap().insert(key, o);
+	pub fn add_in_packet_observer(&mut self, key: String, o: Box<InPacketObserver<CM::AssociatedData>>) {
+		self.in_packet_observer.write().unwrap().insert(key, o);
 	}
-	pub fn remove_packet_observer(&mut self, incoming: bool, key: &String) {
-		let os = if incoming { &mut self.in_packet_observer }
-			else { &mut self.out_packet_observer };
-		os.write().unwrap().remove(key);
+	pub fn add_out_packet_observer(&mut self, key: String, o: Box<OutPacketObserver<CM::AssociatedData>>) {
+		self.out_packet_observer.write().unwrap().insert(key, o);
+	}
+	pub fn remove_in_packet_observer(&mut self, key: &String) {
+		self.in_packet_observer.write().unwrap().remove(key);
+	}
+	pub fn remove_out_packet_observer(&mut self, key: &String) {
+		self.out_packet_observer.write().unwrap().remove(key);
 	}
 }

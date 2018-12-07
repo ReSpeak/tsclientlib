@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 use std::borrow::Cow;
-use std::fmt;
+use std::collections::HashMap;
+use std::{fmt, mem};
 use std::io::prelude::*;
 use std::io::Cursor;
 
@@ -51,6 +52,9 @@ impl PacketType {
 	pub fn is_command(self) -> bool {
 		self == PacketType::Command || self == PacketType::CommandLow
 	}
+	pub fn is_ack(self) -> bool {
+		self == PacketType::Ack || self == PacketType::AckLow
+	}
 	pub fn is_voice(self) -> bool {
 		self == PacketType::Voice || self == PacketType::VoiceWhisper
 	}
@@ -73,7 +77,7 @@ pub enum CodecType {
 	OpusMusic,
 }
 
-/// Packet data, from client
+/// Used for debugging.
 pub struct UdpPacket<'a> {
 	pub data: &'a [u8],
 	pub from_client: bool,
@@ -90,10 +94,21 @@ impl<'a> fmt::Debug for UdpPacket<'a> {
 		write!(f, "UdpPacket {{ header: ")?;
 
 		// Parse header
-		if let Ok(h) =
+		if let Ok(header) =
 			Header::read(&self.from_client, &mut Cursor::new(self.data))
 		{
-			h.fmt(f)?;
+			write!(f, "mac: {:?}, ", header.mac)?;
+			write!(f, "p_id: {}, ", header.p_id)?;
+			if let Some(c_id) = header.c_id {
+				write!(f, "c_id: {}, ", c_id)?;
+			}
+			write!(f, "type: {:?}, ", PacketType::from_u8(header.p_type & 0xf).unwrap())?;
+			write!(f, "flags: ")?;
+			let flags = Flags::from_bits(header.p_type & 0xf0).unwrap();
+			write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
+			write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
+			write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
+			write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
 		}
 
 		write!(f, ", raw: {:?} }}", HexSlice(self.data))?;
@@ -101,6 +116,37 @@ impl<'a> fmt::Debug for UdpPacket<'a> {
 	}
 }
 
+/// Used for debugging.
+pub struct InUdpPacket<'a>(&'a InPacket);
+
+impl<'a> InUdpPacket<'a> {
+	pub fn new(packet: &'a InPacket) -> Self { Self(packet) }
+}
+
+impl<'a> fmt::Debug for InUdpPacket<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "UdpPacket {{ header: {{ ")?;
+
+		let header = self.0.header();
+		write!(f, "mac: {:?}, ", header.mac())?;
+		write!(f, "p_id: {}, ", header.packet_id())?;
+		if let Some(c_id) = header.client_id() {
+			write!(f, "c_id: {}, ", c_id)?;
+		}
+		write!(f, "type: {:?}, ", header.packet_type())?;
+		write!(f, "flags: ")?;
+		let flags = header.flags();
+		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
+
+		write!(f, "}}, raw: {:?} }}", HexSlice(self.0.header_data()))?;
+		Ok(())
+	}
+}
+
+#[derive(Debug)]
 pub(crate) struct MyBytes(Bytes);
 unsafe impl ::stable_deref_trait::StableDeref for MyBytes {}
 impl ::std::ops::Deref for MyBytes {
@@ -113,35 +159,34 @@ rental! {
 		use std::borrow::Cow;
 		use super::*;
 
-		#[rental(covariant)]
+		#[rental(covariant, debug)]
 		pub(crate) struct Packet {
 			header: MyBytes,
 			content: Cow<'header, [u8]>,
 		}
 
-		#[rental]
+		#[rental(covariant, debug)]
 		pub(crate) struct Command {
-			#[subrental = 2]
-			packet: Box<Packet>,
-			data: CommandData<'packet_1>,
+			content: Vec<u8>,
+			data: CommandData<'content>,
 		}
 
-		#[rental]
+		#[rental(debug)]
 		pub(crate) struct S2CInit {
 			#[subrental = 2]
 			packet: Box<Packet>,
 			data: S2CInitData<'packet_1>,
 		}
 
-		#[rental]
+		#[rental(debug)]
 		pub(crate) struct C2SInit {
 			#[subrental = 2]
 			packet: Box<Packet>,
 			data: C2SInitData<'packet_1>,
 		}
 
-		#[rental]
-		pub(crate) struct Voice {
+		#[rental(debug)]
+		pub(crate) struct Audio {
 			#[subrental = 2]
 			packet: Box<Packet>,
 			data: VoiceData<'packet_1>,
@@ -149,21 +194,25 @@ rental! {
 	}
 }
 
+#[derive(Debug, Clone)]
 pub struct CommandData<'a> {
 	pub name: &'a str,
 	pub static_args: Vec<(&'a str, Cow<'a, str>)>,
 	pub list_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
 }
 
-pub struct Packet2 {
+pub struct InPacket {
 	inner: rentals::Packet,
 	dir: Direction,
 }
 
-pub struct Header2<'a>(&'a [u8], Direction);
+pub struct InHeader<'a>(&'a [u8], Direction);
 
-pub struct Command2 {
+#[derive(Debug)]
+pub struct InCommand {
 	inner: rentals::Command,
+	p_type: PacketType,
+	newprotocol: bool,
 	dir: Direction,
 }
 
@@ -198,9 +247,12 @@ pub enum S2CInitData<'a> {
 	},
 }
 
-pub struct S2CInit2(rentals::S2CInit);
-pub struct C2SInit2(rentals::C2SInit);
+#[derive(Debug)]
+pub struct InS2CInit(rentals::S2CInit);
+#[derive(Debug)]
+pub struct InC2SInit(rentals::C2SInit);
 
+#[derive(Debug)]
 pub enum VoiceData<'a> {
 	C2S { id: u16, codec: CodecType, data: &'a [u8] },
 	C2SWhisper {
@@ -224,9 +276,10 @@ pub enum VoiceData<'a> {
 	S2CWhisper { id: u16, from: u16, codec: CodecType, data: &'a [u8] },
 }
 
-pub struct Voice(rentals::Voice);
+#[derive(Debug)]
+pub struct InAudio(rentals::Audio);
 
-impl Packet2 {
+impl InPacket {
 	/// Do some sanity checks before creating the object.
 	pub fn try_new(data: Bytes, dir: Direction) -> Result<Self> {
 		let header_len = if dir == Direction::S2C { ::S2C_HEADER_LEN }
@@ -259,32 +312,47 @@ impl Packet2 {
 	}
 
 	#[inline]
-	pub fn header(&self) -> Header2 { Header2(self.inner.head(), self.dir) }
+	fn header_data(&self) -> &[u8] { self.inner.head() }
+
+	#[inline]
+	pub fn set_content(&mut self, content: Vec<u8>) {
+		self.inner.rent_mut(|c| *c = Cow::Owned(content));
+	}
+
+	#[inline]
+	pub fn content(&self) -> &[u8] {
+		self.inner.ref_rent(|d| &**d)
+	}
+
+	#[inline]
+	pub fn take_content(&mut self) -> Vec<u8> {
+		self.inner.rent_mut(|d| mem::replace(d, Cow::Borrowed(&[])).into_owned())
+	}
+
+	#[inline]
+	pub fn header(&self) -> InHeader { InHeader(self.inner.head(), self.dir) }
 	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 
+	/// Get the acknowledged packet id if this is an ack packet.
 	#[inline]
-	pub fn into_command(self) -> Result<Command2> {
+	pub fn ack_packet(&self) -> Option<u16> {
 		let p_type = self.header().packet_type();
-		let dir = self.dir;
-
-		Ok(Command2 {
-			inner: rentals::Command::try_new(Box::new(self.inner), |p| {
-				let s = ::std::str::from_utf8(&p.content)?;
-				::commands::parse_command2(s)
-			}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?,
-			dir,
-		})
+		if p_type.is_ack() {
+			self.content().read_u16::<NetworkEndian>().ok()
+		} else {
+			None
+		}
 	}
 
 	/// Parse this packet into a voice packet.
-	pub fn into_voice(self) -> Result<Voice> {
+	pub fn into_audio(self) -> Result<InAudio> {
 		let p_type = self.header().packet_type();
 		let newprotocol = self.header().flags().contains(Flags::NEWPROTOCOL);
 		let dir = self.dir;
 		let id = self.content().read_u16::<NetworkEndian>()?;
 
-		Ok(Voice(rentals::Voice::try_new(Box::new(self.inner), |p| {
+		Ok(InAudio(rentals::Audio::try_new_or_drop(Box::new(self.inner), |p| -> Result<_> {
 			let content = p.content;
 			if content.len() < 5 {
 				return Err(format_err!("Voice packet too short").into());
@@ -363,10 +431,10 @@ impl Packet2 {
 					}
 				}
 			}
-		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
+		})?))
 	}
 
-	pub fn into_s2cinit(self) -> Result<S2CInit2> {
+	pub fn into_s2cinit(self) -> Result<InS2CInit> {
 		if self.dir != Direction::S2C {
 			return Err(format_err!("Wrong direction").into());
 		}
@@ -377,7 +445,7 @@ impl Packet2 {
 			return Err(format_err!("Wrong init packet mac").into());
 		}
 
-		Ok(S2CInit2(rentals::S2CInit::try_new(Box::new(self.inner), |p| {
+		Ok(InS2CInit(rentals::S2CInit::try_new_or_drop(Box::new(self.inner), |p| -> Result<_> {
 			let content = &p.content;
 			if content.len() < 1 {
 				return Err(format_err!("Packet too short").into());
@@ -404,10 +472,10 @@ impl Packet2 {
 			} else {
 				Err(format_err!("Invalid init step").into())
 			}
-		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
+		})?))
 	}
 
-	pub fn into_c2sinit(self) -> Result<C2SInit2> {
+	pub fn into_c2sinit(self) -> Result<InC2SInit> {
 		if self.dir != Direction::C2S {
 			return Err(format_err!("Wrong direction").into());
 		}
@@ -418,7 +486,7 @@ impl Packet2 {
 			return Err(format_err!("Wrong init packet mac").into());
 		}
 
-		Ok(C2SInit2(rentals::C2SInit::try_new(Box::new(self.inner), |p| {
+		Ok(InC2SInit(rentals::C2SInit::try_new_or_drop(Box::new(self.inner), |p| -> Result<_> {
 			let content = &p.content;
 			if content.len() < 5 {
 				return Err(format_err!("Packet too short").into());
@@ -462,16 +530,38 @@ impl Packet2 {
 			} else {
 				Err(format_err!("Invalid init step").into())
 			}
-		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
-	}
-
-	#[inline]
-	pub fn content(&self) -> &[u8] {
-		self.inner.ref_rent(|d| &**d)
+		})?))
 	}
 }
 
-impl<'a> Header2<'a> {
+impl fmt::Debug for InPacket {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Packet {{ header: {{ ")?;
+
+		let header = self.header();
+		write!(f, "mac: {:?}, ", header.mac())?;
+		write!(f, "p_id: {}, ", header.packet_id())?;
+		if let Some(c_id) = header.client_id() {
+			write!(f, "c_id: {}, ", c_id)?;
+		}
+		write!(f, "type: {:?}, ", header.packet_type())?;
+		write!(f, "flags: ")?;
+		let flags = header.flags();
+		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
+
+		write!(f, "}}, content: {:?} }}", HexSlice(self.content()))?;
+		Ok(())
+	}
+}
+
+impl<'a> InHeader<'a> {
+	/// The offset to the packet type.
+	#[inline]
+	fn get_off(&self) -> usize { if self.1 == Direction::S2C { 10 } else { 12 } }
+
 	#[inline]
 	pub fn mac(&self) -> &[u8; 8] {
 		array_ref![self.0, 0, 8]
@@ -493,22 +583,117 @@ impl<'a> Header2<'a> {
 
 	#[inline]
 	pub fn flags(&self) -> Flags {
-		let off = if self.1 == Direction::S2C { 10 } else { 12 };
-		Flags::from_bits(self.0[off] & 0xf0).unwrap()
+		Flags::from_bits(self.0[self.get_off()] & 0xf0).unwrap()
 	}
 
 	#[inline]
 	pub fn packet_type(&self) -> PacketType {
-		let off = if self.1 == Direction::S2C { 10 } else { 12 };
-		PacketType::from_u8(self.0[off] & 0xf0).unwrap()
+		PacketType::from_u8(self.0[self.get_off()] & 0xf).unwrap()
+	}
+
+	pub fn get_meta(&self) -> Vec<u8> {
+		let mut res = Vec::with_capacity(5);
+		res.write_u16::<NetworkEndian>(self.packet_id()).unwrap();
+		if let Some(c_id) = self.client_id() {
+			res.write_u16::<NetworkEndian>(c_id).unwrap();
+		}
+		res.write_u8(self.0[self.get_off()]).unwrap();
+		res
 	}
 }
 
-impl Command2 {
+impl<'a> fmt::Debug for C2SInitData<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			C2SInitData::Init0 { .. } => write!(f, "C2SInitData::Init0"),
+			C2SInitData::Init2 { .. } => write!(f, "C2SInitData::Init2"),
+			C2SInitData::Init4 { .. } => write!(f, "C2SInitData::Init4"),
+		}
+	}
+}
+
+impl<'a> fmt::Debug for S2CInitData<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			S2CInitData::Init1 { .. } => write!(f, "S2CInitData::Init1"),
+			S2CInitData::Init3 { .. } => write!(f, "S2CInitData::Init3"),
+		}
+	}
+}
+
+impl InS2CInit {
+	#[inline]
+	pub fn with_data<R, F: FnOnce(&S2CInitData) -> R>(&self, f: F) -> R {
+		self.0.rent(f)
+	}
+}
+
+impl InCommand {
+	pub fn new(content: Vec<u8>, p_type: PacketType, newprotocol: bool, dir: Direction) -> Result<Self> {
+		let inner = rentals::Command::try_new_or_drop(content, |c| {
+			let s = ::std::str::from_utf8(c)?;
+			::commands::parse_command2(s)
+		})?;
+		Ok(Self { inner, p_type, newprotocol, dir })
+	}
+
+	pub fn with_content(packet: &InPacket, content: Vec<u8>) -> Result<Self> {
+		let header = packet.header();
+		Self::new(content, header.packet_type(),
+			header.flags().contains(Flags::NEWPROTOCOL), packet.dir)
+	}
+
 	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
 	pub fn name(&self) -> &str { self.inner.ref_rent(|d| d.name) }
+
+	pub fn iter(&self) -> InCommandIterator {
+		let statics = self.inner.suffix().static_args.iter()
+			.map(|(a, b)| (a.as_ref(), b.as_ref())).collect();
+		InCommandIterator {
+			cmd: self,
+			statics,
+			i: 0,
+		}
+	}
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalCommand<'a>(pub HashMap<&'a str, &'a str>);
+impl<'a> CanonicalCommand<'a> {
+	pub fn has_arg(&self, arg: &str) -> bool {
+		self.0.contains_key(arg)
+	}
+}
+
+pub struct InCommandIterator<'a> {
+	cmd: &'a InCommand,
+	statics: HashMap<&'a str, &'a str>,
+	i: usize,
+}
+
+impl<'a> Iterator for InCommandIterator<'a> {
+	type Item = CanonicalCommand<'a>;
+	fn next(&mut self) -> Option<Self::Item> {
+		let i = self.i;
+		self.i += 1;
+		let c = self.cmd.inner.suffix();
+		if c.list_args.is_empty() {
+			if i == 0 {
+				Some(CanonicalCommand(mem::replace(&mut self.statics, HashMap::new())))
+			} else {
+				None
+			}
+		} else if i < c.list_args.len() {
+			let l = &c.list_args[i];
+			let mut v = self.statics.clone();
+			v.extend(l.iter().map(|(k, v)| (k.as_ref(), v.as_ref())));
+			Some(CanonicalCommand(v))
+		} else {
+			None
+		}
+	}
 }
 
 impl Packet {
@@ -529,36 +714,44 @@ impl Default for Header {
 }
 
 impl Header {
+	#[inline]
 	pub fn new(p_type: PacketType) -> Header {
 		let mut h = Header::default();
 		h.set_type(p_type);
 		h
 	}
 
+	#[inline]
 	pub fn get_p_type(&self) -> u8 {
 		self.p_type
 	}
+	#[inline]
 	pub fn set_p_type(&mut self, p_type: u8) {
 		assert!((p_type & 0xf) <= 8);
 		self.p_type = p_type;
 	}
 
 	/// `true` if the packet is not encrypted.
+	#[inline]
 	pub fn get_unencrypted(&self) -> bool {
 		(self.get_p_type() & 0x80) != 0
 	}
 	/// `true` if the packet is compressed.
+	#[inline]
 	pub fn get_compressed(&self) -> bool {
 		(self.get_p_type() & 0x40) != 0
 	}
+	#[inline]
 	pub fn get_newprotocol(&self) -> bool {
 		(self.get_p_type() & 0x20) != 0
 	}
 	/// `true` for the first and last packet of a compressed series of packets.
+	#[inline]
 	pub fn get_fragmented(&self) -> bool {
 		(self.get_p_type() & 0x10) != 0
 	}
 
+	#[inline]
 	pub fn set_unencrypted(&mut self, value: bool) {
 		let p_type = self.get_p_type();
 		if value {
@@ -567,6 +760,7 @@ impl Header {
 			self.set_p_type(p_type & !0x80);
 		}
 	}
+	#[inline]
 	pub fn set_compressed(&mut self, value: bool) {
 		let p_type = self.get_p_type();
 		if value {
@@ -575,6 +769,7 @@ impl Header {
 			self.set_p_type(p_type & !0x40);
 		}
 	}
+	#[inline]
 	pub fn set_newprotocol(&mut self, value: bool) {
 		let p_type = self.get_p_type();
 		if value {
@@ -583,6 +778,7 @@ impl Header {
 			self.set_p_type(p_type & !0x20);
 		}
 	}
+	#[inline]
 	pub fn set_fragmented(&mut self, value: bool) {
 		let p_type = self.get_p_type();
 		if value {
@@ -592,14 +788,17 @@ impl Header {
 		}
 	}
 
+	#[inline]
 	pub fn get_type(&self) -> PacketType {
 		PacketType::from_u8(self.get_p_type() & 0xf).unwrap()
 	}
+	#[inline]
 	pub fn set_type(&mut self, t: PacketType) {
 		let p_type = self.get_p_type();
 		self.set_p_type((p_type & 0xf0) | t.to_u8().unwrap());
 	}
 
+	#[inline]
 	pub fn write_meta(&self, w: &mut Write) -> Result<()> {
 		w.write_u16::<NetworkEndian>(self.p_id)?;
 		if let Some(c_id) = self.c_id {

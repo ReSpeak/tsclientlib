@@ -4,6 +4,7 @@ use std::u64;
 use byteorder::{NetworkEndian, WriteBytesExt};
 use curve25519_dalek::edwards::EdwardsPoint;
 use num::bigint::BigUint;
+use num::ToPrimitive;
 use quicklz::CompressionLevel;
 use ring::digest;
 
@@ -113,22 +114,24 @@ pub fn compress_and_split(
 }
 
 fn create_key_nonce(
-	header: &Header,
+	p_type: PacketType,
+	c_id: Option<u16>,
+	p_id: u16,
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
 ) -> ([u8; 16], [u8; 16]) {
 	// Check if this generation is cached
-	let cache = &mut cache[(header.p_type & 0xf) as usize];
+	let cache = &mut cache[p_type.to_usize().unwrap()];
 	if cache.generation_id != generation_id {
 		// Update the cache
 		let mut temp = [0; 70];
-		if header.c_id.is_some() {
+		if c_id.is_some() {
 			temp[0] = 0x31;
 		} else {
 			temp[0] = 0x30;
 		}
-		temp[1] = header.p_type & 0xf;
+		temp[1] = p_type.to_u8().unwrap();
 		let mut buf = Vec::with_capacity(4);
 		buf.write_u32::<NetworkEndian>(generation_id).unwrap();
 		temp[2..6].copy_from_slice(&buf);
@@ -153,8 +156,8 @@ fn create_key_nonce(
 	// Use the cached version
 	let mut key = cache.key;
 	let nonce = cache.nonce;
-	key[0] ^= (header.p_id >> 8) as u8;
-	key[1] ^= (header.p_id & 0xff) as u8;
+	key[0] ^= (p_id >> 8) as u8;
+	key[1] ^= (p_id & 0xff) as u8;
 	(key, nonce)
 }
 
@@ -183,35 +186,47 @@ pub fn encrypt(
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
 ) -> Result<Vec<u8>> {
-	let (key, nonce) = create_key_nonce(header, generation_id, iv, cache);
+	let (key, nonce) = create_key_nonce(
+		header.get_type(),
+		header.c_id,
+		header.p_id,
+		generation_id,
+		iv,
+		cache,
+	);
 	encrypt_key_nonce(header, data, &key, &nonce)
 }
 
 pub fn decrypt_key_nonce(
-	header: &Header,
-	data: &[u8],
+	packet: &InPacket,
 	key: &[u8; 16],
 	nonce: &[u8; 16],
 ) -> Result<Vec<u8>> {
-	let mut meta = Vec::with_capacity(5);
-	header.write_meta(&mut meta)?;
-
-	Ok(crypto::Eax::decrypt(key, nonce, &meta, data, &header.mac)?)
+	let header = packet.header();
+	let meta = header.get_meta();
+	Ok(crypto::Eax::decrypt(key, nonce, &meta, packet.content(), header.mac())?)
 }
 
-pub fn decrypt_fake(header: &Header, data: &[u8]) -> Result<Vec<u8>> {
-	decrypt_key_nonce(header, data, &::FAKE_KEY, &::FAKE_NONCE)
+pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
+	decrypt_key_nonce(packet, &::FAKE_KEY, &::FAKE_NONCE)
 }
 
 pub fn decrypt(
-	header: &Header,
-	data: &[u8],
+	packet: &InPacket,
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
 ) -> Result<Vec<u8>> {
-	let (key, nonce) = create_key_nonce(header, generation_id, iv, cache);
-	decrypt_key_nonce(header, data, &key, &nonce)
+	let header = packet.header();
+	let (key, nonce) = create_key_nonce(
+		header.packet_type(),
+		header.client_id(),
+		header.packet_id(),
+		generation_id,
+		iv,
+		cache,
+	);
+	decrypt_key_nonce(packet, &key, &nonce)
 }
 
 /// Compute shared iv and shared mac.

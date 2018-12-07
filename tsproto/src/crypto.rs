@@ -176,6 +176,29 @@ impl EccKeyPrivP256 {
 		Ok(EccKeyPrivP256(EcKey::generate(&group)?))
 	}
 
+	/// Try to import the key from any of the known formats.
+	pub fn import(data: &[u8]) -> Result<Self> {
+		if let Ok(s) = str::from_utf8(data) {
+			if let Ok(r) = Self::import_str(s) {
+				return Ok(r);
+			}
+		}
+		if let Ok(r) = Self::from_tomcrypt(data) { return Ok(r); }
+		if let Ok(r) = Self::from_short(data) { return Ok(r); }
+		Err(format_err!("Any known methods to decode the key failed").into())
+	}
+
+	/// Try to import the key from any of the known formats.
+	pub fn import_str(s: &str) -> Result<Self> {
+		if let Ok(r) = base64::decode(s) {
+			if let Ok(r) = Self::import(&r) {
+				return Ok(r);
+			}
+		}
+		if let Ok(r) = Self::from_ts_obfuscated(s) { return Ok(r); }
+		Err(format_err!("Any known methods to decode the key failed").into())
+	}
+
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
@@ -259,15 +282,11 @@ impl EccKeyPrivP256 {
 		let secret = ::yasna::parse_der(data, |reader| {
 			reader.read_sequence(|reader| {
 				let f = reader.next().read_bitvec()?;
-				if f.len() != 1 {
+				if f.len() != 1 && f.len() != 2 {
 					return Err(::yasna::ASN1Error::new(
 						::yasna::ASN1ErrorKind::Invalid,
 					));
 				}
-
-				let _key_size = reader.next().read_u16()?;
-				let _pubkey_x = reader.next().read_biguint()?;
-				let _pubkey_y = reader.next().read_biguint()?;
 
 				if !f[0] {
 					// Expected a private key but got a public key
@@ -275,6 +294,14 @@ impl EccKeyPrivP256 {
 						::yasna::ASN1ErrorKind::Invalid,
 					));
 				};
+
+				let _key_size = reader.next().read_u16()?;
+				// Keys from the audio bot contain no public key
+				if f.len() != 2 {
+					let _pubkey_x = reader.next().read_biguint()?;
+					let _pubkey_y = reader.next().read_biguint()?;
+				}
+
 				reader.next().read_biguint()
 			})
 		})?;

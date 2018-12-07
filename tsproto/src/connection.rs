@@ -108,8 +108,10 @@ pub struct Connection {
 
 	pub resender: DefaultResender,
 	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-	pub command_sink: mpsc::UnboundedSender<Packet>,
-	pub audio_sink: mpsc::UnboundedSender<Packet>,
+	pub s2c_init_sink: mpsc::UnboundedSender<InS2CInit>,
+	pub c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
+	pub command_sink: mpsc::UnboundedSender<InCommand>,
+	pub audio_sink: mpsc::UnboundedSender<InAudio>,
 
 	/// The next packet id that should be sent.
 	///
@@ -122,11 +124,11 @@ pub struct Connection {
 	/// Used for incoming out-of-order packets.
 	///
 	/// Only used for `Command` and `CommandLow` packets.
-	pub receive_queue: [Vec<(Header, Vec<u8>)>; 2],
+	pub receive_queue: [Vec<InPacket>; 2],
 	/// Used for incoming fragmented packets.
 	///
 	/// Only used for `Command` and `CommandLow` packets.
-	pub fragmented_queue: [Option<(Header, Vec<u8>)>; 2],
+	pub fragmented_queue: [Option<(InPacket, Vec<u8>)>; 2],
 	/// The next packet id that is expected.
 	///
 	/// Works like the `outgoing_p_ids`.
@@ -142,8 +144,10 @@ impl Connection {
 		logger: slog::Logger,
 		udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
 		is_client: bool,
-		command_sink: mpsc::UnboundedSender<Packet>,
-		audio_sink: mpsc::UnboundedSender<Packet>,
+		s2c_init_sink: mpsc::UnboundedSender<InS2CInit>,
+		c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
+		command_sink: mpsc::UnboundedSender<InCommand>,
+		audio_sink: mpsc::UnboundedSender<InAudio>,
 	) -> Self {
 		let mut res = Self {
 			is_client,
@@ -152,6 +156,8 @@ impl Connection {
 			address,
 			resender,
 			udp_packet_sink,
+			s2c_init_sink,
+			c2s_init_sink,
 			command_sink,
 			audio_sink,
 

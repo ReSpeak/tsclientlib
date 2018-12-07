@@ -7,7 +7,7 @@ use futures::Sink;
 
 use connection::Connection;
 use handler_data::PacketHandler;
-use packets::PacketType;
+use packets::{InPacket, PacketType};
 use Error;
 
 /// The unique identification of a connection is handled by the implementation.
@@ -30,7 +30,7 @@ pub trait ConnectionManager: Send {
 	/// Compute the connection key for an incoming udp packet.
 	fn get_connection_key(
 		src_addr: SocketAddr,
-		udp_packet: &::packets::Header,
+		udp_packet: &InPacket,
 	) -> Self::Key;
 }
 
@@ -127,7 +127,7 @@ impl<PH: PacketHandler<T>, T: Send + 'static> ConnectionManager
 
 	fn get_connection_key(
 		addr: SocketAddr,
-		_: &::packets::Header,
+		_: &InPacket,
 	) -> Self::Key {
 		addr
 	}

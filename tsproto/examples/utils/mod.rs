@@ -16,15 +16,23 @@ pub mod voice;
 pub struct SimplePacketHandler;
 
 impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
-	fn new_connection<S1, S2>(
+	fn new_connection<S1, S2, S3, S4>(
 		&mut self,
 		_: &handler_data::ConnectionValue<T>,
-		command_stream: S1,
-		audio_stream: S2,
+		s2c_init_stream: S1,
+		_c2s_init_stream: S2,
+		command_stream: S3,
+		audio_stream: S4,
 	) where
-		S1: Stream<Item = Packet, Error = Error> + Send + 'static,
-		S2: Stream<Item = Packet, Error = Error> + Send + 'static,
+		S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
+		S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
+		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
+		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
 	{
+		// Ignore c2s init stream
+		tokio::spawn(s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
+			println!("Init stream exited with error ({:?})", e)
+		}));
 		tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e| {
 			println!("Command stream exited with error ({:?})", e)
 		}));
@@ -43,7 +51,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	verbose: u8,
 ) -> client::ClientDataM<PH> {
 	// Get P-256 ECDH key
-	let private_key = EccKeyPrivP256::from_ts(
+	let private_key = EccKeyPrivP256::import_str(
 		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -79,7 +87,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 ) -> impl Future<Item = client::ClientConVal, Error = Error> {
 	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
 	.and_then(move |con| {
-		let private_key = EccKeyPrivP256::from_ts(
+		let private_key = EccKeyPrivP256::import_str(
 			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 			DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();

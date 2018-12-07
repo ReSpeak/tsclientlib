@@ -1,12 +1,13 @@
+use std::fmt::Debug;
 use std::net::SocketAddr;
 
 use slog::Logger;
 
-use commands::Command;
 use connection::Connection;
 use connectionmanager::ConnectionManager;
-use handler_data::{Data, PacketObserver, UdpPacketObserver};
-use packets::{self, Packet, PacketType, UdpPacket};
+use handler_data::{Data, InPacketObserver, InUdpPacketObserver,
+	OutPacketObserver, OutUdpPacketObserver};
+use packets::{self, InPacket, InUdpPacket, Packet, PacketType, UdpPacket};
 
 fn prepare_logger(
 	logger: &Logger,
@@ -28,25 +29,26 @@ fn prepare_logger(
 	logger.new(o!("to" => to_s, "dir" => in_s))
 }
 
-pub fn log_udp_packet(
+pub fn log_udp_packet<P: Debug>(
 	logger: &Logger,
 	addr: SocketAddr,
 	is_client: bool,
-	packet: &UdpPacket,
+	incoming: bool,
+	packet: &P,
 ) {
 	let logger = prepare_logger(
 		&logger.new(o!("addr" => addr)),
 		is_client,
-		is_client != packet.from_client,
+		incoming,
 	);
 	debug!(logger, "UdpPacket"; "content" => ?packet);
 }
 
-pub fn log_packet(
+pub fn log_packet<P: Debug>(
 	logger: &Logger,
 	is_client: bool,
 	incoming: bool,
-	packet: &Packet,
+	packet: &P,
 ) {
 	// packet.header.c_id is not set for newly created packets so we cannot
 	// detect if a packet is incoming or not.
@@ -59,18 +61,15 @@ pub fn log_command(
 	is_client: bool,
 	incoming: bool,
 	p_type: PacketType,
-	cmd: &Command,
+	cmd: &str,
 ) {
 	// packet.header.c_id is not set for newly created packets so we cannot
 	// detect if a packet is incoming or not.
 	let logger = prepare_logger(logger, is_client, incoming);
-	let mut v = Vec::new();
-	cmd.write(&mut v).unwrap();
-	let cmd_s = ::std::str::from_utf8(&v).unwrap();
 	if p_type == PacketType::Command {
-		debug!(logger, "Command"; "content" => cmd_s);
+		debug!(logger, "Command"; "content" => cmd);
 	} else {
-		debug!(logger, "CommandLow"; "content" => cmd_s);
+		debug!(logger, "CommandLow"; "content" => cmd);
 	}
 }
 
@@ -78,39 +77,63 @@ pub fn log_command(
 struct UdpPacketLogger {
 	logger: Logger,
 	is_client: bool,
-	incoming: bool,
 }
-impl UdpPacketObserver for UdpPacketLogger {
+impl InUdpPacketObserver for UdpPacketLogger {
+	fn observe(&self, addr: SocketAddr, udp_packet: &InPacket) {
+		let udp_packet = InUdpPacket::new(udp_packet);
+		log_udp_packet(&self.logger, addr, self.is_client, true, &udp_packet);
+	}
+}
+
+impl OutUdpPacketObserver for UdpPacketLogger {
 	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]) {
-		let udp_packet = UdpPacket::new(&*udp_packet,
+		let udp_packet = UdpPacket::new(udp_packet,
 			// from_client
-			self.is_client != self.incoming);
-		log_udp_packet(&self.logger, addr, self.is_client, &udp_packet);
+			self.is_client);
+		log_udp_packet(&self.logger, addr, self.is_client, false, &udp_packet);
 	}
 }
 
 #[derive(Clone, Debug)]
 struct PacketLogger {
 	is_client: bool,
-	incoming: bool,
 }
-impl<T: Send> PacketObserver<T> for PacketLogger {
+impl<T: Send> InPacketObserver<T> for PacketLogger {
+	fn observe(&self, con: &mut (T, Connection), packet: &InPacket) {
+		log_packet(&con.1.logger, self.is_client, true, packet);
+	}
+}
+
+impl<T: Send> OutPacketObserver<T> for PacketLogger {
 	fn observe(&self, con: &mut (T, Connection), packet: &mut Packet) {
-		log_packet(&con.1.logger, self.is_client, self.incoming, packet);
+		log_packet(&con.1.logger, self.is_client, false, packet);
 	}
 }
 
 #[derive(Clone, Debug)]
 struct CommandLogger {
 	is_client: bool,
-	incoming: bool,
 }
-impl<T: Send> PacketObserver<T> for CommandLogger {
+impl<T: Send> InPacketObserver<T> for CommandLogger {
+	fn observe(&self, con: &mut (T, Connection), packet: &InPacket) {
+		let p_type = packet.header().packet_type();
+		if p_type.is_command() {
+			if let Ok(cmd) = ::std::str::from_utf8(packet.content()) {
+				log_command(&con.1.logger, self.is_client, true, p_type, cmd);
+			}
+		}
+	}
+}
+
+impl<T: Send> OutPacketObserver<T> for CommandLogger {
 	fn observe(&self, con: &mut (T, Connection), packet: &mut Packet) {
 		match &packet.data {
 			packets::Data::Command(cmd) | packets::Data::CommandLow(cmd) => {
-				log_command(&con.1.logger, self.is_client, self.incoming,
-					packet.header.get_type(), cmd);
+				let mut v = Vec::new();
+				cmd.write(&mut v).unwrap();
+				let cmd_s = ::std::str::from_utf8(&v).unwrap();
+				log_command(&con.1.logger, self.is_client, false,
+					packet.header.get_type(), cmd_s);
 			}
 			_ => {}
 		}
@@ -118,36 +141,30 @@ impl<T: Send> PacketObserver<T> for CommandLogger {
 }
 
 pub fn add_udp_packet_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
-	data.add_udp_packet_observer(true, "log".into(), Box::new(UdpPacketLogger {
+	data.add_in_udp_packet_observer("log".into(), Box::new(UdpPacketLogger {
 		logger: data.logger.clone(),
 		is_client: data.is_client,
-		incoming: true,
 	}));
-	data.add_udp_packet_observer(false, "log".into(), Box::new(UdpPacketLogger {
+	data.add_out_udp_packet_observer("log".into(), Box::new(UdpPacketLogger {
 		logger: data.logger.clone(),
 		is_client: data.is_client,
-		incoming: false,
 	}));
 }
 
 pub fn add_packet_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
-	data.add_packet_observer(true, "log".into(), Box::new(PacketLogger {
+	data.add_in_packet_observer("log".into(), Box::new(PacketLogger {
 		is_client: data.is_client,
-		incoming: true,
 	}));
-	data.add_packet_observer(false, "log".into(), Box::new(PacketLogger {
+	data.add_out_packet_observer("log".into(), Box::new(PacketLogger {
 		is_client: data.is_client,
-		incoming: false,
 	}));
 }
 
 pub fn add_command_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
-	data.add_packet_observer(true, "cmdlog".into(), Box::new(CommandLogger {
+	data.add_in_packet_observer("cmdlog".into(), Box::new(CommandLogger {
 		is_client: data.is_client,
-		incoming: true,
 	}));
-	data.add_packet_observer(false, "cmdlog".into(), Box::new(CommandLogger {
+	data.add_out_packet_observer("cmdlog".into(), Box::new(CommandLogger {
 		is_client: data.is_client,
-		incoming: false,
 	}));
 }

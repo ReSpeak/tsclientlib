@@ -1,6 +1,4 @@
-use std::borrow::Cow;
 use std::io::Cursor;
-use std::mem;
 use std::net::SocketAddr;
 use std::u16;
 
@@ -14,10 +12,10 @@ use tokio;
 use algorithms as algs;
 use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data, PacketObserver};
+use handler_data::{ConnectionValue, Data, InPacketObserver};
 use packets::Data as PData;
 use packets::*;
-use {packets, Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
+use {Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
 
 /// Decodes incoming udp packets.
 ///
@@ -27,18 +25,18 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
 	is_client: bool,
 	logger: Logger,
 	in_packet_observer: LockedHashMap<String,
-		Box<PacketObserver<CM::AssociatedData>>>,
+		Box<InPacketObserver<CM::AssociatedData>>>,
 
 	/// The sink for `UdpPacket`s with no known connection.
 	///
 	/// This can stay `None` so all packets without connection will be dropped.
-	unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, Bytes)>>,
+	unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, InPacket)>>,
 }
 
 impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	pub fn new(
 		data: &Data<CM>,
-		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, Bytes)>>,
+		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, InPacket)>>,
 	) -> Self {
 		Self {
 			connections: data.connections.clone(),
@@ -51,23 +49,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 
 	pub fn handle_udp_packet(
 		&mut self,
-		(addr, udp_packet): (SocketAddr, Bytes),
+		(addr, packet): (SocketAddr, InPacket),
 	) -> impl Future<Item = (), Error = Error> {
-		// Parse header
-		let (header, pos) = {
-			let mut r = Cursor::new(&*udp_packet);
-			(
-				match packets::Header::read(&!self.is_client, &mut r) {
-					Ok(r) => r,
-					Err(e) => return future::err(e),
-				},
-				r.position() as usize,
-			)
-		};
-
 		// Find the right connection
 		let cons = self.connections.read().unwrap();
-		if let Some(con) = cons.get(&CM::get_connection_key(addr, &header)).map(|vs| vs.clone())
+		if let Some(con) = cons.get(&CM::get_connection_key(addr, &packet)).map(|vs| vs.clone())
 		{
 			// If we are a client and have only a single connection, we will do the
 			// work inside this future and not spawn a new one.
@@ -81,9 +67,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					self.is_client,
 					&con,
 					addr,
-					&udp_packet,
-					header,
-					pos,
+					packet,
 				).into_future()
 			} else {
 				drop(cons);
@@ -95,9 +79,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						is_client,
 						&con,
 						addr,
-						&udp_packet,
-						header,
-						pos,
+						packet,
 					) {
 						error!(logger, "Error handling udp packet"; "error" => ?e);
 					}
@@ -110,7 +92,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// Unknown connection
 			if let Some(sink) = &mut self.unknown_udp_packet_sink {
 				// Don't block if the queue is full
-				if sink.try_send((addr, udp_packet)).is_err() {
+				if sink.try_send((addr, packet)).is_err() {
 					warn!(self.logger, "Unknown connection handler overloaded \
 						– dropping udp packet");
 				}
@@ -131,32 +113,23 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	fn connection_handle_udp_packet(
 		logger: &Logger,
 		in_packet_observer: LockedHashMap<String,
-			Box<PacketObserver<CM::AssociatedData>>>,
+			Box<InPacketObserver<CM::AssociatedData>>>,
 		is_client: bool,
 		connection: &ConnectionValue<CM::AssociatedData>,
 		_: SocketAddr,
-		udp_packet: &Bytes,
-		header: packets::Header,
-		pos: usize,
+		mut packet: InPacket,
 	) -> Result<()> {
 		let con2 = connection.downgrade();
 		let mut con = connection.mutex.lock().unwrap();
 		let con = &mut *con;
-		let dec_data;
-		let dec_data1;
-		let packet;
-		let mut udp_packet = &udp_packet[pos..];
+		let packet_res;
 		let mut ack = None;
-		let mut packets = None;
 
-		let p_type = header.get_type();
+		let p_type = packet.header().packet_type();
 		let type_i = p_type.to_usize().unwrap();
-		let id = header.p_id;
+		let id = packet.header().packet_id();
 		let (in_recv_win, gen_id, cur_next, limit) =
 			con.1.in_receive_window(p_type, id);
-		let r_queue = &mut con.1.receive_queue;
-		let frag_queue = &mut con.1.fragmented_queue;
-		let in_ids = &mut con.1.incoming_p_ids;
 
 		if con.1.params.is_some() && p_type == PacketType::Init {
 			return Err(Error::UnexpectedInitPacket);
@@ -166,16 +139,15 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		if p_type == PacketType::Ack || p_type == PacketType::AckLow
 			|| in_recv_win
 		{
-			if !header.get_unencrypted() {
+			if !packet.header().flags().contains(Flags::UNENCRYPTED) {
 				// If it is the first ack packet of a client, try to fake
 				// decrypt it.
 				let decrypted = if (p_type == PacketType::Ack
 					&& id <= 1
 					&& is_client) || con.1.params.is_none() {
-					if let Ok(dec) = algs::decrypt_fake(&header, udp_packet)
+					if let Ok(dec) = algs::decrypt_fake(&packet)
 					{
-						dec_data = dec;
-						udp_packet = &dec_data;
+						packet.set_content(dec);
 						true
 					} else {
 						false
@@ -187,8 +159,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					if let Some(params) = &mut con.1.params {
 						// Decrypt the packet
 						let dec_res = algs::decrypt(
-							&header,
-							udp_packet,
+							&packet,
 							gen_id,
 							&params.shared_iv,
 							&mut params.key_cache,
@@ -200,8 +171,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							return Ok(());
 						}
 
-						dec_data1 = dec_res?;
-						udp_packet = &dec_data1;
+						packet.set_content(dec_res?);
 					} else {
 						// Failed to fake decrypt the packet
 						return Err(Error::WrongMac);
@@ -211,6 +181,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				// Check if it is ok for the packet to be unencrypted
 				return Err(Error::UnallowedUnencryptedPacket);
 			}
+
+			for o in in_packet_observer.read().unwrap().values() {
+				o.observe(con, &packet);
+			}
+
+			let in_ids = &mut con.1.incoming_p_ids;
 			match p_type {
 				PacketType::Command | PacketType::CommandLow => {
 					if p_type == PacketType::Command {
@@ -224,13 +200,26 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							PData::AckLow(id),
 						));
 					}
-					packets = Some(Self::handle_command_packet(
-						logger, r_queue, frag_queue, in_ids, header,
-						udp_packet,
-					)?);
+					let r_queue = &mut con.1.receive_queue;
+					let frag_queue = &mut con.1.fragmented_queue;
+
+					let commands = Self::handle_command_packet(
+						logger, r_queue, frag_queue, in_ids, packet,
+					)?;
+
+					// Be careful with command packets, they are
+					// guaranteed to be in the right order now, because
+					// we hold a lock on the connection.
+					for c in commands {
+						// Send to packet handler
+						if let Err(e) = con.1.command_sink.unbounded_send(c) {
+							error!(logger, "Failed to send command packet to \
+								handler"; "error" => ?e);
+						}
+					}
 
 					// Dummy value
-					packet = Err(Error::UnallowedUnencryptedPacket);
+					packet_res = Ok(None);
 				}
 				_ => {
 					if p_type == PacketType::Ping {
@@ -245,38 +234,24 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						in_ids[type_i] = (if next_gen { gen_id + 1 } else { gen_id }, id);
 					}
 
-					let p_data = PData::read(
-						&header,
-						&mut Cursor::new(&udp_packet),
-					)?;
-					match p_data {
-						PData::Ack(p_id) | PData::AckLow(p_id) => {
-							// Remove command packet from send queue if the fitting ack is received.
-							let p_type =
-								if p_type == PacketType::Ack {
-									PacketType::Command
-								} else {
-									PacketType::CommandLow
-								};
-							con.1.resender.ack_packet(p_type, p_id);
-							let mut p = Packet::new(header, p_data);
-							for o in in_packet_observer.read().unwrap().values() {
-								o.observe(con, &mut p);
-							}
-							return Ok(());
-						}
-						PData::VoiceS2C { .. }
-						| PData::VoiceWhisperS2C { .. } => {
-							// Seems to work better without assembling the first 3 voice packets
-							// Use handle_voice_packet to assemble fragmented voice packets
-							/*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
-							let res = res.drain(..).map(|p|
-								(con_key.clone(), p)).collect();
-							Ok(res)*/
-							packet = Ok(Packet::new(header, p_data));
-						}
-						_ => packet = Ok(Packet::new(header, p_data)),
+					if p_type.is_ack() {
+						// Remove command packet from send queue if the fitting ack is received.
+						let p_type =
+							if p_type == PacketType::Ack {
+								PacketType::Command
+							} else {
+								PacketType::CommandLow
+							};
+						con.1.resender.ack_packet(p_type, id);
+					} else if p_type.is_voice() {
+						// Seems to work better without assembling the first 3 voice packets
+						// Use handle_voice_packet to assemble fragmented voice packets
+						/*let mut res = Self::handle_voice_packet(&logger, params, &header, p_data);
+						let res = res.drain(..).map(|p|
+							(con_key.clone(), p)).collect();
+						Ok(res)*/
 					}
+					packet_res = Ok(Some(packet));
 				},
 			}
 		} else {
@@ -286,7 +261,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			} else if p_type == PacketType::CommandLow {
 				ack = Some((PacketType::AckLow, PData::AckLow(id)));
 			}
-			packet = Err(Error::NotInReceiveWindow {
+			packet_res = Err(Error::NotInReceiveWindow {
 				id,
 				next: cur_next,
 				limit,
@@ -309,40 +284,22 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			);
 		}
 
-		if let Some(packets) = packets {
-			// Be careful with command packets, they are
-			// guaranteed to be in the right order now, because
-			// we hold a lock on the connection.
-			for mut p in packets {
-				for o in in_packet_observer.read().unwrap().values() {
-					o.observe(con, &mut p);
+		if let Some(packet) = packet_res? {
+			if p_type.is_voice() {
+				if let Err(e) = con.1.audio_sink.unbounded_send(packet.into_audio()?) {
+					error!(logger, "Failed to send packet to handler"; "error" => ?e);
 				}
-				// Send to packet handler
-				if let Err(e) = con.1.command_sink.unbounded_send(p) {
-					error!(logger, "Failed to send command packet to \
-					handler"; "error" => ?e);
+			} else if p_type == PacketType::Init {
+				if is_client {
+					if let Err(e) = con.1.s2c_init_sink.unbounded_send(packet.into_s2cinit()?) {
+						error!(logger, "Failed to send packet to handler"; "error" => ?e);
+					}
+				} else {
+					if let Err(e) = con.1.c2s_init_sink.unbounded_send(packet.into_c2sinit()?) {
+						error!(logger, "Failed to send packet to handler"; "error" => ?e);
+					}
 				}
 			}
-			return Ok(());
-		}
-
-		let mut packet = packet?;
-		for o in in_packet_observer.read().unwrap().values() {
-			o.observe(con, &mut packet);
-		}
-
-		let sink = match packet.data {
-			PData::VoiceS2C { .. } | PData::VoiceWhisperS2C { .. } => {
-				&mut con.1.audio_sink
-			}
-			PData::Ping { .. } => return Ok(()),
-			_ => {
-				// Send as command packet
-				&mut con.1.command_sink
-			}
-		};
-		if let Err(e) = sink.unbounded_send(packet) {
-			error!(logger, "Failed to send packet to handler"; "error" => ?e);
 		}
 		Ok(())
 	}
@@ -352,16 +309,17 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	/// They have to be handled in the right order.
 	fn handle_command_packet(
 		logger: &Logger,
-		r_queue: &mut [Vec<(Header, Vec<u8>)>; 2],
-		frag_queue: &mut [Option<(Header, Vec<u8>)>; 2],
+		r_queue: &mut [Vec<InPacket>; 2],
+		frag_queue: &mut [Option<(InPacket, Vec<u8>)>; 2],
 		in_ids: &mut [(u32, u16); 8],
-		mut header: Header,
-		udp_packet: &[u8],
-	) -> Result<Vec<Packet>> {
-		let mut udp_packet = Cow::Borrowed(udp_packet);
-		let mut id = header.p_id;
-		let type_i = header.get_type().to_usize().unwrap();
-		let cmd_i = if header.get_type() == PacketType::Command {
+		mut packet: InPacket,
+	) -> Result<Vec<InCommand>> {
+		let header = packet.header();
+		let p_type = header.packet_type();
+		let flags = header.flags();
+		let mut id = header.packet_id();
+		let type_i = p_type.to_usize().unwrap();
+		let cmd_i = if p_type == PacketType::Command {
 			0
 		} else {
 			1
@@ -382,12 +340,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				}
 				in_ids.1 = next_id;
 
-				let res_packet = if header.get_fragmented() {
+				let res_packet = if flags.contains(Flags::FRAGMENTED) {
 					if let Some((header, mut frag_queue)) = frag_queue.take() {
 						// Last fragmented packet
-						frag_queue.extend_from_slice(&udp_packet);
+						frag_queue.extend_from_slice(packet.content());
 						// Decompress
-						let decompressed = if header.get_compressed() {
+						let decompressed = if header.header().flags().contains(Flags::COMPRESSED) {
 							//debug!(logger, "Compressed"; "data" => ?::HexSlice(&frag_queue));
 							::quicklz::decompress(
 								&mut Cursor::new(frag_queue),
@@ -402,24 +360,17 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 								"string" => %String::from_utf8_lossy(&decompressed),
 							);
 						}*/
-						let p_data = PData::read(
-							&header,
-							&mut Cursor::new(decompressed.as_slice()),
-						)?;
-						Some(Packet::new(header, p_data))
+						Some(InCommand::with_content(&header, decompressed)?)
 					} else {
 						// Enqueue
-						*frag_queue = Some((
-							header,
-							mem::replace(&mut udp_packet, Cow::Borrowed(&[]))
-								.into_owned(),
-						));
+						let content = packet.take_content();
+						*frag_queue = Some((packet, content));
 						None
 					}
 				} else if let Some((_, ref mut frag_queue)) = *frag_queue {
 					// The packet is fragmented
 					if frag_queue.len() < MAX_FRAGMENTS_LENGTH {
-						frag_queue.extend_from_slice(&udp_packet);
+						frag_queue.extend_from_slice(packet.content());
 						None
 					} else {
 						return Err(Error::MaxLengthExceeded(String::from(
@@ -428,24 +379,19 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					}
 				} else {
 					// Decompress
-					let decompressed = if header.get_compressed() {
+					let decompressed = if flags.contains(Flags::COMPRESSED) {
 						//debug!(logger, "Compressed"; "data" => ?::HexSlice(&packet.0));
 						::quicklz::decompress(
-							&mut Cursor::new(udp_packet),
+							&mut Cursor::new(packet.content()),
 							::MAX_DECOMPRESSED_SIZE,
 						)?
 					} else {
-						mem::replace(&mut udp_packet, Cow::Borrowed(&[]))
-							.into_owned()
+						packet.take_content()
 					};
 					/*if header.get_compressed() {
 						debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
 					}*/
-					let p_data = PData::read(
-						&header,
-						&mut Cursor::new(decompressed.as_slice()),
-					)?;
-					Some(Packet::new(header, p_data))
+					Some(InCommand::with_content(&packet, decompressed)?)
 				};
 				if let Some(p) = res_packet {
 					packets.push(p);
@@ -455,11 +401,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				id = id.wrapping_add(1);
 				if let Some(pos) = r_queue
 					.iter()
-					.position(|&(ref header, _)| header.p_id == id)
+					.position(|p| p.header().packet_id() == id)
 				{
-					let (h, p) = r_queue.remove(pos);
-					header = h;
-					udp_packet = Cow::Owned(p);
+					packet = r_queue.remove(pos);
 				} else {
 					break;
 				}
@@ -476,7 +420,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			if (cur_next < limit && id >= cur_next && id < limit)
 				|| (cur_next > limit && (id >= cur_next || id < limit))
 			{
-				r_queue.push((header, udp_packet.to_vec()));
+				r_queue.push(packet);
 				Ok(vec![])
 			} else {
 				Err(Error::MaxLengthExceeded(String::from("command queue")))
