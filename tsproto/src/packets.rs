@@ -5,6 +5,7 @@ use std::io::prelude::*;
 use std::io::Cursor;
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
+use bytes::Bytes;
 use num::{FromPrimitive, ToPrimitive};
 
 use commands::Command;
@@ -100,40 +101,47 @@ impl<'a> fmt::Debug for UdpPacket<'a> {
 	}
 }
 
+pub(crate) struct MyBytes(Bytes);
+unsafe impl ::stable_deref_trait::StableDeref for MyBytes {}
+impl ::std::ops::Deref for MyBytes {
+	type Target = [u8];
+	fn deref(&self) -> &Self::Target { self.0.as_ref() }
+}
+
 rental! {
 	mod rentals {
 		use std::borrow::Cow;
 		use super::*;
 
 		#[rental(covariant)]
-		pub struct Packet {
-			header: Vec<u8>,
+		pub(crate) struct Packet {
+			header: MyBytes,
 			content: Cow<'header, [u8]>,
 		}
 
 		#[rental]
-		pub struct Command {
+		pub(crate) struct Command {
 			#[subrental = 2]
 			packet: Box<Packet>,
 			data: CommandData<'packet_1>,
 		}
 
 		#[rental]
-		pub struct C2SInit {
-			#[subrental = 2]
-			packet: Box<Packet>,
-			data: C2SInitData<'packet_1>,
-		}
-
-		#[rental]
-		pub struct S2CInit {
+		pub(crate) struct S2CInit {
 			#[subrental = 2]
 			packet: Box<Packet>,
 			data: S2CInitData<'packet_1>,
 		}
 
 		#[rental]
-		pub struct Voice {
+		pub(crate) struct C2SInit {
+			#[subrental = 2]
+			packet: Box<Packet>,
+			data: C2SInitData<'packet_1>,
+		}
+
+		#[rental]
+		pub(crate) struct Voice {
 			#[subrental = 2]
 			packet: Box<Packet>,
 			data: VoiceData<'packet_1>,
@@ -152,13 +160,7 @@ pub struct Packet2 {
 	dir: Direction,
 }
 
-pub struct PacketMut {
-	data: Vec<u8>,
-	dir: Direction,
-}
-
 pub struct Header2<'a>(&'a [u8], Direction);
-pub struct HeaderMut<'a>(&'a mut [u8], Direction);
 
 pub struct Command2 {
 	inner: rentals::Command,
@@ -196,9 +198,8 @@ pub enum S2CInitData<'a> {
 	},
 }
 
-pub struct C2SInit2 {
-	inner: rentals::C2SInit,
-}
+pub struct S2CInit2(rentals::S2CInit);
+pub struct C2SInit2(rentals::C2SInit);
 
 pub enum VoiceData<'a> {
 	C2S { id: u16, codec: CodecType, data: &'a [u8] },
@@ -227,7 +228,7 @@ pub struct Voice(rentals::Voice);
 
 impl Packet2 {
 	/// Do some sanity checks before creating the object.
-	pub fn try_new(data: Vec<u8>, dir: Direction) -> Result<Self> {
+	pub fn try_new(data: Bytes, dir: Direction) -> Result<Self> {
 		let header_len = if dir == Direction::S2C { ::S2C_HEADER_LEN }
 			else { ::C2S_HEADER_LEN };
 		if data.len() < header_len {
@@ -239,23 +240,15 @@ impl Packet2 {
 			return Err(format_err!("Invalid packet type").into());
 		}
 
-		Ok(Self {
-			inner: rentals::Packet::new(data,
-				|data| if dir == Direction::S2C {
-					Cow::Borrowed(&data[header_len..])
-				} else {
-					Cow::Borrowed(&data[header_len..])
-				}),
-			dir,
-		})
+		Ok(Self::new(data, dir))
 	}
 
 	/// This method expects that `data` holds a valid packet.
 	///
 	/// If not, further function calls may panic.
-	pub fn new(data: Vec<u8>, dir: Direction) -> Self {
+	pub fn new(data: Bytes, dir: Direction) -> Self {
 		Self {
-			inner: rentals::Packet::new(data,
+			inner: rentals::Packet::new(MyBytes(data),
 				|data| if dir == Direction::S2C {
 					Cow::Borrowed(&data[::S2C_HEADER_LEN..])
 				} else {
@@ -267,7 +260,10 @@ impl Packet2 {
 
 	#[inline]
 	pub fn header(&self) -> Header2 { Header2(self.inner.head(), self.dir) }
+	#[inline]
+	pub fn direction(&self) -> Direction { self.dir }
 
+	#[inline]
 	pub fn into_command(self) -> Result<Command2> {
 		let p_type = self.header().packet_type();
 		let dir = self.dir;
@@ -370,6 +366,105 @@ impl Packet2 {
 		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
 	}
 
+	pub fn into_s2cinit(self) -> Result<S2CInit2> {
+		if self.dir != Direction::S2C {
+			return Err(format_err!("Wrong direction").into());
+		}
+		if self.header().packet_type() != PacketType::Init {
+			return Err(format_err!("Not an init packet").into());
+		}
+		if self.header().mac() != b"TS3INIT1" {
+			return Err(format_err!("Wrong init packet mac").into());
+		}
+
+		Ok(S2CInit2(rentals::S2CInit::try_new(Box::new(self.inner), |p| {
+			let content = &p.content;
+			if content.len() < 1 {
+				return Err(format_err!("Packet too short").into());
+			}
+
+			if content[0] == 1 {
+				if content.len() < 21 {
+					return Err(format_err!("Packet too short").into());
+				}
+				Ok(S2CInitData::Init1 {
+					random1: array_ref!(content, 1, 16),
+					random0_r: array_ref!(content, 17, 4),
+				})
+			} else if content[0] == 3 {
+				if content.len() < 233 {
+					return Err(format_err!("Packet too short").into());
+				}
+				Ok(S2CInitData::Init3 {
+					x: array_ref!(content, 1, 64),
+					n: array_ref!(content, 65, 64),
+					level: (&content[129..]).read_u32::<NetworkEndian>()?,
+					random2: array_ref!(content, 133, 100),
+				})
+			} else {
+				Err(format_err!("Invalid init step").into())
+			}
+		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
+	}
+
+	pub fn into_c2sinit(self) -> Result<C2SInit2> {
+		if self.dir != Direction::C2S {
+			return Err(format_err!("Wrong direction").into());
+		}
+		if self.header().packet_type() != PacketType::Init {
+			return Err(format_err!("Not an init packet").into());
+		}
+		if self.header().mac() != b"TS3INIT1" {
+			return Err(format_err!("Wrong init packet mac").into());
+		}
+
+		Ok(C2SInit2(rentals::C2SInit::try_new(Box::new(self.inner), |p| {
+			let content = &p.content;
+			if content.len() < 5 {
+				return Err(format_err!("Packet too short").into());
+			}
+
+			let version = (&content[0..]).read_u32::<NetworkEndian>()?;
+			if content[5] == 0 {
+				if content.len() < 13 {
+					return Err(format_err!("Packet too short").into());
+				}
+				Ok(C2SInitData::Init0 {
+					version,
+					timestamp: (&content[5..]).read_u32::<NetworkEndian>()?,
+					random0: array_ref!(content, 9, 4),
+				})
+			} else if content[5] == 2 {
+				if content.len() < 25 {
+					return Err(format_err!("Packet too short").into());
+				}
+				Ok(C2SInitData::Init2 {
+					version,
+					random1: array_ref!(content, 5, 16),
+					random0_r: array_ref!(content, 21, 4),
+				})
+			} else if content[5] == 4 {
+				let len = 5 + 128 + 4 + 100 + 64;
+				if content.len() < len + 20 {
+					return Err(format_err!("Packet too short").into());
+				}
+				let s = ::std::str::from_utf8(&content[len..])?;
+				let command = ::commands::parse_command2(s)?;
+				Ok(C2SInitData::Init4 {
+					version,
+					x: array_ref!(content, 5, 64),
+					n: array_ref!(content, 69, 64),
+					level: (&content[128 + 5..]).read_u32::<NetworkEndian>()?,
+					random2: array_ref!(content, 128 + 9, 100),
+					y: array_ref!(content, 228 + 9, 64),
+					command,
+				})
+			} else {
+				Err(format_err!("Invalid init step").into())
+			}
+		}).map_err(|e: ::rental::RentalError<Error, _>| e.0)?))
+	}
+
 	#[inline]
 	pub fn content(&self) -> &[u8] {
 		self.inner.ref_rent(|d| &**d)
@@ -409,11 +504,11 @@ impl<'a> Header2<'a> {
 	}
 }
 
-impl<'a> HeaderMut<'a> {
+impl Command2 {
 	#[inline]
-	fn header<'b: 'a>(&'b self) -> Header2<'a> {
-		Header2(self.0, self.1)
-	}
+	pub fn direction(&self) -> Direction { self.dir }
+	#[inline]
+	pub fn name(&self) -> &str { self.inner.ref_rent(|d| d.name) }
 }
 
 impl Packet {

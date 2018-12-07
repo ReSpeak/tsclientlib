@@ -40,6 +40,7 @@ extern crate slog;
 extern crate slog_async;
 extern crate slog_perf;
 extern crate slog_term;
+extern crate stable_deref_trait;
 extern crate tokio;
 extern crate tokio_threadpool;
 extern crate yasna;
