@@ -22,8 +22,8 @@ extern crate curve25519_dalek;
 #[macro_use]
 extern crate failure;
 extern crate futures;
-#[cfg(feature = "rust-gmp")]
-extern crate gmp;
+#[cfg(feature = "rug")]
+extern crate rug;
 #[macro_use]
 extern crate nom;
 extern crate num;

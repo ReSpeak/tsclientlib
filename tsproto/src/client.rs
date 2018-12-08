@@ -4,11 +4,13 @@ use std::sync::{Mutex, Weak};
 use chrono::Utc;
 use futures::sync::mpsc;
 use futures::{future, Future, Sink, Stream};
-#[cfg(feature = "rust-gmp")]
-use gmp::mpz::Mpz;
-#[cfg(not(feature = "rust-gmp"))]
+#[cfg(feature = "rug")]
+use rug::Integer;
+#[cfg(feature = "rug")]
+use rug::integer::Order;
+#[cfg(not(feature = "rug"))]
 use num::bigint::BigUint;
-#[cfg(not(feature = "rust-gmp"))]
+#[cfg(not(feature = "rug"))]
 use num::One;
 use rand::{self, Rng};
 use slog::Logger;
@@ -562,42 +564,49 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 
 										// Use gmp for faster computations if it is
 										// available.
-										#[cfg(feature = "rust-gmp")]
+										#[cfg(feature = "rug")]
 										let y = {
-											let mut e = Mpz::new();
-											let n = (&n[..]).into();
-											let x: Mpz = (&x[..]).into();
-											e.setbit(level as usize);
-											let y = x.powm(&e, &n);
-											time_reporter.finish();
-											info!(logger, "Solve RSA puzzle";
-											  	  "level" => level);
-											let ys = y.to_str_radix(10);
-											let yi = ys.parse().unwrap();
-											algs::biguint_to_array(&yi)
+											let mut e = Integer::new();
+											let n = Integer::from_digits(&n[..], Order::Msf);
+											let x = Integer::from_digits(&x[..], Order::Msf);
+											e.set_bit(level, true);
+											let y = match x.pow_mod(&e, &n) {
+												Ok(r) => r,
+												Err(_) => return Err(format_err!("Failed to solve RSA challenge").into()),
+											};
+											let mut yi = [0; 64];
+											y.write_digits(&mut yi, Order::Msf);
+											yi
 										};
 
-										#[cfg(not(feature = "rust-gmp"))]
+										#[cfg(not(feature = "rug"))]
 										let y = {
 											let xi = BigUint::from_bytes_be(&x);
 											let ni = BigUint::from_bytes_be(&n);
 											let mut e = BigUint::one();
 											e <<= level as usize;
 											let yi = xi.modpow(&e, &ni);
-											time_reporter.finish();
 											info!(logger, "Solve RSA puzzle";
 											  	  "level" => level, "x" => %xi, "n" => %ni,
 											  	  "y" => %yi);
 											algs::biguint_to_array(&yi)
 										};
-										(x, n, y)
+
+										time_reporter.finish();
+										info!(logger, "Solve RSA puzzle";
+											  "level" => level);
+										Ok((x, n, y))
 									})
 								}).map_err(|e| {
 									format_err!(
 										"Failed to start blocking operation ({:?})",
 										e
 									).into()
-								}).and_then(move |(x, n, y)| {
+								}).and_then(move |r| -> Box<Future<Item=_, Error=_> + Send> {
+									let (x, n, y) = match r {
+										Ok(r) => r,
+										Err(e) => return Box::new(future::err(e)),
+									};
 									// Create the command string
 									// omega is an ASN.1-DER encoded public key from
 									// the ECDH parameters.
@@ -629,10 +638,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										cheader,
 										packets::Data::C2SInit(data),
 									);
-									con_value
+									Box::new(con_value
 										.as_packet_sink()
 										.send(packet)
-										.map(|_| ())
+										.map(|_| ()))
 								})
 							}).map(|_| ())
 							.map_err(move |error| {
