@@ -324,6 +324,7 @@ pub fn array_to_biguint(i: &[u8; 64]) -> BigUint {
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use std::io::Write;
 	use base64;
 	use packets::{Data, Header, PacketType};
 
@@ -333,7 +334,11 @@ mod tests {
 		let data = (0..100).into_iter().collect::<Vec<_>>();
 		let mut header = Header::default();
 		let enc_data = encrypt_fake(&mut header, &data).unwrap();
-		let dec_data = decrypt_fake(&header, &enc_data).unwrap();
+		let mut packet = Vec::new();
+		header.write(&mut packet).unwrap();
+		packet.write_all(&enc_data).unwrap();
+		let packet = InPacket::try_new(packet.into(), Direction::S2C).unwrap();
+		let dec_data = decrypt_fake(&packet).unwrap();
 		assert_eq!(&data, &dec_data);
 	}
 

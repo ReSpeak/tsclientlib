@@ -27,7 +27,7 @@ named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispac
 		preceded!(tag!("="),
 			do_parse!(
 				// Try to parse the value without escaped characters
-				prefix: is_not!("\u{b}\u{c}\\\t\r\n| /") >>
+				prefix: opt!(is_not!("\u{b}\u{c}\\\t\r\n| /")) >>
 				rest: many0!(alt!(
 					map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
 					map!(tag!("\\f"), |_| "\x0c") | // Form feed
@@ -39,15 +39,15 @@ named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispac
 					map!(tag!("\\s"), |_| " ") |
 					map!(tag!("\\/"), |_| "/") |
 					map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
-				)) >> (if rest.is_empty() { Cow::Borrowed(*prefix) }
-					else { Cow::Owned(format!("{}{}", prefix, rest.concat())) })
+				)) >> (if rest.is_empty() { Cow::Borrowed(prefix.map(|p| *p).unwrap_or("")) }
+					else { Cow::Owned(format!("{}{}", prefix.map(|p| *p).unwrap_or(""), rest.concat())) })
 			)
 		)), |o| o.unwrap_or(Cow::Borrowed("")))
 	>> (*name, value)
 ));
 
 named!(inner_parse_command(CompleteStr) -> ::packets::CommandData, do_parse!(
-	name: alphanumeric >> // Command
+	name: alt!(do_parse!(res: alphanumeric >> multispace >> (res)) | tag!("")) >> // Command
 	static_args: many0!(command_arg2) >>
 	list_args: many0!(do_parse!(many0!(multispace) >>
 		tag!("|") >>
@@ -84,7 +84,7 @@ named!(command_arg(CompleteStr) -> (String, String), do_parse!(many0!(multispace
 ));
 
 named!(parse_command(CompleteStr) -> Command, do_parse!(
-	command: alphanumeric >> // Command
+	command: alt!(do_parse!(res: alphanumeric >> multispace >> (res)) | tag!("")) >> // Command
 	static_args: many0!(command_arg) >>
 	list_args: many0!(do_parse!(many0!(multispace) >>
 		tag!("|") >>
@@ -335,6 +335,7 @@ mod tests {
 	use std::io::Cursor;
 	use std::iter::FromIterator;
 
+	use super::parse_command2;
 	use commands::{CanonicalCommand, Command};
 
 	#[test]
@@ -393,8 +394,11 @@ mod tests {
 
 	#[test]
 	fn canonical_command() {
-		let s = b"cmd a=1 b=2 c=3|b=4|b=5";
-		let cmd = Command::read((), &mut Cursor::new(s)).unwrap();
+		let s = "cmd a=1 b=2 c=3|b=4|b=5";
+		let cmd = Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		let in_cmd = parse_command2(s).unwrap();
+		assert_eq!(cmd.command, "cmd");
+		assert_eq!(in_cmd.name, "cmd");
 		assert_eq!(
 			cmd.get_commands(),
 			vec![
@@ -439,33 +443,54 @@ mod tests {
 	}
 
 	#[test]
+	fn initivexpand2() {
+		let s = "initivexpand2 l=AQCVXTlKF+UQc0yga99dOQ9FJCwLaJqtDb1G7xYPMvHFMwIKVfKADF6zAAcAAAAgQW5vbnltb3VzAAAKQo71lhtEMbqAmtuMLlY8Snr0k2Wmymv4hnHNU6tjQCALKHewCykgcA== beta=\\/8kL8lcAYyMJovVOP6MIUC1oZASyuL\\/Y\\/qjVG06R4byuucl9oPAvR7eqZI7z8jGm9jkGmtJ6 omega=MEsDAgcAAgEgAiBxu2eCLQf8zLnuJJ6FtbVjfaOa1210xFgedoXuGzDbTgIgcGk35eqFavKxS4dROi5uKNSNsmzIL4+fyh5Z\\/+FWGxU= ot=1 proof=MEUCIQDRCP4J9e+8IxMJfCLWWI1oIbNPGcChl+3Jr2vIuyDxzAIgOrzRAFPOuJZF4CBw\\/xgbzEsgKMtEtgNobF6WXVNhfUw= tvd time=1544221457";
+		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		parse_command2(s.as_ref()).unwrap();
+	}
+
+	#[test]
 	fn clientinitiv() {
-		let s = b"clientinitiv alpha=41Te9Ar7hMPx+A== omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 ip";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+		let s = "clientinitiv alpha=41Te9Ar7hMPx+A== omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 ip";
+		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		parse_command2(s.as_ref()).unwrap();
 	}
 
 	#[test]
 	fn initserver() {
 		// Well, that's more corrupted packet, but the parser should be robust
-		let s = b"initserver virtualserver_name=Server\\sder\\sVerplanten virtualserver_welcomemessage=This\\sis\\sSplamys\\sWorld virtualserver_platform=Linux virtualserver_version=3.0.13.8\\s[Build:\\s1500452811] virtualserver_maxclients=32 virtualserver_created=0 virtualserver_nodec_encryption_mode=1 virtualserver_hostmessage=L\xc3\xa9\\sServer\\sde\\sSplamy virtualserver_name=Server_mode=0 virtualserver_default_server group=8 virtualserver_default_channel_group=8 virtualserver_hostbanner_url virtualserver_hostmessagegfx_url virtualserver_hostmessagegfx_interval=2000 virtualserver_priority_speaker_dimm_modificat";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+		let s = "initserver virtualserver_name=Server\\sder\\sVerplanten virtualserver_welcomemessage=This\\sis\\sSplamys\\sWorld virtualserver_platform=Linux virtualserver_version=3.0.13.8\\s[Build:\\s1500452811] virtualserver_maxclients=32 virtualserver_created=0 virtualserver_nodec_encryption_mode=1 virtualserver_hostmessage=Lé\\sServer\\sde\\sSplamy virtualserver_name=Server_mode=0 virtualserver_default_server group=8 virtualserver_default_channel_group=8 virtualserver_hostbanner_url virtualserver_hostmessagegfx_url virtualserver_hostmessagegfx_interval=2000 virtualserver_priority_speaker_dimm_modificat";
+		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		parse_command2(s.as_ref()).unwrap();
 	}
 
 	#[test]
 	fn channellist() {
-		let s = b"channellist cid=2 cpid=0 channel_name=Trusted\\sChannel channel_topic channel_codec=0 channel_codec_quality=0 channel_maxclients=0 channel_maxfamilyclients=-1 channel_order=1 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=0 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic channel_icon_id=0 channel_flag_private=0|cid=4 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s1\\s\\p\\sSplamy\xc2\xb4s\\sBett channel_topic channel_codec=4 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=0 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Neo\\sSeebi\\sEvangelion channel_icon_id=0 channel_flag_private=0"; //|cid=6 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s2\\s\\p\\sThe\\sBook\\sof\\sHeavy\\sMetal channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=4 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Not\\senought\\sChannels channel_icon_id=0 channel_flag_private=0|cid=30 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s3\\s\\p\\sSenpai\\sGef\xc3\xa4hrlich channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=6 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=The\\strashcan\\shas\\sthe\\strash channel_icon_id=0 channel_flag_private=0";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+		let s = "channellist cid=2 cpid=0 channel_name=Trusted\\sChannel channel_topic channel_codec=0 channel_codec_quality=0 channel_maxclients=0 channel_maxfamilyclients=-1 channel_order=1 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=0 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic channel_icon_id=0 channel_flag_private=0|cid=4 cpid=2 channel_name=Ding\\s•\\s1\\s\\p\\sSplamy´s\\sBett channel_topic channel_codec=4 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=0 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Neo\\sSeebi\\sEvangelion channel_icon_id=0 channel_flag_private=0"; //|cid=6 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s2\\s\\p\\sThe\\sBook\\sof\\sHeavy\\sMetal channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=4 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Not\\senought\\sChannels channel_icon_id=0 channel_flag_private=0|cid=30 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s3\\s\\p\\sSenpai\\sGef\xc3\xa4hrlich channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=6 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=The\\strashcan\\shas\\sthe\\strash channel_icon_id=0 channel_flag_private=0";
+		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		parse_command2(s.as_ref()).unwrap();
 	}
 
 	#[test]
 	fn subscribe() {
-		let s = b"notifychannelsubscribed cid=2|cid=4 es=3867|cid=5 es=18694|cid=6 es=18694|cid=7 es=18694|cid=11 es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+		let s = "notifychannelsubscribed cid=2|cid=4 es=3867|cid=5 es=18694|cid=6 es=18694|cid=7 es=18694|cid=11 es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
+		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		parse_command2(s.as_ref()).unwrap();
 	}
 
 	#[test]
 	fn permissionlist() {
-		let s = b"notifypermissionlist group_id_end=0|group_id_end=7|group_id_end=13|group_id_end=18|group_id_end=21|group_id_end=21|group_id_end=33|group_id_end=47|group_id_end=77|group_id_end=82|group_id_end=83|group_id_end=106|group_id_end=126|group_id_end=132|group_id_end=143|group_id_end=151|group_id_end=160|group_id_end=162|group_id_end=170|group_id_end=172|group_id_end=190|group_id_end=197|group_id_end=215|group_id_end=227|group_id_end=232|group_id_end=248|permname=b_serverinstance_help_view permdesc=Retrieve\\sinformation\\sabout\\sServerQuery\\scommands|permname=b_serverinstance_version_view permdesc=Retrieve\\sglobal\\sserver\\sversion\\s(including\\splatform\\sand\\sbuild\\snumber)|permname=b_serverinstance_info_view permdesc=Retrieve\\sglobal\\sserver\\sinformation|permname=b_serverinstance_virtualserver_list permdesc=List\\svirtual\\sservers\\sstored\\sin\\sthe\\sdatabase";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+		let s = "notifypermissionlist group_id_end=0|group_id_end=7|group_id_end=13|group_id_end=18|group_id_end=21|group_id_end=21|group_id_end=33|group_id_end=47|group_id_end=77|group_id_end=82|group_id_end=83|group_id_end=106|group_id_end=126|group_id_end=132|group_id_end=143|group_id_end=151|group_id_end=160|group_id_end=162|group_id_end=170|group_id_end=172|group_id_end=190|group_id_end=197|group_id_end=215|group_id_end=227|group_id_end=232|group_id_end=248|permname=b_serverinstance_help_view permdesc=Retrieve\\sinformation\\sabout\\sServerQuery\\scommands|permname=b_serverinstance_version_view permdesc=Retrieve\\sglobal\\sserver\\sversion\\s(including\\splatform\\sand\\sbuild\\snumber)|permname=b_serverinstance_info_view permdesc=Retrieve\\sglobal\\sserver\\sinformation|permname=b_serverinstance_virtualserver_list permdesc=List\\svirtual\\sservers\\sstored\\sin\\sthe\\sdatabase";
+		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		parse_command2(s.as_ref()).unwrap();
+	}
+
+	#[test]
+	fn serverquery_command() {
+		let s = "cmd=1 cid=2";
+		let cmd = Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
+		let in_cmd = parse_command2(s.as_ref()).unwrap();
+		assert_eq!(cmd.command, "");
+		assert_eq!(in_cmd.name, "");
 	}
 }

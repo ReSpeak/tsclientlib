@@ -196,6 +196,7 @@ rental! {
 
 #[derive(Debug, Clone)]
 pub struct CommandData<'a> {
+	/// The name is empty for serverquery commands
 	pub name: &'a str,
 	pub static_args: Vec<(&'a str, Cow<'a, str>)>,
 	pub list_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
@@ -644,9 +645,15 @@ impl InCommand {
 	}
 
 	#[inline]
+	pub fn packet_type(&self) -> PacketType { self.p_type }
+	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
 	pub fn name(&self) -> &str { self.inner.ref_rent(|d| d.name) }
+	#[inline]
+	pub fn with_data<R, F: FnOnce(&CommandData) -> R>(&self, f: F) -> R {
+		self.inner.rent(f)
+	}
 
 	pub fn iter(&self) -> InCommandIterator {
 		let statics = self.inner.suffix().static_args.iter()

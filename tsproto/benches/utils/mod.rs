@@ -14,15 +14,23 @@ use slog;
 pub struct SimplePacketHandler;
 
 impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
-	fn new_connection<S1, S2>(
+	fn new_connection<S1, S2, S3, S4>(
 		&mut self,
 		_: &handler_data::ConnectionValue<T>,
-		command_stream: S1,
-		audio_stream: S2,
+		s2c_init_stream: S1,
+		_c2s_init_stream: S2,
+		command_stream: S3,
+		audio_stream: S4,
 	) where
-		S1: Stream<Item = Packet, Error = Error> + Send + 'static,
-		S2: Stream<Item = Packet, Error = Error> + Send + 'static,
+		S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
+		S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
+		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
+		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
 	{
+		// Ignore c2s init stream
+		tokio::spawn(s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
+			println!("Init stream exited with error ({:?})", e)
+		}));
 		tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e| {
 			println!("Command stream exited with error ({:?})", e)
 		}));

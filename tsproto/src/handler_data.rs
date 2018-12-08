@@ -100,6 +100,12 @@ pub trait OutPacketObserver<T>: Send + Sync {
 	fn observe(&self, connection: &mut (T, Connection), packet: &mut Packet);
 }
 
+/// The `observe` method is called on every incoming packet.
+pub trait InCommandObserver<T>: Send + Sync {
+	/// The `observe` method should not take too long, because it holds a lock.
+	fn observe(&self, connection: &mut (T, Connection), cmd: &InCommand);
+}
+
 pub struct ConnectionValue<T: 'static> {
 	pub mutex: Arc<Mutex<(T, Connection)>>,
 	pub(crate) out_packet_observer:
@@ -252,6 +258,11 @@ pub struct Data<CM: ConnectionManager + 'static> {
 	pub(crate) out_packet_observer:
 		LockedHashMap<String, Box<OutPacketObserver<CM::AssociatedData>>>,
 
+	/// Observe incoming `Commands`s.
+	pub(crate) in_command_observer:
+		LockedHashMap<String, Box<InCommandObserver<CM::AssociatedData>>>,
+	/// Observe outgoing `Commands`s.
+
 	/// A list of all connected clients or servers
 	///
 	/// You should not add or remove connections directly using the manager,
@@ -310,6 +321,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let out_udp_packet_observer = Arc::new(RwLock::new(HashMap::new()));
 		let in_packet_observer = Arc::new(RwLock::new(HashMap::new()));
 		let out_packet_observer = Arc::new(RwLock::new(HashMap::new()));
+		let in_command_observer = Arc::new(RwLock::new(HashMap::new()));
 
 		let data = Self {
 			is_client,
@@ -325,6 +337,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			out_udp_packet_observer,
 			in_packet_observer,
 			out_packet_observer,
+			in_command_observer,
 
 			packet_handler,
 			connection_manager,
@@ -365,7 +378,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 							let logger = logger.clone();
 							Box::new(codec.handle_udp_packet((a, packet)).then(move |r| {
 								if let Err(e) = r {
-									warn!(logger, "Packet receiver errored"; "error" => ?e);
+									warn!(logger, "Packet handler errored"; "error" => ?e);
 								}
 								// Ignore errors for one packet
 								Ok(())
@@ -507,5 +520,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	}
 	pub fn remove_out_packet_observer(&mut self, key: &String) {
 		self.out_packet_observer.write().unwrap().remove(key);
+	}
+
+	pub fn add_in_command_observer(&mut self, key: String, o: Box<InCommandObserver<CM::AssociatedData>>) {
+		self.in_command_observer.write().unwrap().insert(key, o);
+	}
+	pub fn remove_in_command_observer(&mut self, key: &String) {
+		self.in_command_observer.write().unwrap().remove(key);
 	}
 }

@@ -6,8 +6,9 @@ use slog::Logger;
 use connection::Connection;
 use connectionmanager::ConnectionManager;
 use handler_data::{Data, InPacketObserver, InUdpPacketObserver,
-	OutPacketObserver, OutUdpPacketObserver};
-use packets::{self, InPacket, InUdpPacket, Packet, PacketType, UdpPacket};
+	OutPacketObserver, OutUdpPacketObserver, InCommandObserver};
+use packets::{self, InCommand, InPacket, InUdpPacket, Packet, PacketType,
+	UdpPacket};
 
 fn prepare_logger(
 	logger: &Logger,
@@ -114,14 +115,10 @@ impl<T: Send> OutPacketObserver<T> for PacketLogger {
 struct CommandLogger {
 	is_client: bool,
 }
-impl<T: Send> InPacketObserver<T> for CommandLogger {
-	fn observe(&self, con: &mut (T, Connection), packet: &InPacket) {
-		let p_type = packet.header().packet_type();
-		if p_type.is_command() {
-			if let Ok(cmd) = ::std::str::from_utf8(packet.content()) {
-				log_command(&con.1.logger, self.is_client, true, p_type, cmd);
-			}
-		}
+impl<T: Send> InCommandObserver<T> for CommandLogger {
+	fn observe(&self, con: &mut (T, Connection), cmd: &InCommand) {
+		log_command(&con.1.logger, self.is_client, true, cmd.packet_type(),
+			&cmd.with_data(|d| format!("{:?}", d)));
 	}
 }
 
@@ -161,7 +158,7 @@ pub fn add_packet_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
 }
 
 pub fn add_command_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
-	data.add_in_packet_observer("cmdlog".into(), Box::new(CommandLogger {
+	data.add_in_command_observer("cmdlog".into(), Box::new(CommandLogger {
 		is_client: data.is_client,
 	}));
 	data.add_out_packet_observer("cmdlog".into(), Box::new(CommandLogger {

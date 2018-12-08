@@ -12,7 +12,7 @@ use tokio;
 use algorithms as algs;
 use connection::Connection;
 use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data, InPacketObserver};
+use handler_data::{ConnectionValue, Data, InCommandObserver, InPacketObserver};
 use packets::Data as PData;
 use packets::*;
 use {Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
@@ -26,6 +26,8 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
 	logger: Logger,
 	in_packet_observer: LockedHashMap<String,
 		Box<InPacketObserver<CM::AssociatedData>>>,
+	in_command_observer: LockedHashMap<String,
+		Box<InCommandObserver<CM::AssociatedData>>>,
 
 	/// The sink for `UdpPacket`s with no known connection.
 	///
@@ -43,6 +45,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			is_client: data.is_client,
 			logger: data.logger.clone(),
 			in_packet_observer: data.in_packet_observer.clone(),
+			in_command_observer: data.in_command_observer.clone(),
 			unknown_udp_packet_sink,
 		}
 	}
@@ -59,11 +62,13 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// work inside this future and not spawn a new one.
 			let logger = self.logger.new(o!("addr" => addr));
 			let in_packet_observer = self.in_packet_observer.clone();
+			let in_command_observer = self.in_command_observer.clone();
 			if self.is_client && cons.len() == 1 {
 				drop(cons);
 				Self::connection_handle_udp_packet(
 					&logger,
 					in_packet_observer,
+					in_command_observer,
 					self.is_client,
 					&con,
 					addr,
@@ -76,6 +81,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					if let Err(e) = Self::connection_handle_udp_packet(
 						&logger,
 						in_packet_observer,
+						in_command_observer,
 						is_client,
 						&con,
 						addr,
@@ -114,6 +120,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		logger: &Logger,
 		in_packet_observer: LockedHashMap<String,
 			Box<InPacketObserver<CM::AssociatedData>>>,
+		in_command_observer: LockedHashMap<String,
+			Box<InCommandObserver<CM::AssociatedData>>>,
 		is_client: bool,
 		connection: &ConnectionValue<CM::AssociatedData>,
 		_: SocketAddr,
@@ -211,6 +219,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					// guaranteed to be in the right order now, because
 					// we hold a lock on the connection.
 					for c in commands {
+						for o in in_command_observer.read().unwrap().values() {
+							o.observe(con, &c);
+						}
+
 						// Send to packet handler
 						if let Err(e) = con.1.command_sink.unbounded_send(c) {
 							error!(logger, "Failed to send command packet to \
@@ -316,7 +328,6 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	) -> Result<Vec<InCommand>> {
 		let header = packet.header();
 		let p_type = header.packet_type();
-		let flags = header.flags();
 		let mut id = header.packet_id();
 		let type_i = p_type.to_usize().unwrap();
 		let cmd_i = if p_type == PacketType::Command {
@@ -340,13 +351,14 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				}
 				in_ids.1 = next_id;
 
+				let flags = packet.header().flags();
 				let res_packet = if flags.contains(Flags::FRAGMENTED) {
 					if let Some((header, mut frag_queue)) = frag_queue.take() {
 						// Last fragmented packet
 						frag_queue.extend_from_slice(packet.content());
 						// Decompress
 						let decompressed = if header.header().flags().contains(Flags::COMPRESSED) {
-							//debug!(logger, "Compressed"; "data" => ?::HexSlice(&frag_queue));
+							debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(&frag_queue));
 							::quicklz::decompress(
 								&mut Cursor::new(frag_queue),
 								::MAX_DECOMPRESSED_SIZE,
@@ -380,7 +392,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				} else {
 					// Decompress
 					let decompressed = if flags.contains(Flags::COMPRESSED) {
-						//debug!(logger, "Compressed"; "data" => ?::HexSlice(&packet.0));
+						debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(packet.content()));
 						::quicklz::decompress(
 							&mut Cursor::new(packet.content()),
 							::MAX_DECOMPRESSED_SIZE,
