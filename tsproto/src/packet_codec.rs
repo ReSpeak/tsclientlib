@@ -246,7 +246,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						in_ids[type_i] = (if next_gen { gen_id + 1 } else { gen_id }, id);
 					}
 
-					if p_type.is_ack() {
+					if let Some(ack_id) = packet.ack_packet() {
 						// Remove command packet from send queue if the fitting ack is received.
 						let p_type =
 							if p_type == PacketType::Ack {
@@ -254,7 +254,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							} else {
 								PacketType::CommandLow
 							};
-						con.1.resender.ack_packet(p_type, id);
+						con.1.resender.ack_packet(p_type, ack_id);
 					} else if p_type.is_voice() {
 						// Seems to work better without assembling the first 3 voice packets
 						// Use handle_voice_packet to assemble fragmented voice packets

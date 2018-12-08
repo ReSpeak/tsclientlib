@@ -900,7 +900,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 
 				if is_normal_state && dur > con.resender.config.normal_timeout {
 					warn!(self.logger, "Max resend timeout exceeded";
-						"p_id" => p_id);
+						"p_id" => p_id, "dur" => %dur);
 					// Switch connection to stalling state
 					switch_to_stalling = true;
 					break;
