@@ -521,7 +521,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		key: &CM::Key,
 	) -> Option<ConnectionValue<CM::AssociatedData>>
 	{
-		self.connections.read().get(key).map(|v| v.clone())
+		self.connections.read().get(key).cloned()
 	}
 
 	pub fn add_in_udp_packet_observer(
@@ -540,10 +540,10 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	{
 		self.out_udp_packet_observer.write().insert(key, o);
 	}
-	pub fn remove_in_udp_packet_observer(&mut self, key: &String) {
+	pub fn remove_in_udp_packet_observer(&mut self, key: &str) {
 		self.in_udp_packet_observer.write().remove(key);
 	}
-	pub fn remove_out_udp_packet_observer(&mut self, key: &String) {
+	pub fn remove_out_udp_packet_observer(&mut self, key: &str) {
 		self.out_udp_packet_observer.write().remove(key);
 	}
 
@@ -563,10 +563,10 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	{
 		self.out_packet_observer.write().insert(key, o);
 	}
-	pub fn remove_in_packet_observer(&mut self, key: &String) {
+	pub fn remove_in_packet_observer(&mut self, key: &str) {
 		self.in_packet_observer.write().remove(key);
 	}
-	pub fn remove_out_packet_observer(&mut self, key: &String) {
+	pub fn remove_out_packet_observer(&mut self, key: &str) {
 		self.out_packet_observer.write().remove(key);
 	}
 
@@ -578,7 +578,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	{
 		self.in_command_observer.write().insert(key, o);
 	}
-	pub fn remove_in_command_observer(&mut self, key: &String) {
+	pub fn remove_in_command_observer(&mut self, key: &str) {
 		self.in_command_observer.write().remove(key);
 	}
 }

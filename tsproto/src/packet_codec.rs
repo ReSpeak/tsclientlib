@@ -62,9 +62,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	{
 		// Find the right connection
 		let cons = self.connections.read();
-		if let Some(con) = cons
-			.get(&CM::get_connection_key(addr, &packet))
-			.map(|vs| vs.clone())
+		if let Some(con) =
+			cons.get(&CM::get_connection_key(addr, &packet)).cloned()
 		{
 			// If we are a client and have only a single connection, we will do the
 			// work inside this future and not spawn a new one.
@@ -320,14 +319,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					{
 						error!(logger, "Failed to send packet to handler"; "error" => ?e);
 					}
-				} else {
-					if let Err(e) = con
-						.1
-						.c2s_init_sink
-						.unbounded_send(packet.into_c2sinit()?)
-					{
-						error!(logger, "Failed to send packet to handler"; "error" => ?e);
-					}
+				} else if let Err(e) =
+					con.1.c2s_init_sink.unbounded_send(packet.into_c2sinit()?)
+				{
+					error!(logger, "Failed to send packet to handler"; "error" => ?e);
 				}
 			}
 		}

@@ -517,8 +517,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						let cheader = create_init_header();
 						let data = C2SInit::Init2 {
 							version,
-							random1: (*random1).clone(),
-							random0_r: (*random0_r).clone(),
+							random1: **random1,
+							random0_r: **random0_r,
 						};
 
 						let state = ServerConnectionState::Init2 { version };
@@ -563,9 +563,9 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							let ip = con.address.ip();
 							let logger = logger.clone();
 
-							let x = (*x).clone();
-							let n = (*n).clone();
-							let random2 = (*random2).clone();
+							let x = **x;
+							let n = **n;
+							let random2 = **random2;
 
 							// Spawn this as another future
 							let logger2 = logger.clone();

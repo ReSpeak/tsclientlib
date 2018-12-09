@@ -412,78 +412,72 @@ impl InPacket {
 							data: &content[4..],
 						})
 					}
-				} else {
-					if dir == Direction::S2C {
-						Ok(VoiceData::S2CWhisper {
-							id,
-							from: (&content[2..])
-								.read_u16::<NetworkEndian>()?,
-							codec: CodecType::from_u8(content[4])
-								.ok_or_else::<Error, _>(|| {
-									format_err!("Invalid codec").into()
-								})?,
-							data: &content[5..],
-						})
-					} else {
-						let codec = CodecType::from_u8(content[3])
+				} else if dir == Direction::S2C {
+					Ok(VoiceData::S2CWhisper {
+						id,
+						from: (&content[2..]).read_u16::<NetworkEndian>()?,
+						codec: CodecType::from_u8(content[4])
 							.ok_or_else::<Error, _>(|| {
 								format_err!("Invalid codec").into()
-							})?;
-						if newprotocol {
-							if content.len() < 13 {
-								return Err(format_err!(
-									"Voice packet too short"
-								)
-								.into());
-							}
-							Ok(VoiceData::C2SWhisperNew {
-								id,
-								codec,
-								whisper_type: content[4],
-								target: content[5],
-								target_id: (&content[6..])
-									.read_u64::<NetworkEndian>()?,
-								data: &content[13..],
-							})
-						} else {
-							if content.len() < 5 {
-								return Err(format_err!(
-									"Voice packet too short"
-								)
-								.into());
-							}
-							let channel_count = content[4] as usize;
-							let client_count = content[5] as usize;
-							let channel_off = 5;
-							let client_off = channel_off + channel_count * 8;
-							let off = client_off + client_count * 2;
-							if content.len() < off {
-								return Err(format_err!(
-									"Voice packet too short"
-								)
-								.into());
-							}
-
-							Ok(VoiceData::C2SWhisper {
-								id,
-								codec,
-								channels: (0..channel_count)
-									.map(|i| {
-										(&content[channel_off + i * 8..])
-											.read_u64::<NetworkEndian>()
-									})
-									.collect::<::std::result::Result<Vec<_>, _>>(
-									)?,
-								clients: (0..client_count)
-									.map(|i| {
-										(&content[client_off + i * 2..])
-											.read_u16::<NetworkEndian>()
-									})
-									.collect::<::std::result::Result<Vec<_>, _>>(
-									)?,
-								data: &content[off..],
-							})
+							})?,
+						data: &content[5..],
+					})
+				} else {
+					let codec = CodecType::from_u8(content[3])
+						.ok_or_else::<Error, _>(|| {
+							format_err!("Invalid codec").into()
+						})?;
+					if newprotocol {
+						if content.len() < 13 {
+							return Err(
+								format_err!("Voice packet too short").into()
+							);
 						}
+						Ok(VoiceData::C2SWhisperNew {
+							id,
+							codec,
+							whisper_type: content[4],
+							target: content[5],
+							target_id: (&content[6..])
+								.read_u64::<NetworkEndian>()?,
+							data: &content[13..],
+						})
+					} else {
+						if content.len() < 5 {
+							return Err(
+								format_err!("Voice packet too short").into()
+							);
+						}
+						let channel_count = content[4] as usize;
+						let client_count = content[5] as usize;
+						let channel_off = 5;
+						let client_off = channel_off + channel_count * 8;
+						let off = client_off + client_count * 2;
+						if content.len() < off {
+							return Err(
+								format_err!("Voice packet too short").into()
+							);
+						}
+
+						Ok(VoiceData::C2SWhisper {
+							id,
+							codec,
+							channels: (0..channel_count)
+								.map(|i| {
+									(&content[channel_off + i * 8..])
+										.read_u64::<NetworkEndian>()
+								})
+								.collect::<::std::result::Result<Vec<_>, _>>(
+								)?,
+							clients: (0..client_count)
+								.map(|i| {
+									(&content[client_off + i * 2..])
+										.read_u16::<NetworkEndian>()
+								})
+								.collect::<::std::result::Result<Vec<_>, _>>(
+								)?,
+							data: &content[off..],
+						})
 					}
 				}
 			},
@@ -744,7 +738,7 @@ impl InCommand {
 			.suffix()
 			.static_args
 			.iter()
-			.map(|(a, b)| (a.as_ref(), b.as_ref()))
+			.map(|(a, b)| (*a, b.as_ref()))
 			.collect();
 		InCommandIterator {
 			cmd: self,
@@ -784,7 +778,7 @@ impl<'a> Iterator for InCommandIterator<'a> {
 		} else if i < c.list_args.len() {
 			let l = &c.list_args[i];
 			let mut v = self.statics.clone();
-			v.extend(l.iter().map(|(k, v)| (k.as_ref(), v.as_ref())));
+			v.extend(l.iter().map(|(k, v)| (*k, v.as_ref())));
 			Some(CanonicalCommand(v))
 		} else {
 			None

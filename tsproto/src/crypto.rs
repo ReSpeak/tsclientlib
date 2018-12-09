@@ -91,7 +91,7 @@ impl EccKeyPubP256 {
 		}
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
 			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
-				if *len != 1 || content[0] & 0x80 == 1 {
+				if *len != 1 || content[0] & 0x80 != 0 {
 					return Err(format_err!(
 						"Expected a public key, not a private key"
 					)
@@ -289,7 +289,7 @@ impl EccKeyPrivP256 {
 		}
 
 		// Xor first 100 bytes with a static value
-		#[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
+		#[allow(clippy::needless_range_loop)]
 		for i in 0..cmp::min(data.len(), 100) {
 			data[i] ^= crate::IDENTITY_OBFUSCATION[i];
 		}
@@ -328,12 +328,10 @@ impl EccKeyPrivP256 {
 					} else {
 						return Err(format_err!("Private key not found").into());
 					}
+				} else if let Some(ASN1Block::Integer(_, i)) = blocks.get(2) {
+					Self::from_short(i.to_bytes_be().1)
 				} else {
-					if let Some(ASN1Block::Integer(_, i)) = blocks.get(2) {
-						Self::from_short(i.to_bytes_be().1)
-					} else {
-						return Err(format_err!("Private key not found").into());
-					}
+					return Err(format_err!("Private key not found").into());
 				}
 			} else {
 				return Err(format_err!("Expected a bitstring").into());
@@ -352,7 +350,7 @@ impl EccKeyPrivP256 {
 	pub fn to_ts_obfuscated(&self) -> Result<String> {
 		let mut data = self.to_ts()?.into_bytes();
 		// Xor first 100 bytes with a static value
-		#[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
+		#[allow(clippy::needless_range_loop)]
 		for i in 0..cmp::min(data.len(), 100) {
 			data[i] ^= crate::IDENTITY_OBFUSCATION[i];
 		}

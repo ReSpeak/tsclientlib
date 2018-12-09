@@ -1,12 +1,9 @@
 // TODO remove?
-#![cfg_attr(
-	feature = "cargo-clippy",
-	allow(
-		redundant_closure_call,
-		clone_on_ref_ptr,
-		let_and_return,
-		useless_format
-	)
+#![allow(
+	clippy::redundant_closure_call,
+	clippy::clone_on_ref_ptr,
+	clippy::let_and_return,
+	clippy::useless_format
 )]
 
 extern crate simple_asn1;
@@ -71,13 +68,13 @@ type LockedHashMap<K, V> =
 	std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<K, V>>>;
 
 /// The maximum number of bytes for a fragmented packet.
-#[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
+#[allow(clippy::unreadable_literal)]
 const MAX_FRAGMENTS_LENGTH: usize = 40960;
 /// The maximum number of packets which are stored, if they are received
 /// out-of-order.
 const MAX_QUEUE_LEN: usize = 50;
 /// The maximum decompressed size of a packet.
-#[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
+#[allow(clippy::unreadable_literal)]
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;
 const FAKE_KEY: [u8; 16] = *b"c:\\windows\\syste";
 const FAKE_NONCE: [u8; 16] = *b"m\\firewall32.cpl";
