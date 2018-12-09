@@ -192,7 +192,7 @@ impl<'a> MyStruct<'a> {
 		self.write_raw_read_impl(&mut buf, elem, before)?;
 		writeln!(w, "{}\t}}\n", indent(str::from_utf8(&buf).unwrap(), 2))?;
 
-		writeln!(w, "\tpub fn write(&self, w: &mut Write) -> ::Result<()> {{")?;
+		writeln!(w, "\tpub fn write(&self, w: &mut Write) -> Result<()> {{")?;
 		let mut buf = Vec::new();
 		self.write_raw_write_impl(&mut buf)?;
 		writeln!(w, "{}\t}}", indent(str::from_utf8(&buf).unwrap(), 2))?;
@@ -388,7 +388,7 @@ impl<'a> MyEnum<'a> {
 		self.write_raw_read_impl(&mut buf, elem, before)?;
 		writeln!(w, "{}\t}}\n", indent(str::from_utf8(&buf).unwrap(), 2))?;
 
-		writeln!(w, "\tpub fn write(&self, w: &mut Write) -> ::Result<()> {{")?;
+		writeln!(w, "\tpub fn write(&self, w: &mut Write) -> Result<()> {{")?;
 		let mut buf = Vec::new();
 		self.write_raw_write_impl(&mut buf, elem)?;
 		writeln!(w, "{}\t}}", indent(str::from_utf8(&buf).unwrap(), 2))?;

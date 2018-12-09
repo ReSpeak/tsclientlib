@@ -67,7 +67,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	// Set the data reference
 	let c2 = Arc::downgrade(&c);
 	{
-		let mut c = c.lock().unwrap();
+		let mut c = c.lock();
 		let c = &mut *c;
 		c.packet_handler.complete(c2);
 		if verbose > 0 { log::add_command_logger(c); }
@@ -83,7 +83,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	client: client::ClientDataM<PH>,
 	server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error> {
-	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
+	client::connect(Arc::downgrade(&client), &mut *client.lock(), server_addr)
 	.and_then(move |con| {
 		let private_key = EccKeyPrivP256::from_ts(
 			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
