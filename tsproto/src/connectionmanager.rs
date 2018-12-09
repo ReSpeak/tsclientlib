@@ -105,9 +105,7 @@ impl<PH: PacketHandler<T>, T: Send + 'static> Default
 
 impl<PH: PacketHandler<T>, T: Send + 'static> SocketConnectionManager<PH, T> {
 	/// Create a new connection manager.
-	pub fn new() -> Self {
-		Self::default()
-	}
+	pub fn new() -> Self { Self::default() }
 }
 
 impl<PH: PacketHandler<T>, T: Send + 'static> ConnectionManager
@@ -121,14 +119,10 @@ impl<PH: PacketHandler<T>, T: Send + 'static> ConnectionManager
 		&mut self,
 		_: &mut Self::AssociatedData,
 		con: &mut Connection,
-	) -> Self::Key {
+	) -> Self::Key
+	{
 		con.address
 	}
 
-	fn get_connection_key(
-		addr: SocketAddr,
-		_: &InPacket,
-	) -> Self::Key {
-		addr
-	}
+	fn get_connection_key(addr: SocketAddr, _: &InPacket) -> Self::Key { addr }
 }

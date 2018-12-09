@@ -4,23 +4,25 @@ use std::sync::Weak;
 use chrono::Utc;
 use futures::sync::mpsc;
 use futures::{future, Future, Sink, Stream};
-#[cfg(feature = "rug")]
-use rug::Integer;
-#[cfg(feature = "rug")]
-use rug::integer::Order;
 #[cfg(not(feature = "rug"))]
 use num::bigint::BigUint;
 #[cfg(not(feature = "rug"))]
 use num::One;
 use parking_lot::Mutex;
 use rand::{self, Rng};
+#[cfg(feature = "rug")]
+use rug::integer::Order;
+#[cfg(feature = "rug")]
+use rug::Integer;
 use slog::Logger;
 use {base64, tokio, tokio_threadpool};
 
 use crate::algorithms as algs;
 use crate::commands::Command;
 use crate::connection::*;
-use crate::connectionmanager::{Resender, ResenderEvent, SocketConnectionManager};
+use crate::connectionmanager::{
+	Resender, ResenderEvent, SocketConnectionManager,
+};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::handler_data::{
 	ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler,
@@ -89,14 +91,15 @@ pub fn wait_for_state<
 >(
 	connection: &ClientConVal,
 	f: F,
-) -> Box<Future<Item = (), Error = Error> + Send> {
+) -> Box<Future<Item = (), Error = Error> + Send>
+{
 	let (send, recv) = mpsc::channel(0);
 	let con = match connection.mutex.upgrade() {
 		Some(c) => c,
 		None => {
 			return Box::new(future::err(
 				format_err!("Connection is gone").into(),
-			))
+			));
 		}
 	};
 	let mut con = con.lock();
@@ -141,7 +144,8 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	datam: Weak<Mutex<ClientData<PH>>>,
 	data: &mut ClientData<PH>,
 	server_addr: SocketAddr,
-) -> impl Future<Item = ClientConVal, Error = Error> {
+) -> impl Future<Item = ClientConVal, Error = Error>
+{
 	// Send the first init packet
 	// Get the current timestamp
 	let now = Utc::now();
@@ -159,9 +163,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 
 	let state = ServerConnectionData {
 		state_change_listener: Vec::new(),
-		state: ServerConnectionState::Init0 {
-			version: timestamp,
-		},
+		state: ServerConnectionState::Init0 { version: timestamp },
 	};
 	// Add the connection to the connection list
 	let key = data.add_connection(datam, state, server_addr);
@@ -179,7 +181,8 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 					false
 				}
 			})
-		}).and_then(move |_| Ok(con2))
+		})
+		.and_then(move |_| Ok(con2))
 }
 
 pub struct DefaultPacketHandler<
@@ -209,7 +212,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 	{
 		let con_val2 = con_val.downgrade();
 		let data = self.data.as_ref().unwrap().clone();
-		let s2c_init_stream = s2c_init_stream.and_then(move |p| -> Result<Option<InS2CInit>> {
+		let s2c_init_stream = s2c_init_stream
+			.and_then(move |p| -> Result<Option<InS2CInit>> {
 				// Get private key
 				let key = {
 					let d = if let Some(d) = data.upgrade() {
@@ -218,7 +222,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// Connection doesn't exist anymore
 						return Err(format_err!(
 							"Connection does not exist while handling packet"
-						).into());
+						)
+						.into());
 					};
 					let d = d.lock();
 					d.private_key.clone()
@@ -266,7 +271,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										.upgrade()
 										.ok_or_else(|| {
 											format_err!("Connection is gone")
-										})?.mutex;
+										})?
+										.mutex;
 									let mut con = mutex.lock();
 									let state = &mut con.0;
 									// Notify state changed listeners
@@ -284,7 +290,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										}
 									}
 									Ok(())
-								}).map_err(move |e| {
+								})
+								.map_err(move |e| {
 									error!(logger,
 										"Error sending response packet";
 										"error" => ?e)
@@ -324,7 +331,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				} else {
 					Ok(Some(p))
 				}
-		}).filter_map(|p| p);
+			})
+			.filter_map(|p| p);
 
 		let con_val2 = con_val.downgrade();
 		let data = self.data.as_ref().unwrap().clone();
@@ -336,7 +344,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					&& name != "initivexpand2"
 					&& name != "initserver"
 					&& name != "notifyclientleftview"
-					&& name != "notifyplugincmd" {
+					&& name != "notifyplugincmd"
+				{
 					// Forward packet
 					return Ok(Some(cmd));
 				}
@@ -349,7 +358,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// Connection doesn't exist anymore
 						return Err(format_err!(
 							"Connection does not exist while handling packet"
-						).into());
+						)
+						.into());
 					};
 					let d = d.lock();
 					d.private_key.clone()
@@ -395,7 +405,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										.upgrade()
 										.ok_or_else(|| {
 											format_err!("Connection is gone")
-										})?.mutex;
+										})?
+										.mutex;
 									let mut con = mutex.lock();
 									let state = &mut con.0;
 									// Notify state changed listeners
@@ -413,7 +424,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										}
 									}
 									Ok(())
-								}).map_err(move |e| {
+								})
+								.map_err(move |e| {
 									error!(logger,
 										"Error sending response packet";
 										"error" => ?e)
@@ -453,7 +465,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				} else {
 					Ok(Some(cmd))
 				}
-			}).filter_map(|p| p);
+			})
+			.filter_map(|p| p);
 
 		self.inner.new_connection(
 			con_val,
@@ -471,9 +484,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 	/// Do not forget to call [`complete`] afterwards.
 	///
 	/// [`complete`]: #method.complete
-	pub fn new(inner: IPH) -> Self {
-		Self { inner, data: None }
-	}
+	pub fn new(inner: IPH) -> Self { Self { inner, data: None } }
 
 	/// Needs to be called to complete the initialization of this packet handler.
 	pub fn complete(&mut self, data: Weak<Mutex<ClientData<IPH>>>) {
@@ -488,12 +499,11 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		is_end: &mut bool,
 		private_key: EccKeyPrivP256,
 		logger: &Logger,
-	) -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+	) -> Result<Option<(ServerConnectionState, Option<Packet>)>>
+	{
 		let con_value = con_value.downgrade();
 		let res = match state.state {
-			ServerConnectionState::Init0 {
-				version,
-			} => {
+			ServerConnectionState::Init0 { version } => {
 				// Handle an Init1
 				packet.with_data(|init| {
 					if let S2CInitData::Init1 { random1, random0_r } = init {
@@ -528,7 +538,13 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 			ServerConnectionState::Init2 { version } => {
 				// Handle an Init3
 				packet.with_data(|init| {
-					if let S2CInitData::Init3 { x, n, level, random2 } = init {
+					if let S2CInitData::Init3 {
+						x,
+						n,
+						level,
+						random2,
+					} = init
+					{
 						let level = *level;
 						// Solve RSA puzzle: y = x ^ (2 ^ level) % n
 						// Use Montgomery Reduction
@@ -568,12 +584,24 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										#[cfg(feature = "rug")]
 										let y = {
 											let mut e = Integer::new();
-											let n = Integer::from_digits(&n[..], Order::Msf);
-											let x = Integer::from_digits(&x[..], Order::Msf);
+											let n = Integer::from_digits(
+												&n[..],
+												Order::Msf,
+											);
+											let x = Integer::from_digits(
+												&x[..],
+												Order::Msf,
+											);
 											e.set_bit(level, true);
 											let y = match x.pow_mod(&e, &n) {
 												Ok(r) => r,
-												Err(_) => return Err(format_err!("Failed to solve RSA challenge").into()),
+												Err(_) => {
+													return Err(format_err!(
+														"Failed to solve RSA \
+														 challenge"
+													)
+													.into());
+												}
 											};
 											let mut yi = [0; 64];
 											y.write_digits(&mut yi, Order::Msf);
@@ -598,53 +626,69 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 											  "level" => level);
 										Ok((x, n, y))
 									})
-								}).map_err(|e| {
-									format_err!(
-										"Failed to start blocking operation ({:?})",
-										e
-									).into()
-								}).and_then(move |r| -> Box<Future<Item=_, Error=_> + Send> {
-									let (x, n, y) = match r {
-										Ok(r) => r,
-										Err(e) => return Box::new(future::err(e)),
-									};
-									// Create the command string
-									// omega is an ASN.1-DER encoded public key from
-									// the ECDH parameters.
-									let omega_s =
-										private_key.to_pub().to_ts().unwrap();
-									let mut command = Command::new("clientinitiv");
-									command.push("alpha", alpha_s);
-									command.push("omega", omega_s);
-									command.push("ot", "1");
-									// Set ip always except if it is a local address
-									if crate::utils::is_global_ip(&ip) {
-										command.push("ip", ip.to_string());
-									} else {
-										command.push("ip", "");
-									}
-
-									let cheader = create_init_header();
-									let data = C2SInit::Init4 {
-										version,
-										x,
-										n,
-										level,
-										random2,
-										y,
-										command: command.clone(),
-									};
-
-									let packet = Packet::new(
-										cheader,
-										packets::Data::C2SInit(data),
-									);
-									Box::new(con_value
-										.as_packet_sink()
-										.send(packet)
-										.map(|_| ()))
 								})
-							}).map(|_| ())
+								.map_err(|e| {
+									format_err!(
+										"Failed to start blocking operation \
+										 ({:?})",
+										e
+									)
+									.into()
+								})
+								.and_then(
+									move |r| -> Box<
+										Future<Item = _, Error = _> + Send,
+									> {
+										let (x, n, y) = match r {
+											Ok(r) => r,
+											Err(e) => {
+												return Box::new(future::err(e));
+											}
+										};
+										// Create the command string
+										// omega is an ASN.1-DER encoded public key from
+										// the ECDH parameters.
+										let omega_s = private_key
+											.to_pub()
+											.to_ts()
+											.unwrap();
+										let mut command =
+											Command::new("clientinitiv");
+										command.push("alpha", alpha_s);
+										command.push("omega", omega_s);
+										command.push("ot", "1");
+										// Set ip always except if it is a local address
+										if crate::utils::is_global_ip(&ip) {
+											command.push("ip", ip.to_string());
+										} else {
+											command.push("ip", "");
+										}
+
+										let cheader = create_init_header();
+										let data = C2SInit::Init4 {
+											version,
+											x,
+											n,
+											level,
+											random2,
+											y,
+											command: command.clone(),
+										};
+
+										let packet = Packet::new(
+											cheader,
+											packets::Data::C2SInit(data),
+										);
+										Box::new(
+											con_value
+												.as_packet_sink()
+												.send(packet)
+												.map(|_| ()),
+										)
+									},
+								)
+							})
+							.map(|_| ())
 							.map_err(move |error| {
 								error!(logger2, "Cannot send packet";
 									"error" => ?error)
@@ -680,7 +724,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		is_end: &mut bool,
 		private_key: EccKeyPrivP256,
 		logger: &Logger,
-	) -> Result<Option<(ServerConnectionState, Option<Packet>)>> {
+	) -> Result<Option<(ServerConnectionState, Option<Packet>)>>
+	{
 		let res = match state.state {
 			ServerConnectionState::ClientInitIv { ref alpha } => {
 				let resender = &mut con.resender;
@@ -688,11 +733,12 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					(|con_params: &mut Option<ConnectedParams>| -> Result<_> {
 						let cmd = command.iter().next().unwrap();
 						if command.name() == "initivexpand"
-							&& cmd.has_arg("alpha") && cmd.has_arg("beta")
-							&& cmd.has_arg("omega") && base64::decode(
-							cmd.0["alpha"],
-						).map(|a| a == alpha)
-						.unwrap_or(false)
+							&& cmd.has_arg("alpha")
+							&& cmd.has_arg("beta")
+							&& cmd.has_arg("omega")
+							&& base64::decode(cmd.0["alpha"])
+								.map(|a| a == alpha)
+								.unwrap_or(false)
 						{
 							resender.ack_packet(PacketType::Init, 4);
 
@@ -723,9 +769,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							Ok(None)
 						} else if command.name() == "initivexpand2"
 							&& cmd.has_arg("l") && cmd.has_arg("beta")
-							&& cmd.has_arg("omega") && cmd
-							.has_arg("ot") && cmd.0["ot"] == "1"
-							&& cmd.has_arg("time") && cmd.has_arg("beta")
+							&& cmd.has_arg("omega")
+							&& cmd.has_arg("ot") && cmd.0["ot"] == "1"
+							&& cmd.has_arg("time")
+							&& cmd.has_arg("beta")
 						{
 							resender.ack_packet(PacketType::Init, 4);
 
@@ -736,12 +783,12 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							// Check signature of l (proof)
 							server_key.clone().verify(&l, &proof)?;
 
-							let beta_vec =
-								base64::decode(cmd.0["beta"])?;
+							let beta_vec = base64::decode(cmd.0["beta"])?;
 							if beta_vec.len() != 54 {
 								return Err(format_err!(
 									"Incorrect beta length"
-								).into());
+								)
+								.into());
 							}
 
 							let mut beta = [0; 54];
@@ -787,7 +834,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						} else {
 							Err(format_err!(
 								"initivexpand command has wrong arguments"
-							).into())
+							)
+							.into())
 						}
 					})(&mut con.params);
 
@@ -840,10 +888,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							*is_end = true;
 							// Possible improvement: Wait with the
 							// disconnect until we sent the ack.
-							Some((
-								ServerConnectionState::Disconnected,
-								None,
-							))
+							Some((ServerConnectionState::Disconnected, None))
 						} else {
 							None
 						}

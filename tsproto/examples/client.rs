@@ -26,10 +26,8 @@ mod utils;
 use crate::utils::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -89,7 +87,8 @@ fn main() {
 					// Wait some time
 					Delay::new(Instant::now() + Duration::from_secs(2))
 						.map(move |_| con)
-				}).and_then(move |con| {
+				})
+				.and_then(move |con| {
 					info!(logger, "Waited");
 
 					// Send packet
@@ -113,13 +112,15 @@ fn main() {
 							disconnect(con).map_err(|e| {
 								panic!("Failed to disconnect ({:?})", e)
 							})
-						}).and_then(move |_| {
+						})
+						.and_then(move |_| {
 							info!(logger, "Disconnected");
 							// Quit client
 							drop(c);
 							Ok(())
 						})
 				})
-		}).map_err(|e| panic!("An error occurred {:?}", e)),
+		})
+		.map_err(|e| panic!("An error occurred {:?}", e)),
 	);
 }

@@ -40,9 +40,7 @@ struct SendRecord {
 }
 
 impl PartialEq for SendRecord {
-	fn eq(&self, other: &Self) -> bool {
-		self.cmp(other) == Ordering::Equal
-	}
+	fn eq(&self, other: &Self) -> bool { self.cmp(other) == Ordering::Equal }
 }
 impl Eq for SendRecord {}
 
@@ -75,9 +73,7 @@ impl Ord for SendRecord {
 }
 
 impl Hash for SendRecord {
-	fn hash<H: Hasher>(&self, state: &mut H) {
-		self.id.hash(state);
-	}
+	fn hash<H: Hasher>(&self, state: &mut H) { self.id.hash(state); }
 }
 
 /// An implementation of a [`Resender`] that is provided by this library.
@@ -318,7 +314,8 @@ impl Resender for DefaultResender {
 					.map(|mut rec| {
 						rec.tries = 0;
 						rec
-					}).collect();
+					})
+					.collect();
 				res
 			}
 			ResendStates::Connecting { to_send, .. }
@@ -386,7 +383,8 @@ impl Sink for DefaultResender {
 	fn start_send(
 		&mut self,
 		(p_type, p_id, packet): Self::SinkItem,
-	) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
+	{
 		let rec = SendRecord {
 			sent: Utc::now(),
 			last: Utc::now(),
@@ -479,9 +477,7 @@ impl<'a, T: Ord + 'a> DerefMut for PeekMut<'a, T> {
 }
 
 impl<'a, T: Ord + 'a> From<&'a mut T> for PeekMut<'a, T> {
-	fn from(t: &'a mut T) -> PeekMut<'a, T> {
-		PeekMut::Ref(t)
-	}
+	fn from(t: &'a mut T) -> PeekMut<'a, T> { PeekMut::Ref(t) }
 }
 
 impl<'a, T: Ord + 'a> From<binary_heap::PeekMut<'a, T>> for PeekMut<'a, T> {
@@ -608,7 +604,8 @@ impl<CM: ConnectionManager + 'static> ResendFuture<CM> {
 		data: &Data<CM>,
 		datam: Weak<Mutex<Data<CM>>>,
 		connection_key: CM::Key,
-	) -> Self {
+	) -> Self
+	{
 		let connection = data
 			.get_connection(&connection_key)
 			.expect("Connection for resender not found")
@@ -675,70 +672,75 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 		let next_state = {
 			let resender = &mut con.resender;
 			match resender.state {
-				ResendStates::Connecting { ref start_time, .. } => if now_naive
-					.signed_duration_since(start_time.naive_utc())
-					>= resender.config.connecting_timeout
-				{
-					StateChange::EndConnection
-				} else {
-					// Schedule timeout
-					let dur = (*start_time
-						+ resender.config.connecting_timeout)
-						.naive_utc()
-						.signed_duration_since(now_naive);
-					let next = Instant::now() + dur.to_std().unwrap();
-					self.state_timeout.reset(next);
-					if let futures::Async::Ready(()) =
-						self.state_timeout.poll()?
+				ResendStates::Connecting { ref start_time, .. } => {
+					if now_naive.signed_duration_since(start_time.naive_utc())
+						>= resender.config.connecting_timeout
 					{
-						task::current().notify();
+						StateChange::EndConnection
+					} else {
+						// Schedule timeout
+						let dur = (*start_time
+							+ resender.config.connecting_timeout)
+							.naive_utc()
+							.signed_duration_since(now_naive);
+						let next = Instant::now() + dur.to_std().unwrap();
+						self.state_timeout.reset(next);
+						if let futures::Async::Ready(()) =
+							self.state_timeout.poll()?
+						{
+							task::current().notify();
+						}
+						StateChange::Nothing
 					}
-					StateChange::Nothing
-				},
+				}
 				ResendStates::Normal { .. } => StateChange::Nothing,
 				ResendStates::Stalling {
 					ref mut to_send,
 					ref start_time,
-				} => if now_naive.signed_duration_since(start_time.naive_utc())
-					>= resender.config.stalling_timeout
-				{
-					StateChange::NewState(ResendStates::Dead {
-						to_send: mem::replace(to_send, Vec::new()),
-						start_time: Utc::now(),
-					})
-				} else {
-					// Schedule timeout
-					let dur = (*start_time + resender.config.stalling_timeout)
-						.naive_utc()
-						.signed_duration_since(now_naive);
-					let next = Instant::now() + dur.to_std().unwrap();
-					self.state_timeout.reset(next);
-					if let futures::Async::Ready(()) =
-						self.state_timeout.poll()?
+				} => {
+					if now_naive.signed_duration_since(start_time.naive_utc())
+						>= resender.config.stalling_timeout
 					{
-						task::current().notify();
+						StateChange::NewState(ResendStates::Dead {
+							to_send: mem::replace(to_send, Vec::new()),
+							start_time: Utc::now(),
+						})
+					} else {
+						// Schedule timeout
+						let dur = (*start_time
+							+ resender.config.stalling_timeout)
+							.naive_utc()
+							.signed_duration_since(now_naive);
+						let next = Instant::now() + dur.to_std().unwrap();
+						self.state_timeout.reset(next);
+						if let futures::Async::Ready(()) =
+							self.state_timeout.poll()?
+						{
+							task::current().notify();
+						}
+						StateChange::Nothing
 					}
-					StateChange::Nothing
-				},
-				ResendStates::Dead { ref start_time, .. } => if now_naive
-					.signed_duration_since(start_time.naive_utc())
-					>= resender.config.dead_timeout
-				{
-					StateChange::EndConnection
-				} else {
-					// Schedule timeout
-					let dur = (*start_time + resender.config.dead_timeout)
-						.naive_utc()
-						.signed_duration_since(now_naive);
-					let next = Instant::now() + dur.to_std().unwrap();
-					self.state_timeout.reset(next);
-					if let futures::Async::Ready(()) =
-						self.state_timeout.poll()?
+				}
+				ResendStates::Dead { ref start_time, .. } => {
+					if now_naive.signed_duration_since(start_time.naive_utc())
+						>= resender.config.dead_timeout
 					{
-						task::current().notify();
+						StateChange::EndConnection
+					} else {
+						// Schedule timeout
+						let dur = (*start_time + resender.config.dead_timeout)
+							.naive_utc()
+							.signed_duration_since(now_naive);
+						let next = Instant::now() + dur.to_std().unwrap();
+						self.state_timeout.reset(next);
+						if let futures::Async::Ready(()) =
+							self.state_timeout.poll()?
+						{
+							task::current().notify();
+						}
+						StateChange::Nothing
 					}
-					StateChange::Nothing
-				},
+				}
 				ResendStates::Disconnecting { ref start_time, .. } => {
 					if now_naive.signed_duration_since(start_time.naive_utc())
 						>= resender.config.disconnect_timeout

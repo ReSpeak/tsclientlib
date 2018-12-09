@@ -110,9 +110,7 @@ impl InnerLicense {
 }
 
 impl Licenses {
-	pub fn new() -> Self {
-		Self::default()
-	}
+	pub fn new() -> Self { Self::default() }
 
 	pub fn parse(mut data: &[u8]) -> Result<Self> {
 		let version = data[0];
@@ -201,7 +199,8 @@ impl Licenses {
 		&self,
 		starting_block: usize,
 		first_key: EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519> {
+	) -> Result<EccKeyPrivEd25519>
+	{
 		let mut res = first_key;
 		for l in &self.blocks[starting_block..] {
 			res = l.derive_private_key(&res)?;
@@ -249,7 +248,8 @@ impl License {
 				if license_data > 0x7f {
 					return Err(format_err!(
 						"Invalid data in intermediate license"
-					).into());
+					)
+					.into());
 				}
 
 				let len = if let Some(len) =
@@ -301,7 +301,7 @@ impl License {
 			i => {
 				return Err(
 					format_err!("Invalid license block type {}", i).into()
-				)
+				);
 			}
 		};
 
@@ -391,7 +391,8 @@ impl License {
 	pub fn derive_public_key(
 		&self,
 		parent_key: &EdwardsPoint,
-	) -> Result<EdwardsPoint> {
+	) -> Result<EdwardsPoint>
+	{
 		let hash_key = self.get_hash_key();
 		let pub_key = self.key.get_pub()?;
 		Ok(pub_key * hash_key + parent_key)
@@ -407,7 +408,8 @@ impl License {
 	pub fn derive_private_key(
 		&self,
 		parent_key: &EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519> {
+	) -> Result<EccKeyPrivEd25519>
+	{
 		let priv_key = if let LicenseKey::Private(ref k) = self.key {
 			&k.0
 		} else {

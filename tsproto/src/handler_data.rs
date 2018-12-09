@@ -5,7 +5,7 @@ use std::sync::{Arc, Weak};
 
 use bytes::Bytes;
 use futures::sync::{mpsc, oneshot};
-use futures::{future, Future, Sink, stream, Stream};
+use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Mutex, RwLock};
 use slog::Drain;
 use tokio::codec::BytesCodec;
@@ -35,7 +35,8 @@ pub trait ConnectionListener<CM: ConnectionManager>: Send {
 		_key: &mut CM::Key,
 		_adata: &mut CM::AssociatedData,
 		_con: &mut Connection,
-	) -> bool {
+	) -> bool
+	{
 		false
 	}
 
@@ -49,7 +50,8 @@ pub trait ConnectionListener<CM: ConnectionManager>: Send {
 		&mut self,
 		_key: &CM::Key,
 		_con: &mut ConnectionValue<CM::AssociatedData>,
-	) -> bool {
+	) -> bool
+	{
 		false
 	}
 }
@@ -114,8 +116,12 @@ pub struct ConnectionValue<T: 'static> {
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
-	pub(crate) fn new(data: T, con: Connection,
-		out_packet_observer: LockedHashMap<String, Box<OutPacketObserver<T>>>) -> Self {
+	pub(crate) fn new(
+		data: T,
+		con: Connection,
+		out_packet_observer: LockedHashMap<String, Box<OutPacketObserver<T>>>,
+	) -> Self
+	{
 		Self {
 			mutex: Arc::new(Mutex::new((data, con))),
 			out_packet_observer,
@@ -125,7 +131,8 @@ impl<T: Send + 'static> ConnectionValue<T> {
 	fn encode_packet(
 		&self,
 		mut packet: Packet,
-	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send> {
+	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send>
+	{
 		let mut con = self.mutex.lock();
 		let con = &mut *con;
 		// Call observer
@@ -175,7 +182,8 @@ impl<T: 'static> Clone for ConnectionValue<T> {
 
 pub struct ConnectionValueWeak<T: Send + 'static> {
 	pub mutex: Weak<Mutex<(T, Connection)>>,
-	pub(crate) out_packet_observer: LockedHashMap<String, Box<OutPacketObserver<T>>>,
+	pub(crate) out_packet_observer:
+		LockedHashMap<String, Box<OutPacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValueWeak<T> {
@@ -297,7 +305,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		packet_handler: CM::PacketHandler,
 		connection_manager: CM,
 		logger: L,
-	) -> Result<Arc<Mutex<Self>>> {
+	) -> Result<Arc<Mutex<Self>>>
+	{
 		let logger = logger.into().unwrap_or_else(|| {
 			let decorator = slog_term::TermDecorator::new().build();
 			let drain = slog_term::FullFormat::new(decorator).build().fuse();
@@ -353,44 +362,62 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 						o.observe(addr, &p);
 					}
 					(p, addr)
-				}).forward(sink.sink_map_err(
+				})
+				.forward(sink.sink_map_err(
 					move |e| error!(logger2, "Failed to send udp packet"; "error" => ?e),
-				)).map(|_| ()),
+				))
+				.map(|_| ()),
 		);
 
 		// Handle incoming packets
 		let logger = data.logger.clone();
 		let logger2 = logger.clone();
 		let in_udp_packet_observer = data.in_udp_packet_observer.clone();
-		let mut codec = PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
+		let mut codec =
+			PacketCodecReceiver::new(&data, unknown_udp_packet_sink);
 		tokio::spawn(
 			stream
 				.map_err(move |e| {
 					error!(logger2, "Packet stream errored";
 						"error" => ?e)
-				}).for_each(move |(p, a)| -> Box<Future<Item=_, Error=_> + Send> {
-					match InPacket::try_new(p.freeze(),
-						if is_client { Direction::S2C } else { Direction::C2S }) {
-						Ok(packet) => {
-							for o in in_udp_packet_observer.read().values() {
-								o.observe(a, &packet);
-							}
-
-							let logger = logger.clone();
-							Box::new(codec.handle_udp_packet((a, packet)).then(move |r| {
-								if let Err(e) = r {
-									warn!(logger, "Packet handler errored"; "error" => ?e);
+				})
+				.for_each(
+					move |(p, a)| -> Box<Future<Item = _, Error = _> + Send> {
+						match InPacket::try_new(
+							p.freeze(),
+							if is_client {
+								Direction::S2C
+							} else {
+								Direction::C2S
+							},
+						) {
+							Ok(packet) => {
+								for o in in_udp_packet_observer.read().values()
+								{
+									o.observe(a, &packet);
 								}
-								// Ignore errors for one packet
-								Ok(())
-							}))
+
+								let logger = logger.clone();
+								Box::new(
+									codec.handle_udp_packet((a, packet)).then(
+										move |r| {
+											if let Err(e) = r {
+												warn!(logger, "Packet handler errored"; "error" => ?e);
+											}
+											// Ignore errors for one packet
+											Ok(())
+										},
+									),
+								)
+							}
+							Err(e) => {
+								warn!(logger, "Packet parsing error"; "error" => ?e);
+								Box::new(future::ok(()))
+							}
 						}
-						Err(e) => {
-							warn!(logger, "Packet parsing error"; "error" => ?e);
-							Box::new(future::ok(()))
-						}
-					}
-				}).select2(exit_recv)
+					},
+				)
+				.select2(exit_recv)
 				.map_err(|_| ())
 				.map(|_| ()),
 		);
@@ -403,7 +430,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		data_mut: Weak<Mutex<Self>>,
 		mut data: CM::AssociatedData,
 		addr: SocketAddr,
-	) -> CM::Key {
+	) -> CM::Key
+	{
 		// Add options like ip to logger
 		let logger = self.logger.new(o!("addr" => addr.to_string()));
 		let resender =
@@ -440,11 +468,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			}
 		}
 
-		let con_val = ConnectionValue::new(
-			data,
-			con,
-			self.out_packet_observer.clone(),
-		);
+		let con_val =
+			ConnectionValue::new(data, con, self.out_packet_observer.clone());
 		self.packet_handler.new_connection(
 			&con_val,
 			s2c_init_recv.map_err(|_| format_err!("Failed to receive").into()),
@@ -469,7 +494,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn remove_connection(
 		&mut self,
 		key: &CM::Key,
-	) -> Option<ConnectionValue<CM::AssociatedData>> {
+	) -> Option<ConnectionValue<CM::AssociatedData>>
+	{
 		// Get connection
 		let mut res = self.get_connection(key);
 		if let Some(con) = &mut res {
@@ -493,14 +519,25 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn get_connection(
 		&self,
 		key: &CM::Key,
-	) -> Option<ConnectionValue<CM::AssociatedData>> {
+	) -> Option<ConnectionValue<CM::AssociatedData>>
+	{
 		self.connections.read().get(key).map(|v| v.clone())
 	}
 
-	pub fn add_in_udp_packet_observer(&mut self, key: String, o: Box<InUdpPacketObserver>) {
+	pub fn add_in_udp_packet_observer(
+		&mut self,
+		key: String,
+		o: Box<InUdpPacketObserver>,
+	)
+	{
 		self.in_udp_packet_observer.write().insert(key, o);
 	}
-	pub fn add_out_udp_packet_observer(&mut self, key: String, o: Box<OutUdpPacketObserver>) {
+	pub fn add_out_udp_packet_observer(
+		&mut self,
+		key: String,
+		o: Box<OutUdpPacketObserver>,
+	)
+	{
 		self.out_udp_packet_observer.write().insert(key, o);
 	}
 	pub fn remove_in_udp_packet_observer(&mut self, key: &String) {
@@ -510,10 +547,20 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		self.out_udp_packet_observer.write().remove(key);
 	}
 
-	pub fn add_in_packet_observer(&mut self, key: String, o: Box<InPacketObserver<CM::AssociatedData>>) {
+	pub fn add_in_packet_observer(
+		&mut self,
+		key: String,
+		o: Box<InPacketObserver<CM::AssociatedData>>,
+	)
+	{
 		self.in_packet_observer.write().insert(key, o);
 	}
-	pub fn add_out_packet_observer(&mut self, key: String, o: Box<OutPacketObserver<CM::AssociatedData>>) {
+	pub fn add_out_packet_observer(
+		&mut self,
+		key: String,
+		o: Box<OutPacketObserver<CM::AssociatedData>>,
+	)
+	{
 		self.out_packet_observer.write().insert(key, o);
 	}
 	pub fn remove_in_packet_observer(&mut self, key: &String) {
@@ -523,7 +570,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		self.out_packet_observer.write().remove(key);
 	}
 
-	pub fn add_in_command_observer(&mut self, key: String, o: Box<InCommandObserver<CM::AssociatedData>>) {
+	pub fn add_in_command_observer(
+		&mut self,
+		key: String,
+		o: Box<InCommandObserver<CM::AssociatedData>>,
+	)
+	{
 		self.in_command_observer.write().insert(key, o);
 	}
 	pub fn remove_in_command_observer(&mut self, key: &String) {

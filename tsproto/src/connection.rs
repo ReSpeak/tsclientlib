@@ -51,9 +51,11 @@ impl fmt::Debug for SharedIv {
 				"SharedIv::ProtocolOrig({:?})",
 				crate::utils::HexSlice(data)
 			),
-			SharedIv::Protocol31(ref data) => {
-				write!(f, "SharedIv::Protocol32({:?})", crate::utils::HexSlice(data))
-			}
+			SharedIv::Protocol31(ref data) => write!(
+				f,
+				"SharedIv::Protocol32({:?})",
+				crate::utils::HexSlice(data)
+			),
 		}
 	}
 }
@@ -82,7 +84,8 @@ impl ConnectedParams {
 		public_key: EccKeyPubP256,
 		shared_iv: SharedIv,
 		shared_mac: [u8; 8],
-	) -> Self {
+	) -> Self
+	{
 		Self {
 			c_id: 0,
 			voice_encryption: true,
@@ -133,7 +136,6 @@ pub struct Connection {
 	///
 	/// Works like the `outgoing_p_ids`.
 	pub incoming_p_ids: [(u32, u16); 8],
-
 }
 
 impl Connection {
@@ -148,7 +150,8 @@ impl Connection {
 		c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
 		command_sink: mpsc::UnboundedSender<InCommand>,
 		audio_sink: mpsc::UnboundedSender<InAudio>,
-	) -> Self {
+	) -> Self
+	{
 		let mut res = Self {
 			is_client,
 			logger,
@@ -169,9 +172,11 @@ impl Connection {
 		if is_client {
 			// The first command is sent as part of the C2SInit::Init4 packet
 			// so it does not get registered automatically.
-			res.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
+			res.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 1);
 		} else {
-			res.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
+			res.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 1);
 		}
 		res
 	}
@@ -187,7 +192,8 @@ impl Connection {
 		&self,
 		p_type: PacketType,
 		p_id: u16,
-	) -> (bool, u32, u16, u16) {
+	) -> (bool, u32, u16, u16)
+	{
 		if p_type == PacketType::Init {
 			return (true, 0, 0, 0);
 		}
@@ -228,7 +234,8 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 	fn start_send(
 		&mut self,
 		(p_type, p_id, udp_packet): Self::SinkItem,
-	) -> futures::StartSend<Self::SinkItem, Self::SinkError> {
+	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
+	{
 		match p_type {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
 				if let Some(mutex) = self.con.mutex.upgrade() {
@@ -254,14 +261,16 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 				}
 
 				let (addr, s) = self.udp_packet_sink.as_mut().unwrap();
-				Ok(match s.start_send((*addr, udp_packet)).map_err(|e| {
-					format_err!("Failed to send udp packet ({:?})", e)
-				})? {
-					AsyncSink::Ready => AsyncSink::Ready,
-					AsyncSink::NotReady((_, p)) => {
-						AsyncSink::NotReady((p_type, p_id, p))
-					}
-				})
+				Ok(
+					match s.start_send((*addr, udp_packet)).map_err(|e| {
+						format_err!("Failed to send udp packet ({:?})", e)
+					})? {
+						AsyncSink::Ready => AsyncSink::Ready,
+						AsyncSink::NotReady((_, p)) => {
+							AsyncSink::NotReady((p_type, p_id, p))
+						}
+					},
+				)
 			}
 		}
 	}

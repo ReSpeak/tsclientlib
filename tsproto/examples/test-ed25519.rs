@@ -10,10 +10,8 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(short = "e", long = "pub", help = "Public key")]
 	pub_key: String,

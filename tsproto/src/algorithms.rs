@@ -44,7 +44,8 @@ pub fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
 pub fn compress_and_split(
 	is_client: bool,
 	packet: &Packet,
-) -> Vec<(Header, Vec<u8>)> {
+) -> Vec<(Header, Vec<u8>)>
+{
 	// Everything else (except whisper packets) have to be less than 500 bytes
 	let header_size = if is_client { 13 } else { 11 };
 	let mut data = Vec::new();
@@ -120,7 +121,8 @@ fn create_key_nonce(
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
-) -> ([u8; 16], [u8; 16]) {
+) -> ([u8; 16], [u8; 16])
+{
 	// Check if this generation is cached
 	let cache = &mut cache[p_type.to_usize().unwrap()];
 	if cache.generation_id != generation_id {
@@ -166,7 +168,8 @@ pub fn encrypt_key_nonce(
 	data: &[u8],
 	key: &[u8; 16],
 	nonce: &[u8; 16],
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>>
+{
 	let mut meta = Vec::with_capacity(5);
 	header.write_meta(&mut meta)?;
 
@@ -185,7 +188,8 @@ pub fn encrypt(
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>>
+{
 	let (key, nonce) = create_key_nonce(
 		header.get_type(),
 		header.c_id,
@@ -201,10 +205,17 @@ pub fn decrypt_key_nonce(
 	packet: &InPacket,
 	key: &[u8; 16],
 	nonce: &[u8; 16],
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>>
+{
 	let header = packet.header();
 	let meta = header.get_meta();
-	Ok(crypto::Eax::decrypt(key, nonce, &meta, packet.content(), header.mac())?)
+	Ok(crypto::Eax::decrypt(
+		key,
+		nonce,
+		&meta,
+		packet.content(),
+		header.mac(),
+	)?)
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
@@ -216,7 +227,8 @@ pub fn decrypt(
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
-) -> Result<Vec<u8>> {
+) -> Result<Vec<u8>>
+{
 	let header = packet.header();
 	let (key, nonce) = create_key_nonce(
 		header.packet_type(),
@@ -235,7 +247,8 @@ pub fn compute_iv_mac(
 	beta: &[u8; 10],
 	our_key: EccKeyPrivP256,
 	other_key: EccKeyPubP256,
-) -> Result<([u8; 20], [u8; 8])> {
+) -> Result<([u8; 20], [u8; 8])>
+{
 	let shared_secret = our_key.create_shared_secret(other_key)?;
 	let mut shared_iv = [0; 20];
 	shared_iv.copy_from_slice(
@@ -259,7 +272,8 @@ pub fn compute_iv_mac31(
 	beta: &[u8; 54],
 	our_key: &EccKeyPrivEd25519,
 	other_key: &EdwardsPoint,
-) -> Result<([u8; 64], [u8; 8])> {
+) -> Result<([u8; 64], [u8; 8])>
+{
 	let shared_secret = our_key.create_shared_secret(other_key)?;
 	let mut shared_iv = [0; 64];
 	shared_iv.copy_from_slice(
@@ -317,17 +331,15 @@ pub fn biguint_to_array(i: &BigUint) -> [u8; 64] {
 	a
 }
 
-pub fn array_to_biguint(i: &[u8; 64]) -> BigUint {
-	BigUint::from_bytes_be(i)
-}
+pub fn array_to_biguint(i: &[u8; 64]) -> BigUint { BigUint::from_bytes_be(i) }
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use std::io::Write;
-	use base64;
 	use crate::license::Licenses;
 	use crate::packets::{Data, Header, PacketType};
+	use base64;
+	use std::io::Write;
 
 	#[test]
 	fn test_fake_crypt() {

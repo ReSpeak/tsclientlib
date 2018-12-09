@@ -24,18 +24,34 @@ fn write(b: &mut Bencher, cmd: &[u8]) {
 	b.iter(|| command.write(&mut Vec::new()).unwrap());
 }
 
-fn bench_parse_short(c: &mut Criterion) { c.bench_function("parse short", |b| parse(b, SHORT_CMD)); }
-fn bench_parse_long(c: &mut Criterion) { c.bench_function("parse long", |b| parse(b, LONG_CMD)); }
+fn bench_parse_short(c: &mut Criterion) {
+	c.bench_function("parse short", |b| parse(b, SHORT_CMD));
+}
+fn bench_parse_long(c: &mut Criterion) {
+	c.bench_function("parse long", |b| parse(b, LONG_CMD));
+}
 
-fn bench_write_short(c: &mut Criterion) { c.bench_function("write short", |b| write(b, SHORT_CMD)); }
-fn bench_write_long(c: &mut Criterion) { c.bench_function("write long", |b| write(b, LONG_CMD)); }
+fn bench_write_short(c: &mut Criterion) {
+	c.bench_function("write short", |b| write(b, SHORT_CMD));
+}
+fn bench_write_long(c: &mut Criterion) {
+	c.bench_function("write long", |b| write(b, LONG_CMD));
+}
 
-fn bench_parse_new_short(c: &mut Criterion) { c.bench_function("parse new short", |b| parse_new(b, SHORT_CMD)); }
-fn bench_parse_new_long(c: &mut Criterion) { c.bench_function("parse new long", |b| parse_new(b, LONG_CMD)); }
+fn bench_parse_new_short(c: &mut Criterion) {
+	c.bench_function("parse new short", |b| parse_new(b, SHORT_CMD));
+}
+fn bench_parse_new_long(c: &mut Criterion) {
+	c.bench_function("parse new long", |b| parse_new(b, LONG_CMD));
+}
 
-criterion_group!(benches,
-	bench_parse_short, bench_parse_long,
-	bench_parse_new_short, bench_parse_new_long,
-	bench_write_short, bench_write_long,
+criterion_group!(
+	benches,
+	bench_parse_short,
+	bench_parse_long,
+	bench_parse_new_short,
+	bench_parse_new_long,
+	bench_write_short,
+	bench_write_long,
 );
 criterion_main!(benches);

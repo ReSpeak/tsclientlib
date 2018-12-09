@@ -67,7 +67,8 @@ pub mod resend;
 pub mod utils;
 
 type Result<T> = std::result::Result<T, Error>;
-type LockedHashMap<K, V> = std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<K, V>>>;
+type LockedHashMap<K, V> =
+	std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<K, V>>>;
 
 /// The maximum number of bytes for a fragmented packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]
@@ -123,10 +124,7 @@ pub enum Error {
 
 	#[fail(
 		display = "Packet {} not in receive window [{};{}) for type {:?}",
-		id,
-		next,
-		limit,
-		p_type
+		id, next, limit, p_type
 	)]
 	NotInReceiveWindow {
 		id: u16,
@@ -167,14 +165,10 @@ pub struct ClientId(pub SocketAddr);
 pub struct ServerId(pub SocketAddr);
 
 impl Into<SocketAddr> for ClientId {
-	fn into(self) -> SocketAddr {
-		self.0
-	}
+	fn into(self) -> SocketAddr { self.0 }
 }
 impl Into<SocketAddr> for ServerId {
-	fn into(self) -> SocketAddr {
-		self.0
-	}
+	fn into(self) -> SocketAddr { self.0 }
 }
 
 pub fn init() -> Result<()> {

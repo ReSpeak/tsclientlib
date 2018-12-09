@@ -27,19 +27,21 @@ fn send_messages(b: &mut Bencher) {
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
 	let logger2 = logger.clone();
-	let (c, con) = rt.block_on(future::lazy(move || {
-		let c = create_client(
-			local_address,
-			logger2.clone(),
-			SimplePacketHandler,
-			0,
-		);
+	let (c, con) = rt
+		.block_on(future::lazy(move || {
+			let c = create_client(
+				local_address,
+				logger2.clone(),
+				SimplePacketHandler,
+				0,
+			);
 
-		info!(logger2, "Connecting");
-		utils::connect(logger2.clone(), c.clone(), address)
-			.map_err(|e| panic!("Failed to connect ({:?})", e))
-			.map(move |con| (c, con))
-	})).unwrap();
+			info!(logger2, "Connecting");
+			utils::connect(logger2.clone(), c.clone(), address)
+				.map_err(|e| panic!("Failed to connect ({:?})", e))
+				.map(move |con| (c, con))
+		}))
+		.unwrap();
 
 	let mut header = Header::default();
 	header.set_type(PacketType::Command);
@@ -54,9 +56,8 @@ fn send_messages(b: &mut Bencher) {
 		i += 1;
 
 		let sink = con.as_packet_sink();
-		rt.block_on(future::lazy(move || {
-			sink.send(packet)
-		})).unwrap();
+		rt.block_on(future::lazy(move || sink.send(packet)))
+			.unwrap();
 	});
 	rt.block_on(future::lazy(move || {
 		disconnect(con)
@@ -67,14 +68,16 @@ fn send_messages(b: &mut Bencher) {
 				drop(c);
 				Ok(())
 			})
-	})).unwrap();
+	}))
+	.unwrap();
 	rt.shutdown_on_idle().wait().unwrap();
 }
 
-
 fn bench_message(c: &mut Criterion) {
-	c.bench("message", Benchmark::new("message", send_messages)
-		.sample_size(200));
+	c.bench(
+		"message",
+		Benchmark::new("message", send_messages).sample_size(200),
+	);
 }
 
 criterion_group!(benches, bench_message);

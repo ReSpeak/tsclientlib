@@ -117,10 +117,8 @@ pub fn parse_command2(s: &str) -> Result<CommandData> {
 			if !cmd.list_args.is_empty() {
 				let mut la = Vec::new();
 				for &(ref arg, _) in &cmd.list_args[0] {
-					if let Some(i) = cmd
-						.static_args
-						.iter()
-						.position(|&(ref k, _)| k == arg)
+					if let Some(i) =
+						cmd.static_args.iter().position(|&(ref k, _)| k == arg)
 					{
 						la.push(cmd.static_args.remove(i));
 					} else {
@@ -153,7 +151,8 @@ impl Command {
 		&mut self,
 		key: K,
 		val: V,
-	) {
+	)
+	{
 		let key = key.into();
 		for &mut (ref mut k, ref mut v) in &mut self.static_args {
 			if key == *k {
@@ -293,7 +292,8 @@ impl Command {
 						None
 					}
 				},
-			).next()
+			)
+			.next()
 	}
 
 	pub fn get_commands(&self) -> Vec<CanonicalCommand> {
@@ -325,9 +325,7 @@ impl Command {
 }
 
 impl<'a> CanonicalCommand<'a> {
-	pub fn has_arg(&self, arg: &str) -> bool {
-		self.args.contains_key(arg)
-	}
+	pub fn has_arg(&self, arg: &str) -> bool { self.args.contains_key(arg) }
 }
 
 #[cfg(test)]
@@ -460,21 +458,61 @@ mod tests {
 	#[test]
 	fn initserver() {
 		// Well, that's more corrupted packet, but the parser should be robust
-		let s = "initserver virtualserver_name=Server\\sder\\sVerplanten virtualserver_welcomemessage=This\\sis\\sSplamys\\sWorld virtualserver_platform=Linux virtualserver_version=3.0.13.8\\s[Build:\\s1500452811] virtualserver_maxclients=32 virtualserver_created=0 virtualserver_nodec_encryption_mode=1 virtualserver_hostmessage=Lé\\sServer\\sde\\sSplamy virtualserver_name=Server_mode=0 virtualserver_default_server group=8 virtualserver_default_channel_group=8 virtualserver_hostbanner_url virtualserver_hostmessagegfx_url virtualserver_hostmessagegfx_interval=2000 virtualserver_priority_speaker_dimm_modificat";
+		let s =
+			"initserver virtualserver_name=Server\\sder\\sVerplanten \
+			 virtualserver_welcomemessage=This\\sis\\sSplamys\\sWorld \
+			 virtualserver_platform=Linux \
+			 virtualserver_version=3.0.13.8\\s[Build:\\s1500452811] \
+			 virtualserver_maxclients=32 virtualserver_created=0 \
+			 virtualserver_nodec_encryption_mode=1 \
+			 virtualserver_hostmessage=Lé\\sServer\\sde\\sSplamy \
+			 virtualserver_name=Server_mode=0 virtualserver_default_server \
+			 group=8 virtualserver_default_channel_group=8 \
+			 virtualserver_hostbanner_url virtualserver_hostmessagegfx_url \
+			 virtualserver_hostmessagegfx_interval=2000 \
+			 virtualserver_priority_speaker_dimm_modificat";
 		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
 		parse_command2(s.as_ref()).unwrap();
 	}
 
 	#[test]
 	fn channellist() {
-		let s = "channellist cid=2 cpid=0 channel_name=Trusted\\sChannel channel_topic channel_codec=0 channel_codec_quality=0 channel_maxclients=0 channel_maxfamilyclients=-1 channel_order=1 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=0 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic channel_icon_id=0 channel_flag_private=0|cid=4 cpid=2 channel_name=Ding\\s•\\s1\\s\\p\\sSplamy´s\\sBett channel_topic channel_codec=4 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=0 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Neo\\sSeebi\\sEvangelion channel_icon_id=0 channel_flag_private=0"; //|cid=6 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s2\\s\\p\\sThe\\sBook\\sof\\sHeavy\\sMetal channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=4 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Not\\senought\\sChannels channel_icon_id=0 channel_flag_private=0|cid=30 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s3\\s\\p\\sSenpai\\sGef\xc3\xa4hrlich channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=6 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=The\\strashcan\\shas\\sthe\\strash channel_icon_id=0 channel_flag_private=0";
+		let s =
+			"channellist cid=2 cpid=0 channel_name=Trusted\\sChannel \
+			 channel_topic channel_codec=0 channel_codec_quality=0 \
+			 channel_maxclients=0 channel_maxfamilyclients=-1 channel_order=1 \
+			 channel_flag_permanent=1 channel_flag_semi_permanent=0 \
+			 channel_flag_default=0 channel_flag_password=0 \
+			 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 \
+			 channel_delete_delay=0 channel_flag_maxclients_unlimited=0 \
+			 channel_flag_maxfamilyclients_unlimited=0 \
+			 channel_flag_maxfamilyclients_inherited=1 \
+			 channel_needed_talk_power=0 channel_forced_silence=0 \
+			 channel_name_phonetic channel_icon_id=0 \
+			 channel_flag_private=0|cid=4 cpid=2 \
+			 channel_name=Ding\\s•\\s1\\s\\p\\sSplamy´s\\sBett channel_topic \
+			 channel_codec=4 channel_codec_quality=7 channel_maxclients=-1 \
+			 channel_maxfamilyclients=-1 channel_order=0 \
+			 channel_flag_permanent=1 channel_flag_semi_permanent=0 \
+			 channel_flag_default=0 channel_flag_password=0 \
+			 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 \
+			 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 \
+			 channel_flag_maxfamilyclients_unlimited=0 \
+			 channel_flag_maxfamilyclients_inherited=1 \
+			 channel_needed_talk_power=0 channel_forced_silence=0 \
+			 channel_name_phonetic=Neo\\sSeebi\\sEvangelion channel_icon_id=0 \
+			 channel_flag_private=0"; //|cid=6 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s2\\s\\p\\sThe\\sBook\\sof\\sHeavy\\sMetal channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=4 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Not\\senought\\sChannels channel_icon_id=0 channel_flag_private=0|cid=30 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s3\\s\\p\\sSenpai\\sGef\xc3\xa4hrlich channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=6 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=The\\strashcan\\shas\\sthe\\strash channel_icon_id=0 channel_flag_private=0";
 		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
 		parse_command2(s.as_ref()).unwrap();
 	}
 
 	#[test]
 	fn subscribe() {
-		let s = "notifychannelsubscribed cid=2|cid=4 es=3867|cid=5 es=18694|cid=6 es=18694|cid=7 es=18694|cid=11 es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
+		let s = "notifychannelsubscribed cid=2|cid=4 es=3867|cid=5 \
+		         es=18694|cid=6 es=18694|cid=7 es=18694|cid=11 \
+		         es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 \
+		         es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 \
+		         es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
 		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
 		parse_command2(s.as_ref()).unwrap();
 	}

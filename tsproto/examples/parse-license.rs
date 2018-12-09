@@ -7,10 +7,8 @@ use structopt::StructOpt;
 use tsproto::license::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(help = "The license data (base64)")]
 	license: String,

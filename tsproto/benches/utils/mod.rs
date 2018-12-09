@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures::{Future, Sink, Stream};
+use slog;
 use tokio;
 use tsproto::algorithms as algs;
 use tsproto::client::ServerConnectionData;
@@ -9,7 +10,6 @@ use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
 use tsproto::*;
-use slog;
 
 pub struct SimplePacketHandler;
 
@@ -28,9 +28,11 @@ impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
 		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
 	{
 		// Ignore c2s init stream
-		tokio::spawn(s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
-			println!("Init stream exited with error ({:?})", e)
-		}));
+		tokio::spawn(
+			s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
+				println!("Init stream exited with error ({:?})", e)
+			}),
+		);
 		tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e| {
 			println!("Command stream exited with error ({:?})", e)
 		}));
@@ -47,7 +49,8 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	logger: slog::Logger,
 	packet_handler: PH,
 	verbose: u8,
-) -> client::ClientDataM<PH> {
+) -> client::ClientDataM<PH>
+{
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::from_ts(
 		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
@@ -62,7 +65,8 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		client::DefaultPacketHandler::new(packet_handler),
 		connectionmanager::SocketConnectionManager::new(),
 		logger,
-	).unwrap();
+	)
+	.unwrap();
 
 	// Set the data reference
 	let c2 = Arc::downgrade(&c);
@@ -70,9 +74,15 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		let mut c = c.lock();
 		let c = &mut *c;
 		c.packet_handler.complete(c2);
-		if verbose > 0 { log::add_command_logger(c); }
-		if verbose > 1 { log::add_packet_logger(c); }
-		if verbose > 2 { log::add_udp_packet_logger(c); }
+		if verbose > 0 {
+			log::add_command_logger(c);
+		}
+		if verbose > 1 {
+			log::add_packet_logger(c);
+		}
+		if verbose > 2 {
+			log::add_udp_packet_logger(c);
+		}
 	}
 
 	c
@@ -82,7 +92,8 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	logger: slog::Logger,
 	client: client::ClientDataM<PH>,
 	server_addr: SocketAddr,
-) -> impl Future<Item = client::ClientConVal, Error = Error> {
+) -> impl Future<Item = client::ClientConVal, Error = Error>
+{
 	client::connect(Arc::downgrade(&client), &mut *client.lock(), server_addr)
 	.and_then(move |con| {
 		let private_key = EccKeyPrivP256::from_ts(

@@ -46,10 +46,8 @@ use utils::*;
 const VOICE_TIMEOUT_SECS: u64 = 1;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -211,7 +209,8 @@ fn main() {
 					tokio::spawn(audio);
 				}
 
-				let (disconnect_send, disconnect_recv) = oneshot::channel::<()>();
+				let (disconnect_send, disconnect_recv) =
+					oneshot::channel::<()>();
 				#[cfg(target_family = "unix")]
 				{
 					// Pause or unpause sending on sighup
@@ -225,8 +224,9 @@ fn main() {
 							.for_each(move |_| {
 								// Switch state from playing to paused or reverse
 								// Returns (success, current state, pending state)
-								let state = pipe
-									.get_state(gst::ClockTime::from_mseconds(10));
+								let state = pipe.get_state(
+									gst::ClockTime::from_mseconds(10),
+								);
 								if state.0 != gst::StateChangeReturn::Failure {
 									//debug!(logger2, "Got state"; "current" => ?state.1, "pending" => ?state.2);
 									if state.1 == gst::State::Playing {
@@ -250,9 +250,11 @@ fn main() {
 									error!(logger2, "Failed to get current state"; "result" => ?state);
 								}
 								future::ok(())
-							}).map_err(move |error| {
+							})
+							.map_err(move |error| {
 								error!(logger3, "Error waiting for signal"; "error" => ?error);
-							}).select2(disconnect_recv)
+							})
+							.select2(disconnect_recv)
 							.map(|_| ())
 							.map_err(|_| ());
 						tokio::spawn(sighup);
@@ -281,7 +283,8 @@ fn main() {
 											.unwrap();
 									}
 									drop(c);
-								}).map_err(|e| {
+								})
+								.map_err(|e| {
 									panic!("Failed to disconnect ({:?})", e)
 								})
 						}),
@@ -301,7 +304,8 @@ fn setup_audio(
 	args: &Args,
 	con: client::ClientConVal,
 	logger: Logger,
-) -> Result<(gst::Pipeline, Box<Future<Item = (), Error = ()> + Send>), Error> {
+) -> Result<(gst::Pipeline, Box<Future<Item = (), Error = ()> + Send>), Error>
+{
 	// Channel, which can buffer some packets
 	let (send, recv) = mpsc::channel(5);
 	let pipeline = create_audio_to_ts_pipeline(send, args, logger.clone())?;
@@ -313,11 +317,13 @@ fn setup_audio(
 fn packet_sender(
 	con: client::ClientConVal,
 	recv: mpsc::Receiver<Packet>,
-) -> impl Future<Item = (), Error = ()> {
+) -> impl Future<Item = (), Error = ()>
+{
 	let sink = con.as_packet_sink();
 	recv.forward(sink.sink_map_err(|error| {
 		println!("Error when forwarding: {:?}", error);
-	})).map(|_| ())
+	}))
+	.map(|_| ())
 	.map_err(|error| {
 		println!("Error when forwarding: {:?}", error);
 	})
@@ -327,7 +333,8 @@ fn voice_timeout<F: FnOnce() + Send + 'static>(
 	executor: TaskExecutor,
 	f: F,
 	last_sent: Arc<Mutex<Instant>>,
-) {
+)
+{
 	let timeout =
 		Delay::new(Instant::now() + Duration::from_secs(VOICE_TIMEOUT_SECS));
 	let e = executor.clone();
@@ -345,7 +352,8 @@ fn voice_timeout<F: FnOnce() + Send + 'static>(
 fn create_ts_to_audio_pipeline(
 	executor: TaskExecutor,
 	logger: Logger,
-) -> Result<gst::Pipeline, failure::Error> {
+) -> Result<gst::Pipeline, failure::Error>
+{
 	let pipeline = gst::Pipeline::new("ts-to-audio-pipeline");
 
 	let appsrc = gst::ElementFactory::make("appsrc", "appsrc")
@@ -464,7 +472,8 @@ fn create_ts_to_audio_pipeline(
 		let decode = gst::ElementFactory::make(
 			"decodebin",
 			format!("decoder_{}", src_pad.get_name()).as_str(),
-		).expect("Missing decodebin");
+		)
+		.expect("Missing decodebin");
 		if let Err(e) = pipe.add(&decode) {
 			error!(logger, "Cannot add decoder to pipeline"; "error" => ?e);
 			return;
@@ -618,7 +627,8 @@ fn create_audio_to_ts_pipeline(
 	sender: mpsc::Sender<Packet>,
 	args: &Args,
 	logger: Logger,
-) -> Result<gst::Pipeline, failure::Error> {
+) -> Result<gst::Pipeline, failure::Error>
+{
 	let pipeline = gst::Pipeline::new("audio-to-ts-pipeline");
 
 	let decode;
@@ -760,7 +770,8 @@ fn create_audio_to_ts_pipeline(
 						return gst::FlowReturn::Error;
 					}
 				}
-			}).build(),
+			})
+			.build(),
 	);
 
 	Ok(pipeline)
@@ -769,7 +780,8 @@ fn create_audio_to_ts_pipeline(
 fn main_loop(
 	pipeline: &gst::Pipeline,
 	logger: Logger,
-) -> Result<Box<Future<Item = (), Error = ()> + Send>, failure::Error> {
+) -> Result<Box<Future<Item = (), Error = ()> + Send>, failure::Error>
+{
 	pipeline.set_state(gst::State::Playing).into_result()?;
 	debug!(logger, "Pipeline is playing");
 

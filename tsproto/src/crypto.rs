@@ -92,14 +92,21 @@ impl EccKeyPubP256 {
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
 			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
 				if *len != 1 || content[0] & 0x80 == 1 {
-					return Err(format_err!("Expected a public key, not a private key").into());
+					return Err(format_err!(
+						"Expected a public key, not a private key"
+					)
+					.into());
 				}
-				if let (Some(ASN1Block::Integer(_, x)),
-					Some(ASN1Block::Integer(_, y))) = (blocks.get(2), blocks.get(3)) {
+				if let (
+					Some(ASN1Block::Integer(_, x)),
+					Some(ASN1Block::Integer(_, y)),
+				) = (blocks.get(2), blocks.get(3))
+				{
 					let x = BigNum::from_slice(&x.to_bytes_be().1)?;
 					let y = BigNum::from_slice(&y.to_bytes_be().1)?;
 
-					let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+					let group =
+						EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
 					let k = EcKey::from_public_key_affine_coordinates(
 						&group, &x, &y,
 					)?;
@@ -129,17 +136,20 @@ impl EccKeyPubP256 {
 			&mut ctx,
 		)?;
 		let pub_len = (pubkey_bin.len() - 1) / 2;
-		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
-		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
+		let pubkey_x =
+			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
+		let pubkey_y =
+			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
 
-		Ok(::simple_asn1::to_der(
-			&ASN1Block::Sequence(0, vec![
+		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
+			0,
+			vec![
 				ASN1Block::BitString(0, 1, vec![0]),
 				ASN1Block::Integer(0, 32.into()),
 				ASN1Block::Integer(0, pubkey_x),
 				ASN1Block::Integer(0, pubkey_y),
-			])
-		)?)
+			],
+		))?)
 	}
 
 	/// Compute the uid of this key.
@@ -179,8 +189,12 @@ impl EccKeyPrivP256 {
 				return Ok(r);
 			}
 		}
-		if let Ok(r) = Self::from_tomcrypt(data) { return Ok(r); }
-		if let Ok(r) = Self::from_short(data) { return Ok(r); }
+		if let Ok(r) = Self::from_tomcrypt(data) {
+			return Ok(r);
+		}
+		if let Ok(r) = Self::from_short(data) {
+			return Ok(r);
+		}
 		Err(format_err!("Any known methods to decode the key failed").into())
 	}
 
@@ -191,7 +205,9 @@ impl EccKeyPrivP256 {
 				return Ok(r);
 			}
 		}
-		if let Ok(r) = Self::from_ts_obfuscated(s) { return Ok(r); }
+		if let Ok(r) = Self::from_ts_obfuscated(s) {
+			return Ok(r);
+		}
 		Err(format_err!("Any known methods to decode the key failed").into())
 	}
 
@@ -200,22 +216,33 @@ impl EccKeyPrivP256 {
 	/// This is just the `BigNum` of the private key.
 	pub fn from_short<V: Into<Vec<u8>>>(data: V) -> Result<Self> {
 		// Convert to openssl format
-		let der = ::simple_asn1::to_der(
-			&ASN1Block::Sequence(0, vec![
+		let der = ::simple_asn1::to_der(&ASN1Block::Sequence(
+			0,
+			vec![
 				// Version
 				ASN1Block::Integer(0, 1.into()),
 				// Private key
 				ASN1Block::OctetString(0, data.into()),
 				// Parameters
-				ASN1Block::Explicit(ASN1Class::ContextSpecific, 0, 0u8.into(),
-					Box::new(ASN1Block::ObjectIdentifier(0,
+				ASN1Block::Explicit(
+					ASN1Class::ContextSpecific,
+					0,
+					0u8.into(),
+					Box::new(ASN1Block::ObjectIdentifier(
+						0,
 						::simple_asn1::OID::new(vec![
-							1u8.into(), 2u8.into(), 840u16.into(), 10045u16.into(),
-							3u8.into(), 1u8.into(), 7u8.into(),
-						])
-				)))
-			])
-		)?;
+							1u8.into(),
+							2u8.into(),
+							840u16.into(),
+							10045u16.into(),
+							3u8.into(),
+							1u8.into(),
+							7u8.into(),
+						]),
+					)),
+				),
+			],
+		))?;
 
 		let k = EcKey::private_key_from_der(&der)?;
 		Ok(EccKeyPrivP256(k))
@@ -224,9 +251,7 @@ impl EccKeyPrivP256 {
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn to_short(&self) -> Vec<u8> {
-		self.0.private_key().to_vec()
-	}
+	pub fn to_short(&self) -> Vec<u8> { self.0.private_key().to_vec() }
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> {
@@ -290,7 +315,12 @@ impl EccKeyPrivP256 {
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
 			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
 				if (*len != 1 && *len != 2) || content[0] & 0x80 == 0 {
-					return Err(format_err!("Does not contain a private key ({}, {:?})", len, content).into());
+					return Err(format_err!(
+						"Does not contain a private key ({}, {:?})",
+						len,
+						content
+					)
+					.into());
 				}
 				if *len == 1 {
 					if let Some(ASN1Block::Integer(_, i)) = blocks.get(4) {
@@ -352,20 +382,24 @@ impl EccKeyPrivP256 {
 			&mut ctx,
 		)?;
 		let pub_len = (pubkey_bin.len() - 1) / 2;
-		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
-		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
+		let pubkey_x =
+			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
+		let pubkey_y =
+			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
 
-		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.private_key().to_vec());
+		let privkey =
+			BigInt::from_bytes_be(Sign::Plus, &self.0.private_key().to_vec());
 
-		Ok(::simple_asn1::to_der(
-			&ASN1Block::Sequence(0, vec![
+		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
+			0,
+			vec![
 				ASN1Block::BitString(0, 1, vec![0x80]),
 				ASN1Block::Integer(0, 32.into()),
 				ASN1Block::Integer(0, pubkey_x),
 				ASN1Block::Integer(0, pubkey_y),
 				ASN1Block::Integer(0, privkey),
-			])
-		)?)
+			],
+		))?)
 	}
 
 	/// This has to be the private key, the other one has to be the public key.
@@ -387,9 +421,7 @@ impl EccKeyPrivP256 {
 		Ok(signer.sign_to_vec()?)
 	}
 
-	pub fn to_pub(&self) -> EccKeyPubP256 {
-		self.into()
-	}
+	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }
 }
 
 impl<'a> Into<EccKeyPubP256> for &'a EccKeyPrivP256 {
@@ -422,9 +454,9 @@ impl EccKeyPubEd25519 {
 impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
 	pub fn create() -> Result<Self> {
-		Ok(EccKeyPrivEd25519(
-			Scalar::random(&mut ::rand::rngs::OsRng::new()?),
-		))
+		Ok(EccKeyPrivEd25519(Scalar::random(
+			&mut ::rand::rngs::OsRng::new()?,
+		)))
 	}
 
 	pub fn from_base64(data: &str) -> Result<Self> {
@@ -438,22 +470,19 @@ impl EccKeyPrivEd25519 {
 		EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data))
 	}
 
-	pub fn to_base64(&self) -> String {
-		base64::encode(self.0.as_bytes())
-	}
+	pub fn to_base64(&self) -> String { base64::encode(self.0.as_bytes()) }
 
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(
 		&self,
 		pub_key: &EdwardsPoint,
-	) -> Result<[u8; 32]> {
+	) -> Result<[u8; 32]>
+	{
 		let res = pub_key * self.0;
 		Ok(res.compress().0)
 	}
 
-	pub fn to_pub(&self) -> EccKeyPubEd25519 {
-		self.into()
-	}
+	pub fn to_pub(&self) -> EccKeyPubEd25519 { self.into() }
 }
 
 impl<'a> Into<EccKeyPubEd25519> for &'a EccKeyPrivEd25519 {
@@ -487,7 +516,8 @@ impl Eax {
 		nonce: &[u8; 16],
 		header: &[u8],
 		data: &[u8],
-	) -> Result<(Vec<u8>, Vec<u8>)> {
+	) -> Result<(Vec<u8>, Vec<u8>)>
+	{
 		// https://crypto.stackexchange.com/questions/26948/eax-cipher-mode-with-nonce-equal-header
 		// has an explanation of eax.
 
@@ -523,7 +553,8 @@ impl Eax {
 		header: &[u8],
 		data: &[u8],
 		mac: &[u8],
-	) -> Result<Vec<u8>> {
+	) -> Result<Vec<u8>>
+	{
 		let n = Self::cmac_with_iv(key, 0, nonce)?;
 
 		// 2. h ← OMAC(1 || Nonce)
@@ -559,7 +590,8 @@ impl Eax {
 		key: &[u8; 16],
 		iv: u8,
 		data: &[u8],
-	) -> Result<Vec<u8>> {
+	) -> Result<Vec<u8>>
+	{
 		let cipher = Cipher::aes_128_cbc();
 		let key = PKey::cmac(&cipher, key)?;
 		let mut signer = Signer::new_without_digest(&key)?;
@@ -616,6 +648,7 @@ mod tests {
 	fn parse_ed25519_pub_key() {
 		EccKeyPubEd25519::from_base64(
 			"zQ3irtRjRVCafjz9j2iz3HVVsp3M7HPNGHUPmTgSQIo=",
-		).unwrap();
+		)
+		.unwrap();
 	}
 }

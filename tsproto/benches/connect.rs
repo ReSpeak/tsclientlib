@@ -44,21 +44,24 @@ fn connect(b: &mut Bencher) {
 					info!(logger, "Disconnecting");
 					disconnect(con)
 						.map_err(|e| panic!("Failed to disconnect ({:?})", e))
-				}).and_then(move |_| {
+				})
+				.and_then(move |_| {
 					info!(logger2, "Disconnected");
 					// Quit client
 					drop(c);
 					Ok(())
 				})
-		})).unwrap();
+		}))
+		.unwrap();
 	});
 	rt.shutdown_on_idle().wait().unwrap();
 }
 
-
 fn bench_connect(c: &mut Criterion) {
-	c.bench("connect", Benchmark::new("connect", connect)
-		.sample_size(20));
+	c.bench(
+		"connect",
+		Benchmark::new("connect", connect).sample_size(20),
+	);
 }
 
 criterion_group!(benches, bench_connect);

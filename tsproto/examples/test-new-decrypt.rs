@@ -15,7 +15,8 @@ fn main() {
 	let shared_iv = utils::read_hex(
 		"C2 45 6F CB FC 22 08 AE 44 2B 7D E7 3A 67 1B DA 93 09 B2 00 F2 CD 10 \
 		 49 08 CD 3A B0 7B DD 58 AD",
-	).unwrap();
+	)
+	.unwrap();
 	let mut shared_iv = digest::digest(&digest::SHA512, &shared_iv)
 		.as_ref()
 		.to_vec();
@@ -24,7 +25,8 @@ fn main() {
 			"4D 3F DA B7 D8 B0 2C 82 70 6A 39 3E 97 17 61 09 FA 03 AB 30 5C \
 			 BB 78 7A 9A 82 D5 39 9A 60 FD A9 F6 7A D9 04 52 F2 AE 00 3E 35 \
 			 E8 19 10 89 40 43 80 58 27 1F 0A E0 E0 3D E0 9C F0 A3 4D 15 6B F0"
-		).unwrap()
+		)
+		.unwrap()
 		.as_slice(),
 		shared_iv.as_slice()
 	);

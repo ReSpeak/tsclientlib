@@ -11,10 +11,8 @@ use tsproto::algorithms as algs;
 use tsproto::utils;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(short = "d", long = "data", help = "Data (hex)")]
 	data: String,
