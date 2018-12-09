@@ -12,13 +12,13 @@ use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
 use {slog, slog_async, slog_term, tokio};
 
-use connection::*;
-use connectionmanager::ConnectionManager;
-use crypto::EccKeyPrivP256;
-use packet_codec::{PacketCodecReceiver, PacketCodecSender};
-use packets::*;
-use resend::DefaultResender;
-use {Error, LockedHashMap, Result};
+use crate::connection::*;
+use crate::connectionmanager::ConnectionManager;
+use crate::crypto::EccKeyPrivP256;
+use crate::packet_codec::{PacketCodecReceiver, PacketCodecSender};
+use crate::packets::*;
+use crate::resend::DefaultResender;
+use crate::{Error, LockedHashMap, Result};
 
 pub type DataM<CM> = Arc<Mutex<Data<CM>>>;
 
@@ -188,8 +188,8 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 
 	pub fn as_udp_packet_sink(
 		&self,
-	) -> ::connection::ConnectionUdpPacketSink<T> {
-		::connection::ConnectionUdpPacketSink::new(self.clone())
+	) -> crate::connection::ConnectionUdpPacketSink<T> {
+		crate::connection::ConnectionUdpPacketSink::new(self.clone())
 	}
 
 	pub fn as_packet_sink(
@@ -239,7 +239,7 @@ pub struct Data<CM: ConnectionManager + 'static> {
 	exit_send: oneshot::Sender<()>,
 
 	/// The default resend config. It gets copied for each new connection.
-	resend_config: ::resend::ResendConfig,
+	resend_config: crate::resend::ResendConfig,
 
 	pub connections:
 		LockedHashMap<CM::Key, ConnectionValue<CM::AssociatedData>>,
@@ -314,7 +314,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
 		let (exit_send, exit_recv) = oneshot::channel();
 		let (udp_packet_sink, udp_packet_sink_sender) =
-			mpsc::channel(::UDP_SINK_CAPACITY);
+			mpsc::channel(crate::UDP_SINK_CAPACITY);
 		let logger2 = logger.clone();
 
 		let connections = Arc::new(RwLock::new(HashMap::new()));
@@ -458,7 +458,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 
 		// Start resender
 		let resend_fut =
-			::resend::ResendFuture::new(&self, data_mut, key.clone());
+			crate::resend::ResendFuture::new(&self, data_mut, key.clone());
 		::tokio::spawn(resend_fut.map_err(move |e| {
 			error!(logger, "Resend future failed"; "error" => ?e);
 		}));

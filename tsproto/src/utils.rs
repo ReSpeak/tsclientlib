@@ -7,8 +7,8 @@ use std::rc::Rc;
 use futures;
 use futures::Sink;
 
-use packets::Header;
-use Result;
+use crate::packets::Header;
+use crate::Result;
 
 pub struct HexSlice<'a, T: fmt::LowerHex + 'a>(pub &'a [T]);
 

@@ -10,7 +10,7 @@ use criterion::{Bencher, Benchmark, Criterion};
 use futures::{future, Future};
 
 mod utils;
-use utils::*;
+use crate::utils::*;
 
 fn connect(b: &mut Bencher) {
 	tsproto::init().unwrap();

@@ -5,10 +5,10 @@ use std::net::SocketAddr;
 use bytes::Bytes;
 use futures::Sink;
 
-use connection::Connection;
-use handler_data::PacketHandler;
-use packets::{InPacket, PacketType};
-use Error;
+use crate::connection::Connection;
+use crate::handler_data::PacketHandler;
+use crate::packets::{InPacket, PacketType};
+use crate::Error;
 
 /// The unique identification of a connection is handled by the implementation.
 pub trait ConnectionManager: Send {

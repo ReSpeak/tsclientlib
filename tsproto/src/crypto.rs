@@ -18,7 +18,7 @@ use openssl::pkey::{PKey, Private, Public};
 use openssl::sign::{Signer, Verifier};
 use openssl::symm::{self, Cipher};
 
-use {Error, Result};
+use crate::{Error, Result};
 
 pub enum KeyType {
 	Public,
@@ -266,7 +266,7 @@ impl EccKeyPrivP256 {
 		// Xor first 100 bytes with a static value
 		#[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
 		for i in 0..cmp::min(data.len(), 100) {
-			data[i] ^= ::IDENTITY_OBFUSCATION[i];
+			data[i] ^= crate::IDENTITY_OBFUSCATION[i];
 		}
 		Self::from_ts(str::from_utf8(&data)?)
 	}
@@ -324,7 +324,7 @@ impl EccKeyPrivP256 {
 		// Xor first 100 bytes with a static value
 		#[cfg_attr(feature = "cargo-clippy", allow(needless_range_loop))]
 		for i in 0..cmp::min(data.len(), 100) {
-			data[i] ^= ::IDENTITY_OBFUSCATION[i];
+			data[i] ^= crate::IDENTITY_OBFUSCATION[i];
 		}
 
 		// Hash everything until the first 0 byte, starting after the first 20

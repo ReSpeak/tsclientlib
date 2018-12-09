@@ -10,8 +10,8 @@ use curve25519_dalek::scalar::Scalar;
 use num_traits::{FromPrimitive, ToPrimitive};
 use ring::digest;
 
-use crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
-use Result;
+use crate::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
+use crate::Result;
 
 pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
 
@@ -172,7 +172,7 @@ impl Licenses {
 
 	pub fn derive_public_key(&self) -> Result<EdwardsPoint> {
 		let mut last_round =
-			CompressedEdwardsY(::ROOT_KEY).decompress().unwrap();
+			CompressedEdwardsY(crate::ROOT_KEY).decompress().unwrap();
 		for l in &self.blocks {
 			//let derived_key = last_round.compress().0;
 			//println!("Got key: {:?}", ::utils::HexSlice((&derived_key) as &[u8]));

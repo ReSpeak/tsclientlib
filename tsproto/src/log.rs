@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 
 use slog::Logger;
 
-use connection::Connection;
-use connectionmanager::ConnectionManager;
-use handler_data::{Data, InPacketObserver, InUdpPacketObserver,
+use crate::connection::Connection;
+use crate::connectionmanager::ConnectionManager;
+use crate::handler_data::{Data, InPacketObserver, InUdpPacketObserver,
 	OutPacketObserver, OutUdpPacketObserver, InCommandObserver};
-use packets::{self, InCommand, InPacket, InUdpPacket, Packet, PacketType,
+use crate::packets::{self, InCommand, InPacket, InUdpPacket, Packet, PacketType,
 	UdpPacket};
 
 fn prepare_logger(

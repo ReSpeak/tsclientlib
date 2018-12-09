@@ -8,11 +8,11 @@ use futures::{self, AsyncSink, Sink};
 use num_traits::ToPrimitive;
 use slog;
 
-use crypto::EccKeyPubP256;
-use handler_data::ConnectionValueWeak;
-use packets::*;
-use resend::DefaultResender;
-use Error;
+use crate::crypto::EccKeyPubP256;
+use crate::handler_data::ConnectionValueWeak;
+use crate::packets::*;
+use crate::resend::DefaultResender;
+use crate::Error;
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -49,10 +49,10 @@ impl fmt::Debug for SharedIv {
 			SharedIv::ProtocolOrig(ref data) => write!(
 				f,
 				"SharedIv::ProtocolOrig({:?})",
-				::utils::HexSlice(data)
+				crate::utils::HexSlice(data)
 			),
 			SharedIv::Protocol31(ref data) => {
-				write!(f, "SharedIv::Protocol32({:?})", ::utils::HexSlice(data))
+				write!(f, "SharedIv::Protocol32({:?})", crate::utils::HexSlice(data))
 			}
 		}
 	}

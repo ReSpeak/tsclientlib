@@ -9,13 +9,13 @@ use num_traits::ToPrimitive;
 use slog::Logger;
 use tokio;
 
-use algorithms as algs;
-use connection::Connection;
-use connectionmanager::{ConnectionManager, Resender};
-use handler_data::{ConnectionValue, Data, InCommandObserver, InPacketObserver};
-use packets::Data as PData;
-use packets::*;
-use {Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
+use crate::algorithms as algs;
+use crate::connection::Connection;
+use crate::connectionmanager::{ConnectionManager, Resender};
+use crate::handler_data::{ConnectionValue, Data, InCommandObserver, InPacketObserver};
+use crate::packets::Data as PData;
+use crate::packets::*;
+use crate::{Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
 
 /// Decodes incoming udp packets.
 ///
@@ -361,7 +361,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							//debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(&frag_queue));
 							::quicklz::decompress(
 								&mut Cursor::new(frag_queue),
-								::MAX_DECOMPRESSED_SIZE,
+								crate::MAX_DECOMPRESSED_SIZE,
 							)?
 						} else {
 							frag_queue
@@ -395,7 +395,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						//debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(packet.content()));
 						::quicklz::decompress(
 							&mut Cursor::new(packet.content()),
-							::MAX_DECOMPRESSED_SIZE,
+							crate::MAX_DECOMPRESSED_SIZE,
 						)?
 					} else {
 						packet.take_content()
@@ -522,7 +522,7 @@ impl PacketCodecSender {
 		if let PData::Command(cmd) = &packet.data {
 			if cmd.command == "clientdisconnect" {
 				con.resender.handle_event(
-					::connectionmanager::ResenderEvent::Disconnecting,
+					crate::connectionmanager::ResenderEvent::Disconnecting,
 				);
 			}
 		}

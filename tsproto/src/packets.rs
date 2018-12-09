@@ -9,9 +9,9 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use num_traits::{FromPrimitive, ToPrimitive};
 
-use commands::Command;
-use utils::HexSlice;
-use {Error, Result};
+use crate::commands::Command;
+use crate::utils::HexSlice;
+use crate::{Error, Result};
 
 include!(concat!(env!("OUT_DIR"), "/packets.rs"));
 
@@ -283,8 +283,8 @@ pub struct InAudio(rentals::Audio);
 impl InPacket {
 	/// Do some sanity checks before creating the object.
 	pub fn try_new(data: Bytes, dir: Direction) -> Result<Self> {
-		let header_len = if dir == Direction::S2C { ::S2C_HEADER_LEN }
-			else { ::C2S_HEADER_LEN };
+		let header_len = if dir == Direction::S2C { crate::S2C_HEADER_LEN }
+			else { crate::C2S_HEADER_LEN };
 		if data.len() < header_len {
 			return Err(format_err!("Packet too short").into());
 		}
@@ -304,9 +304,9 @@ impl InPacket {
 		Self {
 			inner: rentals::Packet::new(MyBytes(data),
 				|data| if dir == Direction::S2C {
-					Cow::Borrowed(&data[::S2C_HEADER_LEN..])
+					Cow::Borrowed(&data[crate::S2C_HEADER_LEN..])
 				} else {
-					Cow::Borrowed(&data[::C2S_HEADER_LEN..])
+					Cow::Borrowed(&data[crate::C2S_HEADER_LEN..])
 				}),
 			dir,
 		}
@@ -518,7 +518,7 @@ impl InPacket {
 					return Err(format_err!("Packet too short").into());
 				}
 				let s = ::std::str::from_utf8(&content[len..])?;
-				let command = ::commands::parse_command2(s)?;
+				let command = crate::commands::parse_command2(s)?;
 				Ok(C2SInitData::Init4 {
 					version,
 					x: array_ref!(content, 5, 64),
@@ -633,7 +633,7 @@ impl InCommand {
 	pub fn new(content: Vec<u8>, p_type: PacketType, newprotocol: bool, dir: Direction) -> Result<Self> {
 		let inner = rentals::Command::try_new_or_drop(content, |c| {
 			let s = ::std::str::from_utf8(c)?;
-			::commands::parse_command2(s)
+			crate::commands::parse_command2(s)
 		})?;
 		Ok(Self { inner, p_type, newprotocol, dir })
 	}

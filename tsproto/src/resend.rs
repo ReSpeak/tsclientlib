@@ -17,10 +17,10 @@ use parking_lot::Mutex;
 use slog::Logger;
 use tokio::timer::Delay;
 
-use connectionmanager::{ConnectionManager, Resender, ResenderEvent};
-use handler_data::{ConnectionValue, ConnectionValueWeak, Data};
-use packets::*;
-use {Error, LockedHashMap};
+use crate::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
+use crate::handler_data::{ConnectionValue, ConnectionValueWeak, Data};
+use crate::packets::*;
+use crate::{Error, LockedHashMap};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct PacketId(PacketType, u16);

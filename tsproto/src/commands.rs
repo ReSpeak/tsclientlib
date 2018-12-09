@@ -6,7 +6,8 @@ use std::str;
 use nom::types::CompleteStr;
 use nom::{alphanumeric, multispace};
 
-use Result;
+use crate::packets::CommandData;
+use crate::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
@@ -46,7 +47,7 @@ named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispac
 	>> (*name, value)
 ));
 
-named!(inner_parse_command(CompleteStr) -> ::packets::CommandData, do_parse!(
+named!(inner_parse_command(CompleteStr) -> CommandData, do_parse!(
 	name: alt!(do_parse!(res: alphanumeric >> multispace >> (res)) | tag!("")) >> // Command
 	static_args: many0!(command_arg2) >>
 	list_args: many0!(do_parse!(many0!(multispace) >>
@@ -56,7 +57,7 @@ named!(inner_parse_command(CompleteStr) -> ::packets::CommandData, do_parse!(
 	)) >>
 	many0!(multispace) >>
 	eof!() >>
-	(::packets::CommandData {
+	(crate::packets::CommandData {
 		name: *name,
 		static_args,
 		list_args,
@@ -100,12 +101,12 @@ named!(parse_command(CompleteStr) -> Command, do_parse!(
 	})
 ));
 
-pub fn parse_command2(s: &str) -> Result<::packets::CommandData> {
+pub fn parse_command2(s: &str) -> Result<CommandData> {
 	match inner_parse_command(CompleteStr(s)) {
 		Ok((rest, mut cmd)) => {
 			// Error if rest contains something
 			if !rest.is_empty() {
-				return Err(::Error::ParseCommand(format!(
+				return Err(crate::Error::ParseCommand(format!(
 					"Command was not parsed completely {:?}",
 					rest
 				)));
@@ -130,7 +131,7 @@ pub fn parse_command2(s: &str) -> Result<::packets::CommandData> {
 			}
 			Ok(cmd)
 		}
-		Err(e) => Err(::Error::ParseCommand(format!("{:?}", e))),
+		Err(e) => Err(crate::Error::ParseCommand(format!("{:?}", e))),
 	}
 }
 
@@ -193,7 +194,7 @@ impl Command {
 			Ok((rest, mut cmd)) => {
 				// Error if rest contains something
 				if !rest.is_empty() {
-					return Err(::Error::ParseCommand(format!(
+					return Err(crate::Error::ParseCommand(format!(
 						"Command was not parsed completely {:?}",
 						rest
 					)));
@@ -218,7 +219,7 @@ impl Command {
 				}
 				Ok(cmd)
 			}
-			Err(e) => Err(::Error::ParseCommand(format!("{:?}", e))),
+			Err(e) => Err(crate::Error::ParseCommand(format!("{:?}", e))),
 		}
 	}
 
@@ -336,7 +337,7 @@ mod tests {
 	use std::iter::FromIterator;
 
 	use super::parse_command2;
-	use commands::{CanonicalCommand, Command};
+	use crate::commands::{CanonicalCommand, Command};
 
 	#[test]
 	fn parse() {

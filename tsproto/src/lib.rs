@@ -1,5 +1,4 @@
 // TODO remove?
-#![feature(nll)]
 #![cfg_attr(
 	feature = "cargo-clippy",
 	allow(

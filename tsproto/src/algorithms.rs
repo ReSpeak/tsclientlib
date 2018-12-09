@@ -8,10 +8,10 @@ use num_traits::ToPrimitive;
 use quicklz::CompressionLevel;
 use ring::digest;
 
-use connection::{CachedKey, SharedIv};
-use crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use packets::*;
-use {crypto, Result};
+use crate::connection::{CachedKey, SharedIv};
+use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
+use crate::packets::*;
+use crate::{crypto, Result};
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -176,7 +176,7 @@ pub fn encrypt_key_nonce(
 }
 
 pub fn encrypt_fake(header: &mut Header, data: &[u8]) -> Result<Vec<u8>> {
-	encrypt_key_nonce(header, data, &::FAKE_KEY, &::FAKE_NONCE)
+	encrypt_key_nonce(header, data, &crate::FAKE_KEY, &crate::FAKE_NONCE)
 }
 
 pub fn encrypt(
@@ -208,7 +208,7 @@ pub fn decrypt_key_nonce(
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
-	decrypt_key_nonce(packet, &::FAKE_KEY, &::FAKE_NONCE)
+	decrypt_key_nonce(packet, &crate::FAKE_KEY, &crate::FAKE_NONCE)
 }
 
 pub fn decrypt(
@@ -326,11 +326,12 @@ mod tests {
 	use super::*;
 	use std::io::Write;
 	use base64;
-	use packets::{Data, Header, PacketType};
+	use crate::license::Licenses;
+	use crate::packets::{Data, Header, PacketType};
 
 	#[test]
 	fn test_fake_crypt() {
-		::init().unwrap();
+		crate::init().unwrap();
 		let data = (0..100).into_iter().collect::<Vec<_>>();
 		let mut header = Header::default();
 		let enc_data = encrypt_fake(&mut header, &data).unwrap();
@@ -365,7 +366,7 @@ mod tests {
 	#[test]
 	#[should_panic]
 	fn shared_iv31() {
-		let licenses = ::license::Licenses::parse(&base64::decode("AQA1hUFJiiSs\
+		let licenses = Licenses::parse(&base64::decode("AQA1hUFJiiSs\
 			0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
 			4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==")
 			.unwrap()).unwrap();
@@ -377,7 +378,7 @@ mod tests {
 			0xb5, 0x51, 0x27, 0x08, 0x8e, 0xdd, 0x96, 0x3d, 0x6e, 0x79,
 		];
 
-		let priv_key = ::crypto::EccKeyPrivEd25519::from_bytes(client_ek);
+		let priv_key = EccKeyPrivEd25519::from_bytes(client_ek);
 
 		let alpha_b64 = base64::decode("Jkxq1wIvvhzaCA==").unwrap();
 		let mut alpha = [0; 10];

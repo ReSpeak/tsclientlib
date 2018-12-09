@@ -17,17 +17,17 @@ use rand::{self, Rng};
 use slog::Logger;
 use {base64, tokio, tokio_threadpool};
 
-use algorithms as algs;
-use commands::Command;
-use connection::*;
-use connectionmanager::{Resender, ResenderEvent, SocketConnectionManager};
-use crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use handler_data::{
+use crate::algorithms as algs;
+use crate::commands::Command;
+use crate::connection::*;
+use crate::connectionmanager::{Resender, ResenderEvent, SocketConnectionManager};
+use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
+use crate::handler_data::{
 	ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler,
 };
-use license::Licenses;
-use packets::*;
-use {packets, Error, Result};
+use crate::license::Licenses;
+use crate::packets::*;
+use crate::{packets, Error, Result};
 
 pub type CM<PH> =
 	SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
@@ -618,7 +618,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									command.push("omega", omega_s);
 									command.push("ot", "1");
 									// Set ip always except if it is a local address
-									if ::utils::is_global_ip(&ip) {
+									if crate::utils::is_global_ip(&ip) {
 										command.push("ip", ip.to_string());
 									} else {
 										command.push("ip", "");
@@ -809,9 +809,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						}
 
 						let clientinit_id =
-							if let ::connection::SharedIv::Protocol31(_) =
-								params.shared_iv
-							{
+							if let SharedIv::Protocol31(_) = params.shared_iv {
 								2
 							} else {
 								1

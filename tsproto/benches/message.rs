@@ -13,7 +13,7 @@ use tsproto::packets::*;
 use tsproto::*;
 
 mod utils;
-use utils::*;
+use crate::utils::*;
 
 fn send_messages(b: &mut Bencher) {
 	tsproto::init().unwrap();
