@@ -3,8 +3,8 @@ use std::u64;
 
 use byteorder::{NetworkEndian, WriteBytesExt};
 use curve25519_dalek::edwards::EdwardsPoint;
-use num::bigint::BigUint;
-use num::ToPrimitive;
+use num_bigint::BigUint;
+use num_traits::ToPrimitive;
 use quicklz::CompressionLevel;
 use ring::digest;
 

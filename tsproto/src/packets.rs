@@ -7,7 +7,7 @@ use std::io::Cursor;
 
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
-use num::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 
 use commands::Command;
 use utils::HexSlice;

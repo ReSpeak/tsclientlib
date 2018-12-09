@@ -5,4 +5,5 @@ authors = ["Splamy <splamyn@gmail.com>"]
 
 [dependencies]
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
-tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
+#tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
+tsproto-structs = { path = "../../ts-dev-tools/tsproto-structs" }

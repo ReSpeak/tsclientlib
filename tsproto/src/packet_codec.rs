@@ -5,7 +5,7 @@ use std::u16;
 use bytes::Bytes;
 use futures::sync::mpsc;
 use futures::{future, Future, IntoFuture, Sink};
-use num::ToPrimitive;
+use num_traits::ToPrimitive;
 use slog::Logger;
 use tokio;
 

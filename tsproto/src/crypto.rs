@@ -2,8 +2,7 @@
 use std::{cmp, fmt, str};
 
 use base64;
-use num::BigInt;
-use num_bigint::Sign;
+use num_bigint::{BigInt, Sign};
 use ring::digest;
 use simple_asn1::{ASN1Block, ASN1Class};
 

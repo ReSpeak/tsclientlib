@@ -29,10 +29,10 @@ extern crate futures;
 extern crate rug;
 #[macro_use]
 extern crate nom;
-extern crate num;
 extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
+extern crate num_traits;
 extern crate openssl;
 extern crate parking_lot;
 extern crate quicklz;

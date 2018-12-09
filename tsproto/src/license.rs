@@ -7,7 +7,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use num::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 use ring::digest;
 
 use crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};

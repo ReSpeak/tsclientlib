@@ -13,7 +13,6 @@ mod facade_parser;
 mod message_parser;
 mod messages_to_book_parser;
 mod packets_parser;
-mod permission_parser;
 mod version_parser;
 
 pub use tsproto_structs::EnumValue;
@@ -25,7 +24,6 @@ pub use facade_parser::FacadeDeclarations;
 pub use message_parser::MessageDeclarations;
 pub use messages_to_book_parser::MessagesToBookDeclarations;
 pub use packets_parser::Packets;
-pub use permission_parser::Permissions;
 pub use version_parser::Versions;
 
 // TODO Outdated, only here for the packet parser
