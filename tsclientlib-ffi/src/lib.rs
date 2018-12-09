@@ -4,6 +4,7 @@ extern crate failure;
 #[macro_use]
 extern crate lazy_static;
 extern crate num;
+extern crate parking_lot;
 extern crate tokio;
 extern crate tsclientlib;
 
@@ -11,10 +12,10 @@ use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 
 use chashmap::CHashMap;
 use num::ToPrimitive;
+use parking_lot::Mutex;
 use tokio::prelude::{future, Future};
 use tsclientlib::{ChannelId, ClientId, ConnectOptions, Connection,
 	ServerGroupId};
@@ -27,8 +28,7 @@ const EVENT_CHANNEL_SIZE: usize = 5;
 lazy_static! {
 	static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new()
 		.unwrap();
-	// TODO Find the next free connection id thread safe
-	static ref NEXT_CON_ID: AtomicUsize = AtomicUsize::new(0);
+	static ref FIRST_FREE_CON_ID: Mutex<ConnectionId> = Mutex::new(ConnectionId(0));
 	static ref CONNECTIONS: CHashMap<ConnectionId, Connection> = CHashMap::new();
 
 	// TODO It's bad when the sender blocks, maybe use futures
@@ -41,7 +41,7 @@ lazy_static! {
 
 include!(concat!(env!("OUT_DIR"), "/book_ffi.rs"));
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct ConnectionId(u32);
 
@@ -140,11 +140,32 @@ impl ConnectionExt for tsclientlib::data::Connection {
 
 // TODO On future errors, send event
 
+impl ConnectionId {
+	fn next_free() -> Self {
+		let next_free = FIRST_FREE_CON_ID.lock();
+		let res = *next_free;
+		let next = res.0 + 1;
+		while CONNECTIONS.contains_key(&ConnectionId(next)) {
+			next += 1;
+		}
+		*next_free = ConnectionId(next);
+		res
+	}
+
+	/// Should be called when a connection is removed
+	fn mark_free(id: Self) {
+		let next_free = FIRST_FREE_CON_ID.lock();
+		if id < *next_free {
+			*next_free = id;
+		}
+	}
+}
+
 #[no_mangle]
 pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 	let address = unsafe { CStr::from_ptr(address) };
 	let options = ConnectOptions::new(address.to_str().unwrap());
-	let con_id = ConnectionId(NEXT_CON_ID.fetch_add(1, Ordering::Relaxed) as u32);
+	let con_id = ConnectionId::next_free();
 
 	RUNTIME.executor().spawn(future::lazy(move ||
 		Connection::new(options)

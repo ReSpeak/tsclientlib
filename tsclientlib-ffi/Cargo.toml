@@ -12,6 +12,7 @@ chashmap = "2"
 failure = "0.1"
 lazy_static = "1"
 num = "0.2"
+parking_lot = "0.7"
 tokio = "0.1"
 tsclientlib = { path = "../tsclientlib" }
 

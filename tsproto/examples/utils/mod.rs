@@ -29,7 +29,7 @@ impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
 		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
 		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
 	{
-		// Ignore c2s init stream
+		// Ignore c2s init stream and start s2c init stream
 		tokio::spawn(s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
 			println!("Init stream exited with error ({:?})", e)
 		}));

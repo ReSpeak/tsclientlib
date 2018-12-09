@@ -21,6 +21,7 @@ extern crate chrono;
 extern crate failure;
 #[macro_use]
 extern crate futures;
+extern crate parking_lot;
 extern crate rand;
 extern crate reqwest;
 #[macro_use]
@@ -38,15 +39,16 @@ extern crate tsproto_commands;
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::{Arc, Once, ONCE_INIT, RwLock, RwLockReadGuard};
+use std::sync::Arc;
 
 use failure::ResultExt;
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
+use parking_lot::{Once, ONCE_INIT, RwLock, RwLockReadGuard};
 use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::commands::Command;
-use tsproto::packets::{Header, Packet, PacketType};
+use tsproto::packets::{Header, InAudio, InCommand, Packet, PacketType};
 use tsproto::{client, commands, crypto, log, packets};
 use tsproto_commands::messages::Message;
 
@@ -187,9 +189,9 @@ pub trait PacketHandler {
 	fn new_connection(
 		&mut self,
 		command_stream: Box<
-			Stream<Item = Packet, Error = tsproto::Error> + Send,
+			Stream<Item = InCommand, Error = tsproto::Error> + Send,
 		>,
-		audio_stream: Box<Stream<Item = Packet, Error = tsproto::Error> + Send>,
+		audio_stream: Box<Stream<Item = InAudio, Error = tsproto::Error> + Send>,
 	);
 	/// Clone into a box.
 	fn clone(&self) -> PHBox;
@@ -359,7 +361,7 @@ impl Connection {
 					debug!(logger, "Connecting"; "address" => %addr);
 					let connect_fut = client::connect(
 						Arc::downgrade(&client),
-						&mut *client.lock().unwrap(),
+						&mut *client.lock(),
 						addr,
 					).from_err();
 
@@ -370,7 +372,7 @@ impl Connection {
 								e
 							).into()
 						}).and_then(move |cmd| {
-							let cmd = cmd.get_commands().remove(0);
+							let cmd = cmd.iter().next().unwrap();
 							let notif = Message::parse(cmd)?;
 							if let Message::InitServer(p) = notif {
 								Ok(p)
@@ -390,7 +392,7 @@ impl Connection {
 							Ok(r) => r.mutex,
 							Err(e) => return Box::new(future::err(e.into())),
 						};
-						let con = mutex.lock().unwrap();
+						let con = mutex.lock();
 						con.1.logger.clone()
 					};
 					// TODO Add possibility to specify offset and level in ConnectOptions
@@ -400,7 +402,7 @@ impl Connection {
 						slog::Level::Info);
 					time_reporter.start("Compute public key hash cash level");
 					let pub_k = {
-						let mut c = client.lock().unwrap();
+						let mut c = client.lock();
 						c.private_key.to_pub()
 					};
 					Box::new(future::poll_fn(move || {
@@ -457,7 +459,7 @@ impl Connection {
 						let mutex = con.upgrade().ok_or_else(||
 							format_err!("Connection does not exist anymore"))?
 							.mutex;
-						let con = mutex.lock().unwrap();
+						let con = mutex.lock();
 						con.1.params.as_ref().ok_or_else(||
 							format_err!("Connection params do not exist"))?
 							.public_key.get_uid()?
@@ -578,7 +580,7 @@ impl Connection {
 
 	// TODO Rename to read and create write?
 	pub fn lock(&self) -> ConnectionLock {
-		ConnectionLock::new(self.inner.connection.read().unwrap())
+		ConnectionLock::new(self.inner.connection.read())
 	}
 
 	pub fn to_mut<'a>(
@@ -686,7 +688,7 @@ impl Drop for Connection {
 		if Arc::strong_count(&self.inner.connection) <= 2 {
 			// The last 2 references are in the packet handler and this one
 			// Disconnect
-			let logger = self.inner.client_data.lock().unwrap().logger.clone();
+			let logger = self.inner.client_data.lock().logger.clone();
 			tokio::spawn(self.disconnect(None).map_err(move |e|
 				error!(logger, "Failed to disconnect"; "error" => ?e)));
 		}
