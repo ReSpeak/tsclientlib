@@ -2,7 +2,6 @@ use std::num::ParseFloatError;
 use std::num::ParseIntError;
 
 use errors::Error;
-use permissions::Permission;
 use *;
 
 pub trait Response {

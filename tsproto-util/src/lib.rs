@@ -2,9 +2,7 @@
 extern crate t4rust_derive;
 extern crate tsproto_structs;
 
-use std::fs::File;
 use std::io::prelude::*;
-use std::io::Cursor;
 
 mod book_ffi;
 mod book_parser;
@@ -23,44 +21,8 @@ pub use error_parser::Errors;
 pub use facade_parser::FacadeDeclarations;
 pub use message_parser::MessageDeclarations;
 pub use messages_to_book_parser::MessagesToBookDeclarations;
-pub use packets_parser::Packets;
+pub use packets_parser::PacketDeclarations;
 pub use version_parser::Versions;
-
-// TODO Outdated, only here for the packet parser
-pub trait Declaration {
-	type Dep;
-
-	fn get_filename() -> &'static str;
-
-	fn parse(s: &str, dep: Self::Dep) -> Self
-	where
-		Self: Sized,
-	{
-		let mut cursor = Cursor::new(s.as_bytes());
-		Self::parse_from_read(&mut cursor, dep)
-	}
-
-	fn parse_from_read(read: &mut Read, dep: Self::Dep) -> Self
-	where
-		Self: Sized,
-	{
-		let mut v = Vec::new();
-		read.read_to_end(&mut v).unwrap();
-		let s = String::from_utf8(v).unwrap();
-		Self::parse(&s, dep)
-	}
-
-	fn from_file(base: &str, dep: Self::Dep) -> Self
-	where
-		Self: Sized,
-	{
-		let file = format!("{}/declarations/{}", base, Self::get_filename());
-		println!("cargo:rerun-if-changed={}", file);
-
-		let mut fread = File::open(file).unwrap();
-		Self::parse_from_read(&mut fread, dep)
-	}
-}
 
 pub fn to_pascal_case<S: AsRef<str>>(text: S) -> String {
 	let sref = text.as_ref();

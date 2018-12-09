@@ -2,14 +2,13 @@ extern crate chrono;
 #[macro_use]
 extern crate failure;
 extern crate futures;
-extern crate num;
 #[macro_use]
 extern crate num_derive;
+extern crate num_traits;
 extern crate tsproto;
 
 pub mod errors;
 pub mod messages;
-pub mod permissions;
 pub mod versions;
 
 use std::fmt;
@@ -48,6 +47,15 @@ pub struct ChannelGroupId(pub u64);
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct IconHash(pub u32);
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub struct Permission(pub u32);
+impl Permission {
+	/// Never fails
+	pub fn from_u32(i: u32) -> Option<Self> { Some(Permission(i)) }
+	/// Never fails
+	pub fn to_u32(&self) -> Option<u32> { Some(self.0) }
+}
 
 #[derive(
 	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,

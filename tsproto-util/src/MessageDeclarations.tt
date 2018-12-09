@@ -1,7 +1,7 @@
 <#@ template cleanws="true" #>
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
-use num::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 use tsproto::commands::{Command, CanonicalCommand};
 
 <#

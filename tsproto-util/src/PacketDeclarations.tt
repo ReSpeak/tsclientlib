@@ -1,15 +1,28 @@
 <#@ template cleanws="true" #>
 <#
+let root = &DATA.root;
 let mut res = Vec::new();
-self.root.write_decl(&mut res).unwrap();
+MyField(root).write_decl(&mut res).unwrap();
 let decls = String::from_utf8(res).unwrap();
 
-let mut from_client = Field::new();
-from_client.content.elem.name = String::from("from_client");
-from_client.content.element_type = ElementType::Custom(String::from("bool"));
+let mut from_client = Field {
+	doc: String::new(),
+	value: None,
+	optional: false,
+	content: ElementWrapper {
+		elem: Element {
+			name: "from_client".into(),
+			pre_conditions: Vec::new(),
+			pre_code: Vec::new(),
+			post_conditions: Vec::new(),
+			post_code: Vec::new(),
+		},
+		element_type: ElementType::Custom(String::from("bool")),
+	},
+};
 
 let mut res = Vec::new();
-self.root.write_impl(&mut res, Some(&from_client)).unwrap();
+MyField(root).write_impl(&mut res, Some(&from_client)).unwrap();
 let impls = String::from_utf8(res).unwrap();
 #>
 <#= decls #>

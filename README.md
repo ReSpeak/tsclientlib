@@ -12,12 +12,6 @@ If you are searching for a usable client, [Qint](https://github.com/ReSpeak/Qint
  - tsproto-commands: Parse commands into structs
  - tsclientlib: This is the main product of this repository, a simple to use TeamSpeak library
 
-## Clone
-
-```
-git clone --recurse-submodules https://github.com/ReSpeak/tsclientlib.git
-```
-
 ## Dependencies
 
 - OpenSSL 1.1
