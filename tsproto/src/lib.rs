@@ -32,6 +32,7 @@ extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
 extern crate openssl;
+extern crate parking_lot;
 extern crate quicklz;
 extern crate rand;
 #[macro_use]
@@ -65,7 +66,7 @@ pub mod resend;
 pub mod utils;
 
 type Result<T> = std::result::Result<T, Error>;
-type LockedHashMap<K, V> = std::sync::Arc<std::sync::RwLock<std::collections::HashMap<K, V>>>;
+type LockedHashMap<K, V> = std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<K, V>>>;
 
 /// The maximum number of bytes for a fragmented packet.
 #[cfg_attr(feature = "cargo-clippy", allow(unreadable_literal))]

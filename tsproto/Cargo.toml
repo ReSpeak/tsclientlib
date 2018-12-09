@@ -6,7 +6,6 @@ description = """
 An implementation of the TeamSpeak3 protocol as a library for use in clients and bots.
 """
 repository = "https://github.com/ReSpeak/tsclientlib"
-documentation = "https://docs.rs/tsproto"
 keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
 license = "MIT/Apache-2.0"
@@ -37,6 +36,7 @@ num-bigint = "0.2"
 num-derive = "0.2"
 num-traits = "0.2"
 openssl = "0.10"
+parking_lot = "0.7"
 rand = "0.6"
 rental = "0.5"
 ring = "0.13"

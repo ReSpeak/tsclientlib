@@ -208,21 +208,6 @@ impl EccKeyPrivP256 {
 				// Private key
 				ASN1Block::OctetString(0, data.into()),
 				// Parameters
-				// Explicitely tagged oid
-				// Oid: 1, 2, 840, 10045, 3, 1, 7,
-				// The first two bytes get merged with b1 * 40 + b2.
-				// The rest gets base127 encoded, the first byte always has the
-				// first bit set.
-				//ASN1Block::Unknown(ASN1Class::ContextSpecifi0, 160u8.into(), vec![
-					//1 * 40 + 2,
-					//(840u16 >> 7) as u8 | 0x80,
-					//(840u16 % 128) as u8,
-					//(10045u16 >> 7) as u8 | 0x80,
-					//(10045u16 % 128) as u8,
-					//3,
-					//1,
-					//7,
-				//]),
 				ASN1Block::Explicit(ASN1Class::ContextSpecific, 0, 0u8.into(),
 					Box::new(ASN1Block::ObjectIdentifier(0,
 						::simple_asn1::OID::new(vec![
@@ -232,28 +217,7 @@ impl EccKeyPrivP256 {
 				)))
 			])
 		)?;
-		println!("{:?}", der);
 
-		//let der = ::yasna::construct_der(|writer| {
-			//writer.write_sequence(|writer| {
-				//// version
-				//writer.next().write_u8(1);
-				//// privateKey
-				//writer.next().write_bytes(data);
-				//// parameters
-				//let tag = ::yasna::Tag::context(0);
-				//writer.next().write_tagged(tag, |writer| {
-					//writer.write_oid(
-						//#[cfg_attr(
-							//feature = "cargo-clippy", allow(unreadable_literal)
-						//)]
-						//&::yasna::models::ObjectIdentifier::from_slice(&[
-							//1, 2, 840, 10045, 3, 1, 7,
-						//]),
-					//);
-				//});
-			//})
-		//});
 		let k = EcKey::private_key_from_der(&der)?;
 		Ok(EccKeyPrivP256(k))
 	}

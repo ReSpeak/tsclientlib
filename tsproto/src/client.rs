@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::{Mutex, Weak};
+use std::sync::Weak;
 
 use chrono::Utc;
 use futures::sync::mpsc;
@@ -12,6 +12,7 @@ use rug::integer::Order;
 use num::bigint::BigUint;
 #[cfg(not(feature = "rug"))]
 use num::One;
+use parking_lot::Mutex;
 use rand::{self, Rng};
 use slog::Logger;
 use {base64, tokio, tokio_threadpool};
@@ -98,7 +99,7 @@ pub fn wait_for_state<
 			))
 		}
 	};
-	let mut con = con.lock().unwrap();
+	let mut con = con.lock();
 	con.0.state_change_listener.push(Box::new(move |s| {
 		// Check if it is the right state
 		if f(s) {
@@ -219,7 +220,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							"Connection does not exist while handling packet"
 						).into());
 					};
-					let d = d.lock().unwrap();
+					let d = d.lock();
 					d.private_key.clone()
 				};
 
@@ -228,7 +229,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					.upgrade()
 					.ok_or_else(|| format_err!("Connection is gone"))?;
 				let con_val3 = con_val.clone();
-				let mut con = con_val.mutex.lock().unwrap();
+				let mut con = con_val.mutex.lock();
 				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
 				let mut is_end = false;
@@ -266,7 +267,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										.ok_or_else(|| {
 											format_err!("Connection is gone")
 										})?.mutex;
-									let mut con = mutex.lock().unwrap();
+									let mut con = mutex.lock();
 									let state = &mut con.0;
 									// Notify state changed listeners
 									let mut i = 0;
@@ -315,7 +316,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// connection is already gone.
 						return Ok(None);
 					};
-					d.lock().unwrap().remove_connection(&addr);
+					d.lock().remove_connection(&addr);
 				}
 
 				if ignore_packet {
@@ -350,7 +351,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							"Connection does not exist while handling packet"
 						).into());
 					};
-					let d = d.lock().unwrap();
+					let d = d.lock();
 					d.private_key.clone()
 				};
 
@@ -358,7 +359,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				let con_val = con_val2
 					.upgrade()
 					.ok_or_else(|| format_err!("Connection is gone"))?;
-				let mut con = con_val.mutex.lock().unwrap();
+				let mut con = con_val.mutex.lock();
 				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
 				let mut is_end = false;
@@ -395,7 +396,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										.ok_or_else(|| {
 											format_err!("Connection is gone")
 										})?.mutex;
-									let mut con = mutex.lock().unwrap();
+									let mut con = mutex.lock();
 									let state = &mut con.0;
 									// Notify state changed listeners
 									let mut i = 0;
@@ -444,7 +445,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// connection is already gone.
 						return Ok(None);
 					};
-					d.lock().unwrap().remove_connection(&addr);
+					d.lock().remove_connection(&addr);
 				}
 
 				if ignore_packet {

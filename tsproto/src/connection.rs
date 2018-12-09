@@ -232,7 +232,7 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 		match p_type {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
 				if let Some(mutex) = self.con.mutex.upgrade() {
-					let mut con = mutex.lock().unwrap();
+					let mut con = mutex.lock();
 					let res =
 						con.1.resender.start_send((p_type, p_id, udp_packet));
 					res
@@ -243,7 +243,7 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 			_ => {
 				if self.udp_packet_sink.is_none() {
 					if let Some(mutex) = self.con.mutex.upgrade() {
-						let con = mutex.lock().unwrap();
+						let con = mutex.lock();
 						self.udp_packet_sink = Some((
 							con.1.address,
 							con.1.udp_packet_sink.clone(),

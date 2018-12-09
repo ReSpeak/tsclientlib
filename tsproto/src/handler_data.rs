@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::mem;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Weak};
 
 use bytes::Bytes;
 use futures::sync::{mpsc, oneshot};
 use futures::{future, Future, Sink, stream, Stream};
+use parking_lot::{Mutex, RwLock};
 use slog::Drain;
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
@@ -125,10 +126,10 @@ impl<T: Send + 'static> ConnectionValue<T> {
 		&self,
 		mut packet: Packet,
 	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send> {
-		let mut con = self.mutex.lock().unwrap();
+		let mut con = self.mutex.lock();
 		let con = &mut *con;
 		// Call observer
-		for o in self.out_packet_observer.read().unwrap().values() {
+		for o in self.out_packet_observer.read().values() {
 			o.observe(con, &mut packet);
 		}
 
@@ -348,7 +349,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		tokio::spawn(
 			udp_packet_sink_sender
 				.map(move |(addr, p)| {
-					for o in out_udp_packet_observer.read().unwrap().values() {
+					for o in out_udp_packet_observer.read().values() {
 						o.observe(addr, &p);
 					}
 					(p, addr)
@@ -371,7 +372,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 					match InPacket::try_new(p.freeze(),
 						if is_client { Direction::S2C } else { Direction::C2S }) {
 						Ok(packet) => {
-							for o in in_udp_packet_observer.read().unwrap().values() {
+							for o in in_udp_packet_observer.read().values() {
 								o.observe(a, &packet);
 							}
 
@@ -453,7 +454,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		);
 
 		// Add connection
-		self.connections.write().unwrap().insert(key.clone(), con_val);
+		self.connections.write().insert(key.clone(), con_val);
 
 		// Start resender
 		let resend_fut =
@@ -473,7 +474,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let mut res = self.get_connection(key);
 		if let Some(con) = &mut res {
 			// Remove connection
-			self.connections.write().unwrap().remove(key);
+			self.connections.write().remove(key);
 
 			// Call listeners
 			let mut i = 0;
@@ -493,39 +494,39 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		&self,
 		key: &CM::Key,
 	) -> Option<ConnectionValue<CM::AssociatedData>> {
-		self.connections.read().unwrap().get(key).map(|v| v.clone())
+		self.connections.read().get(key).map(|v| v.clone())
 	}
 
 	pub fn add_in_udp_packet_observer(&mut self, key: String, o: Box<InUdpPacketObserver>) {
-		self.in_udp_packet_observer.write().unwrap().insert(key, o);
+		self.in_udp_packet_observer.write().insert(key, o);
 	}
 	pub fn add_out_udp_packet_observer(&mut self, key: String, o: Box<OutUdpPacketObserver>) {
-		self.out_udp_packet_observer.write().unwrap().insert(key, o);
+		self.out_udp_packet_observer.write().insert(key, o);
 	}
 	pub fn remove_in_udp_packet_observer(&mut self, key: &String) {
-		self.in_udp_packet_observer.write().unwrap().remove(key);
+		self.in_udp_packet_observer.write().remove(key);
 	}
 	pub fn remove_out_udp_packet_observer(&mut self, key: &String) {
-		self.out_udp_packet_observer.write().unwrap().remove(key);
+		self.out_udp_packet_observer.write().remove(key);
 	}
 
 	pub fn add_in_packet_observer(&mut self, key: String, o: Box<InPacketObserver<CM::AssociatedData>>) {
-		self.in_packet_observer.write().unwrap().insert(key, o);
+		self.in_packet_observer.write().insert(key, o);
 	}
 	pub fn add_out_packet_observer(&mut self, key: String, o: Box<OutPacketObserver<CM::AssociatedData>>) {
-		self.out_packet_observer.write().unwrap().insert(key, o);
+		self.out_packet_observer.write().insert(key, o);
 	}
 	pub fn remove_in_packet_observer(&mut self, key: &String) {
-		self.in_packet_observer.write().unwrap().remove(key);
+		self.in_packet_observer.write().remove(key);
 	}
 	pub fn remove_out_packet_observer(&mut self, key: &String) {
-		self.out_packet_observer.write().unwrap().remove(key);
+		self.out_packet_observer.write().remove(key);
 	}
 
 	pub fn add_in_command_observer(&mut self, key: String, o: Box<InCommandObserver<CM::AssociatedData>>) {
-		self.in_command_observer.write().unwrap().insert(key, o);
+		self.in_command_observer.write().insert(key, o);
 	}
 	pub fn remove_in_command_observer(&mut self, key: &String) {
-		self.in_command_observer.write().unwrap().remove(key);
+		self.in_command_observer.write().remove(key);
 	}
 }

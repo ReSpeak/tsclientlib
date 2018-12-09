@@ -55,7 +55,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		(addr, packet): (SocketAddr, InPacket),
 	) -> impl Future<Item = (), Error = Error> {
 		// Find the right connection
-		let cons = self.connections.read().unwrap();
+		let cons = self.connections.read();
 		if let Some(con) = cons.get(&CM::get_connection_key(addr, &packet)).map(|vs| vs.clone())
 		{
 			// If we are a client and have only a single connection, we will do the
@@ -128,7 +128,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		mut packet: InPacket,
 	) -> Result<()> {
 		let con2 = connection.downgrade();
-		let mut con = connection.mutex.lock().unwrap();
+		let mut con = connection.mutex.lock();
 		let con = &mut *con;
 		let packet_res;
 		let mut ack = None;
@@ -190,7 +190,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				return Err(Error::UnallowedUnencryptedPacket);
 			}
 
-			for o in in_packet_observer.read().unwrap().values() {
+			for o in in_packet_observer.read().values() {
 				o.observe(con, &packet);
 			}
 
@@ -219,7 +219,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					// guaranteed to be in the right order now, because
 					// we hold a lock on the connection.
 					for c in commands {
-						for o in in_command_observer.read().unwrap().values() {
+						for o in in_command_observer.read().values() {
 							o.observe(con, &c);
 						}
 
