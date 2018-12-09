@@ -60,6 +60,22 @@ impl Permission {
 #[derive(
 	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
 )]
+pub enum PermissionType {
+	/// Server group permission. (id1: ServerGroupId, id2: 0)
+	ServerGroup,
+	/// Client specific permission. (id1: ClientDbId, id2: 0)
+	GlobalClient,
+	/// Channel specific permission. (id1: ChannelId, id2: 0)
+	Channel,
+	/// Channel group permission. (id1: ChannelId, id2: ChannelGroupId)
+	ChannelGroup,
+	/// Channel-client specific permission. (id1: ChannelId, id2: ClientDbId)
+	ChannelClient,
+}
+
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum TextMessageTargetMode {
 	/// Maybe to all servers?
 	Unknown,

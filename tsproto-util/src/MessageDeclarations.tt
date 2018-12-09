@@ -62,6 +62,7 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 		"GroupNamingMode" |
 		"GroupType" |
 		"Permission" |
+		"PermissionType" |
 		"TokenType" |
 		"PluginTargetMode" |
 		"Error" => format!("{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
@@ -150,6 +151,7 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
 		"GroupNamingMode" |
 		"GroupType" |
 		"Permission" |
+		"PermissionType" |
 		"TokenType" |
 		"PluginTargetMode" |
 		"Error" => "val.to_u32().unwrap().to_string()",
