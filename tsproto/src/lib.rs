@@ -10,6 +10,7 @@
 	)
 )]
 
+extern crate simple_asn1;
 #[macro_use]
 extern crate arrayref;
 extern crate base64;
@@ -27,6 +28,7 @@ extern crate rug;
 #[macro_use]
 extern crate nom;
 extern crate num;
+extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
 extern crate openssl;
@@ -43,7 +45,6 @@ extern crate slog_term;
 extern crate stable_deref_trait;
 extern crate tokio;
 extern crate tokio_threadpool;
-extern crate yasna;
 
 use std::net::SocketAddr;
 
@@ -94,6 +95,10 @@ const C2S_HEADER_LEN: usize = 13;
 #[derive(Fail, Debug)]
 pub enum Error {
 	#[fail(display = "{}", _0)]
+	Asn1Decode(#[cause] simple_asn1::ASN1DecodeErr),
+	#[fail(display = "{}", _0)]
+	Asn1Encode(#[cause] simple_asn1::ASN1EncodeErr),
+	#[fail(display = "{}", _0)]
 	Base64(#[cause] base64::DecodeError),
 	#[fail(display = "{}", _0)]
 	FutureCanceled(#[cause] futures::Canceled),
@@ -113,8 +118,6 @@ pub enum Error {
 	Timer(#[cause] tokio::timer::Error),
 	#[fail(display = "{}", _0)]
 	Utf8(#[cause] std::str::Utf8Error),
-	#[fail(display = "{}", _0)]
-	Yasna(#[cause] yasna::ASN1Error),
 
 	#[fail(
 		display = "Packet {} not in receive window [{};{}) for type {:?}",
@@ -147,6 +150,18 @@ pub enum Error {
 	WrongSignature,
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
+}
+
+impl From<simple_asn1::ASN1DecodeErr> for Error {
+	fn from(e: simple_asn1::ASN1DecodeErr) -> Self {
+		Error::Asn1Decode(e)
+	}
+}
+
+impl From<simple_asn1::ASN1EncodeErr> for Error {
+	fn from(e: simple_asn1::ASN1EncodeErr) -> Self {
+		Error::Asn1Encode(e)
+	}
 }
 
 impl From<base64::DecodeError> for Error {
@@ -206,12 +221,6 @@ impl From<tokio::timer::Error> for Error {
 impl From<std::str::Utf8Error> for Error {
 	fn from(e: std::str::Utf8Error) -> Self {
 		Error::Utf8(e)
-	}
-}
-
-impl From<yasna::ASN1Error> for Error {
-	fn from(e: yasna::ASN1Error) -> Self {
-		Error::Yasna(e)
 	}
 }
 

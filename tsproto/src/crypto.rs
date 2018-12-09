@@ -2,8 +2,10 @@
 use std::{cmp, fmt, str};
 
 use base64;
-use num::BigUint;
+use num::BigInt;
+use num_bigint::Sign;
 use ring::digest;
+use simple_asn1::{ASN1Block, ASN1Class};
 
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
@@ -76,42 +78,42 @@ impl EccKeyPubP256 {
 		Self::from_tomcrypt(&base64::decode(data)?)
 	}
 
+	/// Decodes the public key from an ASN.1 DER object how tomcrypt stores it.
+	///
+	/// The format is:
+	/// - `BitString` where the first bit is 1 if the private key is contained
+	/// - `Integer`: The key size (32)
+	/// - `Integer`: X coordinate of the public key
+	/// - `Integer`: Y coordinate of the public key
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
-		// Read tomcrypt DER
-		Ok(::yasna::parse_der(data, |reader| {
-			reader.read_sequence(|reader| {
-				let f = reader.next().read_bitvec()?;
-				if f.len() != 1 {
-					return Err(::yasna::ASN1Error::new(
-						::yasna::ASN1ErrorKind::Invalid,
-					));
+		let blocks = ::simple_asn1::from_der(data)?;
+		if blocks.len() != 1 {
+			return Err(format_err!("More than one ASN.1 block").into());
+		}
+		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
+			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
+				if *len != 1 || content[0] & 0x80 == 1 {
+					return Err(format_err!("Expected a public key, not a private key").into());
 				}
+				if let (Some(ASN1Block::Integer(_, x)),
+					Some(ASN1Block::Integer(_, y))) = (blocks.get(2), blocks.get(3)) {
+					let x = BigNum::from_slice(&x.to_bytes_be().1)?;
+					let y = BigNum::from_slice(&y.to_bytes_be().1)?;
 
-				let _key_size = reader.next().read_u16()?;
-				let pubkey_x = reader.next().read_biguint()?;
-				let pubkey_y = reader.next().read_biguint()?;
-
-				if f[0] {
-					// Got a private key but expected a public key
-					return Err(::yasna::ASN1Error::new(
-						::yasna::ASN1ErrorKind::Invalid,
-					));
-				}
-
-				let res: Result<Self> = (|| {
-					let x = BigNum::from_slice(&pubkey_x.to_bytes_be())?;
-					let y = BigNum::from_slice(&pubkey_y.to_bytes_be())?;
-
-					let group =
-						EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+					let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
 					let k = EcKey::from_public_key_affine_coordinates(
 						&group, &x, &y,
 					)?;
 					Ok(EccKeyPubP256(k))
-				})();
-				Ok(res)
-			})
-		})??)
+				} else {
+					return Err(format_err!("Public key not found").into());
+				}
+			} else {
+				return Err(format_err!("Expected a bitstring").into());
+			}
+		} else {
+			return Err(format_err!("Expected a sequence").into());
+		}
 	}
 
 	/// Convert to base64 encoded public tomcrypt key.
@@ -128,22 +130,17 @@ impl EccKeyPubP256 {
 			&mut ctx,
 		)?;
 		let pub_len = (pubkey_bin.len() - 1) / 2;
-		let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..=pub_len]);
-		let pubkey_y = BigUint::from_bytes_be(&pubkey_bin[1 + pub_len..]);
+		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
+		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
 
-		// Write tomcrypt DER
-		let der = ::yasna::construct_der(|writer| {
-			writer.write_sequence(|writer| {
-				writer
-					.next()
-					.write_bitvec(&::std::iter::once(false).collect());
-				writer.next().write_u16(32);
-				writer.next().write_biguint(&pubkey_x);
-				writer.next().write_biguint(&pubkey_y);
-			})
-		});
-
-		Ok(der)
+		Ok(::simple_asn1::to_der(
+			&ASN1Block::Sequence(0, vec![
+				ASN1Block::BitString(0, 1, vec![0]),
+				ASN1Block::Integer(0, 32.into()),
+				ASN1Block::Integer(0, pubkey_x),
+				ASN1Block::Integer(0, pubkey_y),
+			])
+		)?)
 	}
 
 	/// Compute the uid of this key.
@@ -202,27 +199,61 @@ impl EccKeyPrivP256 {
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn from_short(data: &[u8]) -> Result<Self> {
-		let der = ::yasna::construct_der(|writer| {
-			writer.write_sequence(|writer| {
-				// version
-				writer.next().write_u8(1);
-				// privateKey
-				writer.next().write_bytes(data);
-				// parameters
-				let tag = ::yasna::Tag::context(0);
-				writer.next().write_tagged(tag, |writer| {
-					writer.write_oid(
-						#[cfg_attr(
-							feature = "cargo-clippy", allow(unreadable_literal)
-						)]
-						&::yasna::models::ObjectIdentifier::from_slice(&[
-							1, 2, 840, 10045, 3, 1, 7,
-						]),
-					);
-				});
-			})
-		});
+	pub fn from_short<V: Into<Vec<u8>>>(data: V) -> Result<Self> {
+		// Convert to openssl format
+		let der = ::simple_asn1::to_der(
+			&ASN1Block::Sequence(0, vec![
+				// Version
+				ASN1Block::Integer(0, 1.into()),
+				// Private key
+				ASN1Block::OctetString(0, data.into()),
+				// Parameters
+				// Explicitely tagged oid
+				// Oid: 1, 2, 840, 10045, 3, 1, 7,
+				// The first two bytes get merged with b1 * 40 + b2.
+				// The rest gets base127 encoded, the first byte always has the
+				// first bit set.
+				//ASN1Block::Unknown(ASN1Class::ContextSpecifi0, 160u8.into(), vec![
+					//1 * 40 + 2,
+					//(840u16 >> 7) as u8 | 0x80,
+					//(840u16 % 128) as u8,
+					//(10045u16 >> 7) as u8 | 0x80,
+					//(10045u16 % 128) as u8,
+					//3,
+					//1,
+					//7,
+				//]),
+				ASN1Block::Explicit(ASN1Class::ContextSpecific, 0, 0u8.into(),
+					Box::new(ASN1Block::ObjectIdentifier(0,
+						::simple_asn1::OID::new(vec![
+							1u8.into(), 2u8.into(), 840u16.into(), 10045u16.into(),
+							3u8.into(), 1u8.into(), 7u8.into(),
+						])
+				)))
+			])
+		)?;
+		println!("{:?}", der);
+
+		//let der = ::yasna::construct_der(|writer| {
+			//writer.write_sequence(|writer| {
+				//// version
+				//writer.next().write_u8(1);
+				//// privateKey
+				//writer.next().write_bytes(data);
+				//// parameters
+				//let tag = ::yasna::Tag::context(0);
+				//writer.next().write_tagged(tag, |writer| {
+					//writer.write_oid(
+						//#[cfg_attr(
+							//feature = "cargo-clippy", allow(unreadable_literal)
+						//)]
+						//&::yasna::models::ObjectIdentifier::from_slice(&[
+							//1, 2, 840, 10045, 3, 1, 7,
+						//]),
+					//);
+				//});
+			//})
+		//});
 		let k = EcKey::private_key_from_der(&der)?;
 		Ok(EccKeyPrivP256(k))
 	}
@@ -277,35 +308,46 @@ impl EccKeyPrivP256 {
 		Self::from_ts(str::from_utf8(&data)?)
 	}
 
+	/// Decodes the private key from an ASN.1 DER object how tomcrypt stores it.
+	///
+	/// The format is:
+	/// - `BitString` where the first bit is 1 if the private key is contained
+	/// - `Integer`: The key size (32)
+	/// - `Integer`: X coordinate of the public key
+	/// - `Integer`: Y coordinate of the public key
+	/// - `Integer`: Private key
+	///
+	/// The TS3AudioBot stores two 1 bits in the first `BitString` and omits the
+	/// public key.
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
-		// Read tomcrypt DER
-		let secret = ::yasna::parse_der(data, |reader| {
-			reader.read_sequence(|reader| {
-				let f = reader.next().read_bitvec()?;
-				if f.len() != 1 && f.len() != 2 {
-					return Err(::yasna::ASN1Error::new(
-						::yasna::ASN1ErrorKind::Invalid,
-					));
+		let blocks = ::simple_asn1::from_der(data)?;
+		if blocks.len() != 1 {
+			return Err(format_err!("More than one ASN.1 block").into());
+		}
+		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
+			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
+				if (*len != 1 && *len != 2) || content[0] & 0x80 == 0 {
+					return Err(format_err!("Does not contain a private key ({}, {:?})", len, content).into());
 				}
-
-				if !f[0] {
-					// Expected a private key but got a public key
-					return Err(::yasna::ASN1Error::new(
-						::yasna::ASN1ErrorKind::Invalid,
-					));
-				};
-
-				let _key_size = reader.next().read_u16()?;
-				// Keys from the audio bot contain no public key
-				if f.len() != 2 {
-					let _pubkey_x = reader.next().read_biguint()?;
-					let _pubkey_y = reader.next().read_biguint()?;
+				if *len == 1 {
+					if let Some(ASN1Block::Integer(_, i)) = blocks.get(4) {
+						Self::from_short(i.to_bytes_be().1)
+					} else {
+						return Err(format_err!("Private key not found").into());
+					}
+				} else {
+					if let Some(ASN1Block::Integer(_, i)) = blocks.get(2) {
+						Self::from_short(i.to_bytes_be().1)
+					} else {
+						return Err(format_err!("Private key not found").into());
+					}
 				}
-
-				reader.next().read_biguint()
-			})
-		})?;
-		Self::from_short(&secret.to_bytes_be())
+			} else {
+				return Err(format_err!("Expected a bitstring").into());
+			}
+		} else {
+			return Err(format_err!("Expected a sequence").into());
+		}
 	}
 
 	/// Convert to base64 encoded private tomcrypt key.
@@ -347,26 +389,20 @@ impl EccKeyPrivP256 {
 			&mut ctx,
 		)?;
 		let pub_len = (pubkey_bin.len() - 1) / 2;
-		let pubkey_x = BigUint::from_bytes_be(&pubkey_bin[1..=pub_len]);
-		let pubkey_y = BigUint::from_bytes_be(&pubkey_bin[1 + pub_len..]);
+		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
+		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
 
-		let privkey = BigUint::from_bytes_be(&self.0.private_key().to_vec());
+		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.private_key().to_vec());
 
-		// Write tomcrypt DER
-		let der = ::yasna::construct_der(|writer| {
-			writer.write_sequence(|writer| {
-				writer
-					.next()
-					.write_bitvec(&::std::iter::once(true).collect());
-				writer.next().write_u16(32);
-				writer.next().write_biguint(&pubkey_x);
-				writer.next().write_biguint(&pubkey_y);
-
-				writer.next().write_biguint(&privkey);
-			})
-		});
-
-		Ok(der)
+		Ok(::simple_asn1::to_der(
+			&ASN1Block::Sequence(0, vec![
+				ASN1Block::BitString(0, 1, vec![0x80]),
+				ASN1Block::Integer(0, 32.into()),
+				ASN1Block::Integer(0, pubkey_x),
+				ASN1Block::Integer(0, pubkey_y),
+				ASN1Block::Integer(0, privkey),
+			])
+		)?)
 	}
 
 	/// This has to be the private key, the other one has to be the public key.
@@ -424,7 +460,7 @@ impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
 	pub fn create() -> Result<Self> {
 		Ok(EccKeyPrivEd25519(
-			Scalar::random(&mut ::rand::OsRng::new()?),
+			Scalar::random(&mut ::rand::rngs::OsRng::new()?),
 		))
 	}
 
@@ -608,7 +644,7 @@ mod tests {
 	fn test_p256_priv_key_short() {
 		let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
 		let short = key.to_short();
-		let key = EccKeyPrivP256::from_short(&short).unwrap();
+		let key = EccKeyPrivP256::from_short(short.as_slice()).unwrap();
 		let short2 = key.to_short();
 		assert_eq!(short, short2);
 	}

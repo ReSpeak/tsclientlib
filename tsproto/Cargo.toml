@@ -21,6 +21,8 @@ default = ["rug"]
 
 [dependencies]
 arrayref = "0.3"
+#simple_asn1 = "0.2"
+simple_asn1 = { git = "https://github.com/Flakebi/simple_asn1.git" }
 base64 = "0.10"
 bitflags = "1"
 byteorder = "1"
@@ -30,11 +32,12 @@ curve25519-dalek = "0.21"
 failure = "0.1"
 futures = "0.1"
 nom = "4"
-num = "0.1"
+num = "0.2"
+num-bigint = "0.2"
 num-derive = "0.2"
 num-traits = "0.2"
 openssl = "0.10"
-rand = "0.5"
+rand = "0.6"
 rental = "0.5"
 ring = "0.13"
 rug = { version = "1", optional = true }
@@ -45,7 +48,6 @@ stable_deref_trait = "1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
 quicklz = "0.2"
-yasna = "0.1"
 
 [dependencies.slog]
 version = "2"
@@ -55,12 +57,12 @@ features = ["max_level_debug", "release_max_level_debug"]
 tsproto-util = { path = "../tsproto-util" }
 
 [dev-dependencies]
-cpuprofiler = "0.0.3"
+#cpuprofiler = "0.0.3"
 criterion = "0.2"
-glib = "0.5"
-gstreamer = { version = "0.11", features = ["futures"] }
-gstreamer-app = "0.11"
-gstreamer-audio = "0.11"
+#glib = "0.5"
+#gstreamer = { version = "0.11", features = ["futures"] }
+#gstreamer-app = "0.11"
+#gstreamer-audio = "0.11"
 structopt = "0.2"
 tokio-signal = "0.2"
 

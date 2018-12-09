@@ -1,9 +1,6 @@
 extern crate base64;
 extern crate failure;
 extern crate futures;
-extern crate gstreamer as gst;
-extern crate gstreamer_app as gst_app;
-extern crate gstreamer_audio as gst_audio;
 extern crate ring;
 #[macro_use]
 extern crate slog;
@@ -90,9 +87,8 @@ fn main() {
 				.and_then(move |con| {
 					info!(logger2, "Connected");
 					// Wait some time
-					//Delay::new(Instant::now() + Duration::from_secs(2))
-						//.map(move |_| con)
-					Ok(con)
+					Delay::new(Instant::now() + Duration::from_secs(2))
+						.map(move |_| con)
 				}).and_then(move |con| {
 					info!(logger, "Waited");
 
@@ -109,9 +105,9 @@ fn main() {
 						.send(packet)
 						.map(|_| ())
 						.map_err(|e| panic!("Failed to send packet ({:?})", e))
-						//.and_then(|_| {
-							//Delay::new(Instant::now() + Duration::from_secs(3))
-						//})
+						.and_then(|_| {
+							Delay::new(Instant::now() + Duration::from_secs(3))
+						})
 						.and_then(move |_| {
 							// Disconnect
 							disconnect(con).map_err(|e| {

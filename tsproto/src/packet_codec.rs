@@ -358,7 +358,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						frag_queue.extend_from_slice(packet.content());
 						// Decompress
 						let decompressed = if header.header().flags().contains(Flags::COMPRESSED) {
-							debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(&frag_queue));
+							//debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(&frag_queue));
 							::quicklz::decompress(
 								&mut Cursor::new(frag_queue),
 								::MAX_DECOMPRESSED_SIZE,
@@ -392,7 +392,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				} else {
 					// Decompress
 					let decompressed = if flags.contains(Flags::COMPRESSED) {
-						debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(packet.content()));
+						//debug!(logger, "Compressed"; "data" => ?::utils::HexSlice(packet.content()));
 						::quicklz::decompress(
 							&mut Cursor::new(packet.content()),
 							::MAX_DECOMPRESSED_SIZE,
