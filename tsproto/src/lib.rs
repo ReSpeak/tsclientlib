@@ -21,6 +21,8 @@ extern crate bytes;
 extern crate chrono;
 extern crate curve25519_dalek;
 #[macro_use]
+extern crate derive_more;
+#[macro_use]
 extern crate failure;
 extern crate futures;
 #[cfg(feature = "rug")]
@@ -93,7 +95,7 @@ const UDP_SINK_CAPACITY: usize = 20;
 const S2C_HEADER_LEN: usize = 11;
 const C2S_HEADER_LEN: usize = 13;
 
-#[derive(Fail, Debug)]
+#[derive(Fail, Debug, From)]
 pub enum Error {
 	#[fail(display = "{}", _0)]
 	Asn1Decode(#[cause] simple_asn1::ASN1DecodeErr),
@@ -151,78 +153,6 @@ pub enum Error {
 	WrongSignature,
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
-}
-
-impl From<simple_asn1::ASN1DecodeErr> for Error {
-	fn from(e: simple_asn1::ASN1DecodeErr) -> Self {
-		Error::Asn1Decode(e)
-	}
-}
-
-impl From<simple_asn1::ASN1EncodeErr> for Error {
-	fn from(e: simple_asn1::ASN1EncodeErr) -> Self {
-		Error::Asn1Encode(e)
-	}
-}
-
-impl From<base64::DecodeError> for Error {
-	fn from(e: base64::DecodeError) -> Self {
-		Error::Base64(e)
-	}
-}
-
-impl From<futures::Canceled> for Error {
-	fn from(e: futures::Canceled) -> Self {
-		Error::FutureCanceled(e)
-	}
-}
-
-impl From<std::io::Error> for Error {
-	fn from(e: std::io::Error) -> Self {
-		Error::Io(e)
-	}
-}
-
-impl From<std::num::ParseIntError> for Error {
-	fn from(e: std::num::ParseIntError) -> Self {
-		Error::ParseInt(e)
-	}
-}
-
-impl From<openssl::error::ErrorStack> for Error {
-	fn from(e: openssl::error::ErrorStack) -> Self {
-		Error::Openssl(e)
-	}
-}
-
-impl From<quicklz::Error> for Error {
-	fn from(e: quicklz::Error) -> Self {
-		Error::Quicklz(e)
-	}
-}
-
-impl From<rand::Error> for Error {
-	fn from(e: rand::Error) -> Self {
-		Error::Rand(e)
-	}
-}
-
-impl From<ring::error::Unspecified> for Error {
-	fn from(e: ring::error::Unspecified) -> Self {
-		Error::Ring(e)
-	}
-}
-
-impl From<tokio::timer::Error> for Error {
-	fn from(e: tokio::timer::Error) -> Self {
-		Error::Timer(e)
-	}
-}
-
-impl From<std::str::Utf8Error> for Error {
-	fn from(e: std::str::Utf8Error) -> Self {
-		Error::Utf8(e)
-	}
 }
 
 impl From<failure::Error> for Error {

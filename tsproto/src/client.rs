@@ -614,7 +614,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									let omega_s =
 										private_key.to_pub().to_ts().unwrap();
 									let mut command = Command::new("clientinitiv");
-									command.push("alpha", alpha_s.clone());
+									command.push("alpha", alpha_s);
 									command.push("omega", omega_s);
 									command.push("ot", "1");
 									// Set ip always except if it is a local address
@@ -696,8 +696,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						{
 							resender.ack_packet(PacketType::Init, 4);
 
-							let beta_vec =
-								base64::decode(cmd.0["beta"])?;
+							let beta_vec = base64::decode(cmd.0["beta"])?;
 							if beta_vec.len() != 10 {
 								return Err(format_err!(
 									"Incorrect beta length"
@@ -857,7 +856,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					&& cmd.has_arg("name")
 					&& cmd.has_arg("data")
 					&& cmd.0["name"] == "cliententerview"
-					&& cmd.0["data"] == "version "
+					&& cmd.0["data"] == "version"
 				{
 					let mut command = Command::new("plugincmd");
 					command.push("name", "cliententerview");
@@ -870,7 +869,9 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							env!("CARGO_PKG_VERSION"),
 						),
 					);
-					command.push("targetmode", "1");
+					command.push("targetmode", "2");
+					// TODO Send to clientid
+					//command.push("target", 0);
 
 					let header = Header::new(PacketType::Command);
 
