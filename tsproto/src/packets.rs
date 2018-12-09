@@ -90,6 +90,7 @@ impl<'a> UdpPacket<'a> {
 }
 
 impl<'a> fmt::Debug for UdpPacket<'a> {
+	#[rustfmt::skip]
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "UdpPacket {{ header: ")?;
 
@@ -124,6 +125,7 @@ impl<'a> InUdpPacket<'a> {
 }
 
 impl<'a> fmt::Debug for InUdpPacket<'a> {
+	#[rustfmt::skip]
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "UdpPacket {{ header: {{ ")?;
 
@@ -597,6 +599,7 @@ impl InPacket {
 }
 
 impl fmt::Debug for InPacket {
+	#[rustfmt::skip]
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "Packet {{ header: {{ ")?;
 
@@ -609,42 +612,10 @@ impl fmt::Debug for InPacket {
 		write!(f, "type: {:?}, ", header.packet_type())?;
 		write!(f, "flags: ")?;
 		let flags = header.flags();
-		write!(
-			f,
-			"{}",
-			if flags.contains(Flags::UNENCRYPTED) {
-				"u"
-			} else {
-				"-"
-			}
-		)?;
-		write!(
-			f,
-			"{}",
-			if flags.contains(Flags::COMPRESSED) {
-				"c"
-			} else {
-				"-"
-			}
-		)?;
-		write!(
-			f,
-			"{}",
-			if flags.contains(Flags::NEWPROTOCOL) {
-				"n"
-			} else {
-				"-"
-			}
-		)?;
-		write!(
-			f,
-			"{}",
-			if flags.contains(Flags::FRAGMENTED) {
-				"f"
-			} else {
-				"-"
-			}
-		)?;
+		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
 
 		write!(f, "}}, content: {:?} }}", HexSlice(self.content()))?;
 		Ok(())
