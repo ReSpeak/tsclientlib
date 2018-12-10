@@ -7,7 +7,7 @@ use bytes::Bytes;
 use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Mutex, RwLock};
-use slog::Drain;
+use slog::{debug, error, o, warn, Drain};
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
 use {slog, slog_async, slog_term, tokio};

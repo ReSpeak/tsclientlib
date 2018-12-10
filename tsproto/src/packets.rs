@@ -5,11 +5,13 @@ use std::io::prelude::*;
 use std::io::Cursor;
 use std::{fmt, mem};
 
+use arrayref::array_ref;
+use bitflags::bitflags;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use num_traits::{FromPrimitive, ToPrimitive};
 
-use crate::commands::Command;
+use crate::commands::{CanonicalCommand, CommandData, Command};
 use crate::utils::HexSlice;
 use crate::{Error, Result};
 
@@ -196,14 +198,6 @@ rental! {
 	}
 }
 
-#[derive(Debug, Clone)]
-pub struct CommandData<'a> {
-	/// The name is empty for serverquery commands
-	pub name: &'a str,
-	pub static_args: Vec<(&'a str, Cow<'a, str>)>,
-	pub list_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
-}
-
 pub struct InPacket {
 	inner: rentals::Packet,
 	dir: Direction,
@@ -218,6 +212,9 @@ pub struct InCommand {
 	newprotocol: bool,
 	dir: Direction,
 }
+
+#[derive(Debug)]
+pub struct OutCommand(pub Vec<u8>);
 
 /// The mac has to be `b"TS3INIT1"`.
 ///
@@ -306,6 +303,38 @@ pub enum VoiceData<'a> {
 
 #[derive(Debug)]
 pub struct InAudio(rentals::Audio);
+
+pub struct InCommandIterator<'a> {
+	cmd: &'a InCommand,
+	statics: HashMap<&'a str, &'a str>,
+	i: usize,
+}
+
+impl<'a> Iterator for InCommandIterator<'a> {
+	type Item = CanonicalCommand<'a>;
+	fn next(&mut self) -> Option<Self::Item> {
+		let i = self.i;
+		self.i += 1;
+		let c = self.cmd.inner.suffix();
+		if c.list_args.is_empty() {
+			if i == 0 {
+				Some(CanonicalCommand(mem::replace(
+					&mut self.statics,
+					HashMap::new(),
+				)))
+			} else {
+				None
+			}
+		} else if i < c.list_args.len() {
+			let l = &c.list_args[i];
+			let mut v = self.statics.clone();
+			v.extend(l.iter().map(|(k, v)| (*k, v.as_ref())));
+			Some(CanonicalCommand(v))
+		} else {
+			None
+		}
+	}
+}
 
 impl InPacket {
 	/// Do some sanity checks before creating the object.
@@ -692,7 +721,7 @@ impl InS2CInit {
 }
 
 impl InCommand {
-	pub fn new(
+	pub fn new_in(
 		content: Vec<u8>,
 		p_type: PacketType,
 		newprotocol: bool,
@@ -711,9 +740,9 @@ impl InCommand {
 		})
 	}
 
-	pub fn with_content(packet: &InPacket, content: Vec<u8>) -> Result<Self> {
+	pub fn in_with_content(packet: &InPacket, content: Vec<u8>) -> Result<Self> {
 		let header = packet.header();
-		Self::new(
+		Self::new_in(
 			content,
 			header.packet_type(),
 			header.flags().contains(Flags::NEWPROTOCOL),
@@ -748,41 +777,83 @@ impl InCommand {
 	}
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CanonicalCommand<'a>(pub HashMap<&'a str, &'a str>);
-impl<'a> CanonicalCommand<'a> {
-	pub fn has_arg(&self, arg: &str) -> bool { self.0.contains_key(arg) }
-}
-
-pub struct InCommandIterator<'a> {
-	cmd: &'a InCommand,
-	statics: HashMap<&'a str, &'a str>,
-	i: usize,
-}
-
-impl<'a> Iterator for InCommandIterator<'a> {
-	type Item = CanonicalCommand<'a>;
-	fn next(&mut self) -> Option<Self::Item> {
-		let i = self.i;
-		self.i += 1;
-		let c = self.cmd.inner.suffix();
-		if c.list_args.is_empty() {
-			if i == 0 {
-				Some(CanonicalCommand(mem::replace(
-					&mut self.statics,
-					HashMap::new(),
-				)))
-			} else {
-				None
+impl InCommand {
+	/// Write a command.
+	///
+	/// # Examples
+	/// Write a command from existing `CommandData`.
+	/// ```
+	/// let command = crate::commands::parse_command2("").unwrap();
+	/// tsproto::packets::InCommand::new_out(command.name,
+	///     command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
+	///     command.list_args.iter().map(|i| {
+	///         i.iter().map(|(k, v)| (*k, v.as_ref()))
+	///     }),
+	/// )
+	/// ```
+	pub fn new_out<'a, I1, I2, I3>(
+		name: &str,
+		static_args: I1,
+		list_args: I2,
+	) -> OutCommand
+		where
+			I1: Iterator<Item=(&'a str, &'a str)>,
+			I2: Iterator<Item=I3>,
+			I3: Iterator<Item=(&'a str, &'a str)>,
+	{
+		let mut res = Vec::new();
+		res.extend_from_slice(name.as_bytes());
+		let mut first = true;
+		for (k, v) in static_args {
+			if first {
+				if !name.is_empty() {
+					res.push(b' ');
+				}
+				first = false;
 			}
-		} else if i < c.list_args.len() {
-			let l = &c.list_args[i];
-			let mut v = self.statics.clone();
-			v.extend(l.iter().map(|(k, v)| (*k, v.as_ref())));
-			Some(CanonicalCommand(v))
-		} else {
-			None
+			res.extend_from_slice(k.as_bytes());
+			Self::write_escaped(&mut res, v).unwrap();
 		}
+
+		let mut first_list = true;
+		for i in list_args {
+			if first {
+				if !name.is_empty() {
+					res.push(b' ');
+				}
+				first = false;
+			}
+			if first_list {
+				first_list = false;
+			} else {
+				res.push(b'|');
+			}
+
+			for (k, v) in i {
+				res.extend_from_slice(k.as_bytes());
+				Self::write_escaped(&mut res, v).unwrap();
+			}
+		}
+
+		OutCommand(res)
+	}
+
+	fn write_escaped(w: &mut Write, s: &str) -> Result<()> {
+		for c in s.chars() {
+			match c {
+				'\u{b}' => write!(w, "\\v"),
+				'\u{c}' => write!(w, "\\f"),
+				'\\' => write!(w, "\\\\"),
+				'\t' => write!(w, "\\t"),
+				'\r' => write!(w, "\\r"),
+				'\n' => writeln!(w),
+				'|' => write!(w, "\\p"),
+				' ' => write!(w, "\\s"),
+				'/' => write!(w, "\\/"),
+				c => write!(w, "{}", c),
+			}?;
+		}
+		Ok(())
 	}
 }
 

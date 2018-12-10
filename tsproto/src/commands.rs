@@ -4,9 +4,9 @@ use std::io::prelude::*;
 use std::str;
 
 use nom::types::CompleteStr;
-use nom::{alphanumeric, multispace};
+use nom::{alphanumeric, alt, call, do_parse, eof, error_position, is_not, many0,
+	many1, map, multispace, named, preceded, opt, tag, tuple, tuple_parser};
 
-use crate::packets::CommandData;
 use crate::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,12 +14,6 @@ pub struct Command {
 	pub command: String,
 	pub static_args: Vec<(String, String)>,
 	pub list_args: Vec<Vec<(String, String)>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CanonicalCommand<'a> {
-	pub command: &'a str,
-	pub args: HashMap<&'a str, &'a str>,
 }
 
 named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace) >>
@@ -57,7 +51,7 @@ named!(inner_parse_command(CompleteStr) -> CommandData, do_parse!(
 	)) >>
 	many0!(multispace) >>
 	eof!() >>
-	(crate::packets::CommandData {
+	(CommandData {
 		name: *name,
 		static_args,
 		list_args,
@@ -100,6 +94,20 @@ named!(parse_command(CompleteStr) -> Command, do_parse!(
 		list_args,
 	})
 ));
+
+#[derive(Debug, Clone)]
+pub struct CommandData<'a> {
+	/// The name is empty for serverquery commands
+	pub name: &'a str,
+	pub static_args: Vec<(&'a str, Cow<'a, str>)>,
+	pub list_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalCommand<'a>(pub HashMap<&'a str, &'a str>);
+impl<'a> CanonicalCommand<'a> {
+	pub fn has_arg(&self, arg: &str) -> bool { self.0.contains_key(arg) }
+}
 
 pub fn parse_command2(s: &str) -> Result<CommandData> {
 	match inner_parse_command(CompleteStr(s)) {
@@ -295,37 +303,6 @@ impl Command {
 			)
 			.next()
 	}
-
-	pub fn get_commands(&self) -> Vec<CanonicalCommand> {
-		let statics = self
-			.static_args
-			.iter()
-			.map(|&(ref k, ref v)| (k.as_str(), v.as_str()))
-			.collect();
-		if self.list_args.is_empty() {
-			vec![CanonicalCommand {
-				command: &self.command,
-				args: statics,
-			}]
-		} else {
-			let mut res = Vec::with_capacity(self.list_args.len());
-			for l in &self.list_args {
-				let mut v = statics.clone();
-				v.extend(
-					l.iter().map(|&(ref k, ref v)| (k.as_str(), v.as_str())),
-				);
-				res.push(CanonicalCommand {
-					command: &self.command,
-					args: v,
-				});
-			}
-			res
-		}
-	}
-}
-
-impl<'a> CanonicalCommand<'a> {
-	pub fn has_arg(&self, arg: &str) -> bool { self.args.contains_key(arg) }
 }
 
 #[cfg(test)]
@@ -335,7 +312,7 @@ mod tests {
 	use std::iter::FromIterator;
 
 	use super::parse_command2;
-	use crate::commands::{CanonicalCommand, Command};
+	use crate::commands::Command;
 
 	#[test]
 	fn parse() {
@@ -389,44 +366,6 @@ mod tests {
 		let mut s_r = Vec::new();
 		cmd.write(&mut s_r).unwrap();
 		assert_eq!(&s[..], s_r.as_slice());
-	}
-
-	#[test]
-	fn canonical_command() {
-		let s = "cmd a=1 b=2 c=3|b=4|b=5";
-		let cmd = Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		let in_cmd = parse_command2(s).unwrap();
-		assert_eq!(cmd.command, "cmd");
-		assert_eq!(in_cmd.name, "cmd");
-		assert_eq!(
-			cmd.get_commands(),
-			vec![
-				CanonicalCommand {
-					command: "cmd",
-					args: HashMap::from_iter(
-						vec![("a", "1"), ("b", "2"), ("c", "3")]
-							.iter()
-							.cloned(),
-					),
-				},
-				CanonicalCommand {
-					command: "cmd",
-					args: HashMap::from_iter(
-						vec![("a", "1"), ("b", "4"), ("c", "3")]
-							.iter()
-							.cloned(),
-					),
-				},
-				CanonicalCommand {
-					command: "cmd",
-					args: HashMap::from_iter(
-						vec![("a", "1"), ("b", "5"), ("c", "3")]
-							.iter()
-							.cloned(),
-					),
-				},
-			]
-		);
 	}
 
 	#[test]

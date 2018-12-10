@@ -14,7 +14,7 @@ use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::{self, Async, Future, Sink};
 use parking_lot::Mutex;
-use slog::Logger;
+use slog::{info, warn, Logger};
 use tokio::timer::Delay;
 
 use crate::connectionmanager::{ConnectionManager, Resender, ResenderEvent};

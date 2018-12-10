@@ -6,44 +6,14 @@
 	clippy::useless_format
 )]
 
-extern crate simple_asn1;
-#[macro_use]
-extern crate arrayref;
-extern crate base64;
-#[macro_use]
-extern crate bitflags;
-extern crate byteorder;
-extern crate bytes;
-extern crate chrono;
-extern crate curve25519_dalek;
 #[macro_use]
 extern crate derive_more;
 #[macro_use]
 extern crate failure;
-extern crate futures;
-#[cfg(feature = "rug")]
-extern crate rug;
-#[macro_use]
-extern crate nom;
-extern crate num_bigint;
 #[macro_use]
 extern crate num_derive;
-extern crate num_traits;
-extern crate openssl;
-extern crate parking_lot;
-extern crate quicklz;
-extern crate rand;
 #[macro_use]
 extern crate rental;
-extern crate ring;
-#[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_perf;
-extern crate slog_term;
-extern crate stable_deref_trait;
-extern crate tokio;
-extern crate tokio_threadpool;
 
 use std::net::SocketAddr;
 

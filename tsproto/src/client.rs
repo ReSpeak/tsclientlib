@@ -14,7 +14,7 @@ use rand::{self, Rng};
 use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
-use slog::Logger;
+use slog::{error, info, warn, Logger};
 use {base64, tokio, tokio_threadpool};
 
 use crate::algorithms as algs;

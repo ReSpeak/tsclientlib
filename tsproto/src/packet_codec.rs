@@ -6,7 +6,7 @@ use bytes::Bytes;
 use futures::sync::mpsc;
 use futures::{future, Future, IntoFuture, Sink};
 use num_traits::ToPrimitive;
-use slog::Logger;
+use slog::{error, o, warn, Logger};
 use tokio;
 
 use crate::algorithms as algs;
@@ -386,7 +386,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 								"string" => %String::from_utf8_lossy(&decompressed),
 							);
 						}*/
-						Some(InCommand::with_content(&header, decompressed)?)
+						Some(InCommand::in_with_content(&header, decompressed)?)
 					} else {
 						// Enqueue
 						let content = packet.take_content();
@@ -417,7 +417,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					/*if header.get_compressed() {
 						debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
 					}*/
-					Some(InCommand::with_content(&packet, decompressed)?)
+					Some(InCommand::in_with_content(&packet, decompressed)?)
 				};
 				if let Some(p) = res_packet {
 					packets.push(p);

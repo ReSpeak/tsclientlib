@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::net::SocketAddr;
 
-use slog::Logger;
+use slog::{debug, o, Logger};
 
 use crate::connection::Connection;
 use crate::connectionmanager::ConnectionManager;

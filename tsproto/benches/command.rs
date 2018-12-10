@@ -24,6 +24,17 @@ fn write(b: &mut Bencher, cmd: &[u8]) {
 	b.iter(|| command.write(&mut Vec::new()).unwrap());
 }
 
+fn write_new(b: &mut Bencher, cmd: &[u8]) {
+	let cmd = std::str::from_utf8(cmd).unwrap();
+	let command = parse_command2(cmd).unwrap();
+	b.iter(|| tsproto::packets::InCommand::new_out(command.name,
+		command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
+		command.list_args.iter().map(|i| {
+			i.iter().map(|(k, v)| (*k, v.as_ref()))
+		}),
+	));
+}
+
 fn bench_parse_short(c: &mut Criterion) {
 	c.bench_function("parse short", |b| parse(b, SHORT_CMD));
 }
@@ -36,6 +47,13 @@ fn bench_write_short(c: &mut Criterion) {
 }
 fn bench_write_long(c: &mut Criterion) {
 	c.bench_function("write long", |b| write(b, LONG_CMD));
+}
+
+fn bench_write_new_short(c: &mut Criterion) {
+	c.bench_function("write new short", |b| write_new(b, SHORT_CMD));
+}
+fn bench_write_new_long(c: &mut Criterion) {
+	c.bench_function("write new long", |b| write_new(b, LONG_CMD));
 }
 
 fn bench_parse_new_short(c: &mut Criterion) {
@@ -53,5 +71,7 @@ criterion_group!(
 	bench_parse_new_long,
 	bench_write_short,
 	bench_write_long,
+	bench_write_new_short,
+	bench_write_new_long,
 );
 criterion_main!(benches);
