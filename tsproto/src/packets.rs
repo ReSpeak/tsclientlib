@@ -1,6 +1,5 @@
 #![allow(unused_variables)]
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::io::prelude::*;
 use std::io::Cursor;
 use std::{fmt, mem};
@@ -11,7 +10,7 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use num_traits::{FromPrimitive, ToPrimitive};
 
-use crate::commands::{CanonicalCommand, CommandData, Command};
+use crate::commands::{CommandData, CommandDataIterator, Command};
 use crate::utils::HexSlice;
 use crate::{Error, Result};
 
@@ -303,38 +302,6 @@ pub enum VoiceData<'a> {
 
 #[derive(Debug)]
 pub struct InAudio(rentals::Audio);
-
-pub struct InCommandIterator<'a> {
-	cmd: &'a InCommand,
-	statics: HashMap<&'a str, &'a str>,
-	i: usize,
-}
-
-impl<'a> Iterator for InCommandIterator<'a> {
-	type Item = CanonicalCommand<'a>;
-	fn next(&mut self) -> Option<Self::Item> {
-		let i = self.i;
-		self.i += 1;
-		let c = self.cmd.inner.suffix();
-		if c.list_args.is_empty() {
-			if i == 0 {
-				Some(CanonicalCommand(mem::replace(
-					&mut self.statics,
-					HashMap::new(),
-				)))
-			} else {
-				None
-			}
-		} else if i < c.list_args.len() {
-			let l = &c.list_args[i];
-			let mut v = self.statics.clone();
-			v.extend(l.iter().map(|(k, v)| (*k, v.as_ref())));
-			Some(CanonicalCommand(v))
-		} else {
-			None
-		}
-	}
-}
 
 impl InPacket {
 	/// Do some sanity checks before creating the object.
@@ -721,7 +688,7 @@ impl InS2CInit {
 }
 
 impl InCommand {
-	pub fn new_in(
+	pub fn new(
 		content: Vec<u8>,
 		p_type: PacketType,
 		newprotocol: bool,
@@ -740,9 +707,9 @@ impl InCommand {
 		})
 	}
 
-	pub fn in_with_content(packet: &InPacket, content: Vec<u8>) -> Result<Self> {
+	pub fn with_content(packet: &InPacket, content: Vec<u8>) -> Result<Self> {
 		let header = packet.header();
-		Self::new_in(
+		Self::new(
 			content,
 			header.packet_type(),
 			header.flags().contains(Flags::NEWPROTOCOL),
@@ -753,49 +720,37 @@ impl InCommand {
 	#[inline]
 	pub fn packet_type(&self) -> PacketType { self.p_type }
 	#[inline]
+	pub fn newprotocol(&self) -> bool { self.newprotocol }
+	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
 	pub fn name(&self) -> &str { self.inner.ref_rent(|d| d.name) }
 	#[inline]
-	pub fn with_data<R, F: FnOnce(&CommandData) -> R>(&self, f: F) -> R {
-		self.inner.rent(f)
-	}
+	pub fn data(&self) -> &CommandData { self.inner.suffix() }
 
-	pub fn iter(&self) -> InCommandIterator {
-		let statics = self
-			.inner
-			.suffix()
-			.static_args
-			.iter()
-			.map(|(a, b)| (*a, b.as_ref()))
-			.collect();
-		InCommandIterator {
-			cmd: self,
-			statics,
-			i: 0,
-		}
-	}
+	#[inline]
+	pub fn iter(&self) -> CommandDataIterator { self.inner.suffix().iter() }
 }
 
-impl InCommand {
+impl OutCommand {
 	/// Write a command.
 	///
 	/// # Examples
 	/// Write a command from existing `CommandData`.
 	/// ```
 	/// let command = crate::commands::parse_command2("").unwrap();
-	/// tsproto::packets::InCommand::new_out(command.name,
+	/// tsproto::packets::OutCommand::new(command.name,
 	///     command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
 	///     command.list_args.iter().map(|i| {
 	///         i.iter().map(|(k, v)| (*k, v.as_ref()))
 	///     }),
 	/// )
 	/// ```
-	pub fn new_out<'a, I1, I2, I3>(
+	pub fn new<'a, I1, I2, I3>(
 		name: &str,
 		static_args: I1,
 		list_args: I2,
-	) -> OutCommand
+	) -> Self
 		where
 			I1: Iterator<Item=(&'a str, &'a str)>,
 			I2: Iterator<Item=I3>,

@@ -733,9 +733,9 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					(|con_params: &mut Option<ConnectedParams>| -> Result<_> {
 						let cmd = command.iter().next().unwrap();
 						if command.name() == "initivexpand"
-							&& cmd.has_arg("alpha")
-							&& cmd.has_arg("beta")
-							&& cmd.has_arg("omega")
+							&& cmd.has("alpha")
+							&& cmd.has("beta")
+							&& cmd.has("omega")
 							&& base64::decode(cmd.0["alpha"])
 								.map(|a| a == alpha)
 								.unwrap_or(false)
@@ -768,11 +768,11 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							*con_params = Some(params);
 							Ok(None)
 						} else if command.name() == "initivexpand2"
-							&& cmd.has_arg("l") && cmd.has_arg("beta")
-							&& cmd.has_arg("omega")
-							&& cmd.has_arg("ot") && cmd.0["ot"] == "1"
-							&& cmd.has_arg("time")
-							&& cmd.has_arg("beta")
+							&& cmd.has("l") && cmd.has("beta")
+							&& cmd.has("omega")
+							&& cmd.get("ot") == Some("1")
+							&& cmd.has("time")
+							&& cmd.has("beta")
 						{
 							resender.ack_packet(PacketType::Init, 4);
 
@@ -849,10 +849,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 			}
 			ServerConnectionState::Connecting => {
 				let cmd = command.iter().next().unwrap();
-				if command.name() == "initserver" && cmd.has_arg("aclid") {
+				if command.name() == "initserver" {
 					// Handle an initserver
 					if let Some(params) = &mut con.params {
-						if let Ok(c_id) = cmd.0["aclid"].parse() {
+						if let Ok(c_id) = cmd.get_parse("aclid") {
 							params.c_id = c_id;
 						}
 
@@ -879,12 +879,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 			ServerConnectionState::Connected => {
 				*ignore_packet = false;
 				let cmd = command.iter().next().unwrap();
-				if command.name() == "notifyclientleftview"
-					&& cmd.has_arg("clid")
-				{
+				if command.name() == "notifyclientleftview" {
 					// Handle a disconnect
 					if let Some(ref mut params) = con.params {
-						if cmd.0["clid"].parse() == Ok(params.c_id) {
+						if cmd.get_parse("clid") == Ok(params.c_id) {
 							*is_end = true;
 							// Possible improvement: Wait with the
 							// disconnect until we sent the ack.
@@ -896,10 +894,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						None
 					}
 				} else if command.name() == "notifyplugincmd"
-					&& cmd.has_arg("name")
-					&& cmd.has_arg("data")
-					&& cmd.0["name"] == "cliententerview"
-					&& cmd.0["data"] == "version"
+					&& cmd.get("name") == Some("cliententerview")
+					&& cmd.get("data") == Some("version")
 				{
 					let mut command = Command::new("plugincmd");
 					command.push("name", "cliententerview");

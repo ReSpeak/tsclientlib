@@ -123,7 +123,7 @@ impl<T: Send> InCommandObserver<T> for CommandLogger {
 			self.is_client,
 			true,
 			cmd.packet_type(),
-			&cmd.with_data(|d| format!("{:?}", d)),
+			&format!("{:?}", cmd.data()),
 		);
 	}
 }

@@ -1,7 +1,9 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::prelude::*;
+use std::mem;
 use std::str;
+use std::str::FromStr;
 
 use nom::types::CompleteStr;
 use nom::{alphanumeric, alt, call, do_parse, eof, error_position, is_not, many0,
@@ -106,7 +108,16 @@ pub struct CommandData<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalCommand<'a>(pub HashMap<&'a str, &'a str>);
 impl<'a> CanonicalCommand<'a> {
-	pub fn has_arg(&self, arg: &str) -> bool { self.0.contains_key(arg) }
+	pub fn has(&self, arg: &str) -> bool { self.0.contains_key(arg) }
+	pub fn get(&self, arg: &str) -> Option<&str> { self.0.get(arg).map(|s| *s) }
+
+	pub fn get_parse<F: FromStr>(&self, arg: &str) -> std::result::Result<F, Option<<F as FromStr>::Err>> {
+		if let Some(s) = self.0.get(arg) {
+			s.parse::<F>().map_err(Some)
+		} else {
+			Err(None)
+		}
+	}
 }
 
 pub fn parse_command2(s: &str) -> Result<CommandData> {
@@ -138,6 +149,57 @@ pub fn parse_command2(s: &str) -> Result<CommandData> {
 			Ok(cmd)
 		}
 		Err(e) => Err(crate::Error::ParseCommand(format!("{:?}", e))),
+	}
+}
+
+pub struct CommandDataIterator<'a> {
+	cmd: &'a CommandData<'a>,
+	pub statics: HashMap<&'a str, &'a str>,
+	i: usize,
+}
+
+impl<'a> Iterator for CommandDataIterator<'a> {
+	type Item = CanonicalCommand<'a>;
+	fn next(&mut self) -> Option<Self::Item> {
+		let i = self.i;
+		self.i += 1;
+		if self.cmd.list_args.is_empty() {
+			if i == 0 {
+				Some(CanonicalCommand(mem::replace(
+					&mut self.statics,
+					HashMap::new(),
+				)))
+			} else {
+				None
+			}
+		} else if i < self.cmd.list_args.len() {
+			let l = &self.cmd.list_args[i];
+			let mut v = self.statics.clone();
+			v.extend(l.iter().map(|(k, v)| (*k, v.as_ref())));
+			Some(CanonicalCommand(v))
+		} else {
+			None
+		}
+	}
+}
+
+impl<'a> CommandData<'a> {
+	pub fn static_arg(&self, k: &str) -> Option<&str> {
+		self.static_args.iter().find_map(|(k2, v)| if *k2 == k
+			{ Some(v.as_ref()) } else { None })
+	}
+
+	pub fn iter(&self) -> CommandDataIterator {
+		let statics = self
+			.static_args
+			.iter()
+			.map(|(a, b)| (*a, b.as_ref()))
+			.collect();
+		CommandDataIterator {
+			cmd: self,
+			statics,
+			i: 0,
+		}
 	}
 }
 
