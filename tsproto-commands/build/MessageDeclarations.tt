@@ -5,10 +5,8 @@ use std::mem;
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
 use num_traits::{FromPrimitive, ToPrimitive};
-use tsproto::commands::{Command, CanonicalCommand};
+use tsproto::commands::Command;
 use tsproto::packets::{Direction, InCommand, PacketType};
-
-type MyResult<T> = ::std::result::Result<T, ::failure::Error>;
 
 /*
 Resulting code:
@@ -18,15 +16,13 @@ Example for: sendmessage targetmode=1 target=2 static_arg_s=a\|b msg=bc|msg=a\|c
 */
 
 pub trait InMessageTrait<'a> {
-	fn new(cmd: &'a InCommand) -> MyResult<Self> where Self: Sized;
-	fn get_return_code(&self) -> Option<&str> { panic!("TODO") }
+	fn new(cmd: &'a InCommand) -> Result<Self, ParseError> where Self: Sized;
 }
 
 #[derive(Debug)]
 pub struct InMessage {
 	cmd: InCommand,
 	msg: InMessages<'static>,
-	return_code: Option<&'static str>,
 }
 
 #[derive(Debug)]
@@ -40,8 +36,8 @@ pub enum InMessages<'a> {
 }
 
 impl InMessage {
-	pub fn new(cmd: InCommand) -> MyResult<Self> {
-		let mut res = Self { cmd, msg: InMessages::Other, return_code: None };
+	pub fn new(cmd: InCommand) -> Result<Self, ParseError> {
+		let mut res = Self { cmd, msg: InMessages::Other };
 
 		{
 			// Parse message
@@ -62,15 +58,10 @@ impl InMessage {
 					}<#
 					} #> break InMessages::<#= msg.name #>(In<#= msg.name #>::new(&res.cmd)?); }
 			<# } #>
-				s => return Err(format_err!("Unknown command {}", s).into()),
+				s => return Err(ParseError::UnknownCommand(s.to_string())),
 			}};
 
 			res.msg = unsafe { mem::transmute(msg) };
-			// Get return code
-			let ret: Option<&str> = res.cmd.data().static_args.iter()
-				.find(|(k, _)| *k == "return_code")
-				.map(|(_, v)| v.as_ref());
-			res.return_code = unsafe { mem::transmute(ret) };
 		}
 
 		Ok(res)
@@ -80,60 +71,65 @@ impl InMessage {
 	pub fn command(&self) -> &InCommand { &self.cmd }
 	#[inline]
 	pub fn msg(&self) -> &InMessages { &self.msg }
-	#[inline]
-	pub fn return_code(&self) -> Option<&str> { self.return_code }
 }
 
+// Statics would look like this inside a struct:
+// pub targetmode: TextMessageTargetMode,
+// pub static_arg_s: &'a str,
 <# for msg_group in &self.0.msg_group {
 	for msg in &msg_group.msg { #>
 #[derive(Debug)]
 pub struct In<#= msg.name #><'a> {
-	pub targetmode: TextMessageTargetMode,
-	pub target: Option<u16>,
-	pub static_arg_s: &'a str,
-
+<# if msg_group.default.response { #>
+	pub return_code: Option<&'a str>,
+<# } #>
 	list: Vec<In<#= msg.name #>Part<'a>>,
 }
 
 #[derive(Debug)]
 pub struct In<#= msg.name #>Part<'a> {
-	pub msg: &'a str,
+<# for a in &msg.attributes {
+	let field = self.0.get_field(a); #>
+	<# if field.get_rust_name() != field.ts { #>
+	/// `<#= field.ts #>` in TeamSpeak.
+	<# } #>
+	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a, true).replace("&", "&'a ").replace("UidRef", "UidRef<'a>") #>,
+<# }
 	/// Use the lifetime and make this struct non-exhaustive.
+#>
 	phantom: PhantomData<&'a ()>,
 }
 
 impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
-	fn new(cmd: &'a InCommand) -> MyResult<Self> {
+	fn new(cmd: &'a InCommand) -> Result<Self, ParseError> {
 		let data = cmd.data();
 		if data.name != "<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>" {
-			return Err(format_err!("Not a <#= msg.name #> command"));
+			return Err(ParseError::WrongCommand(data.name.to_string()));
 		}
 		if <#= if msg_group.default.np { "!" } else { "" } #>cmd.newprotocol() {
-			return Err(format_err!("Wrong newprotocol flag for <#= msg.name #> command"));
+			return Err(ParseError::WrongNewprotocol(cmd.newprotocol()));
 		}
-
 		if cmd.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> {
-			return Err(format_err!("Wrong packet type for <#= msg.name #> command").into());
+			return Err(ParseError::WrongPacketType(cmd.packet_type()));
 		}
-
 		<# if !msg_group.default.s2c { #>
 		if cmd.direction() == Direction::S2C {
-			return Err(format_err!("<#= msg.name #> is no s2c command").into());
+			return Err(ParseError::WrongDirection(cmd.direction()));
 		}
 		<# } #>
 		<# if !msg_group.default.c2s { #>
 		if cmd.direction() == Direction::C2S {
-			return Err(format_err!("<#= msg.name #> is no c2s command").into());
+			return Err(ParseError::WrongDirection(cmd.direction()));
 		}
 		<# } #>
-
+<# /*
 		// Statics
 		let it = cmd.iter();
 
 		let arg = it.statics.get("targetmode")
-			.ok_or_else(|| format_err!("Static argument targetmode not found in <#= msg.name #>"))?;
+			.ok_or_else(|| format_err!("Static argument targetmode not found in < #= msg.name # >"))?;
 		let targetmode = TextMessageTargetMode::from_u32(arg.parse()?)
-			.ok_or_else(|| format_err!("Invalid targetmode {} found in <#= msg.name #>", arg))?;
+			.ok_or_else(|| format_err!("Invalid targetmode {} found in < #= msg.name # >", arg))?;
 		let arg = it.statics.get("target");
 		let target;
 		if let Some(arg) = arg {
@@ -143,34 +139,52 @@ impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
 		}
 
 		let static_arg_s = *it.statics.get("static_arg_s")
-			.ok_or_else(|| format_err!("Static argument static_arg_s not found in <#= msg.name #>"))?;
+			.ok_or_else(|| format_err!("Static argument static_arg_s not found in < #= msg.name # >"))?;
+*/ #>
+	<# if msg_group.default.response { #>
+
+		// Get return code
+		let return_code = cmd.data().static_args.iter()
+			.find(|(k, _)| *k == "return_code")
+			.map(|(_, v)| v.as_ref());
+	<# } #>
 
 		// List arguments
 		let mut list = Vec::new();
-		for ccmd in cmd.iter() {
-			let msg = ccmd.0.get("msg")
-				.ok_or_else(|| format_err!("List argument msg not found in <#= msg.name #>"))?;
-			list.push(In<#= msg.name #>Part { msg, phantom: PhantomData });
+		for <#= if msg.attributes.is_empty() { "_" } else { "ccmd" } #> in cmd.iter() {
+			list.push(In<#= msg.name #>Part {
+		<# for a in &msg.attributes {
+			let field = self.0.get_field(a); #>
+				<#= field.get_rust_name() #>: {
+				<# if !a.ends_with('?') { /* is not optional */ #>
+					let val = ccmd.0.get("<#= field.ts #>")
+						.ok_or(ParseError::ParameterNotFound { arg: "<#= field.pretty #>", name: "<#= msg.name #>", })?;
+					<#= generate_deserializer(field) #>				},
+				<# } else { #>
+					if let Some(val) = ccmd.0.get("<#= field.ts #>") {
+						Some({ <#= generate_deserializer(field) #> })
+					} else { None } },
+				<# } #>
+		<# } #>
+				phantom: PhantomData,
+			});
 		}
 		// TODO Still missing: Warn if there are more arguments than we parsed
 
-		Ok(In<#= msg.name #> { targetmode, target, static_arg_s, list })
+		Ok(In<#= msg.name #> {<# if msg_group.default.response { #> return_code,<# } #> list })
 	}
 }
 
+<#
+// Generated for static arguments
+// #[inline]
+// pub fn get_targetmode(&self) -> TextMessageTargetMode { self.targetmode }
+// #[inline]
+// pub fn get_target(&self) -> Option<u16> { self.target }
+#>
 impl<'a> In<#= msg.name #><'a> {
 	#[inline]
-	pub fn get_targetmode(&self) -> TextMessageTargetMode { self.targetmode }
-	#[inline]
-	pub fn get_target(&self) -> Option<u16> { self.target }
-
-	#[inline]
 	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { InMessageIterator(&self.list, 0) }
-}
-
-impl<'a> In<#= msg.name #>Part<'a> {
-	#[inline]
-	pub fn get_msg(&self) -> &'a str { self.msg }
 }
 
 <# }
@@ -188,7 +202,7 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 
 <#
 fn generate_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("");
+	let rust_type = field.get_rust_type("", true);
 	if rust_type.starts_with("Vec<") {
 		vector_value_deserializer(field)
 	} else {
@@ -198,7 +212,7 @@ fn generate_deserializer(field: &Field) -> String {
 
 fn single_value_deserializer(field: &Field, rust_type: &str)
 	-> String {
-	match rust_type {
+	let res = match rust_type {
 		 "i8" |  "u8" |
 		"i16" | "u16" |
 		"i32" | "u32" |
@@ -216,8 +230,8 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 				arg: \"{}\",
 				value: val.to_string(),
 			}})? }}", field.pretty),
-		"Uid" => "Uid(val.to_string())".into(),
-		"String" => "val.to_string()".into(),
+		"UidRef" => "UidRef(val)".into(),
+		"&str" => "val".into(),
 		"IconHash" => format!("IconHash(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
@@ -285,18 +299,19 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 					value: val.to_string(),
 				}})?, Utc)", field.pretty),
 		_ => panic!("Unknown type '{}'", rust_type),
-	}
+	};
+	indent(&res, 2)
 }
 
 fn vector_value_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("");
+	let rust_type = field.get_rust_type("", true);
 	let inner_type = &rust_type[4..rust_type.len()-1];
-	String::from(format!("val.split(',').map(|val|Ok({})).collect::<Result<Vec<{}>, ParseError>>()?",
+	String::from(format!("val.split(',').map(|val| Ok({})).collect::<Result<Vec<{}>, ParseError>>()?",
 		single_value_deserializer(field, inner_type), inner_type))
 }
 
 fn generate_serializer(field: &Field, can_move: bool) -> String {
-	let rust_type = field.get_rust_type("");
+	let rust_type = field.get_rust_type("", false);
 	if rust_type.starts_with("Vec<") {
 		vector_value_serializer(field, can_move)
 	} else {
@@ -351,7 +366,7 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
 }
 
 fn vector_value_serializer(field: &Field, can_move: bool) -> String {
-	let rust_type = field.get_rust_type("");
+	let rust_type = field.get_rust_type("", false);
 	let inner_type = &rust_type[4..rust_type.len()-1];
 	// optimizations for special types
 	match inner_type {
@@ -375,7 +390,7 @@ pub struct <#= msg.name #> {
 	for a in &msg.attributes {
 		let field = self.0.get_field(a);
 #>
-	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a) #>,
+	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a, false) #>,
 <# } #>
 }
 <#

@@ -26,6 +26,9 @@ pub struct ClientId(pub u16);
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Uid(pub String);
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct UidRef<'a>(pub &'a str);
+
 /// The database id of a client.
 ///
 /// This is the id which is saved for a client in the database of one specific

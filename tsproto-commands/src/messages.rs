@@ -16,10 +16,19 @@ pub trait TryParse<T>: Sized {
 
 #[derive(Fail, Debug)]
 pub enum ParseError {
-	#[fail(display = "Parameter {} not found", arg)]
-	ParameterNotFound { arg: &'static str },
+	#[fail(display = "Parameter {} not found in {}", arg, name)]
+	ParameterNotFound { arg: &'static str, name: &'static str },
 	#[fail(display = "Command {} is unknown", _0)]
 	UnknownCommand(String),
+	/// Gets thrown when parsing a specific command with the wrong input.
+	#[fail(display = "Command {} is wrong", _0)]
+	WrongCommand(String),
+	#[fail(display = "Wrong newprotocol flag ({})", _0)]
+	WrongNewprotocol(bool),
+	#[fail(display = "Wrong packet type {:?}", _0)]
+	WrongPacketType(PacketType),
+	#[fail(display = "Wrong direction {:?}", _0)]
+	WrongDirection(Direction),
 	#[fail(
 		display = "Cannot parse \"{}\" as int for parameter {} ({})",
 		value,
