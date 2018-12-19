@@ -45,27 +45,25 @@ impl InMessage {
 
 		{
 			// Parse message
-			let msg: InMessages;
-			match res.cmd.data().name {
-			<# for msg_group in &self.0.msg_group {
-				let mut msgs: Vec<_> = msg_group.msg.iter().filter(|m| m.notify.is_some()).collect();
-				msgs.sort_by_key(|m| m.notify.as_ref().map(|s| s.as_str()).unwrap());
+			let msg: InMessages = loop { match res.cmd.data().name {
+			<#
+				let mut msgs: Vec<_> = self.0.msg_group.iter()
+					.flat_map(|g| g.msg.iter())
+					.filter(|m| m.notify.is_some())
+					.collect();
+				msgs.sort_unstable_by_key(|m| m.notify.as_ref().map(|s| s.as_str()).unwrap());
 				for (notify, group) in &msgs.iter().group_by(|m| m.notify.as_ref().map(|s| s.as_str()).unwrap()) { #>
-				"<#= notify #>" => {
-					<#
-					let mut first = true;
+				"<#= notify #>" => {<#
+					let group: Vec<_> = group.collect();
+					let (msg, group) = group.split_last().unwrap();
 					for msg in group { #>
-					<#= if first { first = false; "" } else { "} else " } #>if let Ok(r) = In<#= msg.name #>::new(&res.cmd) {
-						msg = InMessages::<#= msg.name #>(r);
-					<# } #>
-					} else {
-						return Err(format_err!("Cannot parse command <#= notify #>").into());
-					}
-				}
-			<# }
-			} #>
+					if let Ok(r) = In<#= msg.name #>::new(&res.cmd) {
+						break InMessages::<#= msg.name #>(r);
+					}<#
+					} #> break InMessages::<#= msg.name #>(In<#= msg.name #>::new(&res.cmd)?); }
+			<# } #>
 				s => return Err(format_err!("Unknown command {}", s).into()),
-			}
+			}};
 
 			res.msg = unsafe { mem::transmute(msg) };
 			// Get return code
@@ -166,8 +164,8 @@ impl<'a> In<#= msg.name #><'a> {
 	#[inline]
 	pub fn get_target(&self) -> Option<u16> { self.target }
 
-	//#[inline]
-	//pub fn iter(&self) -> In<#= msg.name #>Iterator { In<#= msg.name #>Iterator(self, 0) }
+	#[inline]
+	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { InMessageIterator(&self.list, 0) }
 }
 
 impl<'a> In<#= msg.name #>Part<'a> {
@@ -175,19 +173,18 @@ impl<'a> In<#= msg.name #>Part<'a> {
 	pub fn get_msg(&self) -> &'a str { self.msg }
 }
 
-// TODO Make generic
-/*pub struct In<#= msg.name #>Iterator<'a>(&'a In<#= msg.name #>, usize);
-impl<'a> Iterator for In<#= msg.name #>Iterator<'a> {
-	type Item = In<#= msg.name #>Part<'a>;
+<# }
+} #>
+
+pub struct InMessageIterator<'a, T>(&'a [T], usize);
+impl<'a, T> Iterator for InMessageIterator<'a, T> {
+	type Item = &'a T;
 	fn next(&mut self) -> Option<Self::Item> {
 		let i = self.1;
 		self.1 += 1;
-		self.0.rent_ref(|l| l.get(i))
+		self.0.get(i)
 	}
-}*/
-
-<# }
-} #>
+}
 
 <#
 fn generate_deserializer(field: &Field) -> String {
