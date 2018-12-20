@@ -100,7 +100,7 @@ pub trait OutPacketObserver<T>: Send + Sync {
 	/// The `observe` method should not take too long, because it holds a lock.
 	/// It is possible to modify the given object, but that should only be done
 	/// in rare cases and if you know what you do.
-	fn observe(&self, connection: &mut (T, Connection), packet: &mut Packet);
+	fn observe(&self, connection: &mut (T, Connection), packet: &mut OutPacket);
 }
 
 /// The `observe` method is called on every incoming packet.
@@ -130,7 +130,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 
 	fn encode_packet(
 		&self,
-		mut packet: Packet,
+		mut packet: OutPacket,
 	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send>
 	{
 		let mut con = self.mutex.lock();
@@ -141,7 +141,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 		}
 
 		let codec = PacketCodecSender::new(con.1.is_client);
-		let p_type = packet.header.get_type();
+		let p_type = packet.header().packet_type();
 
 		let mut udp_packets = match codec.encode_packet(&mut con.1, packet) {
 			Ok(r) => r,
@@ -202,7 +202,7 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 
 	pub fn as_packet_sink(
 		&self,
-	) -> impl Sink<SinkItem = Packet, SinkError = Error> {
+	) -> impl Sink<SinkItem = OutPacket, SinkError = Error> {
 		let cv = self.clone();
 		self.as_udp_packet_sink().with_flat_map(move |p| {
 			if let Some(cv) = cv.upgrade() {

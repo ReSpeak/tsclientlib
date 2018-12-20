@@ -218,9 +218,6 @@ pub struct OutPacket {
 	data: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct OutCommand(pub Vec<u8>);
-
 /// The mac has to be `b"TS3INIT1"`.
 ///
 /// `version` always contains the Teamspeak version as timestamp.
@@ -245,7 +242,7 @@ pub enum C2SInitData<'a> {
 		random2: &'a [u8; 100],
 		/// y = x ^ (2 ^ level) % n
 		y: &'a [u8; 64],
-		/// Has to be a `clientinitiv alpha=… beta=…` command.
+		/// Has to be a `clientinitiv alpha=… omega=…` command.
 		command: CommandData<'a>,
 	},
 }
@@ -308,6 +305,15 @@ pub enum VoiceData<'a> {
 
 #[derive(Debug)]
 pub struct InAudio(rentals::Audio);
+
+impl Direction {
+	pub fn reverse(self) -> Self {
+		match self {
+			Direction::S2C => Direction::C2S,
+			Direction::C2S => Direction::S2C,
+		}
+	}
+}
 
 impl InPacket {
 	/// Do some sanity checks before creating the object.
@@ -769,9 +775,34 @@ impl OutPacket {
 	}
 
 	#[inline]
-	pub fn data(&mut self) -> &mut Vec<u8> { &mut self.data }
+	pub fn into_vec(self) -> Vec<u8> { self.data }
+
+	#[inline]
+	fn content_offset(&self) -> usize {
+		if self.dir == Direction::S2C {
+			crate::S2C_HEADER_LEN
+		} else {
+			crate::C2S_HEADER_LEN
+		}
+	}
+
+	#[inline]
+	pub fn data_mut(&mut self) -> &mut Vec<u8> { &mut self.data }
+	#[inline]
+	pub fn content(&self) -> &[u8] { &self.data[self.content_offset()..] }
+	#[inline]
+	pub fn content_mut(&mut self) -> &mut [u8] {
+		let off = self.content_offset();
+		&mut self.data[off..]
+	}
+	#[inline]
+	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
 	pub fn header(&self) -> InHeader { InHeader(&self.data, self.dir) }
+	#[inline]
+	pub fn header_bytes(&self) -> &[u8] {
+		&self.data[..self.content_offset()]
+	}
 
 	#[inline]
 	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
@@ -797,6 +828,7 @@ impl OutPacket {
 	}
 }
 
+pub struct OutCommand;
 impl OutCommand {
 	/// Write a command.
 	///
@@ -811,20 +843,26 @@ impl OutCommand {
 	///     }),
 	/// )
 	/// ```
-	pub fn new<'a, I1, I2, I3>(
+	pub fn new<K1, V1, K2, V2, I1, I2, I3>(
+		dir: Direction,
+		p_type: PacketType,
 		name: &str,
 		static_args: I1,
 		list_args: I2,
-	) -> Self
+	) -> OutPacket
 		where
-			I1: Iterator<Item=(&'a str, &'a str)>,
+			K1: AsRef<str>,
+			V1: AsRef<str>,
+			K2: AsRef<str>,
+			V2: AsRef<str>,
+			I1: Iterator<Item=(K1, V1)>,
 			I2: Iterator<Item=I3>,
-			I3: Iterator<Item=(&'a str, &'a str)>,
+			I3: Iterator<Item=(K2, V2)>,
 	{
-		let mut res = Vec::new();
-		Self::new_into(name, static_args, list_args, &mut res);
-
-		OutCommand(res)
+		let mut res = OutPacket::new_with_dir(dir, Flags::empty(), p_type);
+		let content = res.data_mut();
+		Self::new_into(name, static_args, list_args, content);
+		res
 	}
 
 	/// Write a command into a given `Vec<u8>`.
@@ -844,15 +882,11 @@ impl OutCommand {
 			I3: Iterator<Item=(K2, V2)>,
 	{
 		res.extend_from_slice(name.as_bytes());
-		let mut first = true;
 		for (k, v) in static_args {
 			let k = k.as_ref();
 			let v = v.as_ref();
-			if first {
-				if !name.is_empty() {
-					res.push(b' ');
-				}
-				first = false;
+			if !name.is_empty() {
+				res.push(b' ');
 			}
 			res.extend_from_slice(k.as_bytes());
 			if !v.is_empty() {
@@ -863,11 +897,8 @@ impl OutCommand {
 
 		let mut first_list = true;
 		for i in list_args {
-			if first {
-				if !name.is_empty() {
-					res.push(b' ');
-				}
-				first = false;
+			if !name.is_empty() {
+				res.push(b' ');
 			}
 			if first_list {
 				first_list = false;
@@ -875,7 +906,13 @@ impl OutCommand {
 				res.push(b'|');
 			}
 
+			let mut first = true;
 			for (k, v) in i {
+				if first {
+					first = false;
+				} else {
+					res.push(b' ');
+				}
 				let k = k.as_ref();
 				let v = v.as_ref();
 				res.extend_from_slice(k.as_bytes());
@@ -903,6 +940,115 @@ impl OutCommand {
 			}?;
 		}
 		Ok(())
+	}
+}
+
+pub struct OutC2SInit0;
+impl OutC2SInit0 {
+	pub fn new(version: u32, timestamp: u32, random0: &[u8; 4]) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		res.mac().copy_from_slice(b"TS3INIT1");
+		res.packet_id(0x65);
+		let content = res.data_mut();
+		content.write_u32::<NetworkEndian>(version).unwrap();
+		content.write_u8(0).unwrap();
+		content.write_u32::<NetworkEndian>(timestamp).unwrap();
+		content.write_all(random0).unwrap();
+		// Reserved
+		content.write_all(&[0u8; 8]).unwrap();
+		res
+	}
+}
+
+pub struct OutC2SInit2;
+impl OutC2SInit2 {
+	pub fn new(version: u32, random1: &[u8; 16], random0_r: &[u8; 4]) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		res.mac().copy_from_slice(b"TS3INIT1");
+		res.packet_id(0x65);
+		let content = res.data_mut();
+		content.write_u32::<NetworkEndian>(version).unwrap();
+		content.write_u8(2).unwrap();
+		content.write_all(random1).unwrap();
+		content.write_all(random0_r).unwrap();
+		res
+	}
+}
+
+pub struct OutC2SInit4;
+impl OutC2SInit4 {
+	pub fn new(version: u32, x: &[u8; 64], n: &[u8; 64], level: u32,
+		random2: &[u8; 100], y: &[u8; 64], alpha: &[u8], omega: &[u8], ip: &str) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		res.mac().copy_from_slice(b"TS3INIT1");
+		res.packet_id(0x65);
+		let content = res.data_mut();
+		content.write_u32::<NetworkEndian>(version).unwrap();
+		content.write_u8(4).unwrap();
+		content.write_all(x).unwrap();
+		content.write_all(n).unwrap();
+		content.write_u32::<NetworkEndian>(level).unwrap();
+		content.write_all(random2).unwrap();
+		content.write_all(y).unwrap();
+		let ip = if ip.is_empty() {
+			String::new()
+		} else {
+			format!("={}", ip)
+		};
+		content.write_all(format!("clientinitiv alpha={} omega={} ot=1 ip{}",
+			base64::encode(alpha), base64::encode(omega), ip).as_bytes()).unwrap();
+		res
+	}
+}
+
+pub struct OutS2CInit1;
+impl OutS2CInit1 {
+	pub fn new(random1: &[u8; 16], random0_r: &[u8; 4]) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		res.mac().copy_from_slice(b"TS3INIT1");
+		res.packet_id(0x65);
+		let content = res.data_mut();
+		content.write_u8(1).unwrap();
+		content.write_all(random1).unwrap();
+		content.write_all(random0_r).unwrap();
+		res
+	}
+}
+
+pub struct OutS2CInit3;
+impl OutS2CInit3 {
+	pub fn new(x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100]) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		res.mac().copy_from_slice(b"TS3INIT1");
+		res.packet_id(0x65);
+		let content = res.data_mut();
+		content.write_u8(3).unwrap();
+		content.write_all(x).unwrap();
+		content.write_all(n).unwrap();
+		content.write_u32::<NetworkEndian>(level).unwrap();
+		content.write_all(random2).unwrap();
+		res
+	}
+}
+
+pub struct OutAck;
+impl OutAck {
+	/// `for_type` is the packet type which gets acknowledged, so e.g. `Command`.
+	pub fn new(dir: Direction, for_type: PacketType, packet_id: u16) -> OutPacket {
+		let p_type = if for_type == PacketType::Command {
+			PacketType::Ack
+		} else if for_type == PacketType::CommandLow {
+			PacketType::AckLow
+		} else if for_type == PacketType::Ping {
+			PacketType::Pong
+		} else {
+			panic!("Invalid packet type to create ack {:?}", for_type);
+		};
+
+		let mut res = OutPacket::new_with_dir(dir, Flags::empty(), p_type);
+		let content = res.data_mut();
+		content.write_u16::<NetworkEndian>(packet_id).unwrap();
+		res
 	}
 }
 

@@ -10,7 +10,7 @@ use crate::handler_data::{
 	OutPacketObserver, OutUdpPacketObserver,
 };
 use crate::packets::{
-	self, InCommand, InPacket, InUdpPacket, Packet, PacketType, UdpPacket,
+	InCommand, InPacket, InUdpPacket, OutPacket, PacketType, UdpPacket,
 };
 
 fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {
@@ -107,7 +107,7 @@ impl<T: Send> InPacketObserver<T> for PacketLogger {
 }
 
 impl<T: Send> OutPacketObserver<T> for PacketLogger {
-	fn observe(&self, con: &mut (T, Connection), packet: &mut Packet) {
+	fn observe(&self, con: &mut (T, Connection), packet: &mut OutPacket) {
 		log_packet(&con.1.logger, self.is_client, false, packet);
 	}
 }
@@ -129,21 +129,17 @@ impl<T: Send> InCommandObserver<T> for CommandLogger {
 }
 
 impl<T: Send> OutPacketObserver<T> for CommandLogger {
-	fn observe(&self, con: &mut (T, Connection), packet: &mut Packet) {
-		match &packet.data {
-			packets::Data::Command(cmd) | packets::Data::CommandLow(cmd) => {
-				let mut v = Vec::new();
-				cmd.write(&mut v).unwrap();
-				let cmd_s = ::std::str::from_utf8(&v).unwrap();
-				log_command(
-					&con.1.logger,
-					self.is_client,
-					false,
-					packet.header.get_type(),
-					cmd_s,
-				);
-			}
-			_ => {}
+	fn observe(&self, con: &mut (T, Connection), packet: &mut OutPacket) {
+		let p_type = packet.header().packet_type();
+		if p_type == PacketType::Command || p_type == PacketType::CommandLow {
+			let cmd_s = ::std::str::from_utf8(packet.content()).unwrap();
+			log_command(
+				&con.1.logger,
+				self.is_client,
+				false,
+				p_type,
+				cmd_s,
+			);
 		}
 	}
 }

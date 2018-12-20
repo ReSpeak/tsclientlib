@@ -20,14 +20,13 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 use tsproto::packets::*;
-use tsproto::*;
 
 mod utils;
 use crate::utils::*;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -92,14 +91,16 @@ fn main() {
 					info!(logger, "Waited");
 
 					// Send packet
-					let mut header = Header::default();
-					header.set_type(PacketType::Command);
-					let mut cmd = commands::Command::new("sendtextmessage");
-
-					cmd.push("targetmode", "3");
-					cmd.push("msg", "Hello");
-
-					let packet = Packet::new(header, Data::Command(cmd));
+					let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+						Direction::C2S,
+						PacketType::Command,
+						"sendtextmessage",
+						vec![
+							("targetmode", "3"),
+							("msg", "Hello"),
+						].into_iter(),
+						std::iter::empty(),
+					);
 					con.as_packet_sink()
 						.send(packet)
 						.map(|_| ())

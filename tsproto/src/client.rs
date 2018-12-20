@@ -18,7 +18,6 @@ use slog::{error, info, warn, Logger};
 use {base64, tokio, tokio_threadpool};
 
 use crate::algorithms as algs;
-use crate::commands::Command;
 use crate::connection::*;
 use crate::connectionmanager::{
 	Resender, ResenderEvent, SocketConnectionManager,
@@ -29,7 +28,7 @@ use crate::handler_data::{
 };
 use crate::license::Licenses;
 use crate::packets::*;
-use crate::{packets, Error, Result};
+use crate::{Error, Result};
 
 pub type CM<PH> =
 	SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
@@ -66,20 +65,6 @@ pub enum ServerConnectionState {
 	Connected,
 	/// The connection is finished, no more packets can be sent or received.
 	Disconnected,
-}
-
-fn create_init_header() -> Header {
-	let mut mac = [0; 8];
-	mac.copy_from_slice(b"TS3INIT1");
-	let mut header = Header {
-		mac,
-		p_id: 0x65,
-		c_id: Some(0),
-		p_type: 0,
-	};
-	header.set_type(PacketType::Init);
-	header.set_unencrypted(true);
-	header
 }
 
 /// Wait until a client reaches a certain state.
@@ -154,12 +139,6 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 
 	// Random bytes
 	let random0 = rng.gen::<[u8; 4]>();
-	let packet_data = C2SInit::Init0 {
-		version: timestamp,
-		timestamp,
-		random0,
-	};
-	let cheader = create_init_header();
 
 	let state = ServerConnectionData {
 		state_change_listener: Vec::new(),
@@ -169,7 +148,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	let key = data.add_connection(datam, state, server_addr);
 	let con = data.get_connection(&key).unwrap().downgrade();
 
-	let packet = Packet::new(cheader, packets::Data::C2SInit(packet_data));
+	let packet = OutC2SInit0::new(timestamp, timestamp, &random0);
 	let con2 = con.clone();
 	con.as_packet_sink()
 		.send(packet)
@@ -499,7 +478,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		is_end: &mut bool,
 		private_key: EccKeyPrivP256,
 		logger: &Logger,
-	) -> Result<Option<(ServerConnectionState, Option<Packet>)>>
+	) -> Result<Option<(ServerConnectionState, Option<OutPacket>)>>
 	{
 		let con_value = con_value.downgrade();
 		let res = match state.state {
@@ -514,21 +493,12 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						con.resender.ack_packet(PacketType::Init, 0);
 						// The packet is correct.
 						// Send next init packet
-						let cheader = create_init_header();
-						let data = C2SInit::Init2 {
-							version,
-							random1: **random1,
-							random0_r: **random0_r,
-						};
 
 						let state = ServerConnectionState::Init2 { version };
 
 						Some((
 							state,
-							Some(Packet::new(
-								cheader,
-								packets::Data::C2SInit(data),
-							)),
+							Some(OutC2SInit2::new(version, random1, random0_r)),
 						))
 					} else {
 						None
@@ -559,7 +529,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							// omega is an ASN.1-DER encoded public key from
 							// the ECDH parameters.
 
-							let alpha_s = base64::encode(&alpha);
 							let ip = con.address.ip();
 							let logger = logger.clone();
 
@@ -648,37 +617,18 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										// Create the command string
 										// omega is an ASN.1-DER encoded public key from
 										// the ECDH parameters.
-										let omega_s = private_key
+										let omega = private_key
 											.to_pub()
-											.to_ts()
+											.to_tomcrypt()
 											.unwrap();
-										let mut command =
-											Command::new("clientinitiv");
-										command.push("alpha", alpha_s);
-										command.push("omega", omega_s);
-										command.push("ot", "1");
 										// Set ip always except if it is a local address
-										if crate::utils::is_global_ip(&ip) {
-											command.push("ip", ip.to_string());
+										let ip = if crate::utils::is_global_ip(&ip) {
+											ip.to_string()
 										} else {
-											command.push("ip", "");
-										}
-
-										let cheader = create_init_header();
-										let data = C2SInit::Init4 {
-											version,
-											x,
-											n,
-											level,
-											random2,
-											y,
-											command: command.clone(),
+											String::new()
 										};
 
-										let packet = Packet::new(
-											cheader,
-											packets::Data::C2SInit(data),
-										);
+										let packet = OutC2SInit4::new(version, &x, &n, level, &random2, &y, &alpha, &omega, &ip);
 										Box::new(
 											con_value
 												.as_packet_sink()
@@ -724,7 +674,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		is_end: &mut bool,
 		private_key: EccKeyPrivP256,
 		logger: &Logger,
-	) -> Result<Option<(ServerConnectionState, Option<Packet>)>>
+	) -> Result<Option<(ServerConnectionState, Option<OutPacket>)>>
 	{
 		let res = match state.state {
 			ServerConnectionState::ClientInitIv { ref alpha } => {
@@ -813,7 +763,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							*con_params = Some(params);
 
 							// Send clientek
-							let mut command = Command::new("clientek");
 							let ek_pub = ek.to_pub();
 							let ek_s = base64::encode(ek_pub.0.as_bytes());
 
@@ -824,12 +773,12 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							let proof = private_key.clone().sign(&all)?;
 							let proof_s = base64::encode(&proof);
 
-							command.push("ek", ek_s);
-							command.push("proof", proof_s);
-
-							Ok(Some(Packet::new(
-								Header::new(PacketType::Command),
-								packets::Data::Command(command),
+							Ok(Some(OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+								Direction::C2S,
+								PacketType::Command,
+								"clientek",
+								vec![("ek", ek_s), ("proof", proof_s)].into_iter(),
+								std::iter::empty(),
 							)))
 						} else {
 							Err(format_err!(
@@ -897,27 +846,23 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					&& cmd.get("name") == Some("cliententerview")
 					&& cmd.get("data") == Some("version")
 				{
-					let mut command = Command::new("plugincmd");
-					command.push("name", "cliententerview");
-					command.push(
-						"data",
-						format!(
-							"{},{}-{}",
-							con.params.as_ref().unwrap().c_id,
-							env!("CARGO_PKG_NAME"),
-							env!("CARGO_PKG_VERSION"),
-						),
-					);
-					command.push("targetmode", "2");
 					// TODO Send to clientid
 					//command.push("target", 0);
 
-					let header = Header::new(PacketType::Command);
-
-					let p = Some(Packet::new(
-						header,
-						packets::Data::Command(command),
-					));
+					let p = Some(OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+						Direction::C2S,
+						PacketType::Command,
+						"plugincmd",
+						vec![("name", "cliententerview".to_string()),
+							("data", format!(
+								"{},{}-{}",
+								con.params.as_ref().unwrap().c_id,
+								env!("CARGO_PKG_NAME"),
+								env!("CARGO_PKG_VERSION"),
+							)),
+							("targetmode", 2.to_string()),
+						].into_iter(), std::iter::empty())
+					);
 					Some((ServerConnectionState::Connected, p))
 				} else {
 					None

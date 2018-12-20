@@ -43,73 +43,76 @@ pub fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
 /// Only `Command` and `CommandLow` packets can be compressed and splitted.
 pub fn compress_and_split(
 	is_client: bool,
-	packet: &Packet,
-) -> Vec<(Header, Vec<u8>)>
+	packet: OutPacket,
+) -> Vec<OutPacket>
 {
-	// Everything else (except whisper packets) have to be less than 500 bytes
-	let header_size = if is_client { 13 } else { 11 };
-	let mut data = Vec::new();
-	packet.data.write(&mut data).unwrap();
+	// Everything except whisper packets has to be less than 500 bytes
+	let header_size = if is_client { crate::C2S_HEADER_LEN }
+		else { crate::S2C_HEADER_LEN };
+	let data = packet.content();
 	// The maximum packet size (including header) is 500 bytes.
 	let max_size = 500 - header_size;
 	// Split the data if it is necessary.
-	// Compress also slightly smaller packets
-	let (datas, compressed) = if data.len() > (max_size - 100) {
+	let compressed;
+	let datas = if data.len() > max_size {
 		// Compress with QuickLZ
 		let cdata = ::quicklz::compress(&data, CompressionLevel::Lvl1);
 		// Use only if it is efficient
-		let (mut data, compressed) = if cdata.len() > data.len() {
-			(data, false)
+		let mut data = if cdata.len() > data.len() {
+			compressed = false;
+			data
 		} else {
-			(cdata, true)
+			compressed = true;
+			&cdata
 		};
 
 		// Ignore size limit for whisper packets
 		if data.len() <= max_size
-			|| packet.header.get_type() == PacketType::VoiceWhisper
+			|| packet.header().packet_type() == PacketType::VoiceWhisper
 		{
-			(vec![data], compressed)
+			let mut v = vec![0; header_size + data.len()];
+			v[header_size..].copy_from_slice(data);
+			vec![v]
 		} else {
 			// Split
 			let count = (data.len() + max_size - 1) / max_size;
 			let mut splitted = Vec::with_capacity(count);
-			// Split from the back so the buffer does not have to be moved each
-			// time.
-			// Rest
-			let mut len = data.len();
-			splitted.push(data.split_off(len - (len % max_size)));
-
-			while {
-				len = data.len();
-				len > 0
-			} {
-				splitted.push(data.split_off(len - max_size));
+			while data.len() > max_size {
+				let (first, last) = data.split_at(max_size);
+				let mut v = vec![0; header_size + max_size];
+				v[header_size..].copy_from_slice(first);
+				splitted.push(v);
+				data = last;
 			}
-			(splitted, compressed)
+			// Rest
+			let mut v = vec![0; header_size + data.len()];
+			v[header_size..].copy_from_slice(data);
+			splitted.push(v);
+			splitted
 		}
 	} else {
-		(vec![data], false)
+		return vec![packet];
 	};
+
 	let len = datas.len();
 	let fragmented = len > 1;
-	let default_header = {
-		let mut h = Header::default();
-		h.set_type(packet.header.get_type());
-		h
-	};
+	let orig_header = packet.header_bytes();
+	let header = packet.header();
+	let dir = packet.direction();
 	let mut packets = Vec::with_capacity(datas.len());
-	for (i, d) in datas.into_iter().rev().enumerate() {
-		let mut h = default_header.clone();
+	for (i, mut d) in datas.into_iter().enumerate() {
+		d[..header_size].copy_from_slice(orig_header);
+		let mut packet = OutPacket::new_from_data(dir, d);
 		// Only set flags on first fragment
 		if i == 0 && compressed {
-			h.set_compressed(true);
+			packet.flags(header.flags() | Flags::COMPRESSED);
 		}
 
 		// Set fragmented flag on first and last part
 		if fragmented && (i == 0 || i == len - 1) {
-			h.set_fragmented(true);
+			packet.flags(header.flags() | Flags::FRAGMENTED);
 		}
-		packets.push((h, d));
+		packets.push(packet);
 	}
 	packets
 }
@@ -164,41 +167,39 @@ fn create_key_nonce(
 }
 
 pub fn encrypt_key_nonce(
-	header: &mut Header,
-	data: &[u8],
+	packet: &mut OutPacket,
 	key: &[u8; 16],
 	nonce: &[u8; 16],
-) -> Result<Vec<u8>>
+) -> Result<()>
 {
-	let mut meta = Vec::with_capacity(5);
-	header.write_meta(&mut meta)?;
-
-	let (mac, enc) = crypto::Eax::encrypt(key, nonce, &meta, data)?;
-	header.mac.copy_from_slice(&mac[..8]);
-	Ok(enc)
+	let meta = packet.header().get_meta();
+	let (mac, enc) = crypto::Eax::encrypt(key, nonce, &meta, packet.content())?;
+	packet.mac().copy_from_slice(&mac[..8]);
+	packet.content_mut().copy_from_slice(&enc);
+	Ok(())
 }
 
-pub fn encrypt_fake(header: &mut Header, data: &[u8]) -> Result<Vec<u8>> {
-	encrypt_key_nonce(header, data, &crate::FAKE_KEY, &crate::FAKE_NONCE)
+pub fn encrypt_fake(packet: &mut OutPacket) -> Result<()> {
+	encrypt_key_nonce(packet, &crate::FAKE_KEY, &crate::FAKE_NONCE)
 }
 
 pub fn encrypt(
-	header: &mut Header,
-	data: &[u8],
+	packet: &mut OutPacket,
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [CachedKey; 8],
-) -> Result<Vec<u8>>
+) -> Result<()>
 {
+	let header = packet.header();
 	let (key, nonce) = create_key_nonce(
-		header.get_type(),
-		header.c_id,
-		header.p_id,
+		header.packet_type(),
+		header.client_id(),
+		header.packet_id(),
 		generation_id,
 		iv,
 		cache,
 	);
-	encrypt_key_nonce(header, data, &key, &nonce)
+	encrypt_key_nonce(packet, &key, &nonce)
 }
 
 pub fn decrypt_key_nonce(
