@@ -110,28 +110,33 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 			"offset" => offset);
 
 		// Create clientinit packet
-		let header = Header::new(PacketType::Command);
-		let mut command = commands::Command::new("clientinit");
-		command.push("client_nickname", "Bot");
-		command.push("client_version", "3.1.8 [Build: 1516614607]");
-		command.push("client_platform", "Linux");
-		command.push("client_input_hardware", "1");
-		command.push("client_output_hardware", "1");
-		command.push("client_default_channel", "");
-		command.push("client_default_channel_password", "");
-		command.push("client_server_password", "");
-		command.push("client_meta_data", "");
-		command.push("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==");
-		command.push("client_key_offset", offset.to_string());
-		command.push("client_nickname_phonetic", "");
-		command.push("client_default_token", "");
-		command.push("client_badges", "Overwolf=0");
-		command.push("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
-		let p_data = packets::Data::Command(command);
-		let clientinit_packet = Packet::new(header, p_data);
+		let offset = offset.to_string();
+		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"clientinit",
+			vec![
+				("client_nickname", "Bot"),
+				("client_version", "3.1.8 [Build: 1516614607]"),
+				("client_platform", "Linux"),
+				("client_input_hardware", "1"),
+				("client_output_hardware", "1"),
+				("client_default_channel", ""),
+				("client_default_channel_password", ""),
+				("client_server_password", ""),
+				("client_meta_data", ""),
+				("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw=="),
+				("client_nickname_phonetic", ""),
+				("client_key_offset", &offset),
+				("client_default_token", ""),
+				("client_badges", "Overwolf=0"),
+				("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
+			].into_iter(),
+			std::iter::empty(),
+		);
 
 		let con2 = con.clone();
-		con.as_packet_sink().send(clientinit_packet)
+		con.as_packet_sink().send(packet)
 			.and_then(move |_| client::wait_until_connected(&con))
 			.map(move |_| con2)
 	})
@@ -140,14 +145,17 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 pub fn disconnect(
 	con: client::ClientConVal,
 ) -> impl Future<Item = (), Error = Error> {
-	let header = Header::new(PacketType::Command);
-	let mut command = commands::Command::new("clientdisconnect");
-
-	// Reason: Disconnect
-	command.push("reasonid", "8");
-	command.push("reasonmsg", "Bye");
-	let p_data = packets::Data::Command(command);
-	let packet = Packet::new(header, p_data);
+	let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+		Direction::C2S,
+		PacketType::Command,
+		"clientdisconnect",
+		vec![
+			// Reason: Disconnect
+			("reasonid", "8"),
+			("reasonmsg", "Bye"),
+		].into_iter(),
+		std::iter::empty(),
+	);
 
 	con.as_packet_sink().send(packet).and_then(move |_| {
 		client::wait_for_state(&con, |state| {

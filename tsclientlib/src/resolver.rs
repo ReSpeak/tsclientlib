@@ -187,9 +187,9 @@ pub fn resolve(
 			// Pick the first srv record of the first server that answers
 			Box::new(
 				resolve_srv_raw(resolver.clone(), &prefix.append_name(&name))
-					.map(move |mut srvs| {
+					.map(move |srvs| {
 						StreamCombiner::new(
-							srvs.drain(..)
+							srvs.into_iter()
 								.map(|addrs| {
 									// Got tsdns server
 									let addr = addr.clone();
@@ -428,7 +428,7 @@ fn resolve_srv_raw(
 			}
 
 			let entries: Vec<_> = sorted_entries
-				.drain(..)
+				.into_iter()
 				.map(|e| {
 					let addr = e.target().to_string();
 					let port = e.port();

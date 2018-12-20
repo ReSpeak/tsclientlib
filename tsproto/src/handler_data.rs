@@ -143,13 +143,13 @@ impl<T: Send + 'static> ConnectionValue<T> {
 		let codec = PacketCodecSender::new(con.1.is_client);
 		let p_type = packet.header().packet_type();
 
-		let mut udp_packets = match codec.encode_packet(&mut con.1, packet) {
+		let udp_packets = match codec.encode_packet(&mut con.1, packet) {
 			Ok(r) => r,
 			Err(e) => return Box::new(stream::once(Err(e))),
 		};
 
 		let udp_packets = udp_packets
-			.drain(..)
+			.into_iter()
 			.map(|(p_id, p)| (p_type, p_id, p))
 			.collect::<Vec<_>>();
 		Box::new(stream::iter_ok(udp_packets))

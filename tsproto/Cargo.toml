@@ -9,7 +9,6 @@ repository = "https://github.com/ReSpeak/tsclientlib"
 keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
 license = "MIT/Apache-2.0"
-build = "build/build.rs"
 edition = "2018"
 autobenches = false
 
@@ -21,8 +20,7 @@ default = ["rug"]
 
 [dependencies]
 arrayref = "0.3"
-#simple_asn1 = "0.2"
-simple_asn1 = { git = "https://github.com/Flakebi/simple_asn1.git" }
+simple_asn1 = "0.3"
 base64 = "0.10"
 bitflags = "1"
 byteorder = "1"
@@ -53,9 +51,6 @@ quicklz = "0.2"
 [dependencies.slog]
 version = "2"
 features = ["max_level_debug", "release_max_level_debug"]
-
-[build-dependencies]
-tsproto-util = { path = "../tsproto-util" }
 
 [dev-dependencies]
 #cpuprofiler = "0.0.3"

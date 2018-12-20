@@ -148,7 +148,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	let key = data.add_connection(datam, state, server_addr);
 	let con = data.get_connection(&key).unwrap().downgrade();
 
-	let packet = OutC2SInit0::new(timestamp, timestamp, &random0);
+	let packet = OutC2SInit0::new(timestamp, timestamp, random0);
 	let con2 = con.clone();
 	con.as_packet_sink()
 		.send(packet)
@@ -498,7 +498,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 
 						Some((
 							state,
-							Some(OutC2SInit2::new(version, random1, random0_r)),
+							Some(OutC2SInit2::new(version, random1, **random0_r)),
 						))
 					} else {
 						None

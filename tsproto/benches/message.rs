@@ -10,7 +10,6 @@ use criterion::{Bencher, Benchmark, Criterion};
 use futures::{future, Future, Sink};
 
 use tsproto::packets::*;
-use tsproto::*;
 
 mod utils;
 use crate::utils::*;
@@ -43,16 +42,20 @@ fn send_messages(b: &mut Bencher) {
 		}))
 		.unwrap();
 
-	let mut header = Header::default();
-	header.set_type(PacketType::Command);
-	let mut cmd = commands::Command::new("sendtextmessage");
-	cmd.push("targetmode", "3");
 	let mut i = 0;
 
 	b.iter(|| {
-		let mut cmd = cmd.clone();
-		cmd.push("msg", format!("Hello {}", i));
-		let packet = Packet::new(header.clone(), Data::Command(cmd));
+		let text = format!("Hello {}", i);
+		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"sendtextmessage",
+			vec![
+				("targetmode", "3"),
+				("msg", &text),
+			].into_iter(),
+			std::iter::empty(),
+		);
 		i += 1;
 
 		let sink = con.as_packet_sink();

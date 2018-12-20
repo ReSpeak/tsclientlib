@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::net::SocketAddr;
 
-use slog::{debug, o, Logger};
+use slog::{debug, error, o, Logger};
 
 use crate::connection::Connection;
 use crate::connectionmanager::ConnectionManager;
@@ -10,7 +10,7 @@ use crate::handler_data::{
 	OutPacketObserver, OutUdpPacketObserver,
 };
 use crate::packets::{
-	InCommand, InPacket, InUdpPacket, OutPacket, PacketType, UdpPacket,
+	Direction, InCommand, InPacket, InUdpPacket, OutPacket, PacketType,
 };
 
 fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {
@@ -87,12 +87,11 @@ impl InUdpPacketObserver for UdpPacketLogger {
 
 impl OutUdpPacketObserver for UdpPacketLogger {
 	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]) {
-		let udp_packet = UdpPacket::new(
-			udp_packet,
-			// from_client
-			self.is_client,
-		);
-		log_udp_packet(&self.logger, addr, self.is_client, false, &udp_packet);
+		match InPacket::try_new(udp_packet.into(),
+			if self.is_client { Direction::C2S } else { Direction::S2C }) {
+			Ok(packet) => log_udp_packet(&self.logger, addr, self.is_client, false, &packet),
+			Err(e) => error!(self.logger, "Cannot parse incoming udp packet"; "error" => ?e),
+		}
 	}
 }
 

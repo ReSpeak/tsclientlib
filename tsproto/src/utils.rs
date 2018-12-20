@@ -1,13 +1,8 @@
-use std::cell::RefCell;
 use std::fmt;
-use std::io::Cursor;
 use std::net::IpAddr;
-use std::rc::Rc;
 
 use futures;
-use futures::Sink;
 
-use crate::packets::Header;
 use crate::Result;
 
 pub struct HexSlice<'a, T: fmt::LowerHex + 'a>(pub &'a [T]);
@@ -76,48 +71,5 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
 			.chunks(2)
 			.map(|s| u8::from_str_radix(::std::str::from_utf8(s).unwrap(), 16))
 			.collect::<::std::result::Result<Vec<_>, _>>()?)
-	}
-}
-
-pub fn parse_packet(
-	mut udp_packet: Vec<u8>,
-	is_client: bool,
-) -> Result<(Header, Vec<u8>)>
-{
-	let (header, pos) = {
-		let mut r = Cursor::new(udp_packet.as_slice());
-		(Header::read(&!is_client, &mut r)?, r.position() as usize)
-	};
-	let udp_packet = udp_packet.split_off(pos);
-	Ok((header, udp_packet))
-}
-
-/// A clonable sink.
-pub struct MultiSink<Inner>(Rc<RefCell<Inner>>);
-
-impl<Inner> MultiSink<Inner> {
-	pub fn new(inner: Inner) -> Self { MultiSink(Rc::new(RefCell::new(inner))) }
-}
-
-impl<Inner> ::std::clone::Clone for MultiSink<Inner> {
-	fn clone(&self) -> Self { MultiSink(self.0.clone()) }
-}
-
-impl<I, E, Inner: Sink<SinkItem = I, SinkError = E>> Sink for MultiSink<Inner> {
-	type SinkItem = I;
-	type SinkError = E;
-
-	fn start_send(
-		&mut self,
-		item: Self::SinkItem,
-	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
-	{
-		let mut inner = self.0.borrow_mut();
-		inner.start_send(item)
-	}
-
-	fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-		let mut inner = self.0.borrow_mut();
-		inner.poll_complete()
 	}
 }

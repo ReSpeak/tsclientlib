@@ -308,9 +308,9 @@ impl Resender for DefaultResender {
 			ResendStates::Stalling { to_send, .. }
 			| ResendStates::Dead { to_send, .. } => {
 				// Sort by packet id
-				let mut v = mem::replace(to_send, Vec::new());
+				let v = mem::replace(to_send, Vec::new());
 				let res = v
-					.drain(..)
+					.into_iter()
 					.map(|mut rec| {
 						rec.tries = 0;
 						rec

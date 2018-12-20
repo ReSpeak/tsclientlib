@@ -531,7 +531,7 @@ impl PacketCodecSender {
 		// TODO Move to observer for client
 		if p_type == PacketType::Command {
 			let s = b"clientdisconnect";
-			if &packet.content()[..s.len()] == &s[..] {
+			if packet.content()[..s.len()] == s[..] {
 				con.resender.handle_event(
 					crate::connectionmanager::ResenderEvent::Disconnecting,
 				);
@@ -553,7 +553,7 @@ impl PacketCodecSender {
 				|| (self.is_client && p_id == 1 && {
 					// Test if it is a clientek packet
 					let s = b"clientek";
-					&packet.content()[..s.len()] == &s[..]
+					packet.content()[..s.len()] == s[..]
 				}));
 
 		// Get values from parameters
@@ -599,9 +599,9 @@ impl PacketCodecSender {
 			// Identify init packets by their number
 			if p_type == PacketType::Init {
 				if packet.direction() == Direction::S2C {
-					packet_id = Some(packet.content()[0] as u16);
+					packet_id = Some(u16::from(packet.content()[0]));
 				} else {
-					packet_id = Some(packet.content()[4] as u16);
+					packet_id = Some(u16::from(packet.content()[4]));
 				}
 			} else {
 				packet_id = None;

@@ -1,7 +1,6 @@
-#![allow(unused_variables)]
+#![allow(unused_variables, clippy::new_ret_no_self)]
 use std::borrow::Cow;
 use std::io::prelude::*;
-use std::io::Cursor;
 use std::{fmt, mem};
 
 use arrayref::{array_mut_ref, array_ref};
@@ -10,11 +9,9 @@ use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use num_traits::{FromPrimitive, ToPrimitive};
 
-use crate::commands::{CommandData, CommandDataIterator, Command};
+use crate::commands::{CommandData, CommandDataIterator};
 use crate::utils::HexSlice;
 use crate::{Error, Result};
-
-include!(concat!(env!("OUT_DIR"), "/packets.rs"));
 
 #[derive(
 	Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive, Hash,
@@ -76,46 +73,6 @@ pub enum CodecType {
 	OpusVoice,
 	/// Stereo, 16 bit, 48 kHz, bitrate dependent on the quality setting, optimized for music
 	OpusMusic,
-}
-
-/// Used for debugging.
-pub struct UdpPacket<'a> {
-	pub data: &'a [u8],
-	pub from_client: bool,
-}
-
-impl<'a> UdpPacket<'a> {
-	pub fn new(data: &'a [u8], from_client: bool) -> Self {
-		Self { data, from_client }
-	}
-}
-
-impl<'a> fmt::Debug for UdpPacket<'a> {
-	#[rustfmt::skip]
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "UdpPacket {{ header: ")?;
-
-		// Parse header
-		if let Ok(header) =
-			Header::read(&self.from_client, &mut Cursor::new(self.data))
-		{
-			write!(f, "mac: {:?}, ", header.mac)?;
-			write!(f, "p_id: {}, ", header.p_id)?;
-			if let Some(c_id) = header.c_id {
-				write!(f, "c_id: {}, ", c_id)?;
-			}
-			write!(f, "type: {:?}, ", PacketType::from_u8(header.p_type & 0xf).unwrap())?;
-			write!(f, "flags: ")?;
-			let flags = Flags::from_bits(header.p_type & 0xf0).unwrap();
-			write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
-			write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
-			write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
-			write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
-		}
-
-		write!(f, ", raw: {:?} }}", HexSlice(self.data))?;
-		Ok(())
-	}
 }
 
 /// Used for debugging.
@@ -945,7 +902,7 @@ impl OutCommand {
 
 pub struct OutC2SInit0;
 impl OutC2SInit0 {
-	pub fn new(version: u32, timestamp: u32, random0: &[u8; 4]) -> OutPacket {
+	pub fn new(version: u32, timestamp: u32, random0: [u8; 4]) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
@@ -953,7 +910,7 @@ impl OutC2SInit0 {
 		content.write_u32::<NetworkEndian>(version).unwrap();
 		content.write_u8(0).unwrap();
 		content.write_u32::<NetworkEndian>(timestamp).unwrap();
-		content.write_all(random0).unwrap();
+		content.write_all(&random0).unwrap();
 		// Reserved
 		content.write_all(&[0u8; 8]).unwrap();
 		res
@@ -962,7 +919,7 @@ impl OutC2SInit0 {
 
 pub struct OutC2SInit2;
 impl OutC2SInit2 {
-	pub fn new(version: u32, random1: &[u8; 16], random0_r: &[u8; 4]) -> OutPacket {
+	pub fn new(version: u32, random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
@@ -970,7 +927,7 @@ impl OutC2SInit2 {
 		content.write_u32::<NetworkEndian>(version).unwrap();
 		content.write_u8(2).unwrap();
 		content.write_all(random1).unwrap();
-		content.write_all(random0_r).unwrap();
+		content.write_all(&random0_r).unwrap();
 		res
 	}
 }
@@ -1003,14 +960,14 @@ impl OutC2SInit4 {
 
 pub struct OutS2CInit1;
 impl OutS2CInit1 {
-	pub fn new(random1: &[u8; 16], random0_r: &[u8; 4]) -> OutPacket {
+	pub fn new(random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
 		content.write_u8(1).unwrap();
 		content.write_all(random1).unwrap();
-		content.write_all(random0_r).unwrap();
+		content.write_all(&random0_r).unwrap();
 		res
 	}
 }
@@ -1049,106 +1006,5 @@ impl OutAck {
 		let content = res.data_mut();
 		content.write_u16::<NetworkEndian>(packet_id).unwrap();
 		res
-	}
-}
-
-impl Packet {
-	pub fn new(header: Header, data: Data) -> Packet { Packet { header, data } }
-}
-
-impl Default for Header {
-	fn default() -> Self {
-		Header {
-			mac: Default::default(),
-			p_id: 0,
-			c_id: None,
-			p_type: 0,
-		}
-	}
-}
-
-impl Header {
-	#[inline]
-	pub fn new(p_type: PacketType) -> Header {
-		let mut h = Header::default();
-		h.set_type(p_type);
-		h
-	}
-
-	#[inline]
-	pub fn get_p_type(&self) -> u8 { self.p_type }
-	#[inline]
-	pub fn set_p_type(&mut self, p_type: u8) {
-		assert!((p_type & 0xf) <= 8);
-		self.p_type = p_type;
-	}
-
-	/// `true` if the packet is not encrypted.
-	#[inline]
-	pub fn get_unencrypted(&self) -> bool { (self.get_p_type() & 0x80) != 0 }
-	/// `true` if the packet is compressed.
-	#[inline]
-	pub fn get_compressed(&self) -> bool { (self.get_p_type() & 0x40) != 0 }
-	#[inline]
-	pub fn get_newprotocol(&self) -> bool { (self.get_p_type() & 0x20) != 0 }
-	/// `true` for the first and last packet of a compressed series of packets.
-	#[inline]
-	pub fn get_fragmented(&self) -> bool { (self.get_p_type() & 0x10) != 0 }
-
-	#[inline]
-	pub fn set_unencrypted(&mut self, value: bool) {
-		let p_type = self.get_p_type();
-		if value {
-			self.set_p_type(p_type | 0x80);
-		} else {
-			self.set_p_type(p_type & !0x80);
-		}
-	}
-	#[inline]
-	pub fn set_compressed(&mut self, value: bool) {
-		let p_type = self.get_p_type();
-		if value {
-			self.set_p_type(p_type | 0x40);
-		} else {
-			self.set_p_type(p_type & !0x40);
-		}
-	}
-	#[inline]
-	pub fn set_newprotocol(&mut self, value: bool) {
-		let p_type = self.get_p_type();
-		if value {
-			self.set_p_type(p_type | 0x20);
-		} else {
-			self.set_p_type(p_type & !0x20);
-		}
-	}
-	#[inline]
-	pub fn set_fragmented(&mut self, value: bool) {
-		let p_type = self.get_p_type();
-		if value {
-			self.set_p_type(p_type | 0x10);
-		} else {
-			self.set_p_type(p_type & !0x10);
-		}
-	}
-
-	#[inline]
-	pub fn get_type(&self) -> PacketType {
-		PacketType::from_u8(self.get_p_type() & 0xf).unwrap()
-	}
-	#[inline]
-	pub fn set_type(&mut self, t: PacketType) {
-		let p_type = self.get_p_type();
-		self.set_p_type((p_type & 0xf0) | t.to_u8().unwrap());
-	}
-
-	#[inline]
-	pub fn write_meta(&self, w: &mut Write) -> Result<()> {
-		w.write_u16::<NetworkEndian>(self.p_id)?;
-		if let Some(c_id) = self.c_id {
-			w.write_u16::<NetworkEndian>(c_id)?;
-		}
-		w.write_u8(self.p_type)?;
-		Ok(())
 	}
 }
