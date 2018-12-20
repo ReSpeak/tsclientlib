@@ -6,7 +6,6 @@ use std::mem;
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
 use num_traits::{FromPrimitive, ToPrimitive};
-use tsproto::commands::Command;
 use tsproto::packets::{Direction, Flags, InCommand, OutCommand, OutPacket,
 	PacketType};
 
@@ -108,21 +107,13 @@ impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
 		if data.name != "<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>" {
 			return Err(ParseError::WrongCommand(data.name.to_string()));
 		}
-		if <#= if msg_group.default.np { "!" } else { "" } #>cmd.newprotocol() {
-			return Err(ParseError::WrongNewprotocol(cmd.newprotocol()));
-		}
-		if cmd.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> {
-			return Err(ParseError::WrongPacketType(cmd.packet_type()));
-		}
+		if <#= if msg_group.default.np { "!" } else { "" } #>cmd.newprotocol() { return Err(ParseError::WrongNewprotocol(cmd.newprotocol())); }
+		if cmd.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> { return Err(ParseError::WrongPacketType(cmd.packet_type())); }
 		<# if !msg_group.default.s2c { #>
-		if cmd.direction() == Direction::S2C {
-			return Err(ParseError::WrongDirection(cmd.direction()));
-		}
+		if cmd.direction() == Direction::S2C { return Err(ParseError::WrongDirection(cmd.direction())); }
 		<# } #>
 		<# if !msg_group.default.c2s { #>
-		if cmd.direction() == Direction::C2S {
-			return Err(ParseError::WrongDirection(cmd.direction()));
-		}
+		if cmd.direction() == Direction::C2S { return Err(ParseError::WrongDirection(cmd.direction())); }
 		<# } #>
 <# /*
 		// Statics
@@ -177,13 +168,6 @@ impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
 	}
 }
 
-<#
-// Generated for static arguments
-// #[inline]
-// pub fn get_targetmode(&self) -> TextMessageTargetMode { self.targetmode }
-// #[inline]
-// pub fn get_target(&self) -> Option<u16> { self.target }
-#>
 impl<'a> In<#= msg.name #><'a> {
 	#[inline]
 	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { InMessageIterator(&self.list, 0) }
@@ -201,6 +185,48 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 		self.0.get(i)
 	}
 }
+
+<# for msg_group in &self.0.msg_group {
+	let defs = &msg_group.default;
+	for msg in &msg_group.msg { #>
+
+pub struct Out<#= msg.name #>Message;
+impl Out<#= msg.name #>Message {
+	pub fn new<'a, I: Iterator<Item=In<#= msg.name #>Part<'a>>>(list: I<#=
+			if msg_group.default.response { ", return_code: Option<&str>" } else { "" } #>) -> OutPacket {
+		let mut packet = OutPacket::new_with_dir(Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
+			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" }
+			#>, PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #>);
+	<# if msg_group.default.response { #>
+		let static_args = return_code.iter().map(|s| ("return_code", Cow::Borrowed(*s)));
+	<# } else { #>
+		let static_args = std::iter::empty();
+	<# }
+
+	if msg.attributes.is_empty() { #>
+		let list_args = list.map(|_| { std::iter::empty() });
+	<# } else { #>
+		let list_args = list.map(|p| {
+			let mut res = Vec::new();
+		<# for a in &msg.attributes {
+			let field = self.0.get_field(a);
+			let val = format!("p.{}", field.get_rust_name());
+			if a.ends_with('?') { #>
+			if let Some(val) = <#= val #> { res.push(("<#= field.ts #>", <#= generate_serializer(field, "val") #>)); }
+			<# } else { #>
+			res.push(("<#= field.ts #>", <#= generate_serializer(field, &val) #>));
+			<# } #>
+		<# } #>
+			res.into_iter()
+		});
+	<# } #>
+		OutCommand::new_into::<&'static str, Cow<str>, &'static str, Cow<str>, _, _, _>(
+			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>", static_args, list_args, packet.data());
+		packet
+	}
+}
+<# }
+} #>
 
 <#
 fn generate_deserializer(field: &Field) -> String {
@@ -302,7 +328,11 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 				}})?, Utc)", field.pretty),
 		_ => panic!("Unknown type '{}'", rust_type),
 	};
-	indent(&res, 2)
+	if res.contains('\n') {
+		indent(&res, 2)
+	} else {
+		res
+	}
 }
 
 fn vector_value_deserializer(field: &Field) -> String {
@@ -312,32 +342,32 @@ fn vector_value_deserializer(field: &Field) -> String {
 		single_value_deserializer(field, inner_type), inner_type))
 }
 
-fn generate_serializer(field: &Field) -> String {
+fn generate_serializer(field: &Field, name: &str) -> String {
 	let rust_type = field.get_rust_type("", true);
 	if rust_type.starts_with("Vec<") {
 		let inner_type = &rust_type[4..rust_type.len()-1];
-		vector_value_serializer(field, inner_type)
+		vector_value_serializer(field, inner_type, name)
 	} else {
-		single_value_serializer(field, &rust_type)
+		single_value_serializer(field, &rust_type, name)
 	}
 }
 
-fn single_value_serializer(field: &Field, rust_type: &str) -> String {
+fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String {
 	match rust_type {
 		 "i8" |  "u8" |
 		"i16" | "u16" |
 		"i32" | "u32" |
 		"i64" | "u64" |
-		"f32" | "f64" => "Cow::Owned(val.to_string())",
-		"bool" => "Cow::Borrowed(if val { \"0\" } else { \"1\" })",
-		"&str" => "Cow::Borrowed(val)",
-		"UidRef" => "Cow::Borrowed(val.0)",
+		"f32" | "f64" => format!("Cow::Owned({}.to_string())", name),
+		"bool" => format!("Cow::Borrowed(if {} {{ \"0\" }} else {{ \"1\" }})", name),
+		"&str" => format!("Cow::Borrowed({})", name),
+		"UidRef" => format!("Cow::Borrowed({}.0)", name),
 		"ClientId" |
 		"ClientDbId" |
 		"ChannelId" |
 		"ServerGroupId" |
 		"ChannelGroupId" |
-		"IconHash" => "Cow::Owned(val.0.to_string())",
+		"IconHash" => format!("Cow::Owned({}.0.to_string())", name),
 		"TextMessageTargetMode" |
 		"HostMessageMode" |
 		"HostBannerMode" |
@@ -353,260 +383,27 @@ fn single_value_serializer(field: &Field, rust_type: &str) -> String {
 		"PermissionType" |
 		"TokenType" |
 		"PluginTargetMode" |
-		"Error" => "Cow::Owned(val.to_u32().unwrap().to_string())",
+		"Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
 		"Duration" =>
 			if field.type_s == "DurationSeconds" {
-				"Cow::Owned(val.num_seconds().to_string())"
+				format!("Cow::Owned({}.num_seconds().to_string())", name)
 			} else if field.type_s == "DurationMilliseconds" {
-				"Cow::Owned(val.num_milliseconds().to_string())"
+				format!("Cow::Owned({}.num_milliseconds().to_string())", name)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
 			},
-		"DateTime<Utc>" => "Cow::Owned(val.timestamp().to_string())",
+		"DateTime<Utc>" => format!("Cow::Owned({}.timestamp().to_string())", name),
 		_ => panic!("Unknown type '{}'", rust_type),
-	}.to_string()
+	}
 }
 
-fn vector_value_serializer(field: &Field, inner_type: &str) -> String {
+fn vector_value_serializer(field: &Field, inner_type: &str, name: &str) -> String {
 	format!("{{ let mut s = String::new();
-				for val in val {{
+				for val in {} {{
 					if !s.is_empty() {{ s += \",\" }}
 					let t: Cow<str> = {}; s += t.as_ref();
 				}}
-				Cow::Owned(s) }}", single_value_serializer(field, inner_type))
+				Cow::Owned(s) }}", name, single_value_serializer(field, inner_type, "val"))
 }
 
 #>
-
-<# for msg_group in &self.0.msg_group {
-	let defs = &msg_group.default;
-	for msg in &msg_group.msg { #>
-pub struct Out<#= msg.name #>Message;
-impl Out<#= msg.name #>Message {
-	pub fn new<'a, I: Iterator<Item=In<#= msg.name #>Part<'a>>>(list: I<#=
-			if msg_group.default.response { ", return_code: Option<&str>" } else { "" } #>) -> OutPacket {
-		let mut packet = OutPacket::new_with_dir(Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
-			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" } #>,
-			PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #>,
-		);
-	<# if msg_group.default.response { #>
-		let static_args = return_code.iter().map(|s| ("return_code", Cow::Borrowed(*s)));
-	<# } else { #>
-		let static_args = std::iter::empty();
-	<# } #>
-		<# if msg.attributes.is_empty() { #>
-		let list_args = list.map(|_| { std::iter::empty() });
-		<# } else { #>
-		let list_args = list.map(|p| {
-			let mut res = Vec::new();
-		<# for a in &msg.attributes {
-			let field = self.0.get_field(a); #>
-			let val = p.<#= field.get_rust_name() #>;
-			<# if a.ends_with('?') { #>
-			if let Some(val) = val {
-				res.push(("<#= field.ts #>", <#= generate_serializer(field) #>));
-			}
-			<# } else { #>
-			res.push(("<#= field.ts #>", <#= generate_serializer(field) #>));
-			<# } #>
-		<# } #>
-			res.into_iter()
-		});
-		<# } #>
-		OutCommand::new_into::<&'static str, Cow<str>, &'static str, Cow<str>, _, _, _>(
-			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>",
-			static_args, list_args, packet.data());
-		packet
-	}
-}
-
-#[derive(Debug, Clone)]
-pub struct <#= msg.name #> {
-<# if defs.response { #>
-	pub return_code: Option<String>,
-<# }
-
-	// Attributes
-	for a in &msg.attributes {
-		let field = self.0.get_field(a);
-#>
-	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a, false) #>,
-<# } #>
-}
-<#
-	if defs.response {
-#>
-
-impl Response for <#= msg.name #> {
-	fn get_return_code(&self) -> Option<&str> {
-		self.return_code.as_ref().map(|s| s.as_str())
-	}
-	fn set_return_code(&mut self, return_code: Option<String>) {
-		self.return_code = return_code;
-	}
-}
-<# } #>
-
-/*impl<'a> TryParse<&'a CanonicalCommand<'a>> for <#= msg.name #> {
-	type Err = ParseError;
-	fn try_from(<#= if msg.attributes.len() == 0 { "_" } else { "cmd" } #>: &'a CanonicalCommand<'a>) -> Result<Self, Self::Err> {
-		Ok(<#= msg.name #> {
-<#
-	for a in &msg.attributes {
-		let field = self.0.get_field(a);
-#>
-			<#= field.get_rust_name() #>: {
-				<# if !a.ends_with('?') { /* is not optional */ #>
-				let val = cmd.args.get("<#= field.ts #>")
-					.ok_or(ParseError::ParameterNotFound {
-						arg: "<#= field.pretty #>",
-					})?;
-					<#= generate_deserializer(field) #> },
-				<# } else { #>
-				if let Some(val) = cmd.args.get("<#= field.ts #>") {
-					Some({ <#= generate_deserializer(field) #> })
-				} else { None } },
-				<# } #>
-<# }
-	if defs.response { #>
-			return_code: cmd.args.get("return_code").map(|s| s.to_string()),
-	<# } #>
-		})
-	}
-}
-
-impl<'a> Into<Command> for &'a <#= msg.name #> {
-	fn into(self) -> Command {
-		let<# if msg.attributes.iter().any(|a| a.ends_with('?')) { #> mut<# } #> args = vec![
-<#
-		for a in &msg.attributes {
-			if a.ends_with('?') {
-				continue;
-			}
-			let field = self.0.get_field(a); #>
-			(String::from("<#= field.ts #>"), { let val = &self.<#= field.get_rust_name() #>; <#= generate_serializer(field) #> } ),
-<# } #>
-		];
-
-<#
-		// Add optional values
-		for a in &msg.attributes {
-			if !a.ends_with('?') {
-				continue;
-			}
-			let field = self.0.get_field(a); #>
-		if let Some(ref val) = self.<#= field.get_rust_name() #> {
-			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field) #> }));
-		}
-<# } #>
-
-		Command {
-			command: String::from("<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>"),
-			static_args: args,
-			list_args: vec![],
-		}
-	}
-}
-
-impl Into<Command> for <#= msg.name #> {
-	fn into(self) -> Command {
-		let<# if msg.attributes.iter().any(|a| a.ends_with('?')) { #> mut<# } #> args = vec![
-<#
-		for a in &msg.attributes {
-			if a.ends_with('?') {
-				continue;
-			}
-			let field = self.0.get_field(a); #>
-			(String::from("<#= field.ts #>"), { let val = self.<#= field.get_rust_name() #>; <#= generate_serializer(field) #> } ),
-<# } #>
-		];
-
-<#
-		// Add optional values
-		for a in &msg.attributes {
-			if !a.ends_with('?') {
-				continue;
-			}
-			let field = self.0.get_field(a); #>
-		if let Some(val) = self.<#= field.get_rust_name() #> {
-			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field) #> }));
-		}
-<# } #>
-
-		Command {
-			command: String::from("<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>"),
-			static_args: args,
-			list_args: vec![],
-		}
-	}
-}*/
-
-<# }
-}
-// Create message types
-#>
-#[derive(Debug, Clone)]
-pub enum Message {
-<# for msg_group in &self.0.msg_group {
-	for msg in &msg_group.msg { #>
-	<#= msg.name #>(<#= msg.name #>),
-<# }
-} #>
-}
-
-/*impl Message {
-	pub fn parse(cmd: CanonicalCommand) -> Result<Self, ParseError> {
-		match cmd.command {
-			<# for msg_group in &self.0.msg_group {
-				for msg in msg_group.msg.iter().filter(|m| m.notify.is_some()) { #>
-			"<#= msg.notify.as_ref().unwrap() #>" => Ok(Message::<#= msg.name #>(<#= msg.name #>::try_from(&cmd)?)),
-			<# }
-			} #>
-			_ => Err(ParseError::UnknownCommand(cmd.command.to_string()))
-		}
-	}
-
-	pub fn get_commandlow(&self) -> bool {
-		match self {
-			<# for msg_group in &self.0.msg_group {
-				for msg in &msg_group.msg { #>
-			Message::<#= msg.name #>(_) => <#= msg_group.default.low #>,
-			<# }
-			} #>
-		}
-	}
-
-	pub fn get_newprotocol(&self) -> bool {
-		match self {
-			<# for msg_group in &self.0.msg_group {
-				for msg in &msg_group.msg { #>
-			Message::<#= msg.name #>(_) => <#= msg_group.default.np #>,
-			<# }
-			} #>
-		}
-	}
-}
-
-impl Into<Command> for Message {
-	fn into(self) -> Command {
-		match self {
-			<# for msg_group in &self.0.msg_group {
-				for msg in &msg_group.msg { #>
-			Message::<#= msg.name #>(cmd) => cmd.into(),
-			<# }
-			} #>
-		}
-	}
-}
-
-impl<'a> Into<Command> for &'a Message {
-	fn into(self) -> Command {
-		match *self {
-			<# for msg_group in &self.0.msg_group {
-				for msg in &msg_group.msg { #>
-			Message::<#= msg.name #>(ref cmd) => cmd.into(),
-			<# }
-			} #>
-		}
-	}
-}*/
