@@ -1,4 +1,5 @@
 <#@ template cleanws="true" #>
+use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::mem;
 
@@ -6,7 +7,8 @@ use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
 use num_traits::{FromPrimitive, ToPrimitive};
 use tsproto::commands::Command;
-use tsproto::packets::{Direction, InCommand, PacketType};
+use tsproto::packets::{Direction, Flags, InCommand, OutCommand, OutPacket,
+	PacketType};
 
 /*
 Resulting code:
@@ -310,32 +312,32 @@ fn vector_value_deserializer(field: &Field) -> String {
 		single_value_deserializer(field, inner_type), inner_type))
 }
 
-fn generate_serializer(field: &Field, can_move: bool) -> String {
-	let rust_type = field.get_rust_type("", false);
+fn generate_serializer(field: &Field) -> String {
+	let rust_type = field.get_rust_type("", true);
 	if rust_type.starts_with("Vec<") {
-		vector_value_serializer(field, can_move)
+		let inner_type = &rust_type[4..rust_type.len()-1];
+		vector_value_serializer(field, inner_type)
 	} else {
-		single_value_serializer(field, &rust_type, can_move)
+		single_value_serializer(field, &rust_type)
 	}
 }
 
-fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> String {
+fn single_value_serializer(field: &Field, rust_type: &str) -> String {
 	match rust_type {
 		 "i8" |  "u8" |
 		"i16" | "u16" |
 		"i32" | "u32" |
 		"i64" | "u64" |
-		"f32" | "f64" => "val.to_string()",
-		"bool" => if can_move { "String::from(if  val { \"0\" } else { \"1\" })" }
-						 else { "String::from(if *val { \"0\" } else { \"1\" })" },
-		"String" => if can_move { "val" } else { "val.to_string()" },
-		"Uid" => if can_move { "val.0" } else { "val.0.to_string()" },
+		"f32" | "f64" => "Cow::Owned(val.to_string())",
+		"bool" => "Cow::Borrowed(if val { \"0\" } else { \"1\" })",
+		"&str" => "Cow::Borrowed(val)",
+		"UidRef" => "Cow::Borrowed(val.0)",
 		"ClientId" |
 		"ClientDbId" |
 		"ChannelId" |
 		"ServerGroupId" |
 		"ChannelGroupId" |
-		"IconHash" => "val.0.to_string()",
+		"IconHash" => "Cow::Owned(val.0.to_string())",
 		"TextMessageTargetMode" |
 		"HostMessageMode" |
 		"HostBannerMode" |
@@ -351,28 +353,27 @@ fn single_value_serializer(field: &Field, rust_type: &str, can_move: bool) -> St
 		"PermissionType" |
 		"TokenType" |
 		"PluginTargetMode" |
-		"Error" => "val.to_u32().unwrap().to_string()",
+		"Error" => "Cow::Owned(val.to_u32().unwrap().to_string())",
 		"Duration" =>
 			if field.type_s == "DurationSeconds" {
-				"val.num_seconds().to_string()"
+				"Cow::Owned(val.num_seconds().to_string())"
 			} else if field.type_s == "DurationMilliseconds" {
-				"val.num_milliseconds().to_string()"
+				"Cow::Owned(val.num_milliseconds().to_string())"
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
 			},
-		"DateTime<Utc>" => "val.timestamp().to_string()",
+		"DateTime<Utc>" => "Cow::Owned(val.timestamp().to_string())",
 		_ => panic!("Unknown type '{}'", rust_type),
 	}.to_string()
 }
 
-fn vector_value_serializer(field: &Field, can_move: bool) -> String {
-	let rust_type = field.get_rust_type("", false);
-	let inner_type = &rust_type[4..rust_type.len()-1];
-	// optimizations for special types
-	match inner_type {
-		"String" => String::from("let mut strb = String::new(); for val in val { if !strb.is_empty() { strb += \",\" } strb += &val; } strb"),
-		_ => format!("let mut strb = String::new(); for val in val {{ if !strb.is_empty() {{ strb += \",\" }} let add = {}; strb += &add; }} strb", single_value_serializer(field, inner_type, can_move)),
-	}
+fn vector_value_serializer(field: &Field, inner_type: &str) -> String {
+	format!("{{ let mut s = String::new();
+				for val in val {{
+					if !s.is_empty() {{ s += \",\" }}
+					let t: Cow<str> = {}; s += t.as_ref();
+				}}
+				Cow::Owned(s) }}", single_value_serializer(field, inner_type))
 }
 
 #>
@@ -380,6 +381,45 @@ fn vector_value_serializer(field: &Field, can_move: bool) -> String {
 <# for msg_group in &self.0.msg_group {
 	let defs = &msg_group.default;
 	for msg in &msg_group.msg { #>
+pub struct Out<#= msg.name #>Message;
+impl Out<#= msg.name #>Message {
+	pub fn new<'a, I: Iterator<Item=In<#= msg.name #>Part<'a>>>(list: I<#=
+			if msg_group.default.response { ", return_code: Option<&str>" } else { "" } #>) -> OutPacket {
+		let mut packet = OutPacket::new_with_dir(Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
+			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" } #>,
+			PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #>,
+		);
+	<# if msg_group.default.response { #>
+		let static_args = return_code.iter().map(|s| ("return_code", Cow::Borrowed(*s)));
+	<# } else { #>
+		let static_args = std::iter::empty();
+	<# } #>
+		<# if msg.attributes.is_empty() { #>
+		let list_args = list.map(|_| { std::iter::empty() });
+		<# } else { #>
+		let list_args = list.map(|p| {
+			let mut res = Vec::new();
+		<# for a in &msg.attributes {
+			let field = self.0.get_field(a); #>
+			let val = p.<#= field.get_rust_name() #>;
+			<# if a.ends_with('?') { #>
+			if let Some(val) = val {
+				res.push(("<#= field.ts #>", <#= generate_serializer(field) #>));
+			}
+			<# } else { #>
+			res.push(("<#= field.ts #>", <#= generate_serializer(field) #>));
+			<# } #>
+		<# } #>
+			res.into_iter()
+		});
+		<# } #>
+		OutCommand::new_into::<&'static str, Cow<str>, &'static str, Cow<str>, _, _, _>(
+			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>",
+			static_args, list_args, packet.data());
+		packet
+	}
+}
+
 #[derive(Debug, Clone)]
 pub struct <#= msg.name #> {
 <# if defs.response { #>
@@ -444,7 +484,7 @@ impl<'a> Into<Command> for &'a <#= msg.name #> {
 				continue;
 			}
 			let field = self.0.get_field(a); #>
-			(String::from("<#= field.ts #>"), { let val = &self.<#= field.get_rust_name() #>; <#= generate_serializer(field, false) #> } ),
+			(String::from("<#= field.ts #>"), { let val = &self.<#= field.get_rust_name() #>; <#= generate_serializer(field) #> } ),
 <# } #>
 		];
 
@@ -456,7 +496,7 @@ impl<'a> Into<Command> for &'a <#= msg.name #> {
 			}
 			let field = self.0.get_field(a); #>
 		if let Some(ref val) = self.<#= field.get_rust_name() #> {
-			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field, false) #> }));
+			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field) #> }));
 		}
 <# } #>
 
@@ -477,7 +517,7 @@ impl Into<Command> for <#= msg.name #> {
 				continue;
 			}
 			let field = self.0.get_field(a); #>
-			(String::from("<#= field.ts #>"), { let val = self.<#= field.get_rust_name() #>; <#= generate_serializer(field, true) #> } ),
+			(String::from("<#= field.ts #>"), { let val = self.<#= field.get_rust_name() #>; <#= generate_serializer(field) #> } ),
 <# } #>
 		];
 
@@ -489,7 +529,7 @@ impl Into<Command> for <#= msg.name #> {
 			}
 			let field = self.0.get_field(a); #>
 		if let Some(val) = self.<#= field.get_rust_name() #> {
-			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field, true) #> }));
+			args.push((String::from("<#= field.ts #>"), { <#= generate_serializer(field) #> }));
 		}
 <# } #>
 

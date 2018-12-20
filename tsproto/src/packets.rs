@@ -4,7 +4,7 @@ use std::io::prelude::*;
 use std::io::Cursor;
 use std::{fmt, mem};
 
-use arrayref::array_ref;
+use arrayref::{array_mut_ref, array_ref};
 use bitflags::bitflags;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
@@ -212,7 +212,13 @@ pub struct InCommand {
 	dir: Direction,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct OutPacket {
+	dir: Direction,
+	data: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct OutCommand(pub Vec<u8>);
 
 /// The mac has to be `b"TS3INIT1"`.
@@ -732,6 +738,65 @@ impl InCommand {
 	pub fn iter(&self) -> CommandDataIterator { self.inner.suffix().iter() }
 }
 
+impl OutPacket {
+	#[inline]
+	pub fn new(mac: [u8; 8], packet_id: u16, client_id: Option<u16>,
+		   flags: Flags, packet_type: PacketType) -> Self {
+		let dir = if client_id.is_some() { Direction::C2S } else { Direction::S2C };
+		let mut res = Self::new_with_dir(dir, flags, packet_type);
+		res.data[..8].copy_from_slice(&mac);
+		res.packet_id(packet_id);
+		if let Some(cid) = client_id {
+			res.client_id(cid);
+		}
+		res
+	}
+
+	/// Fill packet with known data. The rest gets filled by `packet_codec`.
+	#[inline]
+	pub fn new_with_dir(dir: Direction, flags: Flags, packet_type: PacketType) -> Self {
+		let data = vec![0; if dir == Direction::S2C { crate::S2C_HEADER_LEN }
+			else { crate::C2S_HEADER_LEN }];
+		let mut res = Self { dir, data };
+		res.flags(flags);
+		res.packet_type(packet_type);
+		res
+	}
+
+	#[inline]
+	pub fn new_from_data(dir: Direction, data: Vec<u8>) -> Self {
+		Self { dir, data }
+	}
+
+	#[inline]
+	pub fn data(&mut self) -> &mut Vec<u8> { &mut self.data }
+	#[inline]
+	pub fn header(&self) -> InHeader { InHeader(&self.data, self.dir) }
+
+	#[inline]
+	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
+	#[inline]
+	pub fn packet_id(&mut self, packet_id: u16) {
+		(&mut self.data[8..10]).write_u16::<NetworkEndian>(packet_id).unwrap();
+	}
+	#[inline]
+	pub fn client_id(&mut self, client_id: u16) {
+		// Client id is only valid for client to server packets.
+		assert_eq!(self.dir, Direction::C2S);
+		(&mut self.data[10..12]).write_u16::<NetworkEndian>(client_id).unwrap();
+	}
+	#[inline]
+	pub fn flags(&mut self, flags: Flags) {
+		let off = self.header().get_off();
+		self.data[off] = (self.data[off] & 0xf) | flags.bits();
+	}
+	#[inline]
+	pub fn packet_type(&mut self, packet_type: PacketType) {
+		let off = self.header().get_off();
+		self.data[off] = (self.data[off] & 0xf0) | packet_type.to_u8().unwrap();
+	}
+}
+
 impl OutCommand {
 	/// Write a command.
 	///
@@ -757,9 +822,32 @@ impl OutCommand {
 			I3: Iterator<Item=(&'a str, &'a str)>,
 	{
 		let mut res = Vec::new();
+		Self::new_into(name, static_args, list_args, &mut res);
+
+		OutCommand(res)
+	}
+
+	/// Write a command into a given `Vec<u8>`.
+	pub fn new_into<K1, V1, K2, V2, I1, I2, I3>(
+		name: &str,
+		static_args: I1,
+		list_args: I2,
+		res: &mut Vec<u8>,
+	)
+		where
+			K1: AsRef<str>,
+			V1: AsRef<str>,
+			K2: AsRef<str>,
+			V2: AsRef<str>,
+			I1: Iterator<Item=(K1, V1)>,
+			I2: Iterator<Item=I3>,
+			I3: Iterator<Item=(K2, V2)>,
+	{
 		res.extend_from_slice(name.as_bytes());
 		let mut first = true;
 		for (k, v) in static_args {
+			let k = k.as_ref();
+			let v = v.as_ref();
 			if first {
 				if !name.is_empty() {
 					res.push(b' ');
@@ -767,7 +855,10 @@ impl OutCommand {
 				first = false;
 			}
 			res.extend_from_slice(k.as_bytes());
-			Self::write_escaped(&mut res, v).unwrap();
+			if !v.is_empty() {
+				res.push(b'=');
+			}
+			Self::write_escaped(res, v).unwrap();
 		}
 
 		let mut first_list = true;
@@ -785,12 +876,15 @@ impl OutCommand {
 			}
 
 			for (k, v) in i {
+				let k = k.as_ref();
+				let v = v.as_ref();
 				res.extend_from_slice(k.as_bytes());
-				Self::write_escaped(&mut res, v).unwrap();
+				if !v.is_empty() {
+					res.push(b'=');
+				}
+				Self::write_escaped(res, v).unwrap();
 			}
 		}
-
-		OutCommand(res)
 	}
 
 	fn write_escaped(w: &mut Write, s: &str) -> Result<()> {
