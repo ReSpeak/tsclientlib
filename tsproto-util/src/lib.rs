@@ -2,14 +2,11 @@
 extern crate t4rust_derive;
 extern crate tsproto_structs;
 
-use std::io::prelude::*;
-
 mod book_ffi;
 mod book_parser;
 mod error_parser;
 mod facade_parser;
 mod messages_to_book_parser;
-mod packets_parser;
 mod version_parser;
 
 pub use tsproto_structs::EnumValue;
@@ -19,7 +16,6 @@ pub use book_parser::BookDeclarations;
 pub use error_parser::Errors;
 pub use facade_parser::FacadeDeclarations;
 pub use messages_to_book_parser::MessagesToBookDeclarations;
-pub use packets_parser::PacketDeclarations;
 pub use version_parser::Versions;
 
 pub fn to_pascal_case<S: AsRef<str>>(text: S) -> String {
@@ -60,9 +56,9 @@ fn is_ref_type(s: &str) -> bool {
 		is_ref_type(&s[7..s.len() - 1])
 	} else {
 		!(s == "bool"
-			|| s.starts_with("i")
-			|| s.starts_with("u")
-			|| s.starts_with("f")
+			|| s.starts_with('i')
+			|| s.starts_with('u')
+			|| s.starts_with('f')
 			|| s.ends_with("Id")
 			|| s.ends_with("Type")
 			|| s.ends_with("Mode"))

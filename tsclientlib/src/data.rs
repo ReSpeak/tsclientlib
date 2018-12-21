@@ -7,8 +7,8 @@ use std::ops::Deref;
 use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
-use tsproto_commands::messages::*;
 use tsproto_commands::*;
+use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 
 use {InnerConnection, Result};
 
@@ -42,7 +42,8 @@ macro_rules! max_clients {
 }
 
 impl Connection {
-	pub(crate) fn new(server_uid: Uid, packet: &InitServer) -> Self {
+	// TODO Make all arguments static for the initserver
+	pub(crate) fn new(server_uid: Uid, packet: &s2c::InitServerPart) -> Self {
 		Self {
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;
@@ -69,13 +70,13 @@ impl Connection {
 				;
 
 				uid: server_uid,
-				name: packet.name.clone(),
-				platform: packet.server_platform.clone(),
-				version: packet.server_version.clone(),
+				name: packet.name.into(),
+				platform: packet.server_platform.into(),
+				version: packet.server_version.into(),
 				created: packet.server_created,
-				ip: packet.server_ip.clone(),
+				ip: packet.server_ip.iter().map(|s| s.to_string()).collect(),
 				ask_for_privilegekey: packet.ask_for_privilegekey,
-				// TODO Or get from license struct
+				// TODO Or get from license struct for newer servers
 				license: packet.license_type.unwrap_or(LicenseType::NoLicense),
 
 				optional_data: None,
@@ -87,7 +88,7 @@ impl Connection {
 		}
 	}
 
-	pub(crate) fn handle_message(&mut self, msg: &Message) -> Result<()> {
+	pub(crate) fn handle_message(&mut self, msg: &InMessage) -> Result<()> {
 		self.handle_message_generated(msg)?;
 
 		// Also raise events
@@ -161,14 +162,14 @@ impl Connection {
 
 	fn max_clients_cc_fun(
 		&self,
-		cmd: &ChannelCreated,
+		cmd: &s2c::ChannelCreatedPart,
 	) -> (Option<u16>, MaxFamilyClients) {
 		max_clients!(cmd)
 	}
 	fn max_clients_ce_fun(
 		&mut self,
 		channel_id: ChannelId,
-		cmd: &ChannelEdited,
+		cmd: &s2c::InChannelEdited,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let (ch, ch_fam) = max_clients!(cmd);
@@ -178,7 +179,7 @@ impl Connection {
 	}
 	fn max_clients_cl_fun(
 		&self,
-		cmd: &ChannelList,
+		cmd: &s2c::InChannelList,
 	) -> (Option<u16>, MaxFamilyClients) {
 		let ch = if cmd.is_max_clients_unlimited {
 			None
@@ -202,7 +203,7 @@ impl Connection {
 		(ch, ch_fam)
 	}
 
-	fn channel_type_cc_fun(&self, cmd: &ChannelCreated) -> ChannelType {
+	fn channel_type_cc_fun(&self, cmd: &s2c::InChannelCreated) -> ChannelType {
 		if cmd.is_permanent == Some(true) {
 			ChannelType::Permanent
 		} else if cmd.is_semi_permanent == Some(true) {
@@ -215,7 +216,7 @@ impl Connection {
 	fn channel_type_ce_fun(
 		&mut self,
 		channel_id: ChannelId,
-		cmd: &ChannelEdited,
+		cmd: &s2c::InChannelEdited,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let typ = if cmd.is_permanent == Some(true) {
@@ -229,7 +230,7 @@ impl Connection {
 		}
 	}
 
-	fn channel_type_cl_fun(&self, cmd: &ChannelList) -> ChannelType {
+	fn channel_type_cl_fun(&self, cmd: &s2c::InChannelList) -> ChannelType {
 		if cmd.is_permanent {
 			ChannelType::Permanent
 		} else if cmd.is_semi_permanent {
@@ -239,7 +240,7 @@ impl Connection {
 		}
 	}
 
-	fn away_fun(&self, cmd: &ClientEnterView) -> Option<String> {
+	fn away_fun(&self, cmd: &s2c::InClientEnterView) -> Option<String> {
 		if cmd.is_away {
 			Some(cmd.away_message.clone())
 		} else {
@@ -249,7 +250,7 @@ impl Connection {
 
 	fn talk_power_fun(
 		&self,
-		cmd: &ClientEnterView,
+		cmd: &s2c::InClientEnterView,
 	) -> Option<TalkPowerRequest> {
 		if cmd.talk_power_request_time.timestamp() > 0 {
 			Some(TalkPowerRequest {
@@ -261,11 +262,11 @@ impl Connection {
 		}
 	}
 
-	fn badges_fun(&self, _cmd: &ClientEnterView) -> Vec<String> {
+	fn badges_fun(&self, _cmd: &s2c::InClientEnterView) -> Vec<String> {
 		Vec::new() // TODO
 	}
 
-	fn address_fun(&self, cmd: &ClientConnectionInfo) -> Option<SocketAddr> {
+	fn address_fun(&self, cmd: &s2c::InClientConnectionInfo) -> Option<SocketAddr> {
 		let ip = if let Ok(ip) = cmd.ip.parse() {
 			ip
 		} else {

@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::io::prelude::*;
 use std::mem;
 use std::str;
 use std::str::FromStr;
@@ -11,14 +10,7 @@ use nom::{alphanumeric, alt, call, do_parse, eof, error_position, is_not, many0,
 
 use crate::Result;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Command {
-	pub command: String,
-	pub static_args: Vec<(String, String)>,
-	pub list_args: Vec<Vec<(String, String)>>,
-}
-
-named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace) >>
+named!(command_arg(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace) >>
 	name: is_not!("\u{b}\u{c}\\\t\r\n| /=") >> // Argument name
 	value: map!(opt!( // Argument value
 		preceded!(tag!("="),
@@ -45,43 +37,6 @@ named!(command_arg2(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispac
 
 named!(inner_parse_command(CompleteStr) -> CommandData, do_parse!(
 	name: alt!(do_parse!(res: alphanumeric >> multispace >> (res)) | tag!("")) >> // Command
-	static_args: many0!(command_arg2) >>
-	list_args: many0!(do_parse!(many0!(multispace) >>
-		tag!("|") >>
-		args: many1!(command_arg2) >>
-		(args)
-	)) >>
-	many0!(multispace) >>
-	eof!() >>
-	(CommandData {
-		name: *name,
-		static_args,
-		list_args,
-	})
-));
-
-named!(command_arg(CompleteStr) -> (String, String), do_parse!(many0!(multispace) >>
-	name: many1!(map!(is_not!("\u{b}\u{c}\\\t\r\n| /="), |s| *s)) >> // Argument name
-	value: map!(opt!( // Argument value
-		preceded!(tag!("="),
-			many0!(alt!(
-				map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
-				map!(tag!("\\f"), |_| "\x0c") | // Form feed
-				map!(tag!("\\\\"), |_| "\\") |
-				map!(tag!("\\t"), |_| "\t") |
-				map!(tag!("\\r"), |_| "\r") |
-				map!(tag!("\\n"), |_| "\n") |
-				map!(tag!("\\p"), |_| "|") |
-				map!(tag!("\\s"), |_| " ") |
-				map!(tag!("\\/"), |_| "/") |
-				map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
-			))
-		)), |o| o.unwrap_or_default())
-	>> (name.concat(), value.concat())
-));
-
-named!(parse_command(CompleteStr) -> Command, do_parse!(
-	command: alt!(do_parse!(res: alphanumeric >> multispace >> (res)) | tag!("")) >> // Command
 	static_args: many0!(command_arg) >>
 	list_args: many0!(do_parse!(many0!(multispace) >>
 		tag!("|") >>
@@ -90,8 +45,8 @@ named!(parse_command(CompleteStr) -> Command, do_parse!(
 	)) >>
 	many0!(multispace) >>
 	eof!() >>
-	(Command {
-		command: command.to_string(),
+	(CommandData {
+		name: *name,
 		static_args,
 		list_args,
 	})
@@ -120,7 +75,7 @@ impl<'a> CanonicalCommand<'a> {
 	}
 }
 
-pub fn parse_command2(s: &str) -> Result<CommandData> {
+pub fn parse_command(s: &str) -> Result<CommandData> {
 	match inner_parse_command(CompleteStr(s)) {
 		Ok((rest, mut cmd)) => {
 			// Error if rest contains something
@@ -203,178 +158,13 @@ impl<'a> CommandData<'a> {
 	}
 }
 
-impl Command {
-	pub fn new<T: Into<String>>(command: T) -> Command {
-		Command {
-			command: command.into(),
-			static_args: Vec::new(),
-			list_args: Vec::new(),
-		}
-	}
-
-	pub fn push<K: Into<String>, V: Into<String>>(&mut self, key: K, val: V) {
-		self.static_args.push((key.into(), val.into()));
-	}
-
-	/// Replace an argument if it exists.
-	pub fn replace<K: Into<String>, V: Into<String>>(
-		&mut self,
-		key: K,
-		val: V,
-	)
-	{
-		let key = key.into();
-		for &mut (ref mut k, ref mut v) in &mut self.static_args {
-			if key == *k {
-				*v = val.into();
-				break;
-			}
-		}
-	}
-
-	/// Remove an argument if it exists.
-	pub fn remove<K: Into<String>>(&mut self, key: K) {
-		let key = key.into();
-		self.static_args.retain(|&(ref k, _)| *k != key);
-	}
-
-	/// Check, if each list argument is contained in each list.
-	pub fn is_valid(&self) -> bool {
-		if !self.list_args.is_empty() {
-			let first = &self.list_args[0];
-			for l in &self.list_args[1..] {
-				if l.len() != first.len() {
-					return false;
-				}
-				for &(ref arg, _) in first {
-					if l.iter().any(|&(ref a, _)| a == arg) {
-						return false;
-					}
-				}
-			}
-		}
-		true
-	}
-
-	pub fn read<T>(_: T, r: &mut Read) -> Result<Command> {
-		let mut buf = String::new();
-		r.read_to_string(&mut buf)?;
-		match parse_command(CompleteStr(&buf)) {
-			Ok((rest, mut cmd)) => {
-				// Error if rest contains something
-				if !rest.is_empty() {
-					return Err(crate::Error::ParseCommand(format!(
-						"Command was not parsed completely {:?}",
-						rest
-					)));
-				}
-
-				// Some of the static args are variable so move the to the right
-				// category.
-				if !cmd.list_args.is_empty() {
-					let mut la = Vec::new();
-					for &(ref arg, _) in &cmd.list_args[0] {
-						if let Some(i) = cmd
-							.static_args
-							.iter()
-							.position(|&(ref k, _)| k == arg)
-						{
-							la.push(cmd.static_args.remove(i));
-						} else {
-							// Not a valid command list, but ignore it
-						}
-					}
-					cmd.list_args.insert(0, la);
-				}
-				Ok(cmd)
-			}
-			Err(e) => Err(crate::Error::ParseCommand(format!("{:?}", e))),
-		}
-	}
-
-	fn write_escaped(w: &mut Write, s: &str) -> Result<()> {
-		for c in s.chars() {
-			match c {
-				'\u{b}' => write!(w, "\\v"),
-				'\u{c}' => write!(w, "\\f"),
-				'\\' => write!(w, "\\\\"),
-				'\t' => write!(w, "\\t"),
-				'\r' => write!(w, "\\r"),
-				'\n' => writeln!(w),
-				'|' => write!(w, "\\p"),
-				' ' => write!(w, "\\s"),
-				'/' => write!(w, "\\/"),
-				c => write!(w, "{}", c),
-			}?;
-		}
-		Ok(())
-	}
-
-	fn write_key_val(w: &mut Write, k: &str, v: &str) -> Result<()> {
-		if v.is_empty() && k != "return_code" {
-			write!(w, "{}", k)?;
-		} else {
-			write!(w, "{}=", k)?;
-			Self::write_escaped(w, v)?;
-		}
-		Ok(())
-	}
-
-	pub fn write(&self, w: &mut Write) -> Result<()> {
-		w.write_all(self.command.as_bytes())?;
-		for &(ref k, ref v) in &self.static_args {
-			write!(w, " ")?;
-			Self::write_key_val(w, k, v)?;
-		}
-		for (i, args) in self.list_args.iter().enumerate() {
-			if i != 0 {
-				write!(w, "|")?;
-			}
-			for (j, &(ref k, ref v)) in args.iter().enumerate() {
-				if j != 0 || i == 0 {
-					write!(w, " ")?;
-				}
-				Self::write_key_val(w, k, v)?;
-			}
-		}
-		Ok(())
-	}
-
-	pub fn has_arg(&self, arg: &str) -> bool {
-		if self.static_args.iter().any(|&(ref a, _)| a == arg) {
-			true
-		} else if !self.list_args.is_empty() {
-			self.list_args[0].iter().any(|&(ref a, _)| a == arg)
-		} else {
-			false
-		}
-	}
-
-	pub fn get_static_arg<K: AsRef<str>>(&self, key: K) -> Option<&str> {
-		let key = key.as_ref();
-		self.static_args
-			.iter()
-			.filter_map(
-				|&(ref k, ref v)| {
-					if k == key {
-						Some(v.as_str())
-					} else {
-						None
-					}
-				},
-			)
-			.next()
-	}
-}
-
 #[cfg(test)]
 mod tests {
 	use std::collections::HashMap;
 	use std::io::Cursor;
 	use std::iter::FromIterator;
 
-	use super::parse_command2;
-	use crate::commands::Command;
+	use super::parse_command;
 
 	#[test]
 	fn parse() {

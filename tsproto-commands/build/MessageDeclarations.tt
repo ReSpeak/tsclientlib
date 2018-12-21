@@ -3,8 +3,6 @@ use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::mem;
 
-use chrono::naive::NaiveDateTime;
-use chrono::{DateTime, Duration, Utc};
 use num_traits::{FromPrimitive, ToPrimitive};
 use tsproto::packets::{Direction, Flags, InCommand, OutCommand, OutPacket,
 	PacketType};
@@ -84,11 +82,11 @@ pub struct In<#= msg.name #><'a> {
 <# if msg_group.default.response { #>
 	pub return_code: Option<&'a str>,
 <# } #>
-	list: Vec<In<#= msg.name #>Part<'a>>,
+	list: Vec<<#= msg.name #>Part<'a>>,
 }
 
 #[derive(Debug)]
-pub struct In<#= msg.name #>Part<'a> {
+pub struct <#= msg.name #>Part<'a> {
 <# for a in &msg.attributes {
 	let field = self.0.get_field(a); #>
 	<# if field.get_rust_name() != field.ts { #>
@@ -145,7 +143,7 @@ impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
 		// List arguments
 		let mut list = Vec::new();
 		for <#= if msg.attributes.is_empty() { "_" } else { "ccmd" } #> in cmd.iter() {
-			list.push(In<#= msg.name #>Part {
+			list.push(<#= msg.name #>Part {
 		<# for a in &msg.attributes {
 			let field = self.0.get_field(a); #>
 				<#= field.get_rust_name() #>: {
@@ -170,7 +168,7 @@ impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
 
 impl<'a> In<#= msg.name #><'a> {
 	#[inline]
-	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { InMessageIterator(&self.list, 0) }
+	pub fn iter(&self) -> InMessageIterator<<#= msg.name #>Part> { InMessageIterator(&self.list, 0) }
 }
 
 <# }
@@ -192,7 +190,7 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 
 pub struct Out<#= msg.name #>Message;
 impl Out<#= msg.name #>Message {
-	pub fn new<'a, I: Iterator<Item=In<#= msg.name #>Part<'a>>>(list: I<#=
+	pub fn new<'a, I: Iterator<Item=<#= msg.name #>Part<'a>>>(list: I<#=
 			if msg_group.default.response { ", return_code: Option<&str>" } else { "" } #>) -> OutPacket {
 		let mut packet = OutPacket::new_with_dir(Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
 			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" }
@@ -221,7 +219,7 @@ impl Out<#= msg.name #>Message {
 		});
 	<# } #>
 		OutCommand::new_into::<&'static str, Cow<str>, &'static str, Cow<str>, _, _, _>(
-			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>", static_args, list_args, packet.data());
+			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>", static_args, list_args, packet.data_mut());
 		packet
 	}
 }

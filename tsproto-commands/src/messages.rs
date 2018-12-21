@@ -1,13 +1,12 @@
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
 
+use chrono::naive::NaiveDateTime;
+use chrono::{DateTime, Duration, Utc};
+use tsproto::packets::{Direction, PacketType};
+
 use errors::Error;
 use *;
-
-pub trait Response {
-	fn get_return_code(&self) -> Option<&str>;
-	fn set_return_code(&mut self, return_code: Option<String>);
-}
 
 pub trait TryParse<T>: Sized {
 	type Err;
@@ -67,4 +66,11 @@ pub enum ParseError {
 	InvalidValue { arg: &'static str, value: String },
 }
 
-include!(concat!(env!("OUT_DIR"), "/messages.rs"));
+pub mod s2c {
+	use super::*;
+	include!(concat!(env!("OUT_DIR"), "/s2c_messages.rs"));
+}
+pub mod c2s {
+	use super::*;
+	include!(concat!(env!("OUT_DIR"), "/c2s_messages.rs"));
+}

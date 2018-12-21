@@ -23,8 +23,13 @@ fn main() {
 	write!(&mut structs, "{}", Errors::default()).unwrap();
 
 	// Write messages
-	let mut structs = File::create(&path.join("messages.rs")).unwrap();
-	write!(&mut structs, "{}", MessageDeclarations::default()).unwrap();
+	let decls = MessageDeclarations::s2c();
+	let mut structs = File::create(&path.join("s2c_messages.rs")).unwrap();
+	write!(&mut structs, "{}", MessageDeclarations(&decls)).unwrap();
+
+	let decls = MessageDeclarations::c2s();
+	let mut structs = File::create(&path.join("c2s_messages.rs")).unwrap();
+	write!(&mut structs, "{}", MessageDeclarations(&decls)).unwrap();
 
 	// Write versions
 	let mut structs = File::create(&path.join("versions.rs")).unwrap();

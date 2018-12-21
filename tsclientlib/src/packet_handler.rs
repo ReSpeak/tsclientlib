@@ -8,7 +8,7 @@ use parking_lot::RwLock;
 use slog::Logger;
 use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::*;
-use tsproto_commands::messages::Message;
+use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use {tokio, tsproto, PHBox, TsError};
 
 use data::Connection;
@@ -128,9 +128,8 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 
 	/// 1. Get first packet and send with `initserver_sender`
 	/// 2. Get connection by polling `connection_recv`
-	/// 3. For each command packet
 	/// 3.1 If it is an error response: Send return code if possible
-	/// 3.2 Else split up into messages and apply to connection
+	/// 3.2 Else apply message to connection
 	///	4. Output packet
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
 		let con;
@@ -143,17 +142,15 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 
 			// 3.
 			let mut con = con.write();
-			let mut handled = true;
 			// Split into messages
-			for c in cmd.iter() {
-				match Message::parse(c) {
-					Err(e) => {
-						warn!(self.logger, "Failed to parse message";
-							"command" => cmd.name(),
-							"error" => ?e);
-						handled = false;
-					}
-					Ok(Message::CommandError(cmd)) => {
+			match InMessage::new(cmd) {
+				Err(e) => {
+					warn!(self.logger, "Failed to parse message";
+						"command" => cmd.name(),
+						"error" => ?e);
+				}
+				Ok(msg) => {
+					if let InMessages::CommandError(cmd) = msg.msg() {
 						// 3.1
 						if let Ok(code) = cmd.return_code.parse() {
 							if let Some(return_sender) = self
@@ -163,23 +160,19 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 								let _ = return_sender.send(cmd.id).is_err();
 							}
 						}
+						// Packet contains only handled return codes
+						task::current().notify();
+						return Ok(Async::NotReady);
 					}
-					Ok(msg) => {
-						// 3.2
-						// Apply
-						if let Err(e) = con.handle_message(&msg) {
-							warn!(self.logger, "Failed to handle message";
-								"command" => cmd.name(),
-								"error" => ?e);
-						}
-						handled = false;
+
+					// 3.2
+					// Apply
+					if let Err(e) = con.handle_message(&msg) {
+						warn!(self.logger, "Failed to handle message";
+							"command" => cmd.name(),
+							"error" => ?e);
 					}
 				}
-			}
-			if handled {
-				// Packet contains only handled return codes
-				task::current().notify();
-				return Ok(Async::NotReady);
 			}
 
 			// 4.

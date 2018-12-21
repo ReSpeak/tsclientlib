@@ -47,17 +47,17 @@ use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Once, ONCE_INIT, RwLock, RwLockReadGuard};
 use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
-use tsproto::commands::Command;
-use tsproto::packets::{Header, InAudio, InCommand, Packet, PacketType};
-use tsproto::{client, commands, crypto, log, packets};
-use tsproto_commands::messages::Message;
+use tsproto::packets::{Direction, InAudio, InCommand, OutCommand, OutPacket,
+	PacketType};
+use tsproto::{client, crypto, log};
+use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
 use packet_handler::{ReturnCodeHandler, SimplePacketHandler};
 
 macro_rules! copy_attrs {
 	($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
 		$to {
-			$($attr: $from.$attr.clone(),)*
+			$($attr: $from.$attr.into(),)*
 			$($extra: $ex,)*
 		}
 	};
@@ -372,10 +372,15 @@ impl Connection {
 								e
 							).into()
 						}).and_then(move |cmd| {
-							let cmd = cmd.iter().next().unwrap();
-							let notif = Message::parse(cmd)?;
-							if let Message::InitServer(p) = notif {
-								Ok(p)
+							let msg = InMessage::new(cmd)?;
+							if let InMessages::InitServer(p) = msg.msg() {
+								if p.iter().next().is_some() {
+									Ok(p)
+								} else {
+									Err(Error::ConnectionFailed(String::from(
+										"Got no real initserver",
+									)))
+								}
 							} else {
 								Err(Error::ConnectionFailed(String::from(
 									"Got no initserver",
@@ -425,29 +430,35 @@ impl Connection {
 						"offset" => offset);
 
 					// Create clientinit packet
-					let header = Header::new(PacketType::Command);
-					let mut command = commands::Command::new("clientinit");
-					command.push("client_nickname", options.name.clone());
-					command.push("client_version", options.version.get_version_string());
-					command.push("client_platform", options.version.get_platform());
-					command.push("client_input_hardware", "1");
-					command.push("client_output_hardware", "1");
-					command.push("client_default_channel", "");
-					command.push("client_default_channel_password", "");
-					command.push("client_server_password", "");
-					command.push("client_meta_data", "");
-					command.push("client_version_sign", base64::encode(
-						options.version.get_signature()));
-					command.push("client_key_offset", offset.to_string());
-					command.push("client_nickname_phonetic", "");
-					command.push("client_default_token", "");
-					command.push("hwid", "123,456");
-					let p_data = packets::Data::Command(command);
-					let clientinit_packet = Packet::new(header, p_data);
+					let version_string = options.version.get_version_string();
+					let version_platform = options.version.get_platform();
+					let version_sign = base64::encode(options.version.get_signature());
+					let offset = offset.to_string();
+					let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+						Direction::C2S,
+						PacketType::Command,
+						"clientinit",
+						vec![
+							("client_nickname", options.name.as_str()),
+							("client_version", &version_string),
+							("client_platform", &version_platform),
+							("client_input_hardware", "1"),
+							("client_output_hardware", "1"),
+							("client_default_channel", ""),
+							("client_default_channel_password", ""),
+							("client_server_password", ""),
+							("client_meta_data", ""),
+							("client_version_sign", &version_sign),
+							("client_nickname_phonetic", ""),
+							("client_key_offset", &offset),
+							("client_default_token", ""),
+							("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
+						].into_iter(),
+						std::iter::empty(),
+					);
 
 					let sink = con.as_packet_sink();
-
-					sink.send(clientinit_packet).map(move |_| con)
+					sink.send(packet).map(move |_| con)
 				})
 				.from_err()
 				// Wait until we sent the clientinit packet and afterwards received
@@ -467,7 +478,7 @@ impl Connection {
 
 					// Create connection
 					let data = data::Connection::new(Uid(uid),
-						&initserver);
+						initserver.iter().next().expect("Got no real initserver"));
 					let con = InnerConnection {
 						connection: Arc::new(RwLock::new(data)),
 						client_data: client2,
@@ -508,7 +519,7 @@ impl Connection {
 	/// interface may change on any version changes.
 	pub fn get_packet_sink(
 		&self,
-	) -> impl Sink<SinkItem = Packet, SinkError = Error> {
+	) -> impl Sink<SinkItem = OutPacket, SinkError = Error> {
 		self.inner
 			.client_connection
 			.as_packet_sink()
@@ -536,31 +547,17 @@ impl Connection {
 	///
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
-	pub fn send_message(
+	pub fn send_packet(
 		&self,
-		msg: Message,
+		packet: OutPacket,
 	) -> impl Future<Item = (), Error = Error> {
 		// Store waiting in HashMap<usize (return code), oneshot::Sender>
 		// The packet handler then sends a result to the sender if the answer is
 		// received.
 
-		let np = msg.get_newprotocol();
-		let typ = if !msg.get_commandlow() {
-			PacketType::Command
-		} else {
-			PacketType::CommandLow
-		};
-		let mut cmd: Command = msg.into();
 		let (code, recv) = self.inner.return_code_handler.get_return_code();
-		cmd.push("return_code", code.to_string());
-		let mut header = Header::new(typ);
-		header.set_newprotocol(np);
-		let data = if typ == PacketType::Command {
-			packets::Data::Command(cmd)
-		} else {
-			packets::Data::CommandLow(cmd)
-		};
-		let packet = packets::Packet::new(header, data);
+		// TODO Add return code
+		//cmd.push("return_code", code.to_string());
 
 		// Send a message and wait until we get an answer for the return code
 		self.get_packet_sink()
@@ -569,7 +566,8 @@ impl Connection {
 				recv.map_err(|e| {
 					format_err!("Too many return codes ({:?})", e).into()
 				})
-			}).and_then(|r| {
+			})
+			.and_then(|r| {
 				if r == TsError::Ok {
 					Ok(())
 				} else {
@@ -648,18 +646,21 @@ impl Connection {
 	) -> BoxFuture<()> {
 		let options = options.into().unwrap_or_default();
 
-		let header = Header::new(PacketType::Command);
-		let mut command = commands::Command::new("clientdisconnect");
-
+		let mut args = Vec::new();
 		if let Some(reason) = options.reason {
-			command.push("reasonid", (reason as u8).to_string());
+			args.push(("reasonid", (reason as u8).to_string()));
 		}
 		if let Some(msg) = options.message {
-			command.push("reasonmsg", msg);
+			args.push(("reasonmsg", msg));
 		}
 
-		let p_data = packets::Data::Command(command);
-		let packet = Packet::new(header, p_data);
+		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"clientdisconnect",
+			args.into_iter(),
+			std::iter::empty(),
+		);
 
 		let wait_for_state =
 			client::wait_for_state(&self.inner.client_connection, |state| {

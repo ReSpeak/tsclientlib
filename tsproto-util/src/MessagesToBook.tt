@@ -1,12 +1,12 @@
 <#@ template cleanws="true" #>
 impl Connection {
-	fn handle_message_generated(&mut self, msg: &messages::Message) -> Result<()> {
+	fn handle_message_generated(&mut self, msg: &s2c::InMessage) -> Result<()> {
 		// TODO Also raise events for changes, adds, removes
-		match *msg {
+		match msg.msg() {
 <# for event in &self.decls {
 	let enum_name = &event.msg.name;
 #>
-			messages::Message::<#= enum_name #>(ref cmd) => {
+			s2c::InMessages::<#= enum_name #>(cmd) => {
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name)); #>
 				self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;

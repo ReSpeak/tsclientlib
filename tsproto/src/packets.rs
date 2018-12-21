@@ -538,7 +538,7 @@ impl InPacket {
 						return Err(format_err!("Packet too short").into());
 					}
 					let s = ::std::str::from_utf8(&content[len..])?;
-					let command = crate::commands::parse_command2(s)?;
+					let command = crate::commands::parse_command(s)?;
 					Ok(C2SInitData::Init4 {
 						version,
 						x: array_ref!(content, 5, 64),
@@ -666,7 +666,7 @@ impl InCommand {
 	{
 		let inner = rentals::Command::try_new_or_drop(content, |c| {
 			let s = ::std::str::from_utf8(c)?;
-			crate::commands::parse_command2(s)
+			crate::commands::parse_command(s)
 		})?;
 		Ok(Self {
 			inner,

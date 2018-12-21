@@ -28,7 +28,7 @@ fn get_id_args(event: &Event) -> String {
 		if !res.is_empty() {
 			res.push_str(", ");
 		}
-		if is_ref_type(&f.get_rust_type("")) {
+		if is_ref_type(&f.get_rust_type("", false)) {
 			res.push('&');
 		}
 		res.push_str("cmd.");
@@ -38,7 +38,7 @@ fn get_id_args(event: &Event) -> String {
 }
 
 fn get_notification_field(from: &Field) -> String {
-	let rust_type = from.get_rust_type("");
+	let rust_type = from.get_rust_type("", false);
 	if rust_type == "String"
 		|| rust_type == "Uid"
 		|| rust_type.starts_with("Vec<")
