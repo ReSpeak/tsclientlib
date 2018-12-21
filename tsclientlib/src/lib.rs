@@ -303,19 +303,14 @@ impl Connection {
 					);
 					let return_code_handler =
 						packet_handler.return_codes.clone();
-					let packet_handler =
-						client::DefaultPacketHandler::new(packet_handler);
-					let client = match client::ClientData::new(
+					let client = match client::new(
 						options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
 							"0.0.0.0:0".parse().unwrap()
 						} else {
 							"[::]:0".parse().unwrap()
 						}),
 						private_key.clone(),
-						true,
-						None,
 						packet_handler,
-						tsproto::connectionmanager::SocketConnectionManager::new(),
 						logger.clone(),
 					) {
 						Ok(client) => client,
@@ -553,7 +548,6 @@ impl Connection {
 			})
 	}
 
-	// TODO Rename to read and create write?
 	pub fn lock(&self) -> ConnectionLock {
 		ConnectionLock::new(self.inner.connection.read())
 	}

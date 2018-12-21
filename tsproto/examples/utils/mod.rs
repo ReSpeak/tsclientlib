@@ -59,13 +59,10 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-	let c = client::ClientData::new(
+	let c = client::new(
 		local_address,
 		private_key,
-		true,
-		None,
-		client::DefaultPacketHandler::new(packet_handler),
-		connectionmanager::SocketConnectionManager::new(),
+		packet_handler,
 		logger,
 	)
 	.unwrap();

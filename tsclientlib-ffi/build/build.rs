@@ -1,6 +1,3 @@
-extern crate tsproto_structs;
-extern crate tsproto_util;
-
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;

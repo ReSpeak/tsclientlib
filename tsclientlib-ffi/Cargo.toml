@@ -3,12 +3,14 @@ name = "tsclientlib-ffi"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 build = "build/build.rs"
+edition = "2018"
 
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 chashmap = "2"
+crossbeam = "0.6"
 failure = "0.1"
 lazy_static = "1"
 num = "0.2"

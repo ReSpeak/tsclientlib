@@ -527,17 +527,6 @@ impl PacketCodecSender {
 			packet.flags(packet.header().flags() | Flags::NEWPROTOCOL);
 		}
 
-		// Change state on disconnect
-		// TODO Move to observer for client
-		if p_type == PacketType::Command {
-			let s = b"clientdisconnect";
-			if packet.content()[..s.len()] == s[..] {
-				con.resender.handle_event(
-					crate::connectionmanager::ResenderEvent::Disconnecting,
-				);
-			}
-		}
-
 		let (gen, p_id) = if p_type == PacketType::Init {
 			(0, 0)
 		} else {

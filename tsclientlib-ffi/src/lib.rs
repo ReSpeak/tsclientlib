@@ -1,19 +1,13 @@
-extern crate chashmap;
 #[macro_use]
 extern crate failure;
-#[macro_use]
-extern crate lazy_static;
-extern crate num;
-extern crate parking_lot;
-extern crate tokio;
-extern crate tsclientlib;
 
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use chashmap::CHashMap;
+use crossbeam::channel;
+use lazy_static::lazy_static;
 use num::ToPrimitive;
 use parking_lot::Mutex;
 use tokio::prelude::{future, Future};
@@ -32,10 +26,8 @@ lazy_static! {
 	static ref CONNECTIONS: CHashMap<ConnectionId, Connection> = CHashMap::new();
 
 	// TODO It's bad when the sender blocks, maybe use futures
-	static ref EVENTS: (std::sync::mpsc::SyncSender<Event>,
-		Mutex<std::sync::mpsc::Receiver<Event>>) = {
-		let (send, recv) = std::sync::mpsc::sync_channel(EVENT_CHANNEL_SIZE);
-		(send, Mutex::new(recv))
+	static ref EVENTS: (channel::Sender<Event>, channel::Receiver<Event>) = {
+		channel::bounded(EVENT_CHANNEL_SIZE)
 	};
 }
 
@@ -142,9 +134,9 @@ impl ConnectionExt for tsclientlib::data::Connection {
 
 impl ConnectionId {
 	fn next_free() -> Self {
-		let next_free = FIRST_FREE_CON_ID.lock();
+		let mut next_free = FIRST_FREE_CON_ID.lock();
 		let res = *next_free;
-		let next = res.0 + 1;
+		let mut next = res.0 + 1;
 		while CONNECTIONS.contains_key(&ConnectionId(next)) {
 			next += 1;
 		}
@@ -154,7 +146,7 @@ impl ConnectionId {
 
 	/// Should be called when a connection is removed
 	fn mark_free(id: Self) {
-		let next_free = FIRST_FREE_CON_ID.lock();
+		let mut next_free = FIRST_FREE_CON_ID.lock();
 		if id < *next_free {
 			*next_free = id;
 		}
@@ -192,7 +184,7 @@ pub extern "C" fn disconnect(con_id: ConnectionId) {
 
 #[no_mangle]
 pub extern "C" fn next_event(ev: *mut FfiEvent) {
-	let event = EVENTS.1.lock().unwrap().recv().unwrap();
+	let event = EVENTS.1.recv().unwrap();
 	unsafe { *ev = FfiEvent {
 		content: match &event {
 			Event::ConnectionAdded(c) => FfiEventUnion { connection_added: *c },

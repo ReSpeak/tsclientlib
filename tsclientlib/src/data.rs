@@ -42,7 +42,6 @@ macro_rules! max_clients {
 }
 
 impl Connection {
-	// TODO Make all arguments static for the initserver
 	pub(crate) fn new(server_uid: Uid, msg: &InMessage) -> Self {
 		let packet = if let InMessages::InitServer(p) = msg.msg() {
 			p
@@ -268,8 +267,8 @@ impl Connection {
 		}
 	}
 
-	fn badges_fun(&self, _cmd: &s2c::ClientEnterViewPart) -> Vec<String> {
-		Vec::new() // TODO
+	fn badges_fun(&self, cmd: &s2c::ClientEnterViewPart) -> Vec<String> {
+		cmd.badges.split(',').map(|s| s.into()).collect()
 	}
 
 	fn address_fun(&self, cmd: &s2c::ClientConnectionInfoPart) -> Option<SocketAddr> {

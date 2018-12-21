@@ -68,7 +68,6 @@ fn main() -> Result<(), failure::Error> {
 	tokio::run(
 		futures::lazy(|| {
 			let con_config = ConnectOptions::new(args.address)
-				// TODO log commands in tsproto
 				.log_commands(args.verbose >= 1)
 				.log_packets(args.verbose >= 2)
 				.log_udp_packets(args.verbose >= 3);

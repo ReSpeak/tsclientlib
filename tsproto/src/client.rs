@@ -24,7 +24,7 @@ use crate::connectionmanager::{
 };
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::handler_data::{
-	ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler,
+	self, ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler,
 };
 use crate::license::Licenses;
 use crate::packets::*;
@@ -115,6 +115,46 @@ pub fn wait_until_connected(
 			false
 		}
 	})
+}
+
+pub fn new<
+	PH: PacketHandler<ServerConnectionData> + 'static,
+	L: Into<Option<slog::Logger>>,
+>(
+	local_addr: SocketAddr,
+	private_key: EccKeyPrivP256,
+	packet_handler: PH,
+	logger: L,
+) -> Result<std::sync::Arc<Mutex<ClientData<PH>>>> {
+	let res = ClientData::new(
+		local_addr,
+		private_key,
+		true,
+		None,
+		DefaultPacketHandler::new(packet_handler),
+		SocketConnectionManager::new(),
+		logger,
+	)?;
+
+	// Change state on disconnect
+	struct Observer;
+	impl handler_data::OutPacketObserver<ServerConnectionData> for Observer {
+		fn observe(&self, (_, con): &mut (ServerConnectionData, Connection),
+			packet: &mut OutPacket) {
+			if packet.header().packet_type() == PacketType::Command {
+				let s = b"clientdisconnect";
+				if packet.content()[..s.len()] == s[..] {
+					con.resender.handle_event(
+						crate::connectionmanager::ResenderEvent::Disconnecting,
+					);
+				}
+			}
+		}
+	}
+
+	res.lock().add_out_packet_observer("tsproto::client".into(), Box::new(Observer));
+
+	Ok(res)
 }
 
 /// Connect to a server.

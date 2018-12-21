@@ -8,11 +8,6 @@ use tsproto::packets::{Direction, PacketType};
 use crate::*;
 use crate::errors::Error;
 
-pub trait TryParse<T>: Sized {
-	type Err;
-	fn try_from(t: T) -> Result<Self, Self::Err>;
-}
-
 #[derive(Fail, Debug)]
 pub enum ParseError {
 	#[fail(display = "Parameter {} not found in {}", arg, name)]
