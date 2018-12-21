@@ -67,12 +67,10 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	)
 	.unwrap();
 
-	// Set the data reference
-	let c2 = Arc::downgrade(&c);
 	{
 		let mut c = c.lock();
 		let c = &mut *c;
-		c.packet_handler.complete(c2);
+		// Logging
 		if verbose > 0 {
 			log::add_command_logger(c);
 		}
@@ -129,7 +127,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 				("client_default_channel_password", ""),
 				("client_server_password", ""),
 				("client_meta_data", ""),
-				("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw=="),
+				("client_version_sign", "LJ5q+KWT4KwBX7oR\\/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw=="),
 				("client_nickname_phonetic", ""),
 				("client_key_offset", &offset),
 				("client_default_token", ""),

@@ -16,7 +16,7 @@ named!(command_arg(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace
 		preceded!(tag!("="),
 			do_parse!(
 				// Try to parse the value without escaped characters
-				prefix: opt!(is_not!("\u{b}\u{c}\\\t\r\n| /")) >>
+				prefix: opt!(is_not!("\u{b}\u{c}\\\t\r\n| ")) >>
 				rest: many0!(alt!(
 					map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
 					map!(tag!("\\f"), |_| "\x0c") | // Form feed
@@ -27,7 +27,7 @@ named!(command_arg(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace
 					map!(tag!("\\p"), |_| "|") |
 					map!(tag!("\\s"), |_| " ") |
 					map!(tag!("\\/"), |_| "/") |
-					map!(is_not!("\u{b}\u{c}\\\t\r\n| /"), |s| *s)
+					map!(is_not!("\u{b}\u{c}\\\t\r\n| "), |s| *s)
 				)) >> (if rest.is_empty() { Cow::Borrowed(prefix.map(|p| *p).unwrap_or("")) }
 					else { Cow::Owned(format!("{}{}", prefix.map(|p| *p).unwrap_or(""), rest.concat())) })
 			)
@@ -252,6 +252,12 @@ mod tests {
 	#[test]
 	fn clientinitiv() {
 		let cmd = test_loop("clientinitiv alpha=41Te9Ar7hMPx+A== omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 ip");
+		assert_eq!(cmd.name, "clientinitiv");
+	}
+
+	#[test]
+	fn clientinitiv2() {
+		let cmd = parse_command("clientinitiv alpha=giGMvmfHzbY3ig== omega=MEsDAgcAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50= ot=1 ip").unwrap();
 		assert_eq!(cmd.name, "clientinitiv");
 	}
 

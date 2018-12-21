@@ -65,12 +65,10 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	)
 	.unwrap();
 
-	// Set the data reference
-	let c2 = Arc::downgrade(&c);
 	{
 		let mut c = c.lock();
 		let c = &mut *c;
-		c.packet_handler.complete(c2);
+		// Logging
 		if verbose > 0 {
 			log::add_command_logger(c);
 		}

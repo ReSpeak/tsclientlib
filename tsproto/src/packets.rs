@@ -493,29 +493,30 @@ impl InPacket {
 		)?))
 	}
 
-	pub fn into_c2sinit(self) -> Result<InC2SInit> {
+	pub fn into_c2sinit(self) -> std::result::Result<InC2SInit, (Self, Error)> {
 		if self.dir != Direction::C2S {
-			return Err(format_err!("Wrong direction").into());
+			return Err((self, format_err!("Wrong direction").into()));
 		}
 		if self.header().packet_type() != PacketType::Init {
-			return Err(format_err!("Not an init packet").into());
+			return Err((self, format_err!("Not an init packet").into()));
 		}
 		if self.header().mac() != b"TS3INIT1" {
-			return Err(format_err!("Wrong init packet mac").into());
+			return Err((self, format_err!("Wrong init packet mac").into()));
 		}
 
-		Ok(InC2SInit(rentals::C2SInit::try_new_or_drop(
+		let dir = self.dir;
+		Ok(InC2SInit(rentals::C2SInit::try_new(
 			Box::new(self.inner),
-			|p| -> Result<_> {
+			|p| {
 				let content = &p.content;
 				if content.len() < 5 {
-					return Err(format_err!("Packet too short").into());
+					return Err(format_err!("Packet too short"));
 				}
 
 				let version = (&content[0..]).read_u32::<NetworkEndian>()?;
-				if content[5] == 0 {
+				if content[4] == 0 {
 					if content.len() < 13 {
-						return Err(format_err!("Packet too short").into());
+						return Err(format_err!("Packet too short"));
 					}
 					Ok(C2SInitData::Init0 {
 						version,
@@ -523,19 +524,19 @@ impl InPacket {
 							.read_u32::<NetworkEndian>()?,
 						random0: array_ref!(content, 9, 4),
 					})
-				} else if content[5] == 2 {
+				} else if content[4] == 2 {
 					if content.len() < 25 {
-						return Err(format_err!("Packet too short").into());
+						return Err(format_err!("Packet too short"));
 					}
 					Ok(C2SInitData::Init2 {
 						version,
 						random1: array_ref!(content, 5, 16),
 						random0_r: array_ref!(content, 21, 4),
 					})
-				} else if content[5] == 4 {
+				} else if content[4] == 4 {
 					let len = 5 + 128 + 4 + 100 + 64;
 					if content.len() < len + 20 {
-						return Err(format_err!("Packet too short").into());
+						return Err(format_err!("Packet too short"));
 					}
 					let s = ::std::str::from_utf8(&content[len..])?;
 					let command = crate::commands::parse_command(s)?;
@@ -550,10 +551,13 @@ impl InPacket {
 						command,
 					})
 				} else {
-					Err(format_err!("Invalid init step").into())
+					Err(format_err!("Invalid init step"))
 				}
 			},
-		)?))
+		).map_err(|r| (Self {
+			inner: *r.1,
+			dir,
+		}, r.0.into()))?))
 	}
 }
 
@@ -653,6 +657,21 @@ impl InS2CInit {
 	#[inline]
 	pub fn with_data<R, F: FnOnce(&S2CInitData) -> R>(&self, f: F) -> R {
 		self.0.rent(f)
+	}
+}
+
+impl InC2SInit {
+	#[inline]
+	pub fn with_data<R, F: FnOnce(&C2SInitData) -> R>(&self, f: F) -> R {
+		self.0.rent(f)
+	}
+
+	#[inline]
+	pub fn into_packet(self) -> InPacket {
+		InPacket {
+			inner: *self.0.into_head(),
+			dir: Direction::C2S,
+		}
 	}
 }
 
@@ -963,7 +982,7 @@ impl OutC2SInit4 {
 pub struct OutS2CInit1;
 impl OutS2CInit1 {
 	pub fn new(random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		let mut res = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -977,7 +996,7 @@ impl OutS2CInit1 {
 pub struct OutS2CInit3;
 impl OutS2CInit3 {
 	pub fn new(x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		let mut res = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();

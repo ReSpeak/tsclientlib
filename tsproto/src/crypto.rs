@@ -1,6 +1,7 @@
 //! This module contains cryptography related code.
 use std::{cmp, fmt, str};
 
+use arrayref::array_ref;
 use base64;
 use num_bigint::{BigInt, Sign};
 use ring::digest;
@@ -437,10 +438,11 @@ impl EccKeyPubEd25519 {
 	}
 
 	pub fn from_base64(data: &str) -> Result<Self> {
-		let mut bs = [0; 32];
 		let decoded = base64::decode(data)?;
-		bs.copy_from_slice(&decoded);
-		Ok(Self::from_bytes(bs))
+		if decoded.len() != 32 {
+			return Err(format_err!("Wrong key length").into());
+		}
+		Ok(Self::from_bytes(*array_ref!(decoded, 0, 32)))
 	}
 
 	pub fn to_base64(&self) -> String {
@@ -458,10 +460,11 @@ impl EccKeyPrivEd25519 {
 	}
 
 	pub fn from_base64(data: &str) -> Result<Self> {
-		let mut bs = [0; 32];
 		let decoded = base64::decode(data)?;
-		bs.copy_from_slice(&decoded);
-		Ok(Self::from_bytes(bs))
+		if decoded.len() != 32 {
+			return Err(format_err!("Wrong key length").into());
+		}
+		Ok(Self::from_bytes(*array_ref!(decoded, 0, 32)))
 	}
 
 	pub fn from_bytes(data: [u8; 32]) -> Self {

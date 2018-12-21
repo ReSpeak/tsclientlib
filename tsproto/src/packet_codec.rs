@@ -313,7 +313,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						error!(logger, "Failed to send packet to handler"; "error" => ?e);
 					}
 				} else if let Err(e) =
-					con.1.c2s_init_sink.unbounded_send(packet.into_c2sinit()?)
+					con.1.c2s_init_sink.unbounded_send(packet.into_c2sinit()
+						.map_err(|(_, e)| e)?)
 				{
 					error!(logger, "Failed to send packet to handler"; "error" => ?e);
 				}

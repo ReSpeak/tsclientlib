@@ -55,9 +55,10 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
 			.map(|s| u8::from_str_radix(s, 16))
 			.collect::<::std::result::Result<Vec<_>, _>>()?)
 	} else if s.starts_with("0x") {
+		let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
 		// Own dumps
 		Ok(s[2..]
-			.split(", ")
+			.split(',')
 			.map(|s| {
 				if s.starts_with("0x") {
 					u8::from_str_radix(&s[2..], 16)
@@ -67,6 +68,7 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
 			})
 			.collect::<::std::result::Result<Vec<_>, _>>()?)
 	} else {
+		let s: String = s.chars().filter(|c| !c.is_whitespace()).collect();
 		Ok(s.as_bytes()
 			.chunks(2)
 			.map(|s| u8::from_str_radix(::std::str::from_utf8(s).unwrap(), 16))

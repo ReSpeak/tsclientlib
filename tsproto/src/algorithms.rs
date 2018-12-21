@@ -97,7 +97,6 @@ pub fn compress_and_split(
 	let len = datas.len();
 	let fragmented = len > 1;
 	let orig_header = packet.header_bytes();
-	let header = packet.header();
 	let dir = packet.direction();
 	let mut packets = Vec::with_capacity(datas.len());
 	for (i, mut d) in datas.into_iter().enumerate() {
@@ -105,12 +104,12 @@ pub fn compress_and_split(
 		let mut packet = OutPacket::new_from_data(dir, d);
 		// Only set flags on first fragment
 		if i == 0 && compressed {
-			packet.flags(header.flags() | Flags::COMPRESSED);
+			packet.flags(packet.header().flags() | Flags::COMPRESSED);
 		}
 
 		// Set fragmented flag on first and last part
 		if fragmented && (i == 0 || i == len - 1) {
-			packet.flags(header.flags() | Flags::FRAGMENTED);
+			packet.flags(packet.header().flags() | Flags::FRAGMENTED);
 		}
 		packets.push(packet);
 	}

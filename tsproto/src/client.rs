@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
 use chrono::Utc;
 use futures::sync::mpsc;
@@ -125,8 +125,8 @@ pub fn new<
 	private_key: EccKeyPrivP256,
 	packet_handler: PH,
 	logger: L,
-) -> Result<std::sync::Arc<Mutex<ClientData<PH>>>> {
-	let res = ClientData::new(
+) -> Result<Arc<Mutex<ClientData<PH>>>> {
+	let c = ClientData::new(
 		local_addr,
 		private_key,
 		true,
@@ -136,25 +136,33 @@ pub fn new<
 		logger,
 	)?;
 
-	// Change state on disconnect
-	struct Observer;
-	impl handler_data::OutPacketObserver<ServerConnectionData> for Observer {
-		fn observe(&self, (_, con): &mut (ServerConnectionData, Connection),
-			packet: &mut OutPacket) {
-			if packet.header().packet_type() == PacketType::Command {
-				let s = b"clientdisconnect";
-				if packet.content()[..s.len()] == s[..] {
-					con.resender.handle_event(
-						crate::connectionmanager::ResenderEvent::Disconnecting,
-					);
+	let c2 = Arc::downgrade(&c);
+	{
+		let mut c = c.lock();
+		let c = &mut *c;
+		// Set the data reference
+		c.packet_handler.complete(c2);
+
+		// Change state on disconnect
+		struct Observer;
+		impl handler_data::OutPacketObserver<ServerConnectionData> for Observer {
+			fn observe(&self, (_, con): &mut (ServerConnectionData, Connection),
+				packet: &mut OutPacket) {
+				if packet.header().packet_type() == PacketType::Command {
+					let s = b"clientdisconnect";
+					if packet.content()[..s.len()] == s[..] {
+						con.resender.handle_event(
+							crate::connectionmanager::ResenderEvent::Disconnecting,
+						);
+					}
 				}
 			}
 		}
+
+		c.add_out_packet_observer("tsproto::client".into(), Box::new(Observer));
 	}
 
-	res.lock().add_out_packet_observer("tsproto::client".into(), Box::new(Observer));
-
-	Ok(res)
+	Ok(c)
 }
 
 /// Connect to a server.
@@ -268,7 +276,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				) {
 					Ok(r) => r,
 					Err(e) => {
-						error!(logger, "Error handling client command";
+						error!(logger, "Error handling init packet";
 							"error" => ?e);
 						// Ignore packet, it is probably malformed
 						return Ok(None);

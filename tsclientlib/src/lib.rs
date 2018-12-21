@@ -317,12 +317,10 @@ impl Connection {
 						Err(error) => return Box::new(future::err(error.into())),
 					};
 
-					// Set the data reference
-					let client2 = Arc::downgrade(&client);
 					{
-						let mut c = client.try_lock().unwrap();
+						let mut c = client.lock();
 						let c = &mut *c;
-						c.packet_handler.complete(client2);
+						// Logging
 						if options.log_commands { log::add_command_logger(c); }
 						if options.log_packets { log::add_packet_logger(c); }
 						if options.log_udp_packets { log::add_udp_packet_logger(c); }
