@@ -5,12 +5,12 @@ use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
 use tsproto::packets::{Direction, PacketType};
 
-use errors::Error;
-use *;
+use crate::*;
+use crate::errors::Error;
 
 pub trait TryParse<T>: Sized {
 	type Err;
-	fn try_from(T) -> Result<Self, Self::Err>;
+	fn try_from(t: T) -> Result<Self, Self::Err>;
 }
 
 #[derive(Fail, Debug)]

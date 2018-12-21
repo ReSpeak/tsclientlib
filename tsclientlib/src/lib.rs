@@ -372,15 +372,9 @@ impl Connection {
 								e
 							).into()
 						}).and_then(move |cmd| {
-							let msg = InMessage::new(cmd)?;
-							if let InMessages::InitServer(p) = msg.msg() {
-								if p.iter().next().is_some() {
-									Ok(p)
-								} else {
-									Err(Error::ConnectionFailed(String::from(
-										"Got no real initserver",
-									)))
-								}
+							let msg = InMessage::new(cmd).map_err(|(_, e)| e)?;
+							if let InMessages::InitServer(_) = msg.msg() {
+								Ok(msg)
 							} else {
 								Err(Error::ConnectionFailed(String::from(
 									"Got no initserver",
@@ -477,8 +471,7 @@ impl Connection {
 					};
 
 					// Create connection
-					let data = data::Connection::new(Uid(uid),
-						initserver.iter().next().expect("Got no real initserver"));
+					let data = data::Connection::new(Uid(uid), &initserver);
 					let con = InnerConnection {
 						connection: Arc::new(RwLock::new(data)),
 						client_data: client2,

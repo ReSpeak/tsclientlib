@@ -687,6 +687,8 @@ impl InCommand {
 	}
 
 	#[inline]
+	pub fn content(&self) -> &[u8] { self.inner.head() }
+	#[inline]
 	pub fn packet_type(&self) -> PacketType { self.p_type }
 	#[inline]
 	pub fn newprotocol(&self) -> bool { self.newprotocol }
@@ -792,7 +794,7 @@ impl OutCommand {
 	/// # Examples
 	/// Write a command from existing `CommandData`.
 	/// ```
-	/// let command = crate::commands::parse_command2("").unwrap();
+	/// let command = crate::commands::parse_command("").unwrap();
 	/// tsproto::packets::OutCommand::new(command.name,
 	///     command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
 	///     command.list_args.iter().map(|i| {
@@ -842,7 +844,7 @@ impl OutCommand {
 		for (k, v) in static_args {
 			let k = k.as_ref();
 			let v = v.as_ref();
-			if !name.is_empty() {
+			if !res.is_empty() {
 				res.push(b' ');
 			}
 			res.extend_from_slice(k.as_bytes());
@@ -854,10 +856,10 @@ impl OutCommand {
 
 		let mut first_list = true;
 		for i in list_args {
-			if !name.is_empty() {
-				res.push(b' ');
-			}
 			if first_list {
+				if !name.is_empty() {
+					res.push(b' ');
+				}
 				first_list = false;
 			} else {
 				res.push(b'|');

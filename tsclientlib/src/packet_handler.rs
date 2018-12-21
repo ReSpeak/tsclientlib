@@ -143,14 +143,19 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 			// 3.
 			let mut con = con.write();
 			// Split into messages
-			match InMessage::new(cmd) {
-				Err(e) => {
+			let name = cmd.name().to_string();
+			let msg = InMessage::new(cmd);
+			let cmd;
+			match msg {
+				Err((c, e)) => {
 					warn!(self.logger, "Failed to parse message";
-						"command" => cmd.name(),
+						"command" => name,
 						"error" => ?e);
+					cmd = c;
 				}
 				Ok(msg) => {
 					if let InMessages::CommandError(cmd) = msg.msg() {
+						let cmd = cmd.iter().next().unwrap();
 						// 3.1
 						if let Ok(code) = cmd.return_code.parse() {
 							if let Some(return_sender) = self
@@ -169,9 +174,10 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 					// Apply
 					if let Err(e) = con.handle_message(&msg) {
 						warn!(self.logger, "Failed to handle message";
-							"command" => cmd.name(),
+							"command" => name,
 							"error" => ?e);
 					}
+					cmd = msg.into_command();
 				}
 			}
 

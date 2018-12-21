@@ -1,11 +1,7 @@
-extern crate chrono;
 #[macro_use]
 extern crate failure;
-extern crate futures;
 #[macro_use]
 extern crate num_derive;
-extern crate num_traits;
-extern crate tsproto;
 
 pub mod errors;
 pub mod messages;
@@ -28,6 +24,11 @@ pub struct Uid(pub String);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UidRef<'a>(pub &'a str);
+impl<'a> Into<Uid> for UidRef<'a> {
+	fn into(self) -> Uid {
+		Uid(self.0.into())
+	}
+}
 
 /// The database id of a client.
 ///

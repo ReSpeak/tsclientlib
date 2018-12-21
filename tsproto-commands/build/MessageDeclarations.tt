@@ -35,7 +35,7 @@ pub enum InMessages<'a> {
 }
 
 impl InMessage {
-	pub fn new(cmd: InCommand) -> Result<Self, ParseError> {
+	pub fn new(cmd: InCommand) -> Result<Self, (InCommand, ParseError)> {
 		let mut res = Self { cmd, msg: InMessages::Other };
 
 		{
@@ -55,9 +55,15 @@ impl InMessage {
 					if let Ok(r) = In<#= msg.name #>::new(&res.cmd) {
 						break InMessages::<#= msg.name #>(r);
 					}<#
-					} #> break InMessages::<#= msg.name #>(In<#= msg.name #>::new(&res.cmd)?); }
+					} #> match In<#= msg.name #>::new(&res.cmd) {
+						Ok(msg) => break InMessages::<#= msg.name #>(msg),
+						Err(e) => return Err((res.cmd, e)),
+					}}
 			<# } #>
-				s => return Err(ParseError::UnknownCommand(s.to_string())),
+				s => {
+					let s = s.to_string();
+					return Err((res.cmd, ParseError::UnknownCommand(s)));
+				}
 			}};
 
 			res.msg = unsafe { mem::transmute(msg) };
@@ -70,6 +76,8 @@ impl InMessage {
 	pub fn command(&self) -> &InCommand { &self.cmd }
 	#[inline]
 	pub fn msg(&self) -> &InMessages { &self.msg }
+	#[inline]
+	pub fn into_command(self) -> InCommand { self.cmd }
 }
 
 // Statics would look like this inside a struct:
@@ -174,6 +182,7 @@ impl<'a> In<#= msg.name #><'a> {
 <# }
 } #>
 
+/// The iterator is guaranteed to output at least one part.
 pub struct InMessageIterator<'a, T>(&'a [T], usize);
 impl<'a, T> Iterator for InMessageIterator<'a, T> {
 	type Item = &'a T;

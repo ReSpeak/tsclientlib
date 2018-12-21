@@ -1,10 +1,10 @@
 use std::default::Default;
 use tsproto_structs::book;
 use tsproto_structs::book::*;
-use *;
+use tsproto_util::*;
 
 #[derive(Template)]
-#[TemplatePath = "src/BookDeclarations.tt"]
+#[TemplatePath = "build/BookDeclarations.tt"]
 #[derive(Debug)]
 pub struct BookDeclarations<'a>(pub &'a book::BookDeclarations);
 

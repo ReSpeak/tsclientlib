@@ -36,7 +36,7 @@ named!(command_arg(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace
 ));
 
 named!(inner_parse_command(CompleteStr) -> CommandData, do_parse!(
-	name: alt!(do_parse!(res: alphanumeric >> multispace >> (res)) | tag!("")) >> // Command
+	name: alt!(do_parse!(res: alphanumeric >> alt!(multispace | eof!()) >> (res)) | tag!("")) >> // Command
 	static_args: many0!(command_arg) >>
 	list_args: many0!(do_parse!(many0!(multispace) >>
 		tag!("|") >>
@@ -160,90 +160,99 @@ impl<'a> CommandData<'a> {
 
 #[cfg(test)]
 mod tests {
-	use std::collections::HashMap;
-	use std::io::Cursor;
-	use std::iter::FromIterator;
+	use std::str;
+	use super::{parse_command, CommandData};
+	use crate::packets::OutCommand;
 
-	use super::parse_command;
+	/// Parse and write again.
+	fn test_loop(s: &str) -> CommandData {
+		let command = parse_command(s).unwrap();
+		println!("Parsed command: {:?}", command);
+		let mut written = Vec::new();
+		OutCommand::new_into(command.name,
+			command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
+			command.list_args.iter().map(|i| {
+				i.iter().map(|(k, v)| (*k, v.as_ref()))
+			}),
+			&mut written,
+		);
+
+		assert_eq!(s, str::from_utf8(&written).unwrap());
+		command
+	}
 
 	#[test]
-	fn parse() {
-		let s = b"cmd a=1 b=2 c=3";
-		let mut cmd = Command::new("cmd");
-		cmd.push("a", "1");
-		cmd.push("b", "2");
-		cmd.push("c", "3");
-
-		// Read
-		let cmd_r = Command::read((), &mut Cursor::new(s)).unwrap();
-		assert_eq!(cmd, cmd_r);
-		// Write
-		let mut s_r = Vec::new();
-		cmd.write(&mut s_r).unwrap();
-		assert_eq!(&s[..], s_r.as_slice());
+	fn simple() {
+		let cmd = test_loop("cmd a=1 b=2 c=3");
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![
+			("a", "1".into()),
+			("b", "2".into()),
+			("c", "3".into()),
+		]);
+		assert!(cmd.list_args.is_empty());
 	}
 
 	#[test]
 	fn escape() {
-		let s = b"cmd a=\\s\\\\ b=\\p c=abc\\tdef";
-		let mut cmd = Command::new("cmd");
-		cmd.push("a", " \\");
-		cmd.push("b", "|");
-		cmd.push("c", "abc\tdef");
-
-		// Read
-		let cmd_r = Command::read((), &mut Cursor::new(s)).unwrap();
-		assert_eq!(cmd, cmd_r);
-		// Write
-		let mut s_r = Vec::new();
-		cmd.write(&mut s_r).unwrap();
-		assert_eq!(&s[..], s_r.as_slice());
+		let cmd = test_loop("cmd a=\\s\\\\ b=\\p c=abc\\tdef");
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![
+			("a", " \\".into()),
+			("b", "|".into()),
+			("c", "abc\tdef".into()),
+		]);
+		assert!(cmd.list_args.is_empty());
 	}
 
 	#[test]
 	fn array() {
-		let s = b"cmd a=1 c=3 b=2|b=4|b=5";
-		let mut cmd = Command::new("cmd");
-		cmd.push("a", "1");
-		cmd.push("c", "3");
-
-		cmd.list_args.push(vec![("b".into(), "2".into())]);
-		cmd.list_args.push(vec![("b".into(), "4".into())]);
-		cmd.list_args.push(vec![("b".into(), "5".into())]);
-
-		// Read
-		let cmd_r = Command::read((), &mut Cursor::new(s)).unwrap();
-		assert_eq!(cmd, cmd_r);
-		// Write
-		let mut s_r = Vec::new();
-		cmd.write(&mut s_r).unwrap();
-		assert_eq!(&s[..], s_r.as_slice());
+		let cmd = test_loop("cmd a=1 c=3 b=2|b=4|b=5");
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![
+			("a", "1".into()),
+			("c", "3".into()),
+		]);
+		assert_eq!(cmd.list_args, vec![
+			vec![("b", "2".into())],
+			vec![("b", "4".into())],
+			vec![("b", "5".into())],
+		]);
 	}
 
 	#[test]
 	fn optional_arg() {
-		let s = b"cmd a";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
-		let s = b"cmd a b=1";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
-		let s = b"cmd a=";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
-		let s = b"cmd a= b=1";
-		Command::read((), &mut Cursor::new(s.as_ref())).unwrap();
+		let cmd = test_loop("cmd a");
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![("a", "".into())]);
+		assert!(cmd.list_args.is_empty());
+
+		let cmd = test_loop("cmd a b=1");
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![("a", "".into()), ("b", "1".into())]);
+		assert!(cmd.list_args.is_empty());
+
+		let cmd = parse_command("cmd a=").unwrap();
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![("a", "".into())]);
+		assert!(cmd.list_args.is_empty());
+
+		let cmd = parse_command("cmd a= b=1").unwrap();
+		assert_eq!(cmd.name, "cmd");
+		assert_eq!(cmd.static_args, vec![("a", "".into()), ("b", "1".into())]);
+		assert!(cmd.list_args.is_empty());
 	}
 
 	#[test]
 	fn initivexpand2() {
-		let s = "initivexpand2 l=AQCVXTlKF+UQc0yga99dOQ9FJCwLaJqtDb1G7xYPMvHFMwIKVfKADF6zAAcAAAAgQW5vbnltb3VzAAAKQo71lhtEMbqAmtuMLlY8Snr0k2Wmymv4hnHNU6tjQCALKHewCykgcA== beta=\\/8kL8lcAYyMJovVOP6MIUC1oZASyuL\\/Y\\/qjVG06R4byuucl9oPAvR7eqZI7z8jGm9jkGmtJ6 omega=MEsDAgcAAgEgAiBxu2eCLQf8zLnuJJ6FtbVjfaOa1210xFgedoXuGzDbTgIgcGk35eqFavKxS4dROi5uKNSNsmzIL4+fyh5Z\\/+FWGxU= ot=1 proof=MEUCIQDRCP4J9e+8IxMJfCLWWI1oIbNPGcChl+3Jr2vIuyDxzAIgOrzRAFPOuJZF4CBw\\/xgbzEsgKMtEtgNobF6WXVNhfUw= tvd time=1544221457";
-		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		parse_command2(s.as_ref()).unwrap();
+		let cmd = test_loop("initivexpand2 l=AQCVXTlKF+UQc0yga99dOQ9FJCwLaJqtDb1G7xYPMvHFMwIKVfKADF6zAAcAAAAgQW5vbnltb3VzAAAKQo71lhtEMbqAmtuMLlY8Snr0k2Wmymv4hnHNU6tjQCALKHewCykgcA== beta=\\/8kL8lcAYyMJovVOP6MIUC1oZASyuL\\/Y\\/qjVG06R4byuucl9oPAvR7eqZI7z8jGm9jkGmtJ6 omega=MEsDAgcAAgEgAiBxu2eCLQf8zLnuJJ6FtbVjfaOa1210xFgedoXuGzDbTgIgcGk35eqFavKxS4dROi5uKNSNsmzIL4+fyh5Z\\/+FWGxU= ot=1 proof=MEUCIQDRCP4J9e+8IxMJfCLWWI1oIbNPGcChl+3Jr2vIuyDxzAIgOrzRAFPOuJZF4CBw\\/xgbzEsgKMtEtgNobF6WXVNhfUw= tvd time=1544221457");
+		assert_eq!(cmd.name, "initivexpand2");
 	}
 
 	#[test]
 	fn clientinitiv() {
-		let s = "clientinitiv alpha=41Te9Ar7hMPx+A== omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 ip";
-		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		parse_command2(s.as_ref()).unwrap();
+		let cmd = test_loop("clientinitiv alpha=41Te9Ar7hMPx+A== omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 ip");
+		assert_eq!(cmd.name, "clientinitiv");
 	}
 
 	#[test]
@@ -262,8 +271,8 @@ mod tests {
 			 virtualserver_hostbanner_url virtualserver_hostmessagegfx_url \
 			 virtualserver_hostmessagegfx_interval=2000 \
 			 virtualserver_priority_speaker_dimm_modificat";
-		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		parse_command2(s.as_ref()).unwrap();
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "initserver");
 	}
 
 	#[test]
@@ -293,8 +302,8 @@ mod tests {
 			 channel_needed_talk_power=0 channel_forced_silence=0 \
 			 channel_name_phonetic=Neo\\sSeebi\\sEvangelion channel_icon_id=0 \
 			 channel_flag_private=0"; //|cid=6 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s2\\s\\p\\sThe\\sBook\\sof\\sHeavy\\sMetal channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=4 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=Not\\senought\\sChannels channel_icon_id=0 channel_flag_private=0|cid=30 cpid=2 channel_name=Ding\\s\xe2\x80\xa2\\s3\\s\\p\\sSenpai\\sGef\xc3\xa4hrlich channel_topic channel_codec=2 channel_codec_quality=7 channel_maxclients=-1 channel_maxfamilyclients=-1 channel_order=6 channel_flag_permanent=1 channel_flag_semi_permanent=0 channel_flag_default=0 channel_flag_password=0 channel_codec_latency_factor=1 channel_codec_is_unencrypted=1 channel_delete_delay=0 channel_flag_maxclients_unlimited=1 channel_flag_maxfamilyclients_unlimited=0 channel_flag_maxfamilyclients_inherited=1 channel_needed_talk_power=0 channel_forced_silence=0 channel_name_phonetic=The\\strashcan\\shas\\sthe\\strash channel_icon_id=0 channel_flag_private=0";
-		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		parse_command2(s.as_ref()).unwrap();
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "channellist");
 	}
 
 	#[test]
@@ -304,23 +313,35 @@ mod tests {
 		         es=18694|cid=13 es=18694|cid=14 es=18694|cid=16 \
 		         es=18694|cid=22 es=18694|cid=23 es=18694|cid=24 \
 		         es=18694|cid=25 es=18694|cid=30 es=18694|cid=163 es=18694";
-		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		parse_command2(s.as_ref()).unwrap();
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "notifychannelsubscribed");
 	}
 
 	#[test]
 	fn permissionlist() {
 		let s = "notifypermissionlist group_id_end=0|group_id_end=7|group_id_end=13|group_id_end=18|group_id_end=21|group_id_end=21|group_id_end=33|group_id_end=47|group_id_end=77|group_id_end=82|group_id_end=83|group_id_end=106|group_id_end=126|group_id_end=132|group_id_end=143|group_id_end=151|group_id_end=160|group_id_end=162|group_id_end=170|group_id_end=172|group_id_end=190|group_id_end=197|group_id_end=215|group_id_end=227|group_id_end=232|group_id_end=248|permname=b_serverinstance_help_view permdesc=Retrieve\\sinformation\\sabout\\sServerQuery\\scommands|permname=b_serverinstance_version_view permdesc=Retrieve\\sglobal\\sserver\\sversion\\s(including\\splatform\\sand\\sbuild\\snumber)|permname=b_serverinstance_info_view permdesc=Retrieve\\sglobal\\sserver\\sinformation|permname=b_serverinstance_virtualserver_list permdesc=List\\svirtual\\sservers\\sstored\\sin\\sthe\\sdatabase";
-		Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		parse_command2(s.as_ref()).unwrap();
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "notifypermissionlist");
 	}
 
 	#[test]
 	fn serverquery_command() {
 		let s = "cmd=1 cid=2";
-		let cmd = Command::read((), &mut Cursor::new(s.as_bytes())).unwrap();
-		let in_cmd = parse_command2(s.as_ref()).unwrap();
-		assert_eq!(cmd.command, "");
-		assert_eq!(in_cmd.name, "");
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "");
+		assert_eq!(cmd.static_args, vec![
+			("cmd", "1".into()),
+			("cid", "2".into()),
+		]);
+		assert!(cmd.list_args.is_empty());
+	}
+
+	#[test]
+	fn no_serverquery_command() {
+		let s = "channellistfinished";
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "channellistfinished");
+		assert!(cmd.static_args.is_empty());
+		assert!(cmd.list_args.is_empty());
 	}
 }

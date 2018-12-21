@@ -117,12 +117,13 @@ struct CommandLogger {
 }
 impl<T: Send> InCommandObserver<T> for CommandLogger {
 	fn observe(&self, con: &mut (T, Connection), cmd: &InCommand) {
+		let cmd_s = ::std::str::from_utf8(cmd.content()).unwrap();
 		log_command(
 			&con.1.logger,
 			self.is_client,
 			true,
 			cmd.packet_type(),
-			&format!("{:?}", cmd.data()),
+			cmd_s,
 		);
 	}
 }

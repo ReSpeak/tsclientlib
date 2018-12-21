@@ -1,9 +1,9 @@
 use std::default::Default;
 use tsproto_structs::book::BookDeclarations;
-use *;
+use tsproto_util::*;
 
 #[derive(Template)]
-#[TemplatePath = "src/FacadeDeclarations.tt"]
+#[TemplatePath = "build/FacadeDeclarations.tt"]
 #[derive(Debug)]
 pub struct FacadeDeclarations<'a>(&'a BookDeclarations);
 

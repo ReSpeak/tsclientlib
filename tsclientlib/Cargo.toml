@@ -26,7 +26,9 @@ tsproto = { path = "../tsproto" }
 tsproto-commands = { path = "../tsproto-commands" }
 
 [build-dependencies]
+t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
 tsproto-util = { path = "../tsproto-util" }
+tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
 
 [dev-dependencies]
 structopt = "0.2"

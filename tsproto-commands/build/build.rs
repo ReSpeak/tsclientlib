@@ -1,8 +1,5 @@
-extern crate itertools;
 #[macro_use]
 extern crate t4rust_derive;
-extern crate tsproto_structs;
-extern crate tsproto_util;
 
 use std::env;
 use std::fs::File;
@@ -12,7 +9,7 @@ use std::path::Path;
 use tsproto_util::{Errors, Versions};
 
 mod message_parser;
-use message_parser::MessageDeclarations;
+use crate::message_parser::MessageDeclarations;
 
 fn main() {
 	let out_dir = env::var("OUT_DIR").unwrap();

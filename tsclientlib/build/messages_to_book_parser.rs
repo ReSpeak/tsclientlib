@@ -4,10 +4,10 @@ use tsproto_structs::book::{PropId, Property};
 use tsproto_structs::messages::Field;
 use tsproto_structs::messages_to_book;
 use tsproto_structs::messages_to_book::*;
-use *;
+use tsproto_util::*;
 
 #[derive(Template)]
-#[TemplatePath = "src/MessagesToBook.tt"]
+#[TemplatePath = "build/MessagesToBook.tt"]
 #[derive(Debug)]
 pub struct MessagesToBookDeclarations<'a>(&'a messages_to_book::MessagesToBookDeclarations<'a>);
 
@@ -39,11 +39,12 @@ fn get_id_args(event: &Event) -> String {
 
 fn get_notification_field(from: &Field) -> String {
 	let rust_type = from.get_rust_type("", false);
-	if rust_type == "String"
-		|| rust_type == "Uid"
-		|| rust_type.starts_with("Vec<")
-	{
+	if rust_type == "String" {
+		format!("{}.into()", from.get_rust_name())
+	} else if rust_type.starts_with("Vec<") {
 		format!("{}.clone()", from.get_rust_name())
+	} else if rust_type == "Uid" {
+		format!("{}.clone().into()", from.get_rust_name())
 	} else {
 		from.get_rust_name().clone()
 	}

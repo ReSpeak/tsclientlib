@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate t4rust_derive;
+extern crate tsproto_structs;
 extern crate tsproto_util;
 
 use std::env;
@@ -5,9 +8,13 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-use tsproto_util::{
-	BookDeclarations, FacadeDeclarations, MessagesToBookDeclarations,
-};
+mod book_parser;
+mod facade_parser;
+mod messages_to_book_parser;
+
+use book_parser::BookDeclarations;
+use facade_parser::FacadeDeclarations;
+use messages_to_book_parser::MessagesToBookDeclarations;
 
 fn main() {
 	let out_dir = env::var("OUT_DIR").unwrap();

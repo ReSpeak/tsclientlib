@@ -43,7 +43,13 @@ macro_rules! max_clients {
 
 impl Connection {
 	// TODO Make all arguments static for the initserver
-	pub(crate) fn new(server_uid: Uid, packet: &s2c::InitServerPart) -> Self {
+	pub(crate) fn new(server_uid: Uid, msg: &InMessage) -> Self {
+		let packet = if let InMessages::InitServer(p) = msg.msg() {
+			p
+		} else {
+			panic!("Got no initserver packet in Connection::new");
+		};
+		let packet = packet.iter().next().unwrap();
 		Self {
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;
@@ -169,7 +175,7 @@ impl Connection {
 	fn max_clients_ce_fun(
 		&mut self,
 		channel_id: ChannelId,
-		cmd: &s2c::InChannelEdited,
+		cmd: &s2c::ChannelEditedPart,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let (ch, ch_fam) = max_clients!(cmd);
@@ -179,7 +185,7 @@ impl Connection {
 	}
 	fn max_clients_cl_fun(
 		&self,
-		cmd: &s2c::InChannelList,
+		cmd: &s2c::ChannelListPart,
 	) -> (Option<u16>, MaxFamilyClients) {
 		let ch = if cmd.is_max_clients_unlimited {
 			None
@@ -203,7 +209,7 @@ impl Connection {
 		(ch, ch_fam)
 	}
 
-	fn channel_type_cc_fun(&self, cmd: &s2c::InChannelCreated) -> ChannelType {
+	fn channel_type_cc_fun(&self, cmd: &s2c::ChannelCreatedPart) -> ChannelType {
 		if cmd.is_permanent == Some(true) {
 			ChannelType::Permanent
 		} else if cmd.is_semi_permanent == Some(true) {
@@ -216,7 +222,7 @@ impl Connection {
 	fn channel_type_ce_fun(
 		&mut self,
 		channel_id: ChannelId,
-		cmd: &s2c::InChannelEdited,
+		cmd: &s2c::ChannelEditedPart,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let typ = if cmd.is_permanent == Some(true) {
@@ -230,7 +236,7 @@ impl Connection {
 		}
 	}
 
-	fn channel_type_cl_fun(&self, cmd: &s2c::InChannelList) -> ChannelType {
+	fn channel_type_cl_fun(&self, cmd: &s2c::ChannelListPart) -> ChannelType {
 		if cmd.is_permanent {
 			ChannelType::Permanent
 		} else if cmd.is_semi_permanent {
@@ -240,9 +246,9 @@ impl Connection {
 		}
 	}
 
-	fn away_fun(&self, cmd: &s2c::InClientEnterView) -> Option<String> {
+	fn away_fun(&self, cmd: &s2c::ClientEnterViewPart) -> Option<String> {
 		if cmd.is_away {
-			Some(cmd.away_message.clone())
+			Some(cmd.away_message.into())
 		} else {
 			None
 		}
@@ -250,23 +256,23 @@ impl Connection {
 
 	fn talk_power_fun(
 		&self,
-		cmd: &s2c::InClientEnterView,
+		cmd: &s2c::ClientEnterViewPart,
 	) -> Option<TalkPowerRequest> {
 		if cmd.talk_power_request_time.timestamp() > 0 {
 			Some(TalkPowerRequest {
 				time: cmd.talk_power_request_time,
-				message: cmd.talk_power_request_message.clone(),
+				message: cmd.talk_power_request_message.into(),
 			})
 		} else {
 			None
 		}
 	}
 
-	fn badges_fun(&self, _cmd: &s2c::InClientEnterView) -> Vec<String> {
+	fn badges_fun(&self, _cmd: &s2c::ClientEnterViewPart) -> Vec<String> {
 		Vec::new() // TODO
 	}
 
-	fn address_fun(&self, cmd: &s2c::InClientConnectionInfo) -> Option<SocketAddr> {
+	fn address_fun(&self, cmd: &s2c::ClientConnectionInfoPart) -> Option<SocketAddr> {
 		let ip = if let Ok(ip) = cmd.ip.parse() {
 			ip
 		} else {

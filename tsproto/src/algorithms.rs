@@ -336,44 +336,36 @@ pub fn array_to_biguint(i: &[u8; 64]) -> BigUint { BigUint::from_bytes_be(i) }
 
 #[cfg(test)]
 mod tests {
+	use base64;
+
 	use super::*;
 	use crate::license::Licenses;
-	use crate::packets::{Data, Header, PacketType};
-	use base64;
-	use std::io::Write;
+	use crate::packets::{PacketType};
 
 	#[test]
 	fn test_fake_crypt() {
 		crate::init().unwrap();
 		let data = (0..100).into_iter().collect::<Vec<_>>();
-		let mut header = Header::default();
-		let enc_data = encrypt_fake(&mut header, &data).unwrap();
-		let mut packet = Vec::new();
-		header.write(&mut packet).unwrap();
-		packet.write_all(&enc_data).unwrap();
-		let packet = InPacket::try_new(packet.into(), Direction::S2C).unwrap();
+		let mut packet = OutPacket::new_with_dir(Direction::C2S, Flags::empty(),
+			PacketType::Ack);
+		packet.data_mut().extend_from_slice(&data);
+		encrypt_fake(&mut packet).unwrap();
+		let packet = InPacket::try_new(packet.data_mut().as_slice().into(),
+			Direction::C2S).unwrap();
 		let dec_data = decrypt_fake(&packet).unwrap();
 		assert_eq!(&data, &dec_data);
 	}
 
 	#[test]
 	fn test_fake_encrypt() {
-		let data = Data::Ack(0);
-		let mut p_data = Vec::new();
-		data.write(&mut p_data).unwrap();
-		let mut header = Header::default();
-		header.c_id = Some(0);
-		header.set_type(PacketType::Ack);
-		let mut enc_data = encrypt_fake(&mut header, &p_data).unwrap();
+		let mut packet = OutAck::new(Direction::C2S, PacketType::Command, 0);
+		encrypt_fake(&mut packet).unwrap();
 
-		let mut buf = Vec::new();
-		header.write(&mut buf).unwrap();
-		buf.append(&mut enc_data);
 		let real_res: &[u8] = &[
 			0xa4, 0x7b, 0x47, 0x94, 0xdb, 0xa9, 0x6a, 0xc5, 0, 0, 0, 0, 0x6,
 			0xfe, 0x18,
 		];
-		assert_eq!(real_res, buf.as_slice());
+		assert_eq!(real_res, packet.data_mut().as_slice());
 	}
 
 	#[test]

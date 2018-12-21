@@ -3,19 +3,13 @@ extern crate t4rust_derive;
 extern crate tsproto_structs;
 
 mod book_ffi;
-mod book_parser;
 mod error_parser;
-mod facade_parser;
-mod messages_to_book_parser;
 mod version_parser;
 
 pub use tsproto_structs::EnumValue;
 
 pub use book_ffi::BookFfi;
-pub use book_parser::BookDeclarations;
 pub use error_parser::Errors;
-pub use facade_parser::FacadeDeclarations;
-pub use messages_to_book_parser::MessagesToBookDeclarations;
 pub use version_parser::Versions;
 
 pub fn to_pascal_case<S: AsRef<str>>(text: S) -> String {
@@ -51,7 +45,7 @@ pub fn to_snake_case<S: AsRef<str>>(text: S) -> String {
 	s
 }
 
-fn is_ref_type(s: &str) -> bool {
+pub fn is_ref_type(s: &str) -> bool {
 	if s.starts_with("Option<") {
 		is_ref_type(&s[7..s.len() - 1])
 	} else {
