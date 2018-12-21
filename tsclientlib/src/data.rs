@@ -10,7 +10,7 @@ use chrono::{DateTime, Duration, Utc};
 use tsproto_commands::*;
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 
-use {InnerConnection, Result};
+use crate::{InnerConnection, Result};
 
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));

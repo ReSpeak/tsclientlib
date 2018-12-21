@@ -3,6 +3,7 @@ name = "tsclientlib"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 build = "build/build.rs"
+edition = "2018"
 
 [dependencies]
 base64 = "0.9"

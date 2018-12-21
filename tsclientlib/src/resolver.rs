@@ -15,7 +15,7 @@ use tokio::util::StreamExt;
 use trust_dns_resolver::{AsyncResolver, Name};
 use {reqwest, tokio, tokio_threadpool};
 
-use {Error, Result};
+use crate::{Error, Result};
 
 const DEFAULT_PORT: u16 = 9987;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
@@ -465,8 +465,22 @@ fn resolve_hostname(
 
 #[cfg(test)]
 mod test {
+	use slog::Drain;
+	use tokio::runtime::Runtime;
+
 	use super::*;
-	use tokio_core::reactor::Core;
+
+	fn setup() -> (Logger, Runtime) {
+		let rt = Runtime::new().unwrap();
+		let logger = {
+			let decorator = slog_term::PlainSyncDecorator::new(std::io::stdout());
+			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+			let drain = slog_async::Async::new(drain).build().fuse();
+
+			slog::Logger::root(drain, o!())
+		};
+		(logger, rt)
+	}
 
 	#[test]
 	fn parse_ip_without_port() {
@@ -547,9 +561,10 @@ mod test {
 
 	#[test]
 	fn resolve_localhost() {
-		let mut core = Core::new().unwrap();
-		let res = resolve(core.handle(), "127.0.0.1");
-		let res = core.run(res.collect());
+		let (logger, mut rt) = setup();
+		let res = rt.block_on(future::lazy(move || {
+			resolve(&logger, "127.0.0.1").collect()
+		}));
 		assert_eq!(
 			res.unwrap().as_slice(),
 			&[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]
@@ -558,9 +573,10 @@ mod test {
 
 	#[test]
 	fn resolve_localhost2() {
-		let mut core = Core::new().unwrap();
-		let res = resolve(core.handle(), "localhost");
-		let res = core.run(res.collect());
+		let (logger, mut rt) = setup();
+		let res = rt.block_on(future::lazy(move || {
+			resolve(&logger, "localhost").collect()
+		}));
 		assert!(
 			res.unwrap().contains(
 				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
@@ -570,9 +586,10 @@ mod test {
 
 	#[test]
 	fn resolve_example() {
-		let mut core = Core::new().unwrap();
-		let res = resolve(core.handle(), "example.com");
-		let res = core.run(res.collect());
+		let (logger, mut rt) = setup();
+		let res = rt.block_on(future::lazy(move || {
+			resolve(&logger, "example.com").collect()
+		}));
 		assert!(res.unwrap().contains(
 			&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()
 		));
@@ -580,9 +597,10 @@ mod test {
 
 	#[test]
 	fn resolve_loc() {
-		let mut core = Core::new().unwrap();
-		let res = resolve(core.handle(), "loc");
-		let res = core.run(res.collect());
+		let (logger, mut rt) = setup();
+		let res = rt.block_on(future::lazy(move || {
+			resolve(&logger, "loc").collect()
+		}));
 		assert!(
 			res.unwrap().contains(
 				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()

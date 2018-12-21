@@ -15,8 +15,7 @@ use tokio::timer::Delay;
 
 use tsclientlib::{ChannelId, ConnectOptions, Connection, DisconnectOptions, Reason};
 use tsclientlib::data::{Channel, Client};
-use tsproto::commands::Command;
-use tsproto::packets::{self, Header, PacketType};
+use tsproto::packets::{Direction, OutCommand, PacketType};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(
@@ -90,10 +89,13 @@ fn main() -> Result<(), failure::Error> {
 					sanitize(&con.server.welcome_message)
 				);
 			}
-			let cmd = Command::new("channelsubscribeall");
-			let header = Header::new(PacketType::Command);
-			let data = packets::Data::Command(cmd);
-			let packet = packets::Packet::new(header, data);
+			let packet = OutCommand::new::<String, String, String, String, _, _, std::iter::Empty<_>>(
+				Direction::C2S,
+				PacketType::Command,
+				"channelsubscribeall",
+				std::iter::empty(),
+				std::iter::empty(),
+			);
 
 			// Send a message and wait until we get an answer for the return code
 			con.get_packet_sink().send(packet).map(|_| con)

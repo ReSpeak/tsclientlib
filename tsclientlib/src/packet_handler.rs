@@ -8,10 +8,10 @@ use parking_lot::RwLock;
 use slog::Logger;
 use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::*;
-use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
-use {tokio, tsproto, PHBox, TsError};
+use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
-use data::Connection;
+use crate::{PHBox, TsError};
+use crate::data::Connection;
 
 pub(crate) struct ReturnCodeHandler {
 	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,

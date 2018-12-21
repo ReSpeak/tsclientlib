@@ -19,7 +19,7 @@ impl Connection {
 					<# }
 				}
 				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name)); #>
-				let mut r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
+				let r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
 				<#
 				for rule in &event.rules {
 					match *rule {

@@ -13,28 +13,12 @@
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 
-extern crate base64;
-extern crate bytes;
-extern crate chashmap;
-extern crate chrono;
 #[macro_use]
 extern crate failure;
 #[macro_use]
 extern crate futures;
-extern crate parking_lot;
-extern crate rand;
-extern crate reqwest;
 #[macro_use]
 extern crate slog;
-extern crate slog_async;
-extern crate slog_perf;
-extern crate slog_term;
-extern crate tokio;
-extern crate tokio_threadpool;
-extern crate trust_dns_proto;
-extern crate trust_dns_resolver;
-extern crate tsproto;
-extern crate tsproto_commands;
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -52,7 +36,7 @@ use tsproto::packets::{Direction, InAudio, InCommand, OutCommand, OutPacket,
 use tsproto::{client, crypto, log};
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
-use packet_handler::{ReturnCodeHandler, SimplePacketHandler};
+use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
 
 macro_rules! copy_attrs {
 	($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
@@ -401,7 +385,7 @@ impl Connection {
 						slog::Level::Info);
 					time_reporter.start("Compute public key hash cash level");
 					let pub_k = {
-						let mut c = client.lock();
+						let c = client.lock();
 						c.private_key.to_pub()
 					};
 					Box::new(future::poll_fn(move || {
