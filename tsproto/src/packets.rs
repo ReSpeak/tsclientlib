@@ -352,11 +352,11 @@ impl InPacket {
 			Box::new(self.inner),
 			|p| -> Result<_> {
 				let content = p.content;
-				if content.len() < 5 {
-					return Err(format_err!("Voice packet too short").into());
-				}
 				if p_type == PacketType::Voice {
 					if dir == Direction::S2C {
+						if content.len() < 5 {
+							return Err(format_err!("Voice packet too short").into());
+						}
 						Ok(VoiceData::S2C {
 							id,
 							from: (&content[2..])
@@ -368,16 +368,22 @@ impl InPacket {
 							data: &content[5..],
 						})
 					} else {
+						if content.len() < 3 {
+							return Err(format_err!("Voice packet too short").into());
+						}
 						Ok(VoiceData::C2S {
 							id,
-							codec: CodecType::from_u8(content[3])
+							codec: CodecType::from_u8(content[2])
 								.ok_or_else::<Error, _>(|| {
 									format_err!("Invalid codec").into()
 								})?,
-							data: &content[4..],
+							data: &content[3..],
 						})
 					}
 				} else if dir == Direction::S2C {
+					if content.len() < 5 {
+						return Err(format_err!("Voice packet too short").into());
+					}
 					Ok(VoiceData::S2CWhisper {
 						id,
 						from: (&content[2..]).read_u16::<NetworkEndian>()?,
@@ -388,12 +394,15 @@ impl InPacket {
 						data: &content[5..],
 					})
 				} else {
-					let codec = CodecType::from_u8(content[3])
+					if content.len() < 3 {
+						return Err(format_err!("Voice packet too short").into());
+					}
+					let codec = CodecType::from_u8(content[2])
 						.ok_or_else::<Error, _>(|| {
 							format_err!("Invalid codec").into()
 						})?;
 					if newprotocol {
-						if content.len() < 13 {
+						if content.len() < 14 {
 							return Err(
 								format_err!("Voice packet too short").into()
 							);
@@ -401,9 +410,9 @@ impl InPacket {
 						Ok(VoiceData::C2SWhisperNew {
 							id,
 							codec,
-							whisper_type: content[4],
-							target: content[5],
-							target_id: (&content[6..])
+							whisper_type: content[3],
+							target: content[4],
+							target_id: (&content[5..])
 								.read_u64::<NetworkEndian>()?,
 							data: &content[13..],
 						})
@@ -413,9 +422,9 @@ impl InPacket {
 								format_err!("Voice packet too short").into()
 							);
 						}
-						let channel_count = content[4] as usize;
-						let client_count = content[5] as usize;
-						let channel_off = 5;
+						let channel_count = content[3] as usize;
+						let client_count = content[4] as usize;
+						let channel_off = 4;
 						let client_off = channel_off + channel_count * 8;
 						let off = client_off + client_count * 2;
 						if content.len() < off {

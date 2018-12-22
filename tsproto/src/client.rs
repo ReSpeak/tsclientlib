@@ -215,7 +215,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 pub struct DefaultPacketHandler<
 	IPH: PacketHandler<ServerConnectionData> + 'static,
 > {
-	inner: IPH,
+	pub inner: IPH,
 	/// The data instance is created after the packet handler so this has to be
 	/// an option.
 	data: Option<Weak<Mutex<ClientData<IPH>>>>,
