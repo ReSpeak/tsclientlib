@@ -631,21 +631,19 @@ impl Connection {
 			std::iter::empty(),
 		);
 
-		let wait_for_state =
-			client::wait_for_state(&self.inner.client_connection, |state| {
-				if let client::ServerConnectionState::Disconnected = state {
-					true
-				} else {
-					false
-				}
-			});
+		let addr = if let Some(con) = self.inner.client_connection.upgrade() {
+			con.mutex.lock().1.address
+		} else {
+			return Box::new(future::ok(()));
+		};
+		let wait = self.inner.client_data.lock().wait_for_disconnect(addr);
 		let inner = self.inner.clone();
 		Box::new(
 			self.inner
 				.client_connection
 				.as_packet_sink()
 				.send(packet)
-				.and_then(move |_| wait_for_state)
+				.and_then(|_| wait)
 				.from_err()
 				// Make sure that the last reference lives long enough
 				.map(move |_| drop(inner)),

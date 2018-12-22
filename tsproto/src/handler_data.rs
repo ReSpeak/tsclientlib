@@ -165,10 +165,9 @@ impl<T: Send + 'static> ConnectionValue<T> {
 
 impl<T: 'static> PartialEq for ConnectionValue<T> {
 	fn eq(&self, other: &Self) -> bool {
-		self as *const ConnectionValue<_> == other as *const _
+		Arc::ptr_eq(&self.mutex, &other.mutex)
 	}
 }
-
 impl<T: 'static> Eq for ConnectionValue<T> {}
 
 impl<T: 'static> Clone for ConnectionValue<T> {
@@ -196,8 +195,14 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 
 	pub fn as_udp_packet_sink(
 		&self,
-	) -> crate::connection::ConnectionUdpPacketSink<T> {
-		crate::connection::ConnectionUdpPacketSink::new(self.clone())
+	) -> Box<Sink<SinkItem = (PacketType, u16, Bytes), SinkError = Error> + Send> {
+		if let Some(con_val) = self.upgrade() {
+			Box::new(ConnectionUdpPacketSink::new(&con_val))
+		} else {
+			Box::new(mpsc::channel::<(PacketType, u16, Bytes)>(0).0
+				.sink_map_err(|_| -> Error { unreachable!("Should error before") })
+				.with(|_| Err(format_err!("Connection is gone").into())))
+		}
 	}
 
 	pub fn as_packet_sink(
@@ -524,6 +529,21 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		self.connections.read().get(key).cloned()
 	}
 
+	pub fn wait_for_disconnect(
+		&mut self,
+		key: CM::Key,
+	) -> Box<Future<Item=(), Error=Error> + Send>
+	{
+		if self.connections.read().contains_key(&key) {
+			let (send, recv) = oneshot::channel();
+			self.connection_listeners.push(Box::new(DisconnectListener::new(key,
+				send)));
+			Box::new(recv.from_err())
+		} else {
+			Box::new(future::ok(()))
+		}
+	}
+
 	pub fn add_in_udp_packet_observer(
 		&mut self,
 		key: String,
@@ -580,5 +600,33 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	}
 	pub fn remove_in_command_observer(&mut self, key: &str) {
 		self.in_command_observer.write().remove(key);
+	}
+}
+
+struct DisconnectListener<T: Eq> {
+	key: T,
+	sender: Option<oneshot::Sender<()>>,
+}
+
+impl<T: Eq> DisconnectListener<T> {
+	fn new(key: T, sender: oneshot::Sender<()>) -> Self {
+		Self { key, sender: Some(sender) }
+	}
+}
+
+impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener<CM::Key> {
+	fn on_connection_removed(
+		&mut self,
+		key: &CM::Key,
+		_: &mut ConnectionValue<CM::AssociatedData>,
+	) -> bool
+	{
+		if *key == self.key {
+			// Ignore if no one is listening to us
+			let _ = self.sender.take().unwrap().send(());
+			true
+		} else {
+			false
+		}
 	}
 }

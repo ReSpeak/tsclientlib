@@ -101,6 +101,7 @@ fn main() {
 						].into_iter(),
 						std::iter::empty(),
 					);
+					let c2 = c.clone();
 					con.as_packet_sink()
 						.send(packet)
 						.map(|_| ())
@@ -110,7 +111,7 @@ fn main() {
 						})
 						.and_then(move |_| {
 							// Disconnect
-							disconnect(con).map_err(|e| {
+							disconnect(&c2, con).map_err(|e| {
 								panic!("Failed to disconnect ({:?})", e)
 							})
 						})

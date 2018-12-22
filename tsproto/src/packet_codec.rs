@@ -141,6 +141,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	) -> Result<()>
 	{
 		let con2 = connection.downgrade();
+		let packet_sink = con2.as_packet_sink();
 		let mut con = connection.mutex.lock();
 		let con = &mut *con;
 		let packet_res;
@@ -207,14 +208,15 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				return Err(Error::UnallowedUnencryptedPacket);
 			}
 
-			for o in in_packet_observer.read().values() {
-				o.observe(con, &packet);
-			}
-
-			let in_ids = &mut con.1.incoming_p_ids;
 			match p_type {
 				PacketType::Command | PacketType::CommandLow => {
 					ack = true;
+
+					for o in in_packet_observer.read().values() {
+						o.observe(con, &packet);
+					}
+					let in_ids = &mut con.1.incoming_p_ids;
+
 					let r_queue = &mut con.1.receive_queue;
 					let frag_queue = &mut con.1.fragmented_queue;
 
@@ -225,8 +227,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					// Be careful with command packets, they are
 					// guaranteed to be in the right order now, because
 					// we hold a lock on the connection.
+					let observer = in_command_observer.read();
 					for c in commands {
-						for o in in_command_observer.read().values() {
+						for o in observer.values() {
 							o.observe(con, &c);
 						}
 
@@ -245,6 +248,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						ack = true;
 					}
 					// Update packet ids
+					let in_ids = &mut con.1.incoming_p_ids;
 					let (id, next_gen) = id.overflowing_add(1);
 					if p_type != PacketType::Init {
 						in_ids[type_i] =
@@ -267,6 +271,12 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							(con_key.clone(), p)).collect();
 						Ok(res)*/
 					}
+
+					// Call observer after handling acks
+					for o in in_packet_observer.read().values() {
+						o.observe(con, &packet);
+					}
+
 					packet_res = Ok(Some(packet));
 				}
 			}
@@ -286,7 +296,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		// Send ack
 		if ack {
 			tokio::spawn(
-				con2.as_packet_sink()
+				packet_sink
 					.send(OutAck::new(dir.reverse(), p_type, id))
 					.map(|_| ())
 					// Ignore errors, this can happen if the connection is

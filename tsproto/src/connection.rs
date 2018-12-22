@@ -9,7 +9,7 @@ use num_traits::ToPrimitive;
 use slog;
 
 use crate::crypto::EccKeyPubP256;
-use crate::handler_data::ConnectionValueWeak;
+use crate::handler_data::{ConnectionValue, ConnectionValueWeak};
 use crate::packets::*;
 use crate::resend::DefaultResender;
 use crate::Error;
@@ -215,14 +215,24 @@ impl Connection {
 
 pub struct ConnectionUdpPacketSink<T: Send + 'static> {
 	con: ConnectionValueWeak<T>,
-	udp_packet_sink: Option<(SocketAddr, mpsc::Sender<(SocketAddr, Bytes)>)>,
+	address: SocketAddr,
+	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
 }
 
 impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
-	pub fn new(con: ConnectionValueWeak<T>) -> Self {
+	pub fn new(con: &ConnectionValue<T>) -> Self {
+		let address;
+		let udp_packet_sink;
+		{
+			let con = con.mutex.lock();
+			address = con.1.address;
+			udp_packet_sink = con.1.udp_packet_sink.clone();
+		}
+
 		Self {
-			con,
-			udp_packet_sink: None,
+			con: con.downgrade(),
+			address,
+			udp_packet_sink,
 		}
 	}
 }
@@ -248,21 +258,9 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 				}
 			}
 			_ => {
-				if self.udp_packet_sink.is_none() {
-					if let Some(mutex) = self.con.mutex.upgrade() {
-						let con = mutex.lock();
-						self.udp_packet_sink = Some((
-							con.1.address,
-							con.1.udp_packet_sink.clone(),
-						));
-					} else {
-						return Err(format_err!("Connection is gone").into());
-					}
-				}
-
-				let (addr, s) = self.udp_packet_sink.as_mut().unwrap();
 				Ok(
-					match s.start_send((*addr, udp_packet)).map_err(|e| {
+					match self.udp_packet_sink.start_send(
+						(self.address, udp_packet)).map_err(|e| {
 						format_err!("Failed to send udp packet ({:?})", e)
 					})? {
 						AsyncSink::Ready => AsyncSink::Ready,
@@ -276,13 +274,9 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 	}
 
 	fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-		if let Some((_, s)) = &mut self.udp_packet_sink {
-			s.poll_complete().map_err(|e| {
-				format_err!("Failed to complete sending udp packet ({:?})", e)
-					.into()
-			})
-		} else {
-			Ok(futures::Async::Ready(()))
-		}
+		self.udp_packet_sink.poll_complete().map_err(|e| {
+			format_err!("Failed to complete sending udp packet ({:?})", e)
+				.into()
+		})
 	}
 }

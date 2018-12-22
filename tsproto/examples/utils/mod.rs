@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::{Future, Sink, Stream};
+use futures::{future, Future, Sink, Stream};
 use tokio;
 use tsproto::algorithms as algs;
-use tsproto::client::ServerConnectionData;
+use tsproto::client::{ServerConnectionData, ServerConnectionState};
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
@@ -139,14 +139,14 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 
 		let con2 = con.clone();
 		con.as_packet_sink().send(packet)
-			.and_then(move |_| client::wait_until_connected(&con))
 			.map(move |_| con2)
 	})
 }
 
-pub fn disconnect(
+pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
+	client: &client::ClientDataM<PH>,
 	con: client::ClientConVal,
-) -> impl Future<Item = (), Error = Error> {
+) -> Box<Future<Item = (), Error = Error> + Send> {
 	let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
 		Direction::C2S,
 		PacketType::Command,
@@ -159,13 +159,12 @@ pub fn disconnect(
 		std::iter::empty(),
 	);
 
-	con.as_packet_sink().send(packet).and_then(move |_| {
-		client::wait_for_state(&con, |state| {
-			if let client::ServerConnectionState::Disconnected = *state {
-				true
-			} else {
-				false
-			}
-		})
-	})
+	let addr = if let Some(con) = con.upgrade() {
+		con.mutex.lock().1.address
+	} else {
+		return Box::new(future::ok(()));
+	};
+	let wait = client.lock().wait_for_disconnect(addr);
+
+	Box::new(con.as_packet_sink().send(packet).and_then(|_| wait))
 }

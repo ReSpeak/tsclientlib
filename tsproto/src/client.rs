@@ -14,7 +14,7 @@ use rand::{self, Rng};
 use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
-use slog::{error, info, warn, Logger};
+use slog::{error, info, Logger};
 use {base64, tokio, tokio_threadpool};
 
 use crate::algorithms as algs;
@@ -24,7 +24,8 @@ use crate::connectionmanager::{
 };
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::handler_data::{
-	self, ConnectionValue, ConnectionValueWeak, Data, DataM, PacketHandler,
+	ConnectionValue, ConnectionValueWeak, Data, DataM, OutPacketObserver,
+	PacketHandler,
 };
 use crate::license::Licenses;
 use crate::packets::*;
@@ -50,7 +51,7 @@ pub struct ServerConnectionData {
 	pub state: ServerConnectionState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ServerConnectionState {
 	/// After `Init0` was sent.
 	Init0 { version: u32 },
@@ -63,8 +64,9 @@ pub enum ServerConnectionState {
 	Connecting,
 	/// Fully connected, the client id is known.
 	Connected,
-	/// The connection is finished, no more packets can be sent or received.
-	Disconnected,
+	/// The connection is finishing, no more packets should be sent.
+	/// We are only waiting until the last ack is sent.
+	Disconnecting,
 }
 
 /// Wait until a client reaches a certain state.
@@ -105,18 +107,6 @@ pub fn wait_for_state<
 	}))
 }
 
-pub fn wait_until_connected(
-	connection: &ClientConVal,
-) -> impl Future<Item = (), Error = Error> {
-	wait_for_state(connection, |state| {
-		if let ServerConnectionState::Connected = state {
-			true
-		} else {
-			false
-		}
-	})
-}
-
 pub fn new<
 	PH: PacketHandler<ServerConnectionData> + 'static,
 	L: Into<Option<slog::Logger>>,
@@ -141,26 +131,13 @@ pub fn new<
 		let mut c = c.lock();
 		let c = &mut *c;
 		// Set the data reference
-		c.packet_handler.complete(c2);
+		c.packet_handler.complete(c2.clone());
 
 		// Change state on disconnect
-		struct Observer;
-		impl handler_data::OutPacketObserver<ServerConnectionData> for Observer {
-			fn observe(&self, (_, con): &mut (ServerConnectionData, Connection),
-				packet: &mut OutPacket) {
-				if packet.header().packet_type() == PacketType::Command {
-					let s = b"clientdisconnect";
-					if packet.content().len() >= s.len()
-						&& packet.content()[..s.len()] == s[..] {
-						con.resender.handle_event(
-							crate::connectionmanager::ResenderEvent::Disconnecting,
-						);
-					}
-				}
-			}
-		}
-
-		c.add_out_packet_observer("tsproto::client".into(), Box::new(Observer));
+		c.add_out_packet_observer("tsproto::client".into(),
+			Box::new(ClientOutPacketObserver {
+				data: c2,
+			}));
 	}
 
 	Ok(c)
@@ -201,17 +178,46 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	let con2 = con.clone();
 	con.as_packet_sink()
 		.send(packet)
-		.and_then(move |_| {
-			wait_for_state(&con, |state| {
-				if let ServerConnectionState::Connecting = *state {
-					true
-				} else {
-					false
-				}
-			})
-		})
+		.and_then(move |_| wait_for_state(&con, |state|
+			*state == ServerConnectionState::Connecting
+		))
 		.and_then(move |_| Ok(con2))
 }
+
+struct ClientOutPacketObserver<
+	PH: PacketHandler<ServerConnectionData> + 'static,
+> {
+	data: Weak<Mutex<ClientData<PH>>>,
+}
+impl<PH: PacketHandler<ServerConnectionData> + 'static>
+	OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver<PH> {
+	fn observe(&self, (state, con): &mut (ServerConnectionData, Connection),
+		packet: &mut OutPacket) {
+		let p_type = packet.header().packet_type();
+		if p_type == PacketType::Command {
+			let s = b"clientdisconnect";
+			if packet.content().len() >= s.len()
+				&& packet.content()[..s.len()] == s[..] {
+				con.resender.handle_event(
+					crate::connectionmanager::ResenderEvent::Disconnecting,
+				);
+			}
+		} else if state.state == ServerConnectionState::Disconnecting
+			&& p_type == PacketType::Ack {
+			// The ack for the notifyclientleftview is sent
+			// Close connection
+			let addr = con.address;
+			let d = if let Some(d) = self.data.upgrade() {
+				d
+			} else {
+				// Connection doesn't exist anymore, ignore it.
+				return;
+			};
+			d.lock().remove_connection(&addr);
+		}
+	}
+}
+
 
 pub struct DefaultPacketHandler<
 	IPH: PacketHandler<ServerConnectionData> + 'static,
@@ -265,13 +271,11 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				let mut con = con_val.mutex.lock();
 				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
-				let mut is_end = false;
 				let handle_res = match Self::handle_init(
 					&con_val3,
 					&mut *con,
 					&p,
 					&mut ignore_packet,
-					&mut is_end,
 					key,
 					&logger,
 				) {
@@ -287,6 +291,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				if let Some((s, packet)) = handle_res {
 					con.0.state = s;
 					if let Some(packet) = packet {
+						drop(con);
 						// First send the packet, then notify the listeners,
 						// this ensures that the clientek packet is sent
 						// before the clientinit.
@@ -339,19 +344,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							}
 						}
 					}
-				}
-
-				if is_end {
-					// Close connection
-					let addr = con.1.address;
-					let d = if let Some(d) = data.upgrade() {
-						d
-					} else {
-						// Connection doesn't exist anymore, ignore it, the
-						// connection is already gone.
-						return Ok(None);
-					};
-					d.lock().remove_connection(&addr);
 				}
 
 				if ignore_packet {
@@ -400,12 +392,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				let mut con = con_val.mutex.lock();
 				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
-				let mut is_end = false;
 				let handle_res = match Self::handle_command(
 					&mut *con,
 					&cmd,
 					&mut ignore_packet,
-					&mut is_end,
 					key,
 					&logger,
 				) {
@@ -421,6 +411,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				if let Some((s, packet)) = handle_res {
 					con.0.state = s;
 					if let Some(packet) = packet {
+						drop(con);
 						// First send the packet, then notify the listeners,
 						// this ensures that the clientek packet is sent
 						// before the clientinit.
@@ -475,19 +466,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					}
 				}
 
-				if is_end {
-					// Close connection
-					let addr = con.1.address;
-					let d = if let Some(d) = data.upgrade() {
-						d
-					} else {
-						// Connection doesn't exist anymore, ignore it, the
-						// connection is already gone.
-						return Ok(None);
-					};
-					d.lock().remove_connection(&addr);
-				}
-
 				if ignore_packet {
 					Ok(None)
 				} else {
@@ -524,7 +502,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		(state, con): &mut (ServerConnectionData, Connection),
 		packet: &InS2CInit,
 		ignore_packet: &mut bool,
-		is_end: &mut bool,
 		private_key: EccKeyPrivP256,
 		logger: &Logger,
 	) -> Result<Option<(ServerConnectionState, Option<OutPacket>)>>
@@ -703,11 +680,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					}
 				})
 			}
-			ServerConnectionState::Disconnected => {
-				warn!(logger, "Got packet from server after disconnecting");
-				*is_end = true;
-				None
-			}
 			_ => {
 				*ignore_packet = false;
 				None
@@ -720,7 +692,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 		(state, con): &mut (ServerConnectionData, Connection),
 		command: &InCommand,
 		ignore_packet: &mut bool,
-		is_end: &mut bool,
 		private_key: EccKeyPrivP256,
 		logger: &Logger,
 	) -> Result<Option<(ServerConnectionState, Option<OutPacket>)>>
@@ -881,10 +852,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					// Handle a disconnect
 					if let Some(ref mut params) = con.params {
 						if cmd.get_parse("clid") == Ok(params.c_id) {
-							*is_end = true;
-							// Possible improvement: Wait with the
-							// disconnect until we sent the ack.
-							Some((ServerConnectionState::Disconnected, None))
+							// Wait with the disconnect until we sent the ack.
+							Some((ServerConnectionState::Disconnecting, None))
 						} else {
 							None
 						}
@@ -916,11 +885,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				} else {
 					None
 				}
-			}
-			ServerConnectionState::Disconnected => {
-				warn!(logger, "Got packet from server after disconnecting");
-				*is_end = true;
-				None
 			}
 			_ => {
 				*ignore_packet = false;
