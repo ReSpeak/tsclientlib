@@ -1,8 +1,6 @@
 use std::fmt;
 use std::net::IpAddr;
 
-use futures;
-
 use crate::Result;
 
 pub struct HexSlice<'a, T: fmt::LowerHex + 'a>(pub &'a [T]);

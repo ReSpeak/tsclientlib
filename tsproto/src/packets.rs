@@ -145,11 +145,10 @@ rental! {
 			data: C2SInitData<'packet_1>,
 		}
 
-		#[rental(debug)]
+		#[rental(debug, covariant)]
 		pub(crate) struct Audio {
-			#[subrental = 2]
 			packet: Box<Packet>,
-			data: VoiceData<'packet_1>,
+			data: AudioData<'packet>,
 		}
 	}
 }
@@ -223,7 +222,7 @@ pub struct InS2CInit(rentals::S2CInit);
 pub struct InC2SInit(rentals::C2SInit);
 
 #[derive(Debug)]
-pub enum VoiceData<'a> {
+pub enum AudioData<'a> {
 	C2S {
 		id: u16,
 		codec: CodecType,
@@ -351,13 +350,13 @@ impl InPacket {
 		Ok(InAudio(rentals::Audio::try_new_or_drop(
 			Box::new(self.inner),
 			|p| -> Result<_> {
-				let content = p.content;
+				let content = p.suffix();
 				if p_type == PacketType::Voice {
 					if dir == Direction::S2C {
 						if content.len() < 5 {
 							return Err(format_err!("Voice packet too short").into());
 						}
-						Ok(VoiceData::S2C {
+						Ok(AudioData::S2C {
 							id,
 							from: (&content[2..])
 								.read_u16::<NetworkEndian>()?,
@@ -371,7 +370,7 @@ impl InPacket {
 						if content.len() < 3 {
 							return Err(format_err!("Voice packet too short").into());
 						}
-						Ok(VoiceData::C2S {
+						Ok(AudioData::C2S {
 							id,
 							codec: CodecType::from_u8(content[2])
 								.ok_or_else::<Error, _>(|| {
@@ -384,7 +383,7 @@ impl InPacket {
 					if content.len() < 5 {
 						return Err(format_err!("Voice packet too short").into());
 					}
-					Ok(VoiceData::S2CWhisper {
+					Ok(AudioData::S2CWhisper {
 						id,
 						from: (&content[2..]).read_u16::<NetworkEndian>()?,
 						codec: CodecType::from_u8(content[4])
@@ -407,7 +406,7 @@ impl InPacket {
 								format_err!("Voice packet too short").into()
 							);
 						}
-						Ok(VoiceData::C2SWhisperNew {
+						Ok(AudioData::C2SWhisperNew {
 							id,
 							codec,
 							whisper_type: content[3],
@@ -433,7 +432,7 @@ impl InPacket {
 							);
 						}
 
-						Ok(VoiceData::C2SWhisper {
+						Ok(AudioData::C2SWhisper {
 							id,
 							codec,
 							channels: (0..channel_count)
@@ -729,6 +728,68 @@ impl InCommand {
 
 	#[inline]
 	pub fn iter(&self) -> CommandDataIterator { self.inner.suffix().iter() }
+}
+
+impl<'a> AudioData<'a> {
+	#[inline]
+	pub fn direction(&self) -> Direction {
+		match self {
+			AudioData::C2S { .. } => Direction::C2S,
+			AudioData::C2SWhisper { .. } => Direction::C2S,
+			AudioData::C2SWhisperNew { .. } => Direction::C2S,
+			AudioData::S2C { .. } => Direction::S2C,
+			AudioData::S2CWhisper { .. } => Direction::S2C,
+		}
+	}
+
+	#[inline]
+	pub fn packet_type(&self) -> PacketType {
+		match self {
+			AudioData::C2S { .. } => PacketType::Voice,
+			AudioData::C2SWhisper { .. } => PacketType::VoiceWhisper,
+			AudioData::C2SWhisperNew { .. } => PacketType::VoiceWhisper,
+			AudioData::S2C { .. } => PacketType::Voice,
+			AudioData::S2CWhisper { .. } => PacketType::VoiceWhisper,
+		}
+	}
+
+	#[inline]
+	pub fn codec(&self) -> CodecType {
+		match self {
+			AudioData::C2S { codec, .. } => *codec,
+			AudioData::C2SWhisper { codec, .. } => *codec,
+			AudioData::C2SWhisperNew { codec, .. } => *codec,
+			AudioData::S2C { codec, .. } => *codec,
+			AudioData::S2CWhisper { codec, .. } => *codec,
+		}
+	}
+
+	#[inline]
+	pub fn id(&self) -> u16 {
+		match self {
+			AudioData::C2S { id, .. } => *id,
+			AudioData::C2SWhisper { id, .. } => *id,
+			AudioData::C2SWhisperNew { id, .. } => *id,
+			AudioData::S2C { id, .. } => *id,
+			AudioData::S2CWhisper { id, .. } => *id,
+		}
+	}
+
+	#[inline]
+	pub fn flags(&self) -> Flags {
+		match self {
+			AudioData::C2S { .. } => Flags::empty(),
+			AudioData::C2SWhisper { .. } => Flags::NEWPROTOCOL,
+			AudioData::C2SWhisperNew { .. } => Flags::NEWPROTOCOL,
+			AudioData::S2C { .. } => Flags::empty(),
+			AudioData::S2CWhisper { .. } => Flags::empty(),
+		}
+	}
+}
+
+impl InAudio {
+	#[inline]
+	pub fn data(&self) -> &AudioData { self.0.suffix() }
 }
 
 impl OutPacket {
@@ -1035,6 +1096,52 @@ impl OutAck {
 		let mut res = OutPacket::new_with_dir(dir, Flags::empty(), p_type);
 		let content = res.data_mut();
 		content.write_u16::<NetworkEndian>(packet_id).unwrap();
+		res
+	}
+}
+
+pub struct OutAudio;
+impl OutAudio {
+	pub fn new(data: &AudioData) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(data.direction(), data.flags(),
+			data.packet_type());
+		let content = res.data_mut();
+
+		content.write_u16::<NetworkEndian>(data.id()).unwrap();
+		match data {
+			AudioData::C2S { id: _, codec, data } => {
+				content.write_u8(codec.to_u8().unwrap()).unwrap();
+				content.extend_from_slice(data);
+			}
+			AudioData::C2SWhisper { id: _, codec, channels, clients, data } => {
+				content.write_u8(codec.to_u8().unwrap()).unwrap();
+				content.write_u8(channels.len() as u8).unwrap();
+				content.write_u8(clients.len() as u8).unwrap();
+
+				for c in channels {
+					content.write_u64::<NetworkEndian>(*c).unwrap();
+				}
+				for c in clients {
+					content.write_u16::<NetworkEndian>(*c).unwrap();
+				}
+				content.extend_from_slice(data);
+			}
+			AudioData::C2SWhisperNew { id: _, codec, whisper_type, target,
+				target_id, data } => {
+				content.write_u8(codec.to_u8().unwrap()).unwrap();
+				content.write_u8(whisper_type.to_u8().unwrap()).unwrap();
+				content.write_u8(*target).unwrap();
+				content.write_u64::<NetworkEndian>(*target_id).unwrap();
+				content.extend_from_slice(data);
+			}
+			AudioData::S2C { id: _, from, codec, data } |
+			AudioData::S2CWhisper { id: _, from, codec, data } => {
+				content.write_u16::<NetworkEndian>(*from).unwrap();
+				content.write_u8(codec.to_u8().unwrap()).unwrap();
+				content.extend_from_slice(data);
+			}
+		}
+
 		res
 	}
 }

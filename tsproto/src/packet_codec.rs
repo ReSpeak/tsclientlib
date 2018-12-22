@@ -543,7 +543,8 @@ impl PacketCodecSender {
 				|| (self.is_client && p_id == 1 && {
 					// Test if it is a clientek packet
 					let s = b"clientek";
-					packet.content()[..s.len()] == s[..]
+					packet.content().len() >= s.len()
+						&& packet.content()[..s.len()] == s[..]
 				}));
 
 		// Get values from parameters

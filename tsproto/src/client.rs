@@ -150,7 +150,8 @@ pub fn new<
 				packet: &mut OutPacket) {
 				if packet.header().packet_type() == PacketType::Command {
 					let s = b"clientdisconnect";
-					if packet.content()[..s.len()] == s[..] {
+					if packet.content().len() >= s.len()
+						&& packet.content()[..s.len()] == s[..] {
 						con.resender.handle_event(
 							crate::connectionmanager::ResenderEvent::Disconnecting,
 						);
