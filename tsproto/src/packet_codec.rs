@@ -282,7 +282,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			}
 		} else {
 			// Send an ack for the case when it was lost
-			if p_type == PacketType::Command || p_type == PacketType::CommandLow {
+			if p_type == PacketType::Command || p_type == PacketType::CommandLow
+			{
 				ack = true;
 			}
 			packet_res = Err(Error::NotInReceiveWindow {
@@ -321,9 +322,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					{
 						error!(logger, "Failed to send packet to handler"; "error" => ?e);
 					}
-				} else if let Err(e) =
-					con.1.c2s_init_sink.unbounded_send(packet.into_c2sinit()
-						.map_err(|(_, e)| e)?)
+				} else if let Err(e) = con
+					.1
+					.c2s_init_sink
+					.unbounded_send(packet.into_c2sinit().map_err(|(_, e)| e)?)
 				{
 					error!(logger, "Failed to send packet to handler"; "error" => ?e);
 				}
@@ -389,8 +391,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 								"string" => %String::from_utf8_lossy(&decompressed),
 							);
 						}*/
-						Some(InCommand::with_content(&header, decompressed)
-							.map_err(|(_, e)| e)?)
+						Some(
+							InCommand::with_content(&header, decompressed)
+								.map_err(|(_, e)| e)?,
+						)
 					} else {
 						// Enqueue
 						let content = packet.take_content();
@@ -421,8 +425,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					/*if header.get_compressed() {
 						debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
 					}*/
-					Some(InCommand::with_content(&packet, decompressed)
-						.map_err(|(_, e)| e)?)
+					Some(
+						InCommand::with_content(&packet, decompressed)
+							.map_err(|(_, e)| e)?,
+					)
 				};
 				if let Some(p) = res_packet {
 					packets.push(p);
@@ -532,9 +538,9 @@ impl PacketCodecSender {
 		let type_i = p_type.to_usize().unwrap();
 
 		// TODO Needed, commands should set their own flag?
-		if (p_type == PacketType::Command
-			|| p_type == PacketType::CommandLow)
-			&& self.is_client {
+		if (p_type == PacketType::Command || p_type == PacketType::CommandLow)
+			&& self.is_client
+		{
 			// Set newprotocol flag
 			packet.flags(packet.header().flags() | Flags::NEWPROTOCOL);
 		}
@@ -594,8 +600,11 @@ impl PacketCodecSender {
 			algs::compress_and_split(self.is_client, packet)
 		} else {
 			// Set the inner packet id for voice packets
-			if p_type == PacketType::Voice || p_type == PacketType::VoiceWhisper {
-				(&mut packet.content_mut()[..2]).write_u16::<NetworkEndian>(con.outgoing_p_ids[type_i].1).unwrap();
+			if p_type == PacketType::Voice || p_type == PacketType::VoiceWhisper
+			{
+				(&mut packet.content_mut()[..2])
+					.write_u16::<NetworkEndian>(con.outgoing_p_ids[type_i].1)
+					.unwrap();
 			}
 
 			// Identify init packets by their number

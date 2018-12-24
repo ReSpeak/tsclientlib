@@ -59,13 +59,8 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-	let c = client::new(
-		local_address,
-		private_key,
-		packet_handler,
-		logger,
-	)
-	.unwrap();
+	let c = client::new(local_address, private_key, packet_handler, logger)
+		.unwrap();
 
 	{
 		let mut c = c.lock();
@@ -146,18 +141,21 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
 	client: &client::ClientDataM<PH>,
 	con: client::ClientConVal,
-) -> Box<Future<Item = (), Error = Error> + Send> {
-	let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-		Direction::C2S,
-		PacketType::Command,
-		"clientdisconnect",
-		vec![
-			// Reason: Disconnect
-			("reasonid", "8"),
-			("reasonmsg", "Bye"),
-		].into_iter(),
-		std::iter::empty(),
-	);
+) -> Box<Future<Item = (), Error = Error> + Send>
+{
+	let packet =
+		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"clientdisconnect",
+			vec![
+				// Reason: Disconnect
+				("reasonid", "8"),
+				("reasonmsg", "Bye"),
+			]
+			.into_iter(),
+			std::iter::empty(),
+		);
 
 	let addr = if let Some(con) = con.upgrade() {
 		con.mutex.lock().1.address

@@ -195,13 +195,19 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 
 	pub fn as_udp_packet_sink(
 		&self,
-	) -> Box<Sink<SinkItem = (PacketType, u16, Bytes), SinkError = Error> + Send> {
+	) -> Box<Sink<SinkItem = (PacketType, u16, Bytes), SinkError = Error> + Send>
+	{
 		if let Some(con_val) = self.upgrade() {
 			Box::new(ConnectionUdpPacketSink::new(&con_val))
 		} else {
-			Box::new(mpsc::channel::<(PacketType, u16, Bytes)>(0).0
-				.sink_map_err(|_| -> Error { unreachable!("Should error before") })
-				.with(|_| Err(format_err!("Connection is gone").into())))
+			Box::new(
+				mpsc::channel::<(PacketType, u16, Bytes)>(0)
+					.0
+					.sink_map_err(|_| -> Error {
+						unreachable!("Should error before")
+					})
+					.with(|_| Err(format_err!("Connection is gone").into())),
+			)
 		}
 	}
 
@@ -543,12 +549,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn wait_for_disconnect(
 		&mut self,
 		key: CM::Key,
-	) -> Box<Future<Item=(), Error=Error> + Send>
+	) -> Box<Future<Item = (), Error = Error> + Send>
 	{
 		if self.connections.read().contains_key(&key) {
 			let (send, recv) = oneshot::channel();
-			self.connection_listeners.push(Box::new(DisconnectListener::new(key,
-				send)));
+			self.connection_listeners
+				.push(Box::new(DisconnectListener::new(key, send)));
 			Box::new(recv.from_err())
 		} else {
 			Box::new(future::ok(()))
@@ -621,11 +627,16 @@ struct DisconnectListener<T: Eq> {
 
 impl<T: Eq> DisconnectListener<T> {
 	fn new(key: T, sender: oneshot::Sender<()>) -> Self {
-		Self { key, sender: Some(sender) }
+		Self {
+			key,
+			sender: Some(sender),
+		}
 	}
 }
 
-impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener<CM::Key> {
+impl<CM: ConnectionManager> ConnectionListener<CM>
+	for DisconnectListener<CM::Key>
+{
 	fn on_connection_removed(
 		&mut self,
 		key: &CM::Key,

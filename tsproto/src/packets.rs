@@ -354,7 +354,9 @@ impl InPacket {
 				if p_type == PacketType::Voice {
 					if dir == Direction::S2C {
 						if content.len() < 5 {
-							return Err(format_err!("Voice packet too short").into());
+							return Err(
+								format_err!("Voice packet too short").into()
+							);
 						}
 						Ok(AudioData::S2C {
 							id,
@@ -368,7 +370,9 @@ impl InPacket {
 						})
 					} else {
 						if content.len() < 3 {
-							return Err(format_err!("Voice packet too short").into());
+							return Err(
+								format_err!("Voice packet too short").into()
+							);
 						}
 						Ok(AudioData::C2S {
 							id,
@@ -513,9 +517,8 @@ impl InPacket {
 		}
 
 		let dir = self.dir;
-		Ok(InC2SInit(rentals::C2SInit::try_new(
-			Box::new(self.inner),
-			|p| {
+		Ok(InC2SInit(
+			rentals::C2SInit::try_new(Box::new(self.inner), |p| {
 				let content = &p.content;
 				if content.len() < 5 {
 					return Err(format_err!("Packet too short"));
@@ -561,11 +564,9 @@ impl InPacket {
 				} else {
 					Err(format_err!("Invalid init step"))
 				}
-			},
-		).map_err(|r| (Self {
-			inner: *r.1,
-			dir,
-		}, r.0.into()))?))
+			})
+			.map_err(|r| (Self { inner: *r.1, dir }, r.0.into()))?,
+		))
 	}
 }
 
@@ -694,7 +695,8 @@ impl InCommand {
 		let inner = rentals::Command::try_new(content, |c| {
 			let s = ::std::str::from_utf8(c)?;
 			crate::commands::parse_command(s)
-		}).map_err(|e| (e.1, e.0))?;
+		})
+		.map_err(|e| (e.1, e.0))?;
 		Ok(Self {
 			inner,
 			p_type,
@@ -798,9 +800,19 @@ impl InAudio {
 
 impl OutPacket {
 	#[inline]
-	pub fn new(mac: [u8; 8], packet_id: u16, client_id: Option<u16>,
-		   flags: Flags, packet_type: PacketType) -> Self {
-		let dir = if client_id.is_some() { Direction::C2S } else { Direction::S2C };
+	pub fn new(
+		mac: [u8; 8],
+		packet_id: u16,
+		client_id: Option<u16>,
+		flags: Flags,
+		packet_type: PacketType,
+	) -> Self
+	{
+		let dir = if client_id.is_some() {
+			Direction::C2S
+		} else {
+			Direction::S2C
+		};
 		let mut res = Self::new_with_dir(dir, flags, packet_type);
 		res.data[..8].copy_from_slice(&mac);
 		res.packet_id(packet_id);
@@ -812,9 +824,20 @@ impl OutPacket {
 
 	/// Fill packet with known data. The rest gets filled by `packet_codec`.
 	#[inline]
-	pub fn new_with_dir(dir: Direction, flags: Flags, packet_type: PacketType) -> Self {
-		let data = vec![0; if dir == Direction::S2C { crate::S2C_HEADER_LEN }
-			else { crate::C2S_HEADER_LEN }];
+	pub fn new_with_dir(
+		dir: Direction,
+		flags: Flags,
+		packet_type: PacketType,
+	) -> Self
+	{
+		let data = vec![
+			0;
+			if dir == Direction::S2C {
+				crate::S2C_HEADER_LEN
+			} else {
+				crate::C2S_HEADER_LEN
+			}
+		];
 		let mut res = Self { dir, data };
 		res.flags(flags);
 		res.packet_type(packet_type);
@@ -852,21 +875,23 @@ impl OutPacket {
 	#[inline]
 	pub fn header(&self) -> InHeader { InHeader(&self.data, self.dir) }
 	#[inline]
-	pub fn header_bytes(&self) -> &[u8] {
-		&self.data[..self.content_offset()]
-	}
+	pub fn header_bytes(&self) -> &[u8] { &self.data[..self.content_offset()] }
 
 	#[inline]
 	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
 	#[inline]
 	pub fn packet_id(&mut self, packet_id: u16) {
-		(&mut self.data[8..10]).write_u16::<NetworkEndian>(packet_id).unwrap();
+		(&mut self.data[8..10])
+			.write_u16::<NetworkEndian>(packet_id)
+			.unwrap();
 	}
 	#[inline]
 	pub fn client_id(&mut self, client_id: u16) {
 		// Client id is only valid for client to server packets.
 		assert_eq!(self.dir, Direction::C2S);
-		(&mut self.data[10..12]).write_u16::<NetworkEndian>(client_id).unwrap();
+		(&mut self.data[10..12])
+			.write_u16::<NetworkEndian>(client_id)
+			.unwrap();
 	}
 	#[inline]
 	pub fn flags(&mut self, flags: Flags) {
@@ -926,14 +951,14 @@ impl OutCommand {
 		static_args: I1,
 		list_args: I2,
 	) -> OutPacket
-		where
-			K1: AsRef<str>,
-			V1: AsRef<str>,
-			K2: AsRef<str>,
-			V2: AsRef<str>,
-			I1: Iterator<Item=(K1, V1)>,
-			I2: Iterator<Item=I3>,
-			I3: Iterator<Item=(K2, V2)>,
+	where
+		K1: AsRef<str>,
+		V1: AsRef<str>,
+		K2: AsRef<str>,
+		V2: AsRef<str>,
+		I1: Iterator<Item = (K1, V1)>,
+		I2: Iterator<Item = I3>,
+		I3: Iterator<Item = (K2, V2)>,
 	{
 		let mut res = OutPacket::new_with_dir(dir, Flags::empty(), p_type);
 		let content = res.data_mut();
@@ -947,15 +972,14 @@ impl OutCommand {
 		static_args: I1,
 		list_args: I2,
 		res: &mut Vec<u8>,
-	)
-		where
-			K1: AsRef<str>,
-			V1: AsRef<str>,
-			K2: AsRef<str>,
-			V2: AsRef<str>,
-			I1: Iterator<Item=(K1, V1)>,
-			I2: Iterator<Item=I3>,
-			I3: Iterator<Item=(K2, V2)>,
+	) where
+		K1: AsRef<str>,
+		V1: AsRef<str>,
+		K2: AsRef<str>,
+		V2: AsRef<str>,
+		I1: Iterator<Item = (K1, V1)>,
+		I2: Iterator<Item = I3>,
+		I3: Iterator<Item = (K2, V2)>,
 	{
 		res.extend_from_slice(name.as_bytes());
 		for (k, v) in static_args {
@@ -1022,7 +1046,11 @@ impl OutCommand {
 pub struct OutC2SInit0;
 impl OutC2SInit0 {
 	pub fn new(version: u32, timestamp: u32, random0: [u8; 4]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+		let mut res = OutPacket::new_with_dir(
+			Direction::C2S,
+			Flags::empty(),
+			PacketType::Init,
+		);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1038,8 +1066,17 @@ impl OutC2SInit0 {
 
 pub struct OutC2SInit2;
 impl OutC2SInit2 {
-	pub fn new(version: u32, random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+	pub fn new(
+		version: u32,
+		random1: &[u8; 16],
+		random0_r: [u8; 4],
+	) -> OutPacket
+	{
+		let mut res = OutPacket::new_with_dir(
+			Direction::C2S,
+			Flags::empty(),
+			PacketType::Init,
+		);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1053,9 +1090,23 @@ impl OutC2SInit2 {
 
 pub struct OutC2SInit4;
 impl OutC2SInit4 {
-	pub fn new(version: u32, x: &[u8; 64], n: &[u8; 64], level: u32,
-		random2: &[u8; 100], y: &[u8; 64], alpha: &[u8], omega: &[u8], ip: &str) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
+	pub fn new(
+		version: u32,
+		x: &[u8; 64],
+		n: &[u8; 64],
+		level: u32,
+		random2: &[u8; 100],
+		y: &[u8; 64],
+		alpha: &[u8],
+		omega: &[u8],
+		ip: &str,
+	) -> OutPacket
+	{
+		let mut res = OutPacket::new_with_dir(
+			Direction::C2S,
+			Flags::empty(),
+			PacketType::Init,
+		);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1071,8 +1122,17 @@ impl OutC2SInit4 {
 		} else {
 			format!("={}", ip)
 		};
-		content.write_all(format!("clientinitiv alpha={} omega={} ot=1 ip{}",
-			base64::encode(alpha), base64::encode(omega), ip).as_bytes()).unwrap();
+		content
+			.write_all(
+				format!(
+					"clientinitiv alpha={} omega={} ot=1 ip{}",
+					base64::encode(alpha),
+					base64::encode(omega),
+					ip
+				)
+				.as_bytes(),
+			)
+			.unwrap();
 		res
 	}
 }
@@ -1080,7 +1140,11 @@ impl OutC2SInit4 {
 pub struct OutS2CInit1;
 impl OutS2CInit1 {
 	pub fn new(random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Init);
+		let mut res = OutPacket::new_with_dir(
+			Direction::S2C,
+			Flags::empty(),
+			PacketType::Init,
+		);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1093,8 +1157,18 @@ impl OutS2CInit1 {
 
 pub struct OutS2CInit3;
 impl OutS2CInit3 {
-	pub fn new(x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Init);
+	pub fn new(
+		x: &[u8; 64],
+		n: &[u8; 64],
+		level: u32,
+		random2: &[u8; 100],
+	) -> OutPacket
+	{
+		let mut res = OutPacket::new_with_dir(
+			Direction::S2C,
+			Flags::empty(),
+			PacketType::Init,
+		);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1110,7 +1184,12 @@ impl OutS2CInit3 {
 pub struct OutAck;
 impl OutAck {
 	/// `for_type` is the packet type which gets acknowledged, so e.g. `Command`.
-	pub fn new(dir: Direction, for_type: PacketType, packet_id: u16) -> OutPacket {
+	pub fn new(
+		dir: Direction,
+		for_type: PacketType,
+		packet_id: u16,
+	) -> OutPacket
+	{
 		let p_type = if for_type == PacketType::Command {
 			PacketType::Ack
 		} else if for_type == PacketType::CommandLow {
@@ -1131,8 +1210,11 @@ impl OutAck {
 pub struct OutAudio;
 impl OutAudio {
 	pub fn new(data: &AudioData) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(data.direction(), data.flags(),
-			data.packet_type());
+		let mut res = OutPacket::new_with_dir(
+			data.direction(),
+			data.flags(),
+			data.packet_type(),
+		);
 		let content = res.data_mut();
 
 		content.write_u16::<NetworkEndian>(data.id()).unwrap();
@@ -1141,7 +1223,13 @@ impl OutAudio {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);
 			}
-			AudioData::C2SWhisper { codec, channels, clients, data, .. } => {
+			AudioData::C2SWhisper {
+				codec,
+				channels,
+				clients,
+				data,
+				..
+			} => {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.write_u8(channels.len() as u8).unwrap();
 				content.write_u8(clients.len() as u8).unwrap();
@@ -1154,16 +1242,26 @@ impl OutAudio {
 				}
 				content.extend_from_slice(data);
 			}
-			AudioData::C2SWhisperNew { codec, whisper_type, target, target_id,
-				data, .. } => {
+			AudioData::C2SWhisperNew {
+				codec,
+				whisper_type,
+				target,
+				target_id,
+				data,
+				..
+			} => {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.write_u8(whisper_type.to_u8().unwrap()).unwrap();
 				content.write_u8(*target).unwrap();
 				content.write_u64::<NetworkEndian>(*target_id).unwrap();
 				content.extend_from_slice(data);
 			}
-			AudioData::S2C { from, codec, data, .. } |
-			AudioData::S2CWhisper { from, codec, data, .. } => {
+			AudioData::S2C {
+				from, codec, data, ..
+			}
+			| AudioData::S2CWhisper {
+				from, codec, data, ..
+			} => {
 				content.write_u16::<NetworkEndian>(*from).unwrap();
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);

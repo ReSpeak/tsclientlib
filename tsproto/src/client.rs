@@ -115,7 +115,8 @@ pub fn new<
 	private_key: EccKeyPrivP256,
 	packet_handler: PH,
 	logger: L,
-) -> Result<Arc<Mutex<ClientData<PH>>>> {
+) -> Result<Arc<Mutex<ClientData<PH>>>>
+{
 	let c = ClientData::new(
 		local_addr,
 		private_key,
@@ -134,10 +135,10 @@ pub fn new<
 		c.packet_handler.complete(c2.clone());
 
 		// Change state on disconnect
-		c.add_out_packet_observer("tsproto::client".into(),
-			Box::new(ClientOutPacketObserver {
-				data: c2,
-			}));
+		c.add_out_packet_observer(
+			"tsproto::client".into(),
+			Box::new(ClientOutPacketObserver { data: c2 }),
+		);
 	}
 
 	Ok(c)
@@ -178,9 +179,11 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	let con2 = con.clone();
 	con.as_packet_sink()
 		.send(packet)
-		.and_then(move |_| wait_for_state(&con, |state|
-			*state == ServerConnectionState::Connecting
-		))
+		.and_then(move |_| {
+			wait_for_state(&con, |state| {
+				*state == ServerConnectionState::Connecting
+			})
+		})
 		.and_then(move |_| Ok(con2))
 }
 
@@ -190,20 +193,27 @@ struct ClientOutPacketObserver<
 	data: Weak<Mutex<ClientData<PH>>>,
 }
 impl<PH: PacketHandler<ServerConnectionData> + 'static>
-	OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver<PH> {
-	fn observe(&self, (state, con): &mut (ServerConnectionData, Connection),
-		packet: &mut OutPacket) {
+	OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver<PH>
+{
+	fn observe(
+		&self,
+		(state, con): &mut (ServerConnectionData, Connection),
+		packet: &mut OutPacket,
+	)
+	{
 		let p_type = packet.header().packet_type();
 		if p_type == PacketType::Command {
 			let s = b"clientdisconnect";
 			if packet.content().len() >= s.len()
-				&& packet.content()[..s.len()] == s[..] {
+				&& packet.content()[..s.len()] == s[..]
+			{
 				con.resender.handle_event(
 					crate::connectionmanager::ResenderEvent::Disconnecting,
 				);
 			}
 		} else if state.state == ServerConnectionState::Disconnecting
-			&& p_type == PacketType::Ack {
+			&& p_type == PacketType::Ack
+		{
 			// The ack for the notifyclientleftview is sent
 			// Close connection
 			let addr = con.address;
@@ -217,7 +227,6 @@ impl<PH: PacketHandler<ServerConnectionData> + 'static>
 		}
 	}
 }
-
 
 pub struct DefaultPacketHandler<
 	IPH: PacketHandler<ServerConnectionData> + 'static,
@@ -524,7 +533,11 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 
 						Some((
 							state,
-							Some(OutC2SInit2::new(version, random1, **random0_r)),
+							Some(OutC2SInit2::new(
+								version,
+								random1,
+								**random0_r,
+							)),
 						))
 					} else {
 						None
@@ -648,13 +661,18 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 											.to_tomcrypt()
 											.unwrap();
 										// Set ip always except if it is a local address
-										let ip = if crate::utils::is_global_ip(&ip) {
+										let ip = if crate::utils::is_global_ip(
+											&ip,
+										) {
 											ip.to_string()
 										} else {
 											String::new()
 										};
 
-										let packet = OutC2SInit4::new(version, &x, &n, level, &random2, &y, &alpha, &omega, &ip);
+										let packet = OutC2SInit4::new(
+											version, &x, &n, level, &random2,
+											&y, &alpha, &omega, &ip,
+										);
 										Box::new(
 											con_value
 												.as_packet_sink()
@@ -703,12 +721,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					(|con_params: &mut Option<ConnectedParams>| -> Result<_> {
 						let cmd = command.iter().next().unwrap();
 						if command.name() == "initivexpand"
-							&& cmd.has("alpha")
-							&& cmd.has("beta")
-							&& cmd.has("omega")
-							&& base64::decode(cmd.0["alpha"])
-								.map(|a| a == alpha)
-								.unwrap_or(false)
+							&& cmd.has("alpha") && cmd.has("beta")
+							&& cmd.has("omega") && base64::decode(cmd.0["alpha"])
+							.map(|a| a == alpha)
+							.unwrap_or(false)
 						{
 							resender.ack_packet(PacketType::Init, 4);
 
@@ -739,9 +755,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							Ok(None)
 						} else if command.name() == "initivexpand2"
 							&& cmd.has("l") && cmd.has("beta")
-							&& cmd.has("omega")
-							&& cmd.get("ot") == Some("1")
-							&& cmd.has("time")
+							&& cmd.has("omega") && cmd.get("ot")
+							== Some("1") && cmd.has("time")
 							&& cmd.has("beta")
 						{
 							resender.ack_packet(PacketType::Init, 4);
@@ -793,11 +808,20 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							let proof = private_key.clone().sign(&all)?;
 							let proof_s = base64::encode(&proof);
 
-							Ok(Some(OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+							Ok(Some(OutCommand::new::<
+								_,
+								_,
+								String,
+								String,
+								_,
+								_,
+								std::iter::Empty<_>,
+							>(
 								Direction::C2S,
 								PacketType::Command,
 								"clientek",
-								vec![("ek", ek_s), ("proof", proof_s)].into_iter(),
+								vec![("ek", ek_s), ("proof", proof_s)]
+									.into_iter(),
 								std::iter::empty(),
 							)))
 						} else {
@@ -867,20 +891,34 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					// TODO Send to clientid
 					//command.push("target", 0);
 
-					let p = Some(OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+					let p = Some(OutCommand::new::<
+						_,
+						_,
+						String,
+						String,
+						_,
+						_,
+						std::iter::Empty<_>,
+					>(
 						Direction::C2S,
 						PacketType::Command,
 						"plugincmd",
-						vec![("name", "cliententerview".to_string()),
-							("data", format!(
-								"{},{}-{}",
-								con.params.as_ref().unwrap().c_id,
-								env!("CARGO_PKG_NAME"),
-								env!("CARGO_PKG_VERSION"),
-							)),
+						vec![
+							("name", "cliententerview".to_string()),
+							(
+								"data",
+								format!(
+									"{},{}-{}",
+									con.params.as_ref().unwrap().c_id,
+									env!("CARGO_PKG_NAME"),
+									env!("CARGO_PKG_VERSION"),
+								),
+							),
 							("targetmode", 2.to_string()),
-						].into_iter(), std::iter::empty())
-					);
+						]
+						.into_iter(),
+						std::iter::empty(),
+					));
 					Some((ServerConnectionState::Connected, p))
 				} else {
 					None

@@ -87,10 +87,24 @@ impl InUdpPacketObserver for UdpPacketLogger {
 
 impl OutUdpPacketObserver for UdpPacketLogger {
 	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]) {
-		match InPacket::try_new(udp_packet.into(),
-			if self.is_client { Direction::C2S } else { Direction::S2C }) {
-			Ok(packet) => log_udp_packet(&self.logger, addr, self.is_client, false, &packet),
-			Err(e) => error!(self.logger, "Cannot parse incoming udp packet"; "error" => ?e),
+		match InPacket::try_new(
+			udp_packet.into(),
+			if self.is_client {
+				Direction::C2S
+			} else {
+				Direction::S2C
+			},
+		) {
+			Ok(packet) => log_udp_packet(
+				&self.logger,
+				addr,
+				self.is_client,
+				false,
+				&packet,
+			),
+			Err(e) => {
+				error!(self.logger, "Cannot parse incoming udp packet"; "error" => ?e)
+			}
 		}
 	}
 }
@@ -133,13 +147,7 @@ impl<T: Send> OutPacketObserver<T> for CommandLogger {
 		let p_type = packet.header().packet_type();
 		if p_type == PacketType::Command || p_type == PacketType::CommandLow {
 			let cmd_s = ::std::str::from_utf8(packet.content()).unwrap();
-			log_command(
-				&con.1.logger,
-				self.is_client,
-				false,
-				p_type,
-				cmd_s,
-			);
+			log_command(&con.1.logger, self.is_client, false, p_type, cmd_s);
 		}
 	}
 }

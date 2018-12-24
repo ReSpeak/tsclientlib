@@ -255,19 +255,19 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 					Err(format_err!("Connection is gone").into())
 				}
 			}
-			_ => {
-				Ok(
-					match self.udp_packet_sink.start_send(
-						(self.address, udp_packet)).map_err(|e| {
+			_ => Ok(
+				match self
+					.udp_packet_sink
+					.start_send((self.address, udp_packet))
+					.map_err(|e| {
 						format_err!("Failed to send udp packet ({:?})", e)
 					})? {
-						AsyncSink::Ready => AsyncSink::Ready,
-						AsyncSink::NotReady((_, p)) => {
-							AsyncSink::NotReady((p_type, p_id, p))
-						}
-					},
-				)
-			}
+					AsyncSink::Ready => AsyncSink::Ready,
+					AsyncSink::NotReady((_, p)) => {
+						AsyncSink::NotReady((p_type, p_id, p))
+					}
+				},
+			),
 		}
 	}
 

@@ -57,13 +57,8 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-	let c = client::new(
-		local_address,
-		private_key,
-		packet_handler,
-		logger,
-	)
-	.unwrap();
+	let c = client::new(local_address, private_key, packet_handler, logger)
+		.unwrap();
 
 	{
 		let mut c = c.lock();
@@ -140,17 +135,19 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 pub fn disconnect(
 	con: client::ClientConVal,
 ) -> impl Future<Item = (), Error = Error> {
-	let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-		Direction::C2S,
-		PacketType::Command,
-		"clientdisconnect",
-		vec![
-			// Reason: Disconnect
-			("reasonid", "8"),
-			("reasonmsg", "Bye"),
-		].into_iter(),
-		std::iter::empty(),
-	);
+	let packet =
+		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"clientdisconnect",
+			vec![
+				// Reason: Disconnect
+				("reasonid", "8"),
+				("reasonmsg", "Bye"),
+			]
+			.into_iter(),
+			std::iter::empty(),
+		);
 
 	con.as_packet_sink().send(packet).and_then(move |_| {
 		client::wait_for_state(&con, |state| {

@@ -5,8 +5,10 @@ use std::str;
 use std::str::FromStr;
 
 use nom::types::CompleteStr;
-use nom::{alphanumeric, alt, call, do_parse, eof, error_position, is_not, many0,
-	many1, map, multispace, named, preceded, opt, tag, tuple, tuple_parser};
+use nom::{
+	alphanumeric, alt, call, do_parse, eof, error_position, is_not, many0,
+	many1, map, multispace, named, opt, preceded, tag, tuple, tuple_parser,
+};
 
 use crate::Result;
 
@@ -66,7 +68,11 @@ impl<'a> CanonicalCommand<'a> {
 	pub fn has(&self, arg: &str) -> bool { self.0.contains_key(arg) }
 	pub fn get(&self, arg: &str) -> Option<&str> { self.0.get(arg).map(|s| *s) }
 
-	pub fn get_parse<F: FromStr>(&self, arg: &str) -> std::result::Result<F, Option<<F as FromStr>::Err>> {
+	pub fn get_parse<F: FromStr>(
+		&self,
+		arg: &str,
+	) -> std::result::Result<F, Option<<F as FromStr>::Err>>
+	{
 		if let Some(s) = self.0.get(arg) {
 			s.parse::<F>().map_err(Some)
 		} else {
@@ -140,8 +146,13 @@ impl<'a> Iterator for CommandDataIterator<'a> {
 
 impl<'a> CommandData<'a> {
 	pub fn static_arg(&self, k: &str) -> Option<&str> {
-		self.static_args.iter().find_map(|(k2, v)| if *k2 == k
-			{ Some(v.as_ref()) } else { None })
+		self.static_args.iter().find_map(|(k2, v)| {
+			if *k2 == k {
+				Some(v.as_ref())
+			} else {
+				None
+			}
+		})
 	}
 
 	pub fn iter(&self) -> CommandDataIterator {
@@ -160,20 +171,22 @@ impl<'a> CommandData<'a> {
 
 #[cfg(test)]
 mod tests {
-	use std::str;
 	use super::{parse_command, CommandData};
 	use crate::packets::OutCommand;
+	use std::str;
 
 	/// Parse and write again.
 	fn test_loop(s: &str) -> CommandData {
 		let command = parse_command(s).unwrap();
 		println!("Parsed command: {:?}", command);
 		let mut written = Vec::new();
-		OutCommand::new_into(command.name,
+		OutCommand::new_into(
+			command.name,
 			command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
-			command.list_args.iter().map(|i| {
-				i.iter().map(|(k, v)| (*k, v.as_ref()))
-			}),
+			command
+				.list_args
+				.iter()
+				.map(|i| i.iter().map(|(k, v)| (*k, v.as_ref()))),
 			&mut written,
 		);
 
@@ -185,11 +198,10 @@ mod tests {
 	fn simple() {
 		let cmd = test_loop("cmd a=1 b=2 c=3");
 		assert_eq!(cmd.name, "cmd");
-		assert_eq!(cmd.static_args, vec![
-			("a", "1".into()),
-			("b", "2".into()),
-			("c", "3".into()),
-		]);
+		assert_eq!(
+			cmd.static_args,
+			vec![("a", "1".into()), ("b", "2".into()), ("c", "3".into()),]
+		);
 		assert!(cmd.list_args.is_empty());
 	}
 
@@ -197,11 +209,14 @@ mod tests {
 	fn escape() {
 		let cmd = test_loop("cmd a=\\s\\\\ b=\\p c=abc\\tdef");
 		assert_eq!(cmd.name, "cmd");
-		assert_eq!(cmd.static_args, vec![
-			("a", " \\".into()),
-			("b", "|".into()),
-			("c", "abc\tdef".into()),
-		]);
+		assert_eq!(
+			cmd.static_args,
+			vec![
+				("a", " \\".into()),
+				("b", "|".into()),
+				("c", "abc\tdef".into()),
+			]
+		);
 		assert!(cmd.list_args.is_empty());
 	}
 
@@ -209,15 +224,18 @@ mod tests {
 	fn array() {
 		let cmd = test_loop("cmd a=1 c=3 b=2|b=4|b=5");
 		assert_eq!(cmd.name, "cmd");
-		assert_eq!(cmd.static_args, vec![
-			("a", "1".into()),
-			("c", "3".into()),
-		]);
-		assert_eq!(cmd.list_args, vec![
-			vec![("b", "2".into())],
-			vec![("b", "4".into())],
-			vec![("b", "5".into())],
-		]);
+		assert_eq!(
+			cmd.static_args,
+			vec![("a", "1".into()), ("c", "3".into()),]
+		);
+		assert_eq!(
+			cmd.list_args,
+			vec![
+				vec![("b", "2".into())],
+				vec![("b", "4".into())],
+				vec![("b", "5".into())],
+			]
+		);
 	}
 
 	#[test]
@@ -335,10 +353,10 @@ mod tests {
 		let s = "cmd=1 cid=2";
 		let cmd = test_loop(s);
 		assert_eq!(cmd.name, "");
-		assert_eq!(cmd.static_args, vec![
-			("cmd", "1".into()),
-			("cid", "2".into()),
-		]);
+		assert_eq!(
+			cmd.static_args,
+			vec![("cmd", "1".into()), ("cid", "2".into()),]
+		);
 		assert!(cmd.list_args.is_empty());
 	}
 

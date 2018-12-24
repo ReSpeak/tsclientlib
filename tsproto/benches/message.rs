@@ -46,16 +46,14 @@ fn send_messages(b: &mut Bencher) {
 
 	b.iter(|| {
 		let text = format!("Hello {}", i);
-		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"sendtextmessage",
-			vec![
-				("targetmode", "3"),
-				("msg", &text),
-			].into_iter(),
-			std::iter::empty(),
-		);
+		let packet =
+			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+				Direction::C2S,
+				PacketType::Command,
+				"sendtextmessage",
+				vec![("targetmode", "3"), ("msg", &text)].into_iter(),
+				std::iter::empty(),
+			);
 		i += 1;
 
 		let sink = con.as_packet_sink();

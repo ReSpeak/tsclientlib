@@ -29,7 +29,11 @@ fn main() {
 	// Parse command line options
 	let args = Args::from_args();
 
-	let dir = if args.c2s { Direction::C2S } else { Direction::S2C };
+	let dir = if args.c2s {
+		Direction::C2S
+	} else {
+		Direction::S2C
+	};
 
 	let data = utils::read_hex(&args.data).unwrap();
 	let packet = match InPacket::try_new(data.into(), dir) {

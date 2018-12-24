@@ -26,7 +26,7 @@ use crate::utils::*;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -91,14 +91,19 @@ fn main() {
 					info!(logger, "Waited");
 
 					// Send packet
-					let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+					let packet = OutCommand::new::<
+						_,
+						_,
+						String,
+						String,
+						_,
+						_,
+						std::iter::Empty<_>,
+					>(
 						Direction::C2S,
 						PacketType::Command,
 						"sendtextmessage",
-						vec![
-							("targetmode", "3"),
-							("msg", "Hello"),
-						].into_iter(),
+						vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
 						std::iter::empty(),
 					);
 					let c2 = c.clone();

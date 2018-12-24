@@ -47,8 +47,11 @@ pub fn compress_and_split(
 ) -> Vec<OutPacket>
 {
 	// Everything except whisper packets has to be less than 500 bytes
-	let header_size = if is_client { crate::C2S_HEADER_LEN }
-		else { crate::S2C_HEADER_LEN };
+	let header_size = if is_client {
+		crate::C2S_HEADER_LEN
+	} else {
+		crate::S2C_HEADER_LEN
+	};
 	let data = packet.content();
 	// The maximum packet size (including header) is 500 bytes.
 	let max_size = 500 - header_size;
@@ -339,18 +342,24 @@ mod tests {
 
 	use super::*;
 	use crate::license::Licenses;
-	use crate::packets::{PacketType};
+	use crate::packets::PacketType;
 
 	#[test]
 	fn test_fake_crypt() {
 		crate::init().unwrap();
 		let data = (0..100).into_iter().collect::<Vec<_>>();
-		let mut packet = OutPacket::new_with_dir(Direction::C2S, Flags::empty(),
-			PacketType::Ack);
+		let mut packet = OutPacket::new_with_dir(
+			Direction::C2S,
+			Flags::empty(),
+			PacketType::Ack,
+		);
 		packet.data_mut().extend_from_slice(&data);
 		encrypt_fake(&mut packet).unwrap();
-		let packet = InPacket::try_new(packet.data_mut().as_slice().into(),
-			Direction::C2S).unwrap();
+		let packet = InPacket::try_new(
+			packet.data_mut().as_slice().into(),
+			Direction::C2S,
+		)
+		.unwrap();
 		let dec_data = decrypt_fake(&packet).unwrap();
 		assert_eq!(&data, &dec_data);
 	}

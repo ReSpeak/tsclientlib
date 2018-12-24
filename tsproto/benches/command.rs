@@ -27,12 +27,16 @@ fn write(b: &mut Bencher, cmd: &[u8]) {
 fn write_new(b: &mut Bencher, cmd: &[u8]) {
 	let cmd = std::str::from_utf8(cmd).unwrap();
 	let command = parse_command2(cmd).unwrap();
-	b.iter(|| tsproto::packets::InCommand::new_out(command.name,
-		command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
-		command.list_args.iter().map(|i| {
-			i.iter().map(|(k, v)| (*k, v.as_ref()))
-		}),
-	));
+	b.iter(|| {
+		tsproto::packets::InCommand::new_out(
+			command.name,
+			command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
+			command
+				.list_args
+				.iter()
+				.map(|i| i.iter().map(|(k, v)| (*k, v.as_ref()))),
+		)
+	});
 }
 
 fn bench_parse_short(c: &mut Criterion) {
