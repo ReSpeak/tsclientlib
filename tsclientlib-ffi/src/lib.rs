@@ -11,8 +11,9 @@ use lazy_static::lazy_static;
 use num::ToPrimitive;
 use parking_lot::Mutex;
 use tokio::prelude::{future, Future};
-use tsclientlib::{ChannelId, ClientId, ConnectOptions, Connection,
-	ServerGroupId};
+use tsclientlib::{
+	ChannelId, ClientId, ConnectOptions, Connection, ServerGroupId,
+};
 
 type Result<T> = std::result::Result<T, tsclientlib::Error>;
 
@@ -75,19 +76,40 @@ trait ConnectionExt {
 	fn get_connection(&self) -> &tsclientlib::data::Connection;
 
 	fn get_server(&self) -> &tsclientlib::data::Server;
-	fn get_connection_server_data(&self) -> &tsclientlib::data::ConnectionServerData;
-	fn get_optional_server_data(&self) -> &tsclientlib::data::OptionalServerData;
+	fn get_connection_server_data(
+		&self,
+	) -> &tsclientlib::data::ConnectionServerData;
+	fn get_optional_server_data(
+		&self,
+	) -> &tsclientlib::data::OptionalServerData;
 	fn get_server_group(&self, id: u64) -> &tsclientlib::data::ServerGroup;
 
 	fn get_client(&self, id: u16) -> &tsclientlib::data::Client;
-	fn get_connection_client_data(&self, id: u16) -> &tsclientlib::data::ConnectionClientData;
-	fn get_optional_client_data(&self, id: u16) -> &tsclientlib::data::OptionalClientData;
+	fn get_connection_client_data(
+		&self,
+		id: u16,
+	) -> &tsclientlib::data::ConnectionClientData;
+	fn get_optional_client_data(
+		&self,
+		id: u16,
+	) -> &tsclientlib::data::OptionalClientData;
 
 	fn get_channel(&self, id: u64) -> &tsclientlib::data::Channel;
-	fn get_optional_channel_data(&self, id: u64) -> &tsclientlib::data::OptionalChannelData;
+	fn get_optional_channel_data(
+		&self,
+		id: u64,
+	) -> &tsclientlib::data::OptionalChannelData;
 
-	fn get_chat_entry(&self, sender_client: u16) -> &tsclientlib::data::ChatEntry;
-	fn get_file(&self, id: u64, path: *const c_char, name: *const c_char) -> &tsclientlib::data::File;
+	fn get_chat_entry(
+		&self,
+		sender_client: u16,
+	) -> &tsclientlib::data::ChatEntry;
+	fn get_file(
+		&self,
+		id: u64,
+		path: *const c_char,
+		name: *const c_char,
+	) -> &tsclientlib::data::File;
 }
 
 // TODO Don't unwrap
@@ -95,10 +117,14 @@ impl ConnectionExt for tsclientlib::data::Connection {
 	fn get_connection(&self) -> &tsclientlib::data::Connection { self }
 
 	fn get_server(&self) -> &tsclientlib::data::Server { &self.server }
-	fn get_connection_server_data(&self) -> &tsclientlib::data::ConnectionServerData {
+	fn get_connection_server_data(
+		&self,
+	) -> &tsclientlib::data::ConnectionServerData {
 		self.server.connection_data.as_ref().unwrap()
 	}
-	fn get_optional_server_data(&self) -> &tsclientlib::data::OptionalServerData {
+	fn get_optional_server_data(
+		&self,
+	) -> &tsclientlib::data::OptionalServerData {
 		self.server.optional_data.as_ref().unwrap()
 	}
 	fn get_server_group(&self, id: u64) -> &tsclientlib::data::ServerGroup {
@@ -108,24 +134,64 @@ impl ConnectionExt for tsclientlib::data::Connection {
 	fn get_client(&self, id: u16) -> &tsclientlib::data::Client {
 		self.server.clients.get(&ClientId(id)).unwrap()
 	}
-	fn get_connection_client_data(&self, id: u16) -> &tsclientlib::data::ConnectionClientData {
-		self.server.clients.get(&ClientId(id)).unwrap().connection_data.as_ref().unwrap()
+	fn get_connection_client_data(
+		&self,
+		id: u16,
+	) -> &tsclientlib::data::ConnectionClientData
+	{
+		self.server
+			.clients
+			.get(&ClientId(id))
+			.unwrap()
+			.connection_data
+			.as_ref()
+			.unwrap()
 	}
-	fn get_optional_client_data(&self, id: u16) -> &tsclientlib::data::OptionalClientData {
-		self.server.clients.get(&ClientId(id)).unwrap().optional_data.as_ref().unwrap()
+	fn get_optional_client_data(
+		&self,
+		id: u16,
+	) -> &tsclientlib::data::OptionalClientData
+	{
+		self.server
+			.clients
+			.get(&ClientId(id))
+			.unwrap()
+			.optional_data
+			.as_ref()
+			.unwrap()
 	}
 
 	fn get_channel(&self, id: u64) -> &tsclientlib::data::Channel {
 		self.server.channels.get(&ChannelId(id)).unwrap()
 	}
-	fn get_optional_channel_data(&self, id: u64) -> &tsclientlib::data::OptionalChannelData {
-		self.server.channels.get(&ChannelId(id)).unwrap().optional_data.as_ref().unwrap()
+	fn get_optional_channel_data(
+		&self,
+		id: u64,
+	) -> &tsclientlib::data::OptionalChannelData
+	{
+		self.server
+			.channels
+			.get(&ChannelId(id))
+			.unwrap()
+			.optional_data
+			.as_ref()
+			.unwrap()
 	}
 
-	fn get_chat_entry(&self, _sender_client: u16) -> &tsclientlib::data::ChatEntry {
+	fn get_chat_entry(
+		&self,
+		_sender_client: u16,
+	) -> &tsclientlib::data::ChatEntry
+	{
 		unimplemented!("TODO Chat entries are not implemented")
 	}
-	fn get_file(&self, _id: u64, _path: *const c_char, _name: *const c_char) -> &tsclientlib::data::File {
+	fn get_file(
+		&self,
+		_id: u64,
+		_path: *const c_char,
+		_name: *const c_char,
+	) -> &tsclientlib::data::File
+	{
 		unimplemented!("TODO Files are not implemented")
 	}
 }
@@ -159,44 +225,53 @@ pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 	let options = ConnectOptions::new(address.to_str().unwrap());
 	let con_id = ConnectionId::next_free();
 
-	RUNTIME.executor().spawn(future::lazy(move ||
-		Connection::new(options)
-		.map(move |con| {
-			// TODO Register handler which removes the connection from the map
-			// on disconnects? Or automatically try to reconnect.
-			CONNECTIONS.insert(con_id, con);
-			EVENTS.0.send(Event::ConnectionAdded(con_id)).unwrap();
+	RUNTIME.executor().spawn(
+		future::lazy(move || {
+			Connection::new(options).map(move |con| {
+				// TODO Register handler which removes the connection from the map
+				// on disconnects? Or automatically try to reconnect.
+				CONNECTIONS.insert(con_id, con);
+				EVENTS.0.send(Event::ConnectionAdded(con_id)).unwrap();
+			})
 		})
-	).map_err(|_| ()));
+		.map_err(|_| ()),
+	);
 	con_id
 }
 
 #[no_mangle]
 pub extern "C" fn disconnect(con_id: ConnectionId) {
-	RUNTIME.executor().spawn(future::lazy(move ||
-		if let Some(con) = CONNECTIONS.get(&con_id) {
-			con.clone().disconnect(None)
-		} else {
-			Box::new(future::err(format_err!("Connection not found").into()))
-		}
-	).map_err(|_| ()));
+	RUNTIME.executor().spawn(
+		future::lazy(move || {
+			if let Some(con) = CONNECTIONS.get(&con_id) {
+				con.clone().disconnect(None)
+			} else {
+				Box::new(future::err(
+					format_err!("Connection not found").into(),
+				))
+			}
+		})
+		.map_err(|_| ()),
+	);
 }
 
 #[no_mangle]
 pub extern "C" fn next_event(ev: *mut FfiEvent) {
 	let event = EVENTS.1.recv().unwrap();
-	unsafe { *ev = FfiEvent {
-		content: match &event {
-			Event::ConnectionAdded(c) => FfiEventUnion { connection_added: *c },
-		},
-		typ: event.get_type(),
-	} };
+	unsafe {
+		*ev = FfiEvent {
+			content: match &event {
+				Event::ConnectionAdded(c) => FfiEventUnion {
+					connection_added: *c,
+				},
+			},
+			typ: event.get_type(),
+		}
+	};
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn free_str(s: *mut c_char) {
-	CString::from_raw(s);
-}
+pub unsafe extern "C" fn free_str(s: *mut c_char) { CString::from_raw(s); }
 
 #[no_mangle]
 pub unsafe extern "C" fn free_u64s(ptr: *mut u64, len: usize) {
