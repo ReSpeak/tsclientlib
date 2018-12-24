@@ -250,9 +250,7 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
 				if let Some(mutex) = self.con.mutex.upgrade() {
 					let mut con = mutex.lock();
-					let res =
-						con.1.resender.start_send((p_type, p_id, udp_packet));
-					res
+					con.1.resender.start_send((p_type, p_id, udp_packet))
 				} else {
 					Err(format_err!("Connection is gone").into())
 				}

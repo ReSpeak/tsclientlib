@@ -88,7 +88,7 @@ impl<'a> fmt::Debug for InUdpPacket<'a> {
 		write!(f, "UdpPacket {{ header: {{ ")?;
 
 		let header = self.0.header();
-		write!(f, "mac: {:?}, ", header.mac())?;
+		write!(f, "mac: {:?}, ", HexSlice(header.mac()))?;
 		write!(f, "p_id: {}, ", header.packet_id())?;
 		if let Some(c_id) = header.client_id() {
 			write!(f, "c_id: {}, ", c_id)?;
@@ -168,7 +168,7 @@ pub struct InCommand {
 	dir: Direction,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct OutPacket {
 	dir: Direction,
 	data: Vec<u8>,
@@ -575,7 +575,7 @@ impl fmt::Debug for InPacket {
 		write!(f, "Packet {{ header: {{ ")?;
 
 		let header = self.header();
-		write!(f, "mac: {:?}, ", header.mac())?;
+		write!(f, "mac: {:?}, ", HexSlice(header.mac()))?;
 		write!(f, "p_id: {}, ", header.packet_id())?;
 		if let Some(c_id) = header.client_id() {
 			write!(f, "c_id: {}, ", c_id)?;
@@ -689,12 +689,12 @@ impl InCommand {
 		p_type: PacketType,
 		newprotocol: bool,
 		dir: Direction,
-	) -> Result<Self>
+	) -> std::result::Result<Self, (Vec<u8>, Error)>
 	{
-		let inner = rentals::Command::try_new_or_drop(content, |c| {
+		let inner = rentals::Command::try_new(content, |c| {
 			let s = ::std::str::from_utf8(c)?;
 			crate::commands::parse_command(s)
-		})?;
+		}).map_err(|e| (e.1, e.0))?;
 		Ok(Self {
 			inner,
 			p_type,
@@ -703,7 +703,11 @@ impl InCommand {
 		})
 	}
 
-	pub fn with_content(packet: &InPacket, content: Vec<u8>) -> Result<Self> {
+	pub fn with_content(
+		packet: &InPacket,
+		content: Vec<u8>,
+	) -> std::result::Result<Self, (Vec<u8>, Error)>
+	{
 		let header = packet.header();
 		Self::new(
 			content,
@@ -873,6 +877,30 @@ impl OutPacket {
 	pub fn packet_type(&mut self, packet_type: PacketType) {
 		let off = self.header().get_off();
 		self.data[off] = (self.data[off] & 0xf0) | packet_type.to_u8().unwrap();
+	}
+}
+
+impl fmt::Debug for OutPacket {
+	#[rustfmt::skip]
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Packet {{ header: {{ ")?;
+
+		let header = self.header();
+		write!(f, "mac: {:?}, ", HexSlice(header.mac()))?;
+		write!(f, "p_id: {}, ", header.packet_id())?;
+		if let Some(c_id) = header.client_id() {
+			write!(f, "c_id: {}, ", c_id)?;
+		}
+		write!(f, "type: {:?}, ", header.packet_type())?;
+		write!(f, "flags: ")?;
+		let flags = header.flags();
+		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
+		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
+
+		write!(f, "}}, content: {:?} }}", HexSlice(self.content()))?;
+		Ok(())
 	}
 }
 
@@ -1109,11 +1137,11 @@ impl OutAudio {
 
 		content.write_u16::<NetworkEndian>(data.id()).unwrap();
 		match data {
-			AudioData::C2S { id: _, codec, data } => {
+			AudioData::C2S { codec, data, .. } => {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);
 			}
-			AudioData::C2SWhisper { id: _, codec, channels, clients, data } => {
+			AudioData::C2SWhisper { codec, channels, clients, data, .. } => {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.write_u8(channels.len() as u8).unwrap();
 				content.write_u8(clients.len() as u8).unwrap();
@@ -1126,16 +1154,16 @@ impl OutAudio {
 				}
 				content.extend_from_slice(data);
 			}
-			AudioData::C2SWhisperNew { id: _, codec, whisper_type, target,
-				target_id, data } => {
+			AudioData::C2SWhisperNew { codec, whisper_type, target, target_id,
+				data, .. } => {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.write_u8(whisper_type.to_u8().unwrap()).unwrap();
 				content.write_u8(*target).unwrap();
 				content.write_u64::<NetworkEndian>(*target_id).unwrap();
 				content.extend_from_slice(data);
 			}
-			AudioData::S2C { id: _, from, codec, data } |
-			AudioData::S2CWhisper { id: _, from, codec, data } => {
+			AudioData::S2C { from, codec, data, .. } |
+			AudioData::S2CWhisper { from, codec, data, .. } => {
 				content.write_u16::<NetworkEndian>(*from).unwrap();
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);

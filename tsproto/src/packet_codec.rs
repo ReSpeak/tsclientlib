@@ -301,7 +301,6 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					.map(|_| ())
 					// Ignore errors, this can happen if the connection is
 					// already gone because we are disconnected.
-					// TODO Wait until the last ack is sent before disconnecting
 					.map_err(|_| ()),
 			);
 		}
@@ -390,7 +389,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 								"string" => %String::from_utf8_lossy(&decompressed),
 							);
 						}*/
-						Some(InCommand::with_content(&header, decompressed)?)
+						Some(InCommand::with_content(&header, decompressed)
+							.map_err(|(_, e)| e)?)
 					} else {
 						// Enqueue
 						let content = packet.take_content();
@@ -421,7 +421,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					/*if header.get_compressed() {
 						debug!(logger, "Decompressed"; "data" => ?::HexSlice(&decompressed));
 					}*/
-					Some(InCommand::with_content(&packet, decompressed)?)
+					Some(InCommand::with_content(&packet, decompressed)
+						.map_err(|(_, e)| e)?)
 				};
 				if let Some(p) = res_packet {
 					packets.push(p);

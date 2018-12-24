@@ -1,11 +1,3 @@
-// TODO remove?
-#![allow(
-	clippy::redundant_closure_call,
-	clippy::clone_on_ref_ptr,
-	clippy::let_and_return,
-	clippy::useless_format
-)]
-
 #[macro_use]
 extern crate derive_more;
 #[macro_use]

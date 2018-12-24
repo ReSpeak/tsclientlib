@@ -296,6 +296,17 @@ impl<CM: ConnectionManager + 'static> Drop for Data<CM> {
 		// Ignore if the receiver was already dropped
 		let sender = mem::replace(&mut self.exit_send, oneshot::channel().0);
 		let _ = sender.send(());
+
+		// Remove all connections
+		while let Some(con) = {
+			let cons = self.connections.read();
+			match cons.keys().next() {
+				Some(k) => Some(k.clone()),
+				None => None,
+			}
+		} {
+			self.remove_connection(&con);
+		}
 	}
 }
 

@@ -309,14 +309,13 @@ impl Resender for DefaultResender {
 			| ResendStates::Dead { to_send, .. } => {
 				// Sort by packet id
 				let v = mem::replace(to_send, Vec::new());
-				let res = v
+				v
 					.into_iter()
 					.map(|mut rec| {
 						rec.tries = 0;
 						rec
 					})
-					.collect();
-				res
+					.collect()
 			}
 			ResendStates::Connecting { to_send, .. }
 			| ResendStates::Normal { to_send }
@@ -799,6 +798,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 		};
 		let last_threshold = now - rto;
 
+		#[allow(clippy::let_and_return)]
 		while let Some(packet) = {
 			let packet = if let Some(rec) =
 				&mut con.resender.state.peek_mut_next_record()

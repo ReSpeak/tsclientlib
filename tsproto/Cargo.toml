@@ -20,7 +20,8 @@ default = ["rug"]
 
 [dependencies]
 arrayref = "0.3"
-simple_asn1 = "0.3"
+#simple_asn1 = "0.3"
+simple_asn1 = { git = "https://github.com/Flakebi/simple_asn1.git" }
 base64 = "0.10"
 bitflags = "1"
 byteorder = "1"
