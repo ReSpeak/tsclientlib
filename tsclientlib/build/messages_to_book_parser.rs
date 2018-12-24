@@ -9,7 +9,9 @@ use tsproto_util::*;
 #[derive(Template)]
 #[TemplatePath = "build/MessagesToBook.tt"]
 #[derive(Debug)]
-pub struct MessagesToBookDeclarations<'a>(&'a messages_to_book::MessagesToBookDeclarations<'a>);
+pub struct MessagesToBookDeclarations<'a>(
+	&'a messages_to_book::MessagesToBookDeclarations<'a>,
+);
 
 impl<'a> Deref for MessagesToBookDeclarations<'a> {
 	type Target = messages_to_book::MessagesToBookDeclarations<'a>;
@@ -17,9 +19,7 @@ impl<'a> Deref for MessagesToBookDeclarations<'a> {
 }
 
 impl Default for MessagesToBookDeclarations<'static> {
-	fn default() -> Self {
-		MessagesToBookDeclarations(&DATA)
-	}
+	fn default() -> Self { MessagesToBookDeclarations(&DATA) }
 }
 
 fn get_id_args(event: &Event) -> String {

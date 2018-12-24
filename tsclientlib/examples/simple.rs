@@ -15,10 +15,8 @@ use tokio::timer::Delay;
 use tsclientlib::{ConnectOptions, Connection};
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -59,7 +57,8 @@ fn main() -> Result<(), failure::Error> {
 
 			// Connect
 			Connection::new(con_config)
-		}).and_then(|con| {
+		})
+		.and_then(|con| {
 			{
 				let con = con.lock();
 				println!(
@@ -72,11 +71,13 @@ fn main() -> Result<(), failure::Error> {
 			Delay::new(Instant::now() + Duration::from_secs(1))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
-		}).and_then(|con| {
+		})
+		.and_then(|con| {
 			// Disconnect
 			drop(con);
 			Ok(())
-		}).map_err(|e| panic!("An error occurred {:?}", e)),
+		})
+		.map_err(|e| panic!("An error occurred {:?}", e)),
 	);
 
 	Ok(())
@@ -86,10 +87,12 @@ fn main() -> Result<(), failure::Error> {
 fn sanitize(s: &str) -> String {
 	s.chars()
 		.filter(|c| {
-			c.is_alphanumeric() || [
-				' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')', '[',
-				']', '{', '}',
-			]
+			c.is_alphanumeric()
+				|| [
+					' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')',
+					'[', ']', '{', '}',
+				]
 				.contains(c)
-		}).collect()
+		})
+		.collect()
 }

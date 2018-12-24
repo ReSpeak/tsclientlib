@@ -1,17 +1,17 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use chashmap::CHashMap;
 use futures::sync::oneshot;
-use futures::{Async, Future, Poll, Stream, task};
+use futures::{task, Async, Future, Poll, Stream};
 use parking_lot::RwLock;
 use slog::Logger;
 use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::*;
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
-use crate::{PHBox, TsError};
 use crate::data::Connection;
+use crate::{PHBox, TsError};
 
 pub(crate) struct ReturnCodeHandler {
 	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,
@@ -31,7 +31,9 @@ pub struct SimplePacketHandler {
 	pub(crate) return_codes: Arc<ReturnCodeHandler>,
 }
 
-struct SimplePacketStreamHandler<Inner: Stream<Item=InCommand, Error=tsproto::Error>> {
+struct SimplePacketStreamHandler<
+	Inner: Stream<Item = InCommand, Error = tsproto::Error>,
+> {
 	inner: Inner,
 	logger: Logger,
 	initserver_sender: Option<oneshot::Sender<InCommand>>,
@@ -46,7 +48,8 @@ impl SimplePacketHandler {
 		handle_packets: Option<PHBox>,
 		initserver_sender: oneshot::Sender<InCommand>,
 		connection_recv: oneshot::Receiver<Arc<RwLock<Connection>>>,
-	) -> Self {
+	) -> Self
+	{
 		Self {
 			logger,
 			handle_packets,
@@ -92,9 +95,11 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 		S4: Stream<Item = InAudio, Error = tsproto::Error> + Send + 'static,
 	{
 		// Ignore c2s init stream and start s2c init stream
-		tokio::spawn(s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
-			println!("Init stream exited with error ({:?})", e)
-		}));
+		tokio::spawn(
+			s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
+				println!("Init stream exited with error ({:?})", e)
+			}),
+		);
 
 		let handler = SimplePacketStreamHandler {
 			inner: command_stream,
@@ -109,11 +114,9 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 			h.new_connection(Box::new(handler), Box::new(audio_stream));
 		} else {
 			let logger = self.logger.clone();
-			tokio::spawn(handler.for_each(|_| Ok(())).map_err(
-				move |e| {
-					error!(logger, "Command stream exited with error ({:?})", e)
-				},
-			));
+			tokio::spawn(handler.for_each(|_| Ok(())).map_err(move |e| {
+				error!(logger, "Command stream exited with error ({:?})", e)
+			}));
 			let logger = self.logger.clone();
 			tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(move |e| {
 				error!(logger, "Audio stream exited with error ({:?})", e)
@@ -122,7 +125,9 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 	}
 }
 
-impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacketStreamHandler<Inner> {
+impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
+	for SimplePacketStreamHandler<Inner>
+{
 	type Item = InCommand;
 	type Error = tsproto::Error;
 
@@ -158,9 +163,9 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 						let cmd = cmd.iter().next().unwrap();
 						// 3.1
 						if let Ok(code) = cmd.return_code.parse() {
-							if let Some(return_sender) = self
-								.return_codes.return_codes
-								.remove(&code) {
+							if let Some(return_sender) =
+								self.return_codes.return_codes.remove(&code)
+							{
 								// Ignore if sending fails
 								let _ = return_sender.send(cmd.id).is_err();
 							}
@@ -194,8 +199,11 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 
 				if let Some(send) = self.initserver_sender.take() {
 					if send.send(cmd).is_err() {
-						error!(self.logger, "Sending the initserver packet \
-							from the packet handler failed");
+						error!(
+							self.logger,
+							"Sending the initserver packet from the packet \
+							 handler failed"
+						);
 					}
 					task::current().notify();
 					return Ok(Async::NotReady);
@@ -206,8 +214,10 @@ impl<Inner: Stream<Item=InCommand, Error=tsproto::Error>> Stream for SimplePacke
 				// 2.
 				con = try_ready!(con_recv.poll());
 			} else {
-				unreachable!("SimplePacketStreamHandler received connection but it \
-					is not set");
+				unreachable!(
+					"SimplePacketStreamHandler received connection but it is \
+					 not set"
+				);
 			}
 		}
 		// Also 2.

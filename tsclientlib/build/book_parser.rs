@@ -9,7 +9,5 @@ use tsproto_util::*;
 pub struct BookDeclarations<'a>(pub &'a book::BookDeclarations);
 
 impl Default for BookDeclarations<'static> {
-	fn default() -> Self {
-		BookDeclarations(&tsproto_structs::book::DATA)
-	}
+	fn default() -> Self { BookDeclarations(&tsproto_structs::book::DATA) }
 }

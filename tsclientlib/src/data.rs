@@ -7,8 +7,8 @@ use std::ops::Deref;
 use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
-use tsproto_commands::*;
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
+use tsproto_commands::*;
 
 use crate::{InnerConnection, Result};
 
@@ -25,18 +25,19 @@ macro_rules! max_clients {
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
-		};
+			};
 		let ch_fam = if $cmd.is_max_family_clients_unlimited {
 			MaxFamilyClients::Unlimited
 		} else if $cmd.inherits_max_family_clients {
 			MaxFamilyClients::Inherited
 		} else if $cmd.max_family_clients >= 0
-			&& $cmd.max_family_clients <= u16::MAX as i32 {
+			&& $cmd.max_family_clients <= u16::MAX as i32
+			{
 			MaxFamilyClients::Limited($cmd.max_family_clients as u16)
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			MaxFamilyClients::Unlimited
-		};
+			};
 		(ch, ch_fam)
 		}};
 }
@@ -103,14 +104,13 @@ impl Connection {
 		Ok(())
 	}
 
-	fn get_mut_server(&mut self) -> &mut Server {
-		&mut self.server
-	}
+	fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
 	fn add_server_group(
 		&mut self,
 		group: ServerGroupId,
 		r: ServerGroup,
-	) -> Option<ServerGroup> {
+	) -> Option<ServerGroup>
+	{
 		self.server.groups.insert(group, r)
 	}
 
@@ -130,7 +130,8 @@ impl Connection {
 		&mut self,
 		client: ClientId,
 		r: ConnectionClientData,
-	) -> Result<Option<ConnectionClientData>> {
+	) -> Result<Option<ConnectionClientData>>
+	{
 		if let Some(client) = self.server.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
@@ -148,7 +149,8 @@ impl Connection {
 		&mut self,
 		channel: ChannelId,
 		r: Channel,
-	) -> Option<Channel> {
+	) -> Option<Channel>
+	{
 		self.server.channels.insert(channel, r)
 	}
 	fn remove_channel(&mut self, channel: ChannelId) -> Option<Channel> {
@@ -157,25 +159,23 @@ impl Connection {
 
 	// Backing functions for MessageToBook declarations
 
-	fn return_false<T>(&self, _: T) -> bool {
-		false
-	}
-	fn return_none<T, O>(&self, _: T) -> Option<O> {
-		None
-	}
+	fn return_false<T>(&self, _: T) -> bool { false }
+	fn return_none<T, O>(&self, _: T) -> Option<O> { None }
 	fn void_fun<T, U>(&self, _: T, _: U) {}
 
 	fn max_clients_cc_fun(
 		&self,
 		cmd: &s2c::ChannelCreatedPart,
-	) -> (Option<u16>, MaxFamilyClients) {
+	) -> (Option<u16>, MaxFamilyClients)
+	{
 		max_clients!(cmd)
 	}
 	fn max_clients_ce_fun(
 		&mut self,
 		channel_id: ChannelId,
 		cmd: &s2c::ChannelEditedPart,
-	) {
+	)
+	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let (ch, ch_fam) = max_clients!(cmd);
 			channel.max_clients = ch;
@@ -185,7 +185,8 @@ impl Connection {
 	fn max_clients_cl_fun(
 		&self,
 		cmd: &s2c::ChannelListPart,
-	) -> (Option<u16>, MaxFamilyClients) {
+	) -> (Option<u16>, MaxFamilyClients)
+	{
 		let ch = if cmd.is_max_clients_unlimited {
 			None
 		} else if cmd.max_clients >= 0 && cmd.max_clients <= u16::MAX as i32 {
@@ -199,7 +200,8 @@ impl Connection {
 		} else if cmd.inherits_max_family_clients {
 			MaxFamilyClients::Inherited
 		} else if cmd.max_family_clients >= 0
-			&& cmd.max_family_clients <= u16::MAX as i32 {
+			&& cmd.max_family_clients <= u16::MAX as i32
+		{
 			MaxFamilyClients::Limited(cmd.max_family_clients as u16)
 		} else {
 			// Max clients is less than zero or too high so ignore it
@@ -208,7 +210,11 @@ impl Connection {
 		(ch, ch_fam)
 	}
 
-	fn channel_type_cc_fun(&self, cmd: &s2c::ChannelCreatedPart) -> ChannelType {
+	fn channel_type_cc_fun(
+		&self,
+		cmd: &s2c::ChannelCreatedPart,
+	) -> ChannelType
+	{
 		if cmd.is_permanent == Some(true) {
 			ChannelType::Permanent
 		} else if cmd.is_semi_permanent == Some(true) {
@@ -222,7 +228,8 @@ impl Connection {
 		&mut self,
 		channel_id: ChannelId,
 		cmd: &s2c::ChannelEditedPart,
-	) {
+	)
+	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let typ = if cmd.is_permanent == Some(true) {
 				ChannelType::Permanent
@@ -256,7 +263,8 @@ impl Connection {
 	fn talk_power_fun(
 		&self,
 		cmd: &s2c::ClientEnterViewPart,
-	) -> Option<TalkPowerRequest> {
+	) -> Option<TalkPowerRequest>
+	{
 		if cmd.talk_power_request_time.timestamp() > 0 {
 			Some(TalkPowerRequest {
 				time: cmd.talk_power_request_time,
@@ -271,7 +279,11 @@ impl Connection {
 		cmd.badges.split(',').map(|s| s.into()).collect()
 	}
 
-	fn address_fun(&self, cmd: &s2c::ClientConnectionInfoPart) -> Option<SocketAddr> {
+	fn address_fun(
+		&self,
+		cmd: &s2c::ClientConnectionInfoPart,
+	) -> Option<SocketAddr>
+	{
 		let ip = if let Ok(ip) = cmd.ip.parse() {
 			ip
 		} else {

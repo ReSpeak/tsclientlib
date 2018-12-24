@@ -8,7 +8,5 @@ use tsproto_util::*;
 pub struct FacadeDeclarations<'a>(&'a BookDeclarations);
 
 impl Default for FacadeDeclarations<'static> {
-	fn default() -> Self {
-		FacadeDeclarations(&tsproto_structs::book::DATA)
-	}
+	fn default() -> Self { FacadeDeclarations(&tsproto_structs::book::DATA) }
 }

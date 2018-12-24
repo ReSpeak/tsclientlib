@@ -41,9 +41,7 @@ struct StreamCombiner<S: Stream> {
 }
 
 impl<S: Stream> StreamCombiner<S> {
-	fn new(streams: Vec<S>) -> Self {
-		Self { streams }
-	}
+	fn new(streams: Vec<S>) -> Self { Self { streams } }
 }
 
 impl<S: Stream> Stream for StreamCombiner<S> {
@@ -94,7 +92,8 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 pub fn resolve(
 	logger: &Logger,
 	address: &str,
-) -> Box<Stream<Item = SocketAddr, Error = Error> + Send> {
+) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>
+{
 	let logger = logger.new(o!("module" => "resolver"));
 	debug!(logger, "Starting resolve"; "address" => address);
 	let addr;
@@ -157,7 +156,8 @@ pub fn resolve(
 			name.set_fqdn(true);
 
 			Ok(resolve_srv(resolver.clone(), &prefix.append_name(&name)))
-		}))).flatten();
+		})))
+		.flatten();
 
 	let address = addr.clone();
 	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(
@@ -205,18 +205,22 @@ pub fn resolve(
 													}
 													addr
 												})
-										}).flatten()
-								}).collect(),
+										})
+										.flatten()
+								})
+								.collect(),
 						)
 					}),
 			)
 		},
-	))).flatten();
+	)))
+	.flatten();
 
 	let last_res = stream::futures_ordered(Some(
 		// Interpret as normal address and resolve with system resolver
 		Ok(resolve_hostname(addr, port.unwrap_or(DEFAULT_PORT))) as Result<_>,
-	)).flatten();
+	))
+	.flatten();
 
 	let streams = vec![
 		nickname_res,
@@ -313,7 +317,8 @@ pub fn resolve_nickname(
 				let url = reqwest::Url::parse_with_params(
 					NICKNAME_LOOKUP_ADDRESS,
 					Some(("name", &nickname)),
-				).map_err(|e| {
+				)
+				.map_err(|e| {
 					format_err!(
 						"Cannot parse nickname lookup address ({:?})",
 						e
@@ -327,7 +332,8 @@ pub fn resolve_nickname(
 					.collect::<Vec<_>>();
 				Ok(res)
 			})
-		}).from_err()
+		})
+		.from_err()
 		.and_then(|r: Result<_>| r)
 		.map(|addrs| {
 			stream::futures_ordered(addrs.iter().map(
@@ -345,15 +351,18 @@ pub fn resolve_nickname(
 						}
 					}
 				},
-			)).flatten()
+			))
+			.flatten()
 		}),
-	)).flatten()
+	))
+	.flatten()
 }
 
 pub fn resolve_tsdns(
 	server: SocketAddr,
 	addr: String,
-) -> impl Stream<Item = SocketAddr, Error = Error> {
+) -> impl Stream<Item = SocketAddr, Error = Error>
+{
 	stream::futures_ordered(Some(
 		TcpStream::connect(&server)
 			.and_then(move |tcp| io::write_all(tcp, addr))
@@ -364,7 +373,8 @@ pub fn resolve_tsdns(
 				if addr.starts_with("404") {
 					return Err(format_err!(
 						"tsdns server does not know the address"
-					).into());
+					)
+					.into());
 				}
 				match parse_ip(addr)? {
 					ParseIpResult::Addr(a) => Ok(a),
@@ -381,7 +391,8 @@ fn resolve_srv_raw(
 ) -> impl Future<
 	Item = Vec<impl Stream<Item = SocketAddr, Error = Error>>,
 	Error = Error,
-> {
+>
+{
 	resolver.lookup_srv(addr).from_err::<Error>().and_then(
 		|lookup| -> Result<_> {
 			let mut entries = Vec::new();
@@ -433,7 +444,8 @@ fn resolve_srv_raw(
 					let addr = e.target().to_string();
 					let port = e.port();
 					resolve_hostname(addr, port)
-				}).collect();
+				})
+				.collect();
 			Ok(entries)
 		},
 	)
@@ -442,24 +454,29 @@ fn resolve_srv_raw(
 fn resolve_srv(
 	resolver: AsyncResolver,
 	addr: &Name,
-) -> impl Stream<Item = SocketAddr, Error = Error> {
+) -> impl Stream<Item = SocketAddr, Error = Error>
+{
 	stream::futures_ordered(Some(
 		resolve_srv_raw(resolver, addr).map(StreamCombiner::new),
-	)).flatten()
+	))
+	.flatten()
 }
 
 fn resolve_hostname(
 	name: String,
 	port: u16,
-) -> impl Stream<Item = SocketAddr, Error = Error> {
+) -> impl Stream<Item = SocketAddr, Error = Error>
+{
 	stream::futures_ordered(Some(
 		future::poll_fn(move || {
 			tokio_threadpool::blocking(|| {
 				(name.as_str(), port).to_socket_addrs().map_err(Error::from)
 			})
-		}).from_err::<Error>()
+		})
+		.from_err::<Error>()
 		.flatten(),
-	)).map(|addrs| stream::futures_ordered(addrs.map(Ok)))
+	))
+	.map(|addrs| stream::futures_ordered(addrs.map(Ok)))
 	.flatten()
 }
 
@@ -473,7 +490,8 @@ mod test {
 	fn setup() -> (Logger, Runtime) {
 		let rt = Runtime::new().unwrap();
 		let logger = {
-			let decorator = slog_term::PlainSyncDecorator::new(std::io::stdout());
+			let decorator =
+				slog_term::PlainSyncDecorator::new(std::io::stdout());
 			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
 			let drain = slog_async::Async::new(drain).build().fuse();
 
@@ -577,11 +595,9 @@ mod test {
 		let res = rt.block_on(future::lazy(move || {
 			resolve(&logger, "localhost").collect()
 		}));
-		assert!(
-			res.unwrap().contains(
-				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
-			)
-		);
+		assert!(res
+			.unwrap()
+			.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 
 	#[test]
@@ -598,13 +614,10 @@ mod test {
 	#[test]
 	fn resolve_loc() {
 		let (logger, mut rt) = setup();
-		let res = rt.block_on(future::lazy(move || {
-			resolve(&logger, "loc").collect()
-		}));
-		assert!(
-			res.unwrap().contains(
-				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
-			)
-		);
+		let res = rt
+			.block_on(future::lazy(move || resolve(&logger, "loc").collect()));
+		assert!(res
+			.unwrap()
+			.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 }

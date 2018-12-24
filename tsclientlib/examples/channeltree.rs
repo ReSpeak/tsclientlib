@@ -13,15 +13,15 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 
-use tsclientlib::{ChannelId, ConnectOptions, Connection, DisconnectOptions, Reason};
 use tsclientlib::data::{Channel, Client};
+use tsclientlib::{
+	ChannelId, ConnectOptions, Connection, DisconnectOptions, Reason,
+};
 use tsproto::packets::{Direction, OutCommand, PacketType};
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
+                                   AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -44,7 +44,13 @@ struct Args {
 }
 
 /// `channels` have to be ordered.
-fn print_channels(clients: &[&Client], channels: &[&Channel], parent: ChannelId, depth: usize) {
+fn print_channels(
+	clients: &[&Client],
+	channels: &[&Channel],
+	parent: ChannelId,
+	depth: usize,
+)
+{
 	let indention = "  ".repeat(depth);
 	for channel in channels {
 		if channel.parent == parent {
@@ -80,7 +86,8 @@ fn main() -> Result<(), failure::Error> {
 
 			// Connect
 			Connection::new(con_config)
-		}).and_then(|con| {
+		})
+		.and_then(|con| {
 			{
 				let con = con.lock();
 				println!(
@@ -88,7 +95,15 @@ fn main() -> Result<(), failure::Error> {
 					sanitize(&con.server.welcome_message)
 				);
 			}
-			let packet = OutCommand::new::<String, String, String, String, _, _, std::iter::Empty<_>>(
+			let packet = OutCommand::new::<
+				String,
+				String,
+				String,
+				String,
+				_,
+				_,
+				std::iter::Empty<_>,
+			>(
 				Direction::C2S,
 				PacketType::Command,
 				"channelsubscribeall",
@@ -98,17 +113,19 @@ fn main() -> Result<(), failure::Error> {
 
 			// Send a message and wait until we get an answer for the return code
 			con.get_packet_sink().send(packet).map(|_| con)
-		}).and_then(|con| {
-
+		})
+		.and_then(|con| {
 			// Wait some time
 			Delay::new(Instant::now() + Duration::from_secs(1))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
-		}).and_then(|con| {
+		})
+		.and_then(|con| {
 			// Print channel tree
 			{
 				let con = con.lock();
-				let mut channels: Vec<_> = con.server.channels.values().collect();
+				let mut channels: Vec<_> =
+					con.server.channels.values().collect();
 				let mut clients: Vec<_> = con.server.clients.values().collect();
 				channels.sort_by_key(|ch| ch.order);
 				clients.sort_by_key(|c| c.talk_power);
@@ -122,7 +139,8 @@ fn main() -> Result<(), failure::Error> {
 					.reason(Reason::Clientdisconnect)
 					.message("Is this the real world?"),
 			)
-		}).map_err(|e| panic!("An error occurred {:?}", e)),
+		})
+		.map_err(|e| panic!("An error occurred {:?}", e)),
 	);
 
 	Ok(())
@@ -132,10 +150,12 @@ fn main() -> Result<(), failure::Error> {
 fn sanitize(s: &str) -> String {
 	s.chars()
 		.filter(|c| {
-			c.is_alphanumeric() || [
-				' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')', '[',
-				']', '{', '}',
-			]
+			c.is_alphanumeric()
+				|| [
+					' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')',
+					'[', ']', '{', '}',
+				]
 				.contains(c)
-		}).collect()
+		})
+		.collect()
 }

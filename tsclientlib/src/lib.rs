@@ -28,11 +28,12 @@ use std::sync::Arc;
 use failure::ResultExt;
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
-use parking_lot::{Once, ONCE_INIT, RwLock, RwLockReadGuard};
+use parking_lot::{Once, RwLock, RwLockReadGuard, ONCE_INIT};
 use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
-use tsproto::packets::{Direction, InAudio, InCommand, OutCommand, OutPacket,
-	PacketType};
+use tsproto::packets::{
+	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
+};
 use tsproto::{client, crypto, log};
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
@@ -54,8 +55,9 @@ pub mod resolver;
 // Reexports
 pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;
-pub use tsproto_commands::{messages, ChannelId, ClientId, Reason, ServerGroupId,
-	Uid};
+pub use tsproto_commands::{
+	messages, ChannelId, ClientId, Reason, ServerGroupId, Uid,
+};
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
@@ -96,15 +98,11 @@ pub enum Error {
 }
 
 impl From<base64::DecodeError> for Error {
-	fn from(e: base64::DecodeError) -> Self {
-		Error::Base64(e)
-	}
+	fn from(e: base64::DecodeError) -> Self { Error::Base64(e) }
 }
 
 impl From<futures::Canceled> for Error {
-	fn from(e: futures::Canceled) -> Self {
-		Error::Canceled(e)
-	}
+	fn from(e: futures::Canceled) -> Self { Error::Canceled(e) }
 }
 
 impl From<trust_dns_proto::error::ProtoError> for Error {
@@ -114,9 +112,7 @@ impl From<trust_dns_proto::error::ProtoError> for Error {
 }
 
 impl From<std::io::Error> for Error {
-	fn from(e: std::io::Error) -> Self {
-		Error::Io(e)
-	}
+	fn from(e: std::io::Error) -> Self { Error::Io(e) }
 }
 
 impl From<tsproto_commands::messages::ParseError> for Error {
@@ -132,9 +128,7 @@ impl From<trust_dns_resolver::error::ResolveError> for Error {
 }
 
 impl From<reqwest::Error> for Error {
-	fn from(e: reqwest::Error) -> Self {
-		Error::Reqwest(e)
-	}
+	fn from(e: reqwest::Error) -> Self { Error::Reqwest(e) }
 }
 
 impl From<tokio_threadpool::BlockingError> for Error {
@@ -144,21 +138,15 @@ impl From<tokio_threadpool::BlockingError> for Error {
 }
 
 impl From<TsError> for Error {
-	fn from(e: TsError) -> Self {
-		Error::Ts(e)
-	}
+	fn from(e: TsError) -> Self { Error::Ts(e) }
 }
 
 impl From<tsproto::Error> for Error {
-	fn from(e: tsproto::Error) -> Self {
-		Error::Tsproto(e)
-	}
+	fn from(e: tsproto::Error) -> Self { Error::Tsproto(e) }
 }
 
 impl From<std::str::Utf8Error> for Error {
-	fn from(e: std::str::Utf8Error) -> Self {
-		Error::Utf8(e)
-	}
+	fn from(e: std::str::Utf8Error) -> Self { Error::Utf8(e) }
 }
 
 impl From<failure::Error> for Error {
@@ -175,7 +163,9 @@ pub trait PacketHandler {
 		command_stream: Box<
 			Stream<Item = InCommand, Error = tsproto::Error> + Send,
 		>,
-		audio_stream: Box<Stream<Item = InAudio, Error = tsproto::Error> + Send>,
+		audio_stream: Box<
+			Stream<Item = InAudio, Error = tsproto::Error> + Send,
+		>,
 	);
 	/// Clone into a box.
 	fn clone(&self) -> PHBox;
@@ -188,9 +178,7 @@ pub struct ConnectionLock<'a> {
 impl<'a> Deref for ConnectionLock<'a> {
 	type Target = data::Connection;
 
-	fn deref(&self) -> &Self::Target {
-		&*self.guard
-	}
+	fn deref(&self) -> &Self::Target { &*self.guard }
 }
 
 #[derive(Clone)]
@@ -520,7 +508,8 @@ impl Connection {
 	pub fn send_packet(
 		&self,
 		packet: OutPacket,
-	) -> impl Future<Item = (), Error = Error> {
+	) -> impl Future<Item = (), Error = Error>
+	{
 		// Store waiting in HashMap<usize (return code), oneshot::Sender>
 		// The packet handler then sends a result to the sender if the answer is
 		// received.
@@ -553,7 +542,8 @@ impl Connection {
 	pub fn to_mut<'a>(
 		&self,
 		con: &'a data::Connection,
-	) -> data::ConnectionMut<'a> {
+	) -> data::ConnectionMut<'a>
+	{
 		data::ConnectionMut {
 			connection: self.inner.clone(),
 			inner: &con,
@@ -612,7 +602,8 @@ impl Connection {
 	pub fn disconnect<O: Into<Option<DisconnectOptions>>>(
 		&self,
 		options: O,
-	) -> BoxFuture<()> {
+	) -> BoxFuture<()>
+	{
 		let options = options.into().unwrap_or_default();
 
 		let mut args = Vec::new();
@@ -623,13 +614,14 @@ impl Connection {
 			args.push(("reasonmsg", msg));
 		}
 
-		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientdisconnect",
-			args.into_iter(),
-			std::iter::empty(),
-		);
+		let packet =
+			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+				Direction::C2S,
+				PacketType::Command,
+				"clientdisconnect",
+				args.into_iter(),
+				std::iter::empty(),
+			);
 
 		let addr = if let Some(con) = self.inner.client_connection.upgrade() {
 			con.mutex.lock().1.address
@@ -657,8 +649,9 @@ impl Drop for Connection {
 			// The last 2 references are in the packet handler and this one
 			// Disconnect
 			let logger = self.inner.client_data.lock().logger.clone();
-			tokio::spawn(self.disconnect(None).map_err(move |e|
-				error!(logger, "Failed to disconnect"; "error" => ?e)));
+			tokio::spawn(self.disconnect(None).map_err(
+				move |e| error!(logger, "Failed to disconnect"; "error" => ?e),
+			));
 		}
 	}
 }
@@ -676,28 +669,23 @@ pub enum ServerAddress {
 }
 
 impl From<SocketAddr> for ServerAddress {
-	fn from(addr: SocketAddr) -> Self {
-		ServerAddress::SocketAddr(addr)
-	}
+	fn from(addr: SocketAddr) -> Self { ServerAddress::SocketAddr(addr) }
 }
 
 impl From<String> for ServerAddress {
-	fn from(addr: String) -> Self {
-		ServerAddress::Other(addr)
-	}
+	fn from(addr: String) -> Self { ServerAddress::Other(addr) }
 }
 
 impl<'a> From<&'a str> for ServerAddress {
-	fn from(addr: &'a str) -> Self {
-		ServerAddress::Other(addr.to_string())
-	}
+	fn from(addr: &'a str) -> Self { ServerAddress::Other(addr.to_string()) }
 }
 
 impl ServerAddress {
 	pub fn resolve(
 		&self,
 		logger: &Logger,
-	) -> Box<Stream<Item = SocketAddr, Error = Error> + Send> {
+	) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>
+	{
 		match self {
 			ServerAddress::SocketAddr(a) => Box::new(stream::once(Ok(*a))),
 			ServerAddress::Other(s) => Box::new(resolver::resolve(logger, s)),
@@ -746,7 +734,9 @@ pub struct ConnectOptions {
 	log_packets: bool,
 	log_udp_packets: bool,
 	handle_packets: Option<PHBox>,
-	prepare_client: Option<Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>>,
+	prepare_client: Option<
+		Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>,
+	>,
 }
 
 impl ConnectOptions {
@@ -906,8 +896,13 @@ impl ConnectOptions {
 	/// # Default
 	/// The client is setup the default way.
 	#[inline]
-	pub fn prepare_client(mut self, prepare_client:
-		Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>) -> Self {
+	pub fn prepare_client(
+		mut self,
+		prepare_client: Box<
+			Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync,
+		>,
+	) -> Self
+	{
 		self.prepare_client = Some(prepare_client);
 		self
 	}
@@ -965,9 +960,7 @@ impl Default for DisconnectOptions {
 
 impl DisconnectOptions {
 	#[inline]
-	pub fn new() -> Self {
-		Self::default()
-	}
+	pub fn new() -> Self { Self::default() }
 
 	/// Set the reason for leaving.
 	///
