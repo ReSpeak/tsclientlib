@@ -60,8 +60,9 @@ fn send_messages(b: &mut Bencher) {
 		rt.block_on(future::lazy(move || sink.send(packet)))
 			.unwrap();
 	});
+	let c2 = c.clone();
 	rt.block_on(future::lazy(move || {
-		disconnect(con)
+		disconnect(&c2, con)
 			.map_err(|e| panic!("Failed to disconnect ({:?})", e))
 			.and_then(move |_| {
 				info!(logger, "Disconnected");

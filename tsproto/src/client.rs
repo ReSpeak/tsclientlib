@@ -107,6 +107,14 @@ pub fn wait_for_state<
 	}))
 }
 
+pub fn wait_until_connected(
+	connection: &ClientConVal,
+) -> impl Future<Item = (), Error = Error> {
+	wait_for_state(connection, |state|
+		*state == ServerConnectionState::Connected
+	)
+}
+
 pub fn new<
 	PH: PacketHandler<ServerConnectionData> + 'static,
 	L: Into<Option<slog::Logger>>,
@@ -137,7 +145,7 @@ pub fn new<
 		// Change state on disconnect
 		c.add_out_packet_observer(
 			"tsproto::client".into(),
-			Box::new(ClientOutPacketObserver { data: c2 }),
+			Box::new(ClientOutPacketObserver),
 		);
 	}
 
@@ -187,17 +195,11 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 		.and_then(move |_| Ok(con2))
 }
 
-struct ClientOutPacketObserver<
-	PH: PacketHandler<ServerConnectionData> + 'static,
-> {
-	data: Weak<Mutex<ClientData<PH>>>,
-}
-impl<PH: PacketHandler<ServerConnectionData> + 'static>
-	OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver<PH>
-{
+struct ClientOutPacketObserver;
+impl OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver {
 	fn observe(
 		&self,
-		(state, con): &mut (ServerConnectionData, Connection),
+		(_, con): &mut (ServerConnectionData, Connection),
 		packet: &mut OutPacket,
 	)
 	{
@@ -211,19 +213,6 @@ impl<PH: PacketHandler<ServerConnectionData> + 'static>
 					crate::connectionmanager::ResenderEvent::Disconnecting,
 				);
 			}
-		} else if state.state == ServerConnectionState::Disconnecting
-			&& p_type == PacketType::Ack
-		{
-			// The ack for the notifyclientleftview is sent
-			// Close connection
-			let addr = con.address;
-			let d = if let Some(d) = self.data.upgrade() {
-				d
-			} else {
-				// Connection doesn't exist anymore, ignore it.
-				return;
-			};
-			d.lock().remove_connection(&addr);
 		}
 	}
 }
@@ -417,7 +406,10 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					}
 				};
 
+				let addr = con.1.address;
+				let is_end;
 				if let Some((s, packet)) = handle_res {
+					is_end = s == ServerConnectionState::Disconnecting;
 					con.0.state = s;
 					if let Some(packet) = packet {
 						drop(con);
@@ -473,6 +465,20 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							}
 						}
 					}
+				} else {
+					is_end = false
+				}
+
+				if is_end {
+					// Close connection
+					let d = if let Some(d) = data.upgrade() {
+						d
+					} else {
+						// Connection doesn't exist anymore, ignore it, the
+						// connection is already gone.
+						return Ok(None);
+					};
+					d.lock().remove_connection(&addr);
 				}
 
 				if ignore_packet {

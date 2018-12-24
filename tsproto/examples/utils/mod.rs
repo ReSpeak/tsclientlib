@@ -4,7 +4,7 @@ use std::sync::Arc;
 use futures::{future, Future, Sink, Stream};
 use tokio;
 use tsproto::algorithms as algs;
-use tsproto::client::{ServerConnectionData, ServerConnectionState};
+use tsproto::client::ServerConnectionData;
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
 use tsproto::packets::*;
@@ -134,6 +134,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 
 		let con2 = con.clone();
 		con.as_packet_sink().send(packet)
+			.and_then(move |_| client::wait_until_connected(&con))
 			.map(move |_| con2)
 	})
 }
@@ -141,8 +142,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
 	client: &client::ClientDataM<PH>,
 	con: client::ClientConVal,
-) -> Box<Future<Item = (), Error = Error> + Send>
-{
+) -> Box<Future<Item=(), Error=Error> + Send> {
 	let packet =
 		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
 			Direction::C2S,

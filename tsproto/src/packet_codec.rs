@@ -563,6 +563,10 @@ impl PacketCodecSender {
 					packet.content().len() >= s.len()
 						&& packet.content()[..s.len()] == s[..]
 				}));
+		// Also fake encrypt the first ack of the client, which is the response
+		// for the initivexpand2 packet.
+		fake_encrypt |= self.is_client && p_type == PacketType::Ack && gen == 0
+			&& p_id == 0;
 
 		// Get values from parameters
 		let should_encrypt;

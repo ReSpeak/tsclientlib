@@ -319,12 +319,7 @@ impl Resender for DefaultResender {
 			ResendStates::Connecting { to_send, .. }
 			| ResendStates::Normal { to_send }
 			| ResendStates::Disconnecting { to_send, .. } => {
-				let mut to_send =
-					mem::replace(to_send, BinaryHeap::new()).into_vec();
-				for rec in &mut to_send {
-					rec.tries = 0;
-				}
-				to_send.into()
+				mem::replace(to_send, BinaryHeap::new()).into_vec().into()
 			}
 		};
 
@@ -819,9 +814,9 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 
 				// Print packet for debugging
 				//info!(con.logger, "Packet in send queue";
-				//"p_id" => id.1,
-				//"p_type" => ?id.0,
-				//"last" => ?last,
+				//"p_id" => rec.id.1,
+				//"p_type" => ?rec.id.0,
+				//"last" => ?rec.last,
 				//);
 				Some(rec.packet.clone())
 			} else {

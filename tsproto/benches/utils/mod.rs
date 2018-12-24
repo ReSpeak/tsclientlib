@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use futures::{Future, Sink, Stream};
+use futures::{future, Future, Sink, Stream};
 use slog;
 use tokio;
 use tsproto::algorithms as algs;
@@ -27,7 +27,7 @@ impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
 		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
 		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
 	{
-		// Ignore c2s init stream
+		// Ignore c2s init stream and start s2c init stream
 		tokio::spawn(
 			s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
 				println!("Init stream exited with error ({:?})", e)
@@ -52,7 +52,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 ) -> client::ClientDataM<PH>
 {
 	// Get P-256 ECDH key
-	let private_key = EccKeyPrivP256::from_ts(
+	let private_key = EccKeyPrivP256::import_str(
 		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -86,7 +86,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 {
 	client::connect(Arc::downgrade(&client), &mut *client.lock(), server_addr)
 	.and_then(move |con| {
-		let private_key = EccKeyPrivP256::from_ts(
+		let private_key = EccKeyPrivP256::import_str(
 			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 			DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -115,7 +115,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 				("client_default_channel_password", ""),
 				("client_server_password", ""),
 				("client_meta_data", ""),
-				("client_version_sign", "LJ5q+KWT4KwBX7oR/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw=="),
+				("client_version_sign", "LJ5q+KWT4KwBX7oR\\/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw=="),
 				("client_nickname_phonetic", ""),
 				("client_key_offset", &offset),
 				("client_default_token", ""),
@@ -132,9 +132,10 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	})
 }
 
-pub fn disconnect(
+pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
+	client: &client::ClientDataM<PH>,
 	con: client::ClientConVal,
-) -> impl Future<Item = (), Error = Error> {
+) -> Box<Future<Item=(), Error=Error> + Send> {
 	let packet =
 		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
 			Direction::C2S,
@@ -149,13 +150,12 @@ pub fn disconnect(
 			std::iter::empty(),
 		);
 
-	con.as_packet_sink().send(packet).and_then(move |_| {
-		client::wait_for_state(&con, |state| {
-			if let client::ServerConnectionState::Disconnected = *state {
-				true
-			} else {
-				false
-			}
-		})
-	})
+	let addr = if let Some(con) = con.upgrade() {
+		con.mutex.lock().1.address
+	} else {
+		return Box::new(future::ok(()));
+	};
+	let wait = client.lock().wait_for_disconnect(addr);
+
+	Box::new(con.as_packet_sink().send(packet).and_then(|_| wait))
 }
