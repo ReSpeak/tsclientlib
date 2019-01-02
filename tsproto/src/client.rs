@@ -5,9 +5,9 @@ use chrono::Utc;
 use futures::sync::mpsc;
 use futures::{future, Future, Sink, Stream};
 #[cfg(not(feature = "rug"))]
-use num::bigint::BigUint;
+use num_bigint::BigUint;
 #[cfg(not(feature = "rug"))]
-use num::One;
+use num_traits::One;
 use parking_lot::Mutex;
 use rand::{self, Rng};
 #[cfg(feature = "rug")]

@@ -13,6 +13,8 @@
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 
+#![recursion_limit="128"]
+
 #[macro_use]
 extern crate failure;
 #[macro_use]
