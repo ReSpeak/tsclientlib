@@ -267,11 +267,15 @@ fn single_value_deserializer(field: &Field, rust_type: &str)
 			}})? }}", field.pretty),
 		"UidRef" => "UidRef(val)".into(),
 		"&str" => "val".into(),
-		"IconHash" => format!("IconHash(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
-				arg: \"{}\",
-				value: val.to_string(),
-				error: e,
-			}})? as u32)", field.pretty),
+		"IconHash" => format!("IconHash(if val.starts_with('-') {{
+			val.parse::<i32>().map(|i| i as u32)
+		}} else {{
+			val.parse::<u64>().map(|i| i as u32)
+		}}.map_err(|e| ParseError::ParseInt {{
+			arg: \"{}\",
+			value: val.to_string(),
+			error: e,
+		}})?)", field.pretty),
 		"ClientId" |
 		"ClientDbId" |
 		"ChannelId" |

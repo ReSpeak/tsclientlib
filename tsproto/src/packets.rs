@@ -351,112 +351,7 @@ impl InPacket {
 			Box::new(self.inner),
 			|p| -> Result<_> {
 				let content = p.suffix();
-				if p_type == PacketType::Voice {
-					if dir == Direction::S2C {
-						if content.len() < 5 {
-							return Err(
-								format_err!("Voice packet too short").into()
-							);
-						}
-						Ok(AudioData::S2C {
-							id,
-							from: (&content[2..])
-								.read_u16::<NetworkEndian>()?,
-							codec: CodecType::from_u8(content[4])
-								.ok_or_else::<Error, _>(|| {
-									format_err!("Invalid codec").into()
-								})?,
-							data: &content[5..],
-						})
-					} else {
-						if content.len() < 3 {
-							return Err(
-								format_err!("Voice packet too short").into()
-							);
-						}
-						Ok(AudioData::C2S {
-							id,
-							codec: CodecType::from_u8(content[2])
-								.ok_or_else::<Error, _>(|| {
-									format_err!("Invalid codec").into()
-								})?,
-							data: &content[3..],
-						})
-					}
-				} else if dir == Direction::S2C {
-					if content.len() < 5 {
-						return Err(format_err!("Voice packet too short").into());
-					}
-					Ok(AudioData::S2CWhisper {
-						id,
-						from: (&content[2..]).read_u16::<NetworkEndian>()?,
-						codec: CodecType::from_u8(content[4])
-							.ok_or_else::<Error, _>(|| {
-								format_err!("Invalid codec").into()
-							})?,
-						data: &content[5..],
-					})
-				} else {
-					if content.len() < 3 {
-						return Err(format_err!("Voice packet too short").into());
-					}
-					let codec = CodecType::from_u8(content[2])
-						.ok_or_else::<Error, _>(|| {
-							format_err!("Invalid codec").into()
-						})?;
-					if newprotocol {
-						if content.len() < 14 {
-							return Err(
-								format_err!("Voice packet too short").into()
-							);
-						}
-						Ok(AudioData::C2SWhisperNew {
-							id,
-							codec,
-							whisper_type: content[3],
-							target: content[4],
-							target_id: (&content[5..])
-								.read_u64::<NetworkEndian>()?,
-							data: &content[13..],
-						})
-					} else {
-						if content.len() < 5 {
-							return Err(
-								format_err!("Voice packet too short").into()
-							);
-						}
-						let channel_count = content[3] as usize;
-						let client_count = content[4] as usize;
-						let channel_off = 4;
-						let client_off = channel_off + channel_count * 8;
-						let off = client_off + client_count * 2;
-						if content.len() < off {
-							return Err(
-								format_err!("Voice packet too short").into()
-							);
-						}
-
-						Ok(AudioData::C2SWhisper {
-							id,
-							codec,
-							channels: (0..channel_count)
-								.map(|i| {
-									(&content[channel_off + i * 8..])
-										.read_u64::<NetworkEndian>()
-								})
-								.collect::<::std::result::Result<Vec<_>, _>>(
-								)?,
-							clients: (0..client_count)
-								.map(|i| {
-									(&content[client_off + i * 2..])
-										.read_u16::<NetworkEndian>()
-								})
-								.collect::<::std::result::Result<Vec<_>, _>>(
-								)?,
-							data: &content[off..],
-						})
-					}
-				}
+				AudioData::parse(p_type, newprotocol, dir, content)
 			},
 		)?))
 	}
@@ -737,6 +632,116 @@ impl InCommand {
 }
 
 impl<'a> AudioData<'a> {
+	pub fn parse(p_type: PacketType, newprotocol: bool, dir: Direction, content: &'a [u8]) -> Result<Self> {
+		let id = (&content[..]).read_u16::<NetworkEndian>()?;
+		if p_type == PacketType::Voice {
+			if dir == Direction::S2C {
+				if content.len() < 5 {
+					return Err(
+						format_err!("Voice packet too short").into()
+					);
+				}
+				Ok(AudioData::S2C {
+					id,
+					from: (&content[2..])
+						.read_u16::<NetworkEndian>()?,
+					codec: CodecType::from_u8(content[4])
+						.ok_or_else::<Error, _>(|| {
+							format_err!("Invalid codec").into()
+						})?,
+					data: &content[5..],
+				})
+			} else {
+				if content.len() < 3 {
+					return Err(
+						format_err!("Voice packet too short").into()
+					);
+				}
+				Ok(AudioData::C2S {
+					id,
+					codec: CodecType::from_u8(content[2])
+						.ok_or_else::<Error, _>(|| {
+							format_err!("Invalid codec").into()
+						})?,
+					data: &content[3..],
+				})
+			}
+		} else if dir == Direction::S2C {
+			if content.len() < 5 {
+				return Err(format_err!("Voice packet too short").into());
+			}
+			Ok(AudioData::S2CWhisper {
+				id,
+				from: (&content[2..]).read_u16::<NetworkEndian>()?,
+				codec: CodecType::from_u8(content[4])
+					.ok_or_else::<Error, _>(|| {
+						format_err!("Invalid codec").into()
+					})?,
+				data: &content[5..],
+			})
+		} else {
+			if content.len() < 3 {
+				return Err(format_err!("Voice packet too short").into());
+			}
+			let codec = CodecType::from_u8(content[2])
+				.ok_or_else::<Error, _>(|| {
+					format_err!("Invalid codec").into()
+				})?;
+			if newprotocol {
+				if content.len() < 14 {
+					return Err(
+						format_err!("Voice packet too short").into()
+					);
+				}
+				Ok(AudioData::C2SWhisperNew {
+					id,
+					codec,
+					whisper_type: content[3],
+					target: content[4],
+					target_id: (&content[5..])
+						.read_u64::<NetworkEndian>()?,
+					data: &content[13..],
+				})
+			} else {
+				if content.len() < 5 {
+					return Err(
+						format_err!("Voice packet too short").into()
+					);
+				}
+				let channel_count = content[3] as usize;
+				let client_count = content[4] as usize;
+				let channel_off = 4;
+				let client_off = channel_off + channel_count * 8;
+				let off = client_off + client_count * 2;
+				if content.len() < off {
+					return Err(
+						format_err!("Voice packet too short").into()
+					);
+				}
+
+				Ok(AudioData::C2SWhisper {
+					id,
+					codec,
+					channels: (0..channel_count)
+						.map(|i| {
+							(&content[channel_off + i * 8..])
+								.read_u64::<NetworkEndian>()
+						})
+						.collect::<::std::result::Result<Vec<_>, _>>(
+						)?,
+					clients: (0..client_count)
+						.map(|i| {
+							(&content[client_off + i * 2..])
+								.read_u16::<NetworkEndian>()
+						})
+						.collect::<::std::result::Result<Vec<_>, _>>(
+						)?,
+					data: &content[off..],
+				})
+			}
+		}
+	}
+
 	#[inline]
 	pub fn direction(&self) -> Direction {
 		match self {

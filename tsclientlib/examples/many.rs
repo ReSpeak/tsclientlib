@@ -1,7 +1,13 @@
+#[macro_use]
+extern crate failure;
+extern crate futures;
+extern crate structopt;
+extern crate tokio;
+extern crate tsclientlib;
+
 use std::time::{Duration, Instant};
 
-use failure::format_err;
-use futures::Future;
+use futures::{stream, Future, Stream};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
@@ -30,6 +36,8 @@ struct Args {
 	// 1. Print command string
 	// 2. Print packets
 	// 3. Print udp packets
+	#[structopt(help = "How many connections")]
+	count: usize,
 }
 
 fn main() -> Result<(), failure::Error> {
@@ -38,23 +46,25 @@ fn main() -> Result<(), failure::Error> {
 
 	tokio::run(
 		futures::lazy(|| {
-			let con_config = ConnectOptions::new(args.address)
-				.log_commands(args.verbose >= 1)
-				.log_packets(args.verbose >= 2)
-				.log_udp_packets(args.verbose >= 3);
+			stream::futures_ordered((0..args.count).map(move |_| {
+				let con_config = ConnectOptions::new(args.address.as_str())
+					.log_commands(args.verbose >= 1)
+					.log_packets(args.verbose >= 2)
+					.log_udp_packets(args.verbose >= 3);
 
-			// Optionally set the key of this client, otherwise a new key is generated.
-			let con_config = con_config.private_key_str(
-				"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-				k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
-				C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+				// Optionally set the key of this client, otherwise a new key is generated.
+				let con_config = con_config.private_key_ts(
+					"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+					k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
+					C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-			// Connect
-			Connection::new(con_config)
+				// Connect
+				Connection::new(con_config)
+			})).collect()
 		})
-		.and_then(|con| {
+		.and_then(|cons| {
 			{
-				let con = con.lock();
+				let con = cons[0].lock();
 				println!(
 					"Server welcome message: {}",
 					sanitize(&con.server.welcome_message)
@@ -62,13 +72,13 @@ fn main() -> Result<(), failure::Error> {
 			}
 
 			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(1))
-				.map(move |_| con)
+			Delay::new(Instant::now() + Duration::from_secs(10))
+				.map(move |_| cons)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		})
-		.and_then(|con| {
+		.and_then(|cons| {
 			// Disconnect
-			drop(con);
+			drop(cons);
 			Ok(())
 		})
 		.map_err(|e| panic!("An error occurred {:?}", e)),

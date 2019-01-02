@@ -41,10 +41,12 @@ pub struct ConnectionId(u32);
 #[repr(u32)]
 pub enum EventType {
 	ConnectionAdded,
+	ConnectionRemoved,
 }
 
 enum Event {
 	ConnectionAdded(ConnectionId),
+	ConnectionRemoved(ConnectionId),
 }
 
 #[repr(C)]
@@ -56,12 +58,14 @@ pub struct FfiEvent {
 #[repr(C)]
 pub union FfiEventUnion {
 	connection_added: ConnectionId,
+	connection_removed: ConnectionId,
 }
 
 impl Event {
 	fn get_type(&self) -> EventType {
 		match self {
 			Event::ConnectionAdded(_) => EventType::ConnectionAdded,
+			Event::ConnectionRemoved(_) => EventType::ConnectionRemoved,
 		}
 	}
 }
@@ -211,10 +215,10 @@ impl ConnectionId {
 	}
 
 	/// Should be called when a connection is removed
-	fn mark_free(id: Self) {
+	fn mark_free(&self) {
 		let mut next_free = FIRST_FREE_CON_ID.lock();
-		if id < *next_free {
-			*next_free = id;
+		if *self < *next_free {
+			*next_free = *self;
 		}
 	}
 }
@@ -228,8 +232,12 @@ pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 	RUNTIME.executor().spawn(
 		future::lazy(move || {
 			Connection::new(options).map(move |con| {
-				// TODO Register handler which removes the connection from the map
-				// on disconnects? Or automatically try to reconnect.
+				// Or automatically try to reconnect.
+				con.add_on_disconnect(Box::new(move || {
+					CONNECTIONS.remove(&con_id);
+					con_id.mark_free();
+					EVENTS.0.send(Event::ConnectionRemoved(con_id)).unwrap();
+				}));
 				CONNECTIONS.insert(con_id, con);
 				EVENTS.0.send(Event::ConnectionAdded(con_id)).unwrap();
 			})
@@ -263,6 +271,9 @@ pub extern "C" fn next_event(ev: *mut FfiEvent) {
 			content: match &event {
 				Event::ConnectionAdded(c) => FfiEventUnion {
 					connection_added: *c,
+				},
+				Event::ConnectionRemoved(c) => FfiEventUnion {
+					connection_removed: *c,
 				},
 			},
 			typ: event.get_type(),

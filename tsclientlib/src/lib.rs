@@ -12,6 +12,8 @@
 //!
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
+// TODO Needed to call a Box<FnOnce>
+#![feature(unsized_locals)]
 
 #![recursion_limit="128"]
 
@@ -33,10 +35,12 @@ use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Once, RwLock, RwLockReadGuard, ONCE_INIT};
 use slog::{Drain, Logger};
 use tsproto::algorithms as algs;
+use tsproto::{client, crypto, log};
+use tsproto::connectionmanager::ConnectionManager;
+use tsproto::handler_data::{ConnectionListener, ConnectionValue};
 use tsproto::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
-use tsproto::{client, crypto, log};
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
 use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
@@ -158,7 +162,7 @@ impl From<failure::Error> for Error {
 	}
 }
 
-type PHBox = Box<PacketHandler + Send + Sync>;
+pub type PHBox = Box<PacketHandler + Send + Sync>;
 pub trait PacketHandler {
 	fn new_connection(
 		&mut self,
@@ -195,6 +199,8 @@ struct InnerConnection {
 pub struct Connection {
 	inner: InnerConnection,
 }
+
+struct DisconnectListener(Option<Box<FnOnce() + Send>>);
 
 /// The main type of this crate, which represents a connection to a server.
 ///
@@ -643,6 +649,42 @@ impl Connection {
 				.map(move |_| drop(inner)),
 		)
 	}
+
+	/// Set a function which will be called when this clients disconnects.
+	///
+	/// # Examples
+	/// ```no_run
+	/// # extern crate tokio;
+	/// # extern crate tsclientlib;
+	/// #
+	/// # use tokio::prelude::Future;
+	/// # use tsclientlib::{Connection, ConnectOptions};
+	/// # fn main() {
+	/// #
+	/// tokio::run(Connection::new(ConnectOptions::new("localhost"))
+	///     .and_then(|connection| {
+	///         connection.add_on_disconnect(Box::new(|| {
+	///             println!("Disconnected");
+	///         }))
+	///
+	///         connection.disconnect(None)
+	///     })
+	///     .map_err(|_| ())
+	/// );
+	/// # }
+	/// ```
+	pub fn add_on_disconnect(&self, f: Box<FnOnce() + Send>) {
+		self.inner.client_data.lock().connection_listeners.push(Box::new(
+			DisconnectListener(Some(f))
+		));
+	}
+}
+
+impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener {
+	fn on_connection_removed(&mut self, _: &CM::Key, _: &mut ConnectionValue<CM::AssociatedData>) -> bool {
+		self.0.take().unwrap()();
+		false
+	}
 }
 
 impl Drop for Connection {
@@ -792,18 +834,31 @@ impl ConnectOptions {
 		self
 	}
 
-	/// Takes the private key as encoded by TeamSpeak (libtomcrypt export and
-	/// base64 encoded).
+	/// Takes the private key as a string. The exact format is determined
+	/// automatically.
 	///
 	/// # Default
 	/// A new identity is generated when connecting.
 	///
 	/// # Error
-	/// An error is returned if either the string is not encoded in valid base64
-	/// or libtomcrypt cannot import the key.
+	/// An error is returned if the string cannot be decoded.
 	#[inline]
-	pub fn private_key_ts(mut self, private_key: &str) -> Result<Self> {
-		self.private_key = Some(crypto::EccKeyPrivP256::from_ts(private_key)?);
+	pub fn private_key_str(mut self, private_key: &str) -> Result<Self> {
+		self.private_key = Some(crypto::EccKeyPrivP256::import_str(private_key)?);
+		Ok(self)
+	}
+
+	/// Takes the private key as a byte slice. The exact format is determined
+	/// automatically.
+	///
+	/// # Default
+	/// A new identity is generated when connecting.
+	///
+	/// # Error
+	/// An error is returned if the byte slice cannot be decoded.
+	#[inline]
+	pub fn private_key_bytes(mut self, private_key: &[u8]) -> Result<Self> {
+		self.private_key = Some(crypto::EccKeyPrivP256::import(private_key)?);
 		Ok(self)
 	}
 
