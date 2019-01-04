@@ -56,6 +56,9 @@ pub mod data;
 mod packet_handler;
 pub mod resolver;
 
+#[cfg(test)]
+mod tests;
+
 // Reexports
 pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;

@@ -190,7 +190,6 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 
 			// 3.
 			let mut con = con.write();
-			// Split into messages
 			let name = cmd.name().to_string();
 			let msg = InMessage::new(cmd);
 			let cmd;
