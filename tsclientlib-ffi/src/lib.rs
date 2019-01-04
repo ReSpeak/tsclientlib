@@ -7,29 +7,53 @@ use std::os::raw::c_char;
 
 use chashmap::CHashMap;
 use crossbeam::channel;
+use futures::{future, Future, Sink, StartSend, Async, AsyncSink, Poll};
 use lazy_static::lazy_static;
 use num::ToPrimitive;
-use parking_lot::Mutex;
-use tokio::prelude::{future, Future};
+use parking_lot::{Mutex, RwLock};
+use slog::{error, o, Drain, Logger};
 use tsclientlib::{
 	ChannelId, ClientId, ConnectOptions, Connection, ServerGroupId,
 };
+use tsproto::packets::OutPacket;
+use tsproto_audio::{audio_to_ts, ts_to_audio};
 
-type Result<T> = std::result::Result<T, tsclientlib::Error>;
-
-/// The sender will block when this amount of events is stored in the queue.
-const EVENT_CHANNEL_SIZE: usize = 5;
+//type Result<T> = std::result::Result<T, tsclientlib::Error>;
 
 lazy_static! {
+	static ref LOGGER: Logger = {
+		let decorator = slog_term::TermDecorator::new().build();
+		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+		let drain = slog_async::Async::new(drain).build().fuse();
+
+		Logger::root(drain, o!())
+	};
+
 	static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new()
 		.unwrap();
-	static ref FIRST_FREE_CON_ID: Mutex<ConnectionId> = Mutex::new(ConnectionId(0));
-	static ref CONNECTIONS: CHashMap<ConnectionId, Connection> = CHashMap::new();
+	static ref FIRST_FREE_CON_ID: Mutex<ConnectionId> =
+		Mutex::new(ConnectionId(0));
+	static ref CONNECTIONS: CHashMap<ConnectionId, Connection> =
+		CHashMap::new();
 
-	// TODO It's bad when the sender blocks, maybe use futures
-	static ref EVENTS: (channel::Sender<Event>, channel::Receiver<Event>) = {
-		channel::bounded(EVENT_CHANNEL_SIZE)
-	};
+	// TODO In theory, this should be only one for every connection
+	/// The gstreamer pipeline which plays back other peoples voice.
+	static ref T2A_PIPES: CHashMap<ConnectionId, ts_to_audio::Pipeline> =
+		CHashMap::new();
+
+	/// The gstreamer pipeline which captures the microphone and sends it to
+	/// TeamSpeak.
+	static ref A2T_PIPE: RwLock<Option<audio_to_ts::Pipeline>> =
+		RwLock::new(None);
+
+	/// The sink for packets where the `A2T_PIPE` will put packets.
+	static ref CURRENT_AUDIO_SINK: Mutex<Option<(ConnectionId, Box<
+		Sink<SinkItem=OutPacket, SinkError=tsclientlib::Error> + Send>)>> =
+		Mutex::new(None);
+
+	/// Transfer events to whoever is listening on the `next_event` method.
+	static ref EVENTS: (channel::Sender<Event>, channel::Receiver<Event>) =
+		channel::unbounded();
 }
 
 include!(concat!(env!("OUT_DIR"), "/book_ffi.rs"));
@@ -74,6 +98,48 @@ impl fmt::Display for ConnectionId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{:?}", self)
 	}
+}
+
+/// Redirect everything to `CURRENT_AUDIO_SINK`.
+struct CurrentAudioSink;
+impl Sink for CurrentAudioSink {
+	type SinkItem = OutPacket;
+	type SinkError = tsclientlib::Error;
+
+	fn start_send(
+		&mut self,
+		item: Self::SinkItem
+	) -> StartSend<Self::SinkItem, Self::SinkError> {
+		let mut cas = CURRENT_AUDIO_SINK.lock();
+		if let Some(sink) = &mut *cas {
+			sink.1.start_send(item)
+		} else {
+			Ok(AsyncSink::Ready)
+		}
+	}
+
+	fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+		let mut cas = CURRENT_AUDIO_SINK.lock();
+		if let Some(sink) = &mut *cas {
+			sink.1.poll_complete()
+		} else {
+			Ok(Async::Ready(()))
+		}
+	}
+
+	fn close(&mut self) -> Poll<(), Self::SinkError> {
+		let mut cas = CURRENT_AUDIO_SINK.lock();
+		if let Some(sink) = &mut *cas {
+			sink.1.close()
+		} else {
+			Ok(Async::Ready(()))
+		}
+	}
+}
+
+impl audio_to_ts::PacketSinkCreator<tsclientlib::Error> for CurrentAudioSink {
+	type S = CurrentAudioSink;
+	fn get_sink(&self) -> Self::S { CurrentAudioSink }
 }
 
 trait ConnectionExt {
@@ -223,6 +289,22 @@ impl ConnectionId {
 	}
 }
 
+fn remove_connection(con_id: ConnectionId) {
+	// Disable sound for this connection
+	let mut cas = CURRENT_AUDIO_SINK.lock();
+	if let Some((id, _)) = &*cas {
+		if *id == con_id {
+			*cas = None;
+		}
+	}
+	drop(cas);
+	T2A_PIPES.remove(&con_id);
+
+	CONNECTIONS.remove(&con_id);
+	con_id.mark_free();
+	EVENTS.0.send(Event::ConnectionRemoved(con_id)).unwrap();
+}
+
 #[no_mangle]
 pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 	let address = unsafe { CStr::from_ptr(address) };
@@ -231,18 +313,52 @@ pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 
 	RUNTIME.executor().spawn(
 		future::lazy(move || {
+			let mut options = options;
+			// Create TeamSpeak to audio pipeline
+			match ts_to_audio::Pipeline::new(LOGGER.clone(),
+				RUNTIME.executor()) {
+				Ok(t2a_pipe) => {
+					let aph = t2a_pipe.create_packet_handler();
+					options = options.audio_packet_handler(aph);
+					T2A_PIPES.insert(con_id, t2a_pipe);
+				}
+				Err(e) => error!(LOGGER, "Failed to create t2a pipeline";
+					"error" => ?e),
+			}
 			Connection::new(options).map(move |con| {
 				// Or automatically try to reconnect.
 				con.add_on_disconnect(Box::new(move || {
-					CONNECTIONS.remove(&con_id);
-					con_id.mark_free();
-					EVENTS.0.send(Event::ConnectionRemoved(con_id)).unwrap();
+					remove_connection(con_id);
 				}));
+
+				// Create audio to TeamSpeak pipeline
+				if A2T_PIPE.read().is_none() {
+					let mut a2t_pipe = A2T_PIPE.write();
+					if a2t_pipe.is_none() {
+						match audio_to_ts::Pipeline::new(LOGGER.clone(),
+							CurrentAudioSink, RUNTIME.executor(), None) {
+							Ok(pipe) => {
+								*a2t_pipe = Some(pipe);
+							}
+							Err(e) => error!(LOGGER,
+								"Failed to create a2t pipeline";
+								"error" => ?e),
+						}
+
+						// Set new connection as default talking server
+						*CURRENT_AUDIO_SINK.lock() =
+							Some((con_id, Box::new(con.get_packet_sink())));
+					}
+				}
+
 				CONNECTIONS.insert(con_id, con);
 				EVENTS.0.send(Event::ConnectionAdded(con_id)).unwrap();
 			})
+			.map_err(move |e| {
+				error!(LOGGER, "Failed to connect"; "error" => %e);
+				remove_connection(con_id);
+			})
 		})
-		.map_err(|_| ()),
 	);
 	con_id
 }
@@ -261,6 +377,27 @@ pub extern "C" fn disconnect(con_id: ConnectionId) {
 		})
 		.map_err(|_| ()),
 	);
+}
+
+#[no_mangle]
+pub extern "C" fn is_talking() -> bool {
+	let a2t_pipe = A2T_PIPE.read();
+	if let Some(a2t_pipe) = &*a2t_pipe {
+		if let Ok(true) = a2t_pipe.is_playing() {
+			return true;
+		}
+	}
+	false
+}
+
+#[no_mangle]
+pub extern "C" fn set_talking(talking: bool) {
+	let a2t_pipe = A2T_PIPE.read();
+	if let Some(a2t_pipe) = &*a2t_pipe {
+		if let Err(e) = a2t_pipe.set_playing(talking) {
+			error!(LOGGER, "Failed to set talking state"; "error" => ?e);
+		}
+	}
 }
 
 #[no_mangle]

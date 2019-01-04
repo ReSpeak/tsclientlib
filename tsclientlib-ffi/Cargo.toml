@@ -12,11 +12,17 @@ crate-type = ["cdylib", "staticlib"]
 chashmap = "2"
 crossbeam = "0.6"
 failure = "0.1"
+futures = "0.1"
 lazy_static = "1"
 num = "0.2"
 parking_lot = "0.7"
+slog = "2"
+slog-async = "2"
+slog-term = "2"
 tokio = "0.1"
-tsclientlib = { path = "../tsclientlib" }
+tsclientlib = { path = "../tsclientlib", features = ["audio"] }
+tsproto = { path = "../tsproto" }
+tsproto-audio = { path = "../tsproto-audio" }
 
 [build-dependencies]
 tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
