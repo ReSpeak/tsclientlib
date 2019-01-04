@@ -3,11 +3,13 @@ use std::sync::Arc;
 
 use chashmap::CHashMap;
 use futures::sync::oneshot;
-use futures::{task, Async, Future, Poll, Stream};
+use futures::{task, try_ready, Async, Future, Poll, Stream};
 use parking_lot::RwLock;
-use slog::Logger;
+use slog::{error, warn, Logger};
 use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::*;
+#[cfg(feature = "audio")]
+use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
 use crate::data::Connection;
@@ -28,6 +30,8 @@ pub struct SimplePacketHandler {
 	handle_packets: Option<PHBox>,
 	initserver_sender: Option<oneshot::Sender<InCommand>>,
 	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
+	#[cfg(feature = "audio")]
+	audio_packet_handler: Option<AudioPacketHandler>,
 	pub(crate) return_codes: Arc<ReturnCodeHandler>,
 }
 
@@ -43,6 +47,7 @@ struct SimplePacketStreamHandler<
 }
 
 impl SimplePacketHandler {
+	#[cfg(not(feature = "audio"))]
 	pub(crate) fn new(
 		logger: Logger,
 		handle_packets: Option<PHBox>,
@@ -59,6 +64,28 @@ impl SimplePacketHandler {
 				return_codes: CHashMap::new(),
 				cur_return_code: AtomicUsize::new(0),
 			}),
+		}
+	}
+
+	#[cfg(feature = "audio")]
+	pub(crate) fn new(
+		logger: Logger,
+		handle_packets: Option<PHBox>,
+		initserver_sender: oneshot::Sender<InCommand>,
+		connection_recv: oneshot::Receiver<Arc<RwLock<Connection>>>,
+		audio_packet_handler: Option<AudioPacketHandler>,
+	) -> Self
+	{
+		Self {
+			logger,
+			handle_packets,
+			initserver_sender: Some(initserver_sender),
+			connection_recv: Some(connection_recv),
+			return_codes: Arc::new(ReturnCodeHandler {
+				return_codes: CHashMap::new(),
+				cur_return_code: AtomicUsize::new(0),
+			}),
+			audio_packet_handler,
 		}
 	}
 }
@@ -110,8 +137,24 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 			return_codes: self.return_codes.clone(),
 		};
 
+		#[cfg(feature = "audio")]
+		let audio_stream: Box<Stream<Item=_, Error=_> + Send> =
+			if let Some(audio_packet_handler) = self.audio_packet_handler.clone() {
+				let logger = self.logger.clone();
+				Box::new(audio_stream.inspect(move |p| if let Err(e) =
+					audio_packet_handler.handle_audio_packet(p.data()) {
+					error!(logger, "Error when handling audio packet";
+						"error" => ?e);
+				}))
+			} else {
+				Box::new(audio_stream)
+			};
+
 		if let Some(h) = &mut self.handle_packets {
+			#[cfg(not(feature = "audio"))]
 			h.new_connection(Box::new(handler), Box::new(audio_stream));
+			#[cfg(feature = "audio")]
+			h.new_connection(Box::new(handler), audio_stream);
 		} else {
 			let logger = self.logger.clone();
 			tokio::spawn(handler.for_each(|_| Ok(())).map_err(move |e| {

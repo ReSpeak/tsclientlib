@@ -1,0 +1,19 @@
+[package]
+name = "tsproto-audio"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+edition = "2018"
+
+[dependencies]
+byteorder = "1"
+failure = "0.1"
+futures = "0.1"
+glib = "0.5"
+gstreamer = { version = "0.11", features = ["futures"] }
+gstreamer-app = "0.11"
+gstreamer-audio = "0.11"
+num-traits = "0.2"
+parking_lot = "0.7"
+slog = "2"
+tokio = "0.1"
+tsproto = { path = "../tsproto" }

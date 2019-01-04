@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use futures::{future, stream, Async, Future, Poll, Stream};
 use rand::{thread_rng, Rng};
-use slog::Logger;
+use slog::{debug, o, Logger};
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio::util::StreamExt;

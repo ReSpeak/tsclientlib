@@ -19,10 +19,6 @@
 
 #[macro_use]
 extern crate failure;
-#[macro_use]
-extern crate futures;
-#[macro_use]
-extern crate slog;
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -33,7 +29,7 @@ use failure::ResultExt;
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Once, RwLock, RwLockReadGuard, ONCE_INIT};
-use slog::{Drain, Logger};
+use slog::{debug, error, info, o, Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::{client, crypto, log};
 use tsproto::connectionmanager::ConnectionManager;
@@ -41,6 +37,8 @@ use tsproto::handler_data::{ConnectionListener, ConnectionValue};
 use tsproto::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
+#[cfg(feature = "audio")]
+use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
 use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
@@ -260,6 +258,8 @@ impl Connection {
 		TSPROTO_INIT.call_once(|| {
 			tsproto::init().expect("tsproto failed to initialize")
 		});
+		#[cfg(feature = "audio")]
+		tsproto_audio::init();
 
 		let logger = options.logger.take().unwrap_or_else(|| {
 			let decorator = slog_term::TermDecorator::new().build();
@@ -296,6 +296,8 @@ impl Connection {
 						ph,
 						initserver_send,
 						connection_recv,
+						#[cfg(feature = "audio")]
+						options.audio_packet_handler.clone(),
 					);
 					let return_code_handler =
 						packet_handler.return_codes.clone();
@@ -515,7 +517,7 @@ impl Connection {
 	/// answer is received. If an error occurs, the future will return an error.
 	pub fn send_packet(
 		&self,
-		packet: OutPacket,
+		mut packet: OutPacket,
 	) -> impl Future<Item = (), Error = Error>
 	{
 		// Store waiting in HashMap<usize (return code), oneshot::Sender>
@@ -523,8 +525,9 @@ impl Connection {
 		// received.
 
 		let (code, recv) = self.inner.return_code_handler.get_return_code();
-		// TODO Add return code
-		//cmd.push("return_code", code.to_string());
+		// Add return code
+		packet.data_mut().extend_from_slice("return_code=".as_bytes());
+		packet.data_mut().extend_from_slice(code.to_string().as_bytes());
 
 		// Send a message and wait until we get an answer for the return code
 		self.get_packet_sink()
@@ -680,6 +683,19 @@ impl Connection {
 	}
 }
 
+#[cfg(feature = "audio")]
+pub struct ConnectionPacketSinkCreator { con: Connection }
+#[cfg(feature = "audio")]
+impl ConnectionPacketSinkCreator {
+	pub fn new(con: Connection) -> Self { Self { con } }
+}
+
+#[cfg(feature = "audio")]
+impl tsproto_audio::audio_to_ts::PacketSinkCreator<Error> for ConnectionPacketSinkCreator {
+	type S = Box<Sink<SinkItem=OutPacket, SinkError=Error> + Send>;
+	fn get_sink(&self) -> Self::S { Box::new(self.con.get_packet_sink()) }
+}
+
 impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener {
 	fn on_connection_removed(&mut self, _: &CM::Key, _: &mut ConnectionValue<CM::AssociatedData>) -> bool {
 		self.0.take().unwrap()();
@@ -777,6 +793,8 @@ pub struct ConnectOptions {
 	log_commands: bool,
 	log_packets: bool,
 	log_udp_packets: bool,
+	#[cfg(feature = "audio")]
+	audio_packet_handler: Option<AudioPacketHandler>,
 	handle_packets: Option<PHBox>,
 	prepare_client: Option<
 		Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>,
@@ -808,6 +826,8 @@ impl ConnectOptions {
 			log_commands: false,
 			log_packets: false,
 			log_udp_packets: false,
+			#[cfg(feature = "audio")]
+			audio_packet_handler: None,
 			handle_packets: None,
 			prepare_client: None,
 		}
@@ -914,6 +934,18 @@ impl ConnectOptions {
 		self
 	}
 
+	/// If the client should.
+	///
+	/// # Default
+	/// `false`
+	#[cfg(feature = "audio")]
+	#[inline]
+	pub fn audio_packet_handler(mut self,
+		audio_packet_handler: AudioPacketHandler) -> Self {
+		self.audio_packet_handler = Some(audio_packet_handler);
+		self
+	}
+
 	/// Set a custom logger for the connection.
 	///
 	/// # Default
@@ -978,6 +1010,8 @@ impl fmt::Debug for ConnectOptions {
 			log_commands,
 			log_packets,
 			log_udp_packets,
+			#[cfg(feature = "audio")]
+			audio_packet_handler,
 			handle_packets: _,
 			prepare_client: _,
 		} = self;
@@ -985,7 +1019,7 @@ impl fmt::Debug for ConnectOptions {
 			f,
 			"ConnectOptions {{ address: {:?}, local_address: {:?}, \
 			 private_key: {:?}, name: {}, version: {}, logger: {:?}, \
-			 log_commands: {}, log_packets: {}, log_udp_packets: {} }}",
+			 log_commands: {}, log_packets: {}, log_udp_packets: {},",
 			address,
 			local_address,
 			private_key,
@@ -996,6 +1030,9 @@ impl fmt::Debug for ConnectOptions {
 			log_packets,
 			log_udp_packets,
 		)?;
+		#[cfg(feature = "audio")]
+		write!(f, ", audio_packet_handler: {:?}", audio_packet_handler)?;
+		write!(f, " }}")?;
 		Ok(())
 	}
 }

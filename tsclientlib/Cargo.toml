@@ -5,6 +5,9 @@ authors = ["Flakebi <flakebi@t-online.de>"]
 build = "build/build.rs"
 edition = "2018"
 
+[features]
+audio = ["tsproto-audio", "gstreamer"]
+
 [dependencies]
 base64 = "0.9"
 bytes = "0.4"
@@ -12,6 +15,7 @@ chashmap = "2"
 chrono = "0.4"
 failure = "0.1"
 futures = "0.1"
+gstreamer = { version = "0.11", optional = true }
 parking_lot = "0.7"
 rand = "0.6"
 reqwest = "0.9"
@@ -24,6 +28,7 @@ tokio-threadpool = "0.1"
 trust-dns-proto = "0.5.0-alpha.1"
 trust-dns-resolver = "0.10.0-alpha.2"
 tsproto = { path = "../tsproto" }
+tsproto-audio = { path = "../tsproto-audio", optional = true }
 tsproto-commands = { path = "../tsproto-commands" }
 
 [build-dependencies]
@@ -33,3 +38,4 @@ tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
 
 [dev-dependencies]
 structopt = "0.2"
+tokio-signal = "0.2"
