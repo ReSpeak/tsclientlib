@@ -1,0 +1,36 @@
+<#@ template cleanws="true" #>
+<# for e in &self.0.decls { #>
+impl<'a> <#= e.book_struct.name #>Mut<'a> {
+<# if e.op == RuleOp::Update {
+	for r in &e.rules { #>
+	pub fn set_<#= to_snake_case(&r.from().name) #>(&self, <#=
+		to_snake_case(&r.from().name) #>: <#= r.from().get_rust_type() #>) -> impl Future<Item=(), Error=Error> {
+		crate::Connection { inner: self.connection }.send_packet(
+			messages::c2s::Out<#= e.msg.name #>Message::new(vec![messages::c2s::<#= e.msg.name #>Part {
+		<# // Ids
+		for r in &e.ids {
+			match r {
+				RuleKind::Map { from, to } => { #>
+				<#= to.get_rust_name() #>: self.inner.<#= to_snake_case(&from.name) #>,
+				<# }
+				RuleKind::Function { from, name, to } =>  { #>
+			<# }
+			}
+		}
+
+		// Dynamic data
+		match r {
+			RuleKind::Map { from, to } => { #>
+				<#= to.get_rust_name() #>: self.inner.<#= to_snake_case(&from.name) #>,
+			<# }
+			RuleKind::Function { from, name, to } =>  { #>
+		<# }
+		} #>
+			}].into_iter()))
+	}
+
+<# }
+} #>
+}
+
+<# } #>

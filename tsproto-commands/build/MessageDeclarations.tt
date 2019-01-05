@@ -96,8 +96,8 @@ pub struct In<#= msg.name #><'a> {
 #[derive(Debug)]
 pub struct <#= msg.name #>Part<'a> {
 <# for a in &msg.attributes {
-	let field = self.0.get_field(a); #>
-	<# if field.get_rust_name() != field.ts { #>
+	let field = self.0.get_field(a);
+	if field.get_rust_name() != field.ts { #>
 	/// `<#= field.ts #>` in TeamSpeak.
 	<# } #>
 	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a, true).replace("&", "&'a ").replace("UidRef", "UidRef<'a>") #>,

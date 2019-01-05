@@ -1,43 +1,4 @@
 <#@ template cleanws="true" #>
-<#
-/*fn create_normal_getter(f: &mut ::std::fmt::Formatter, structs: &[Struct],
-	struc: &Struct, p: &Property, ids: &[Id]) -> ::std::fmt::Result {
-	let pi = PropId::from(p);
-	let name = pi.get_attr_name(struc); #>
-	pub fn get_<#= name #>(&self) -> <#= get_return_type(&p.get_rust_type()) #> {
-		let real = self.cm.get_<#= to_snake_case(&struc.name) #>(<#= get_id_args(ids, structs, struc) #>);
-	<# if p.get_rust_type() == "Option<String>" { #>
-		if real.<#= name #>.is_some() {
-			Some(Ref::map(real, |r| r.<#= name #>.as_ref().unwrap().as_str()))
-		} else {
-			None
-		}
-	<# } else if p.get_rust_type().starts_with("Option<") {
-		   if is_ref_type(&p.get_rust_type()[7..p.get_rust_type().len() - 1]) { #>
-		if real.<#= name #>.is_some() {
-			Some(Ref::map(real, |r| r.<#= name #>.as_ref().unwrap()))
-		} else {
-			None
-		}
-		<# } else { #>
-		real.<#= name #>
-		<# }
-	   } else if p.get_rust_type() == "String" { #>
-		Ref::map(real, |r| r.<#= name #>.as_str())
-	<# } else if p.get_rust_type().starts_with("Vec<") { #>
-		Ref::map(real, |r| r.<#= name #>.as_slice())
-	<# } else if is_ref_type(&p.get_rust_type()) { #>
-		Ref::map(real, |r| &r.<#= name #>)
-	<# } else { #>
-		real.<#= name #>
-	<# } #>
-	}
-<#
-	Ok(())
-}*/
-
-
-#>
 <# for struc in &self.0.structs { #>
 <#= doc_comment(&struc.doc) #>
 pub struct <#= struc.name #>Mut<'a> {
@@ -55,17 +16,133 @@ impl<'a> Deref for <#= struc.name #>Mut<'a> {
 
 impl<'a> <#= struc.name #>Mut<'a> {
 <#
-	// Normal properties
-	// TODO Implement get_mut_xxx for nested structs
-	/*for p in struc.properties.iter().filter(|p| p.get_get(struc)
-		&& struc.id.iter().filter(|i| i.prop == p.name).next().is_none()
-		&& !p.name.ends_with("Data")
-		&& p.name != "Server"
-		&& p.name != "OwnClient"
-		&& p.modifier.is_none()) {
-		create_normal_getter(f, &self.0.structs, struc, p, &struc.id)?;
-	}*/
-#>
+// Struct properties
+for p in struc.properties.iter().filter(|p| p.get_get(struc)
+	// Not an id of this struct
+	&& !struc.id.iter().any(|i| i.struct_name == struc.name && i.prop == p.name)
+	// Is a struct
+	&& self.0.structs.iter().any(|s| s.name == p.type_s)) {
+	let p_struct = self.0.structs.iter().find(|s| s.name == p.type_s).unwrap();
+	let pid = PropId::Prop(p);
+
+	if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
+		let attr_name = pid.get_attr_name(&struc);
+		let attr_name = if attr_name.ends_with('s') {
+			&attr_name[..attr_name.len() - 1]
+		} else { &attr_name };
+		#>
+	pub fn get_<#= attr_name #>(&self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= p_struct.name #>Mut<'a>> {
+		self.inner.<#= pid.get_attr_name(&struc) #>.get(key).map(|i| <#= p_struct.name #>Mut {
+			connection: self.connection.clone(),
+			inner: i,
+		})
+	}
+	<# } else if p.modifier.is_none() {
+
+		if !p.opt { #>
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> <#= p_struct.name #>Mut<'a> {
+		<#= p_struct.name #>Mut {
+			connection: self.connection.clone(),
+			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
+		}
+	}
+		<# } else { #>
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> Option<<#= p_struct.name #>Mut<'a>> {
+		self.inner.<#= pid.get_attr_name(&struc) #>.as_ref().map(|i| <#= p_struct.name #>Mut {
+			connection: self.connection.clone(),
+			inner: i,
+		})
+	}
+		<# } #>
+	<# } #>
+<# }
+
+// Getter for non-struct properties
+for p in struc.properties.iter().filter(|p| p.get_get(struc)
+		&& p.modifier.is_some()
+		// Not an id of this struct
+		&& !struc.id.iter().any(|i| i.struct_name == struc.name && i.prop == p.name)
+		// Is no struct
+		&& !self.0.structs.iter().any(|s| s.name == p.type_s)) {
+	let pid = PropId::Prop(p);
+	let name = if p.name.ends_with('s') {
+		&p.name[..p.name.len() - 1]
+	} else { &p.name };
+	let name = format!("{}{}", struc.name, name);
+	let attr_name = pid.get_attr_name(&struc);
+	let attr_name = if attr_name.ends_with('s') {
+		&attr_name[..attr_name.len() - 1]
+	} else { &attr_name };
+
+	if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) { #>
+	pub fn get_<#= attr_name #>(&self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= name #>Mut<'a>> {
+		self.inner.<#= pid.get_attr_name(&struc) #>.get(key).map(|i| <#= name #>Mut {
+			connection: self.connection.clone(),
+			inner: i,
+		})
+	}
+	<# } else if p.modifier.as_ref().map(|s| s == "array").unwrap_or(false) { #>
+	pub fn get_<#= attr_name #>(&self, index: usize) -> Option<<#= name #>Mut<'a>> {
+		self.inner.<#= pid.get_attr_name(&struc) #>.get(index).map(|i| <#= name #>Mut {
+			connection: self.connection.clone(),
+			inner: i,
+		})
+	}
+	<# } else if p.modifier.is_none() {
+
+		if !p.opt { #>
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> <#= name #>Mut<'a> {
+		<#= name #>Mut {
+			connection: self.connection.clone(),
+			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
+		}
+	}
+		<# } else { #>
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> Option<<#= name #>Mut<'a>> {
+		self.inner.<#= pid.get_attr_name(&struc) #>.as_ref().map(|i| <#= name #>Mut {
+			connection: self.connection.clone(),
+			inner: i,
+		})
+	}
+		<# } #>
+	<# } #>
+<# } #>
 }
 
+<# }
+
+
+// Create also mut structs for types which occur in maps and arrays so we can do
+// client.permissions.get(xxx).delete()
+// client.permissions.add(xxx)
+let mut props = Vec::new();
+for struc in &self.0.structs {
+	props.extend(struc.properties.iter().filter(|p| p.get_get(struc)
+		&& p.modifier.is_some()
+		// Not an id of this struct
+		&& !struc.id.iter().any(|i| i.struct_name == struc.name && i.prop == p.name)
+		// Is no struct
+		&& !self.0.structs.iter().any(|s| s.name == p.type_s))
+		.map(|p| (struc, p)));
+}
+
+for (struc, p) in &props {
+	let name = if p.name.ends_with('s') {
+		&p.name[..p.name.len() - 1]
+	} else { &p.name };
+	let name = format!("{}{}", struc.name, name);
+#>
+
+pub struct <#= name #>Mut<'a> {
+	pub(crate) connection: InnerConnection,
+	pub(crate) inner: &'a <#= p.type_s #>,
+}
+
+impl<'a> Deref for <#= name #>Mut<'a> {
+	type Target = <#= p.type_s #>;
+
+	fn deref(&self) -> &Self::Target {
+		self.inner
+	}
+}
 <# } #>

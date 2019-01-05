@@ -7,14 +7,16 @@ use std::ops::Deref;
 use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
+use futures::Future;
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
-use crate::{InnerConnection, Result};
+use crate::{InnerConnection, Error, Result};
 
-include!(concat!(env!("OUT_DIR"), "/structs.rs"));
-include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
+include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
+include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
+include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 
 macro_rules! max_clients {
 	($cmd:ident) => {{

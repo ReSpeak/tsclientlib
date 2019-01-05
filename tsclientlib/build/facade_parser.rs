@@ -1,5 +1,6 @@
 use std::default::Default;
-use tsproto_structs::book::BookDeclarations;
+
+use tsproto_structs::book::*;
 use tsproto_util::*;
 
 #[derive(Template)]
