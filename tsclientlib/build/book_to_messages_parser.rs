@@ -1,7 +1,5 @@
 use std::default::Default;
 use std::ops::Deref;
-use tsproto_structs::book::Property;
-use tsproto_structs::messages::Field;
 use tsproto_structs::book_to_messages;
 use tsproto_structs::book_to_messages::*;
 use tsproto_util::*;

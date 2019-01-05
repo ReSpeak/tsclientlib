@@ -1,7 +1,7 @@
 use std::default::Default;
 use std::ops::Deref;
 use tsproto_structs::book::{PropId, Property};
-use tsproto_structs::messages::Field;
+use tsproto_structs::messages::{Field, Message};
 use tsproto_structs::messages_to_book;
 use tsproto_structs::messages_to_book::*;
 use tsproto_util::*;
@@ -37,10 +37,14 @@ fn get_id_args(event: &Event) -> String {
 	res
 }
 
-fn get_notification_field(from: &Field) -> String {
+fn get_notification_field(from: &Field, msg: &Message) -> String {
 	let rust_type = from.get_rust_type("", false);
 	if rust_type == "String" {
-		format!("{}.into()", from.get_rust_name())
+		if from.is_opt(msg) {
+			format!("{}.map(|s| s.into())", from.get_rust_name())
+		} else {
+			format!("{}.into()", from.get_rust_name())
+		}
 	} else if rust_type.starts_with("Vec<") {
 		format!("{}.clone()", from.get_rust_name())
 	} else if rust_type == "Uid" {

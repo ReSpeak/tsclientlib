@@ -261,7 +261,7 @@ pub enum LogLevel {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum MaxFamilyClients {
+pub enum MaxClients {
 	Unlimited,
 	Inherited,
 	Limited(u16),

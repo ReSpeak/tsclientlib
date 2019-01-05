@@ -1,6 +1,7 @@
 #![allow(dead_code)] // TODO
 
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::mem;
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -20,25 +21,23 @@ include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 
 macro_rules! max_clients {
 	($cmd:ident) => {{
-		let ch = if $cmd.is_max_clients_unlimited {
-			None
-		} else if $cmd.max_clients >= 0 && $cmd.max_clients <= u16::MAX as i32 {
-			Some($cmd.max_clients as u16)
+		let ch = if $cmd.is_max_clients_unlimited == Some(true) {
+			Some(MaxClients::Unlimited)
+		} else if $cmd.max_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
+			Some(MaxClients::Limited($cmd.max_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
 			};
-		let ch_fam = if $cmd.is_max_family_clients_unlimited {
-			MaxFamilyClients::Unlimited
-		} else if $cmd.inherits_max_family_clients {
-			MaxFamilyClients::Inherited
-		} else if $cmd.max_family_clients >= 0
-			&& $cmd.max_family_clients <= u16::MAX as i32
-			{
-			MaxFamilyClients::Limited($cmd.max_family_clients as u16)
+		let ch_fam = if $cmd.is_max_family_clients_unlimited == Some(true) {
+			Some(MaxClients::Unlimited)
+		} else if $cmd.inherits_max_family_clients == Some(true) {
+			Some(MaxClients::Inherited)
+		} else if $cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
+			Some(MaxClients::Limited($cmd.max_family_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
-			MaxFamilyClients::Unlimited
+			None
 			};
 		(ch, ch_fam)
 		}};
@@ -168,7 +167,7 @@ impl Connection {
 	fn max_clients_cc_fun(
 		&self,
 		cmd: &s2c::ChannelCreatedPart,
-	) -> (Option<u16>, MaxFamilyClients)
+	) -> (Option<MaxClients>, Option<MaxClients>)
 	{
 		max_clients!(cmd)
 	}
@@ -187,27 +186,27 @@ impl Connection {
 	fn max_clients_cl_fun(
 		&self,
 		cmd: &s2c::ChannelListPart,
-	) -> (Option<u16>, MaxFamilyClients)
+	) -> (Option<MaxClients>, Option<MaxClients>)
 	{
 		let ch = if cmd.is_max_clients_unlimited {
-			None
+			Some(MaxClients::Unlimited)
 		} else if cmd.max_clients >= 0 && cmd.max_clients <= u16::MAX as i32 {
-			Some(cmd.max_clients as u16)
+			Some(MaxClients::Limited(cmd.max_clients as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
 		};
 		let ch_fam = if cmd.is_max_family_clients_unlimited {
-			MaxFamilyClients::Unlimited
+			Some(MaxClients::Unlimited)
 		} else if cmd.inherits_max_family_clients {
-			MaxFamilyClients::Inherited
+			Some(MaxClients::Inherited)
 		} else if cmd.max_family_clients >= 0
 			&& cmd.max_family_clients <= u16::MAX as i32
 		{
-			MaxFamilyClients::Limited(cmd.max_family_clients as u16)
+			Some(MaxClients::Limited(cmd.max_family_clients as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
-			MaxFamilyClients::Unlimited
+			Some(MaxClients::Unlimited)
 		};
 		(ch, ch_fam)
 	}

@@ -26,9 +26,23 @@ impl Connection {
 						RuleKind::Map { ref from, ref to, op } => {
 							// Put field from packet into bookkeeping struct
 							match op {
-								RuleOp::Update => { #>
-				r.<#= to_snake_case(&to.name) #> = cmd.<#= get_notification_field(from) #>;
+								RuleOp::Update => {
+									// to is optional, but from not
+									let from_opt = from.is_opt(&event.msg);
+									if to.opt && !from_opt { #>
+				r.<#= to_snake_case(&to.name) #> = Some(cmd.<#= get_notification_field(from, &event.msg) #>);
+									<# } else if from_opt { #>
+				if let Some(val) = cmd.<#= get_notification_field(from, &event.msg) #> {
+									<# if to.opt { #>
+					r.<#= to_snake_case(&to.name) #> = Some(val);
+									<# } else { #>
+					r.<#= to_snake_case(&to.name) #> = val;
+									<# } #>
+				}
+									<# } else { #>
+				r.<#= to_snake_case(&to.name) #> = cmd.<#= get_notification_field(from, &event.msg) #>;
 								<# }
+								}
 								// The field in the struct is a vector
 								RuleOp::Add => { #>
 				r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
@@ -56,7 +70,7 @@ impl Connection {
 				<#
 				// Add ids
 				for (id, fld) in event.book_struct.id.iter().zip(event.id.iter()) { #>
-					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld) #>,
+					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: cmd.<#= get_notification_field(fld, &event.msg) #>,
 				<# }
 
 				let v = vec![];
@@ -73,8 +87,14 @@ impl Connection {
 					if let RuleKind::Map { from, to, op } = *p {
 						if op != RuleOp::Update {
 							panic!("Cannot add or remove when adding a new struct");
-						} #>
-					<#= to_snake_case(&to.name) #>: cmd.<#= get_notification_field(from) #>,
+						}
+						// to is optional, but from not
+						let from_opt = from.is_opt(&event.msg);
+						if to.opt && !from_opt { #>
+					<#= to_snake_case(&to.name) #>: Some(cmd.<#= get_notification_field(from, &event.msg) #>),
+						<# } else { #>
+					<#= to_snake_case(&to.name) #>: cmd.<#= get_notification_field(from, &event.msg) #>,
+						<# } #>
 					<# }
 				}
 				let function_name = format!("add_{}", to_snake_case(&event.book_struct.name)); #>

@@ -5,27 +5,55 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 	for r in &e.rules { #>
 	pub fn set_<#= to_snake_case(&r.from().name) #>(&self, <#=
 		to_snake_case(&r.from().name) #>: <#= r.from().get_rust_type() #>) -> impl Future<Item=(), Error=Error> {
-		crate::Connection { inner: self.connection }.send_packet(
+		// TODO Take a reference (or the type from the message, but without Option<>)
+		crate::Connection { inner: self.connection.clone() }.send_packet(
 			messages::c2s::Out<#= e.msg.name #>Message::new(vec![messages::c2s::<#= e.msg.name #>Part {
-		<# // Ids
+		<#
+		let mut tos = Vec::new();
+		// Ids
 		for r in &e.ids {
 			match r {
-				RuleKind::Map { from, to } => { #>
-				<#= to.get_rust_name() #>: self.inner.<#= to_snake_case(&from.name) #>,
+				RuleKind::Map { from, to } => {
+					tos.push(*to);
+					let is_ref = to.get_rust_type("", true).starts_with('&');
+				#>
+				<#= to.get_rust_name() #>: <#= if is_ref { "&" } else { "" }
+					#>self.inner.<#= to_snake_case(&from.name) #>,
 				<# }
-				RuleKind::Function { from, name, to } =>  { #>
-			<# }
+				RuleKind::Function { from, name, to } =>  {
+					tos.extend_from_slice(to.as_slice());
+				}
 			}
 		}
 
 		// Dynamic data
 		match r {
-			RuleKind::Map { from, to } => { #>
-				<#= to.get_rust_name() #>: self.inner.<#= to_snake_case(&from.name) #>,
+			RuleKind::Map { from, to } => {
+				tos.push(*to);
+				// If the field in the message is optional
+				let opt = to.is_opt(&e.msg);
+				let is_ref = to.get_rust_type("", true).starts_with('&');
+				if to.is_opt(&e.msg) { #>
+				<#= to.get_rust_name() #>: Some(<#= if is_ref { "&" } else { "" }
+					#><#= to_snake_case(&from.name) #>),
+				<# } else { #>
+				<#= to.get_rust_name() #>: <#= if is_ref { "&" } else { "" }
+					#><#= to_snake_case(&from.name) #>,
+				<# } #>
 			<# }
-			RuleKind::Function { from, name, to } =>  { #>
-		<# }
-		} #>
+			RuleKind::Function { from, name, to } =>  {
+				tos.extend_from_slice(to.as_slice());
+			}
+		}
+
+		// All other fields
+		for field in e.msg.attributes.iter().filter_map(|a| {
+			let f = self.0.messages.get_field(a);
+			if tos.contains(&f) { None } else { Some(f) }
+		}) { #>
+				<#= field.get_rust_name() #>: None,
+		<# } #>
+				phantom: PhantomData,
 			}].into_iter()))
 	}
 

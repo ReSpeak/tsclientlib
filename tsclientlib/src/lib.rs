@@ -179,6 +179,7 @@ pub trait PacketHandler {
 }
 
 pub struct ConnectionLock<'a> {
+	connection: InnerConnection,
 	guard: RwLockReadGuard<'a, data::Connection>,
 }
 
@@ -529,7 +530,7 @@ impl Connection {
 
 		let (code, recv) = self.inner.return_code_handler.get_return_code();
 		// Add return code
-		packet.data_mut().extend_from_slice("return_code=".as_bytes());
+		packet.data_mut().extend_from_slice(" return_code=".as_bytes());
 		packet.data_mut().extend_from_slice(code.to_string().as_bytes());
 
 		// Send a message and wait until we get an answer for the return code
@@ -550,19 +551,7 @@ impl Connection {
 	}
 
 	pub fn lock(&self) -> ConnectionLock {
-		ConnectionLock::new(self.inner.connection.read())
-	}
-
-	// TODO Function of ConnectionLock?
-	pub fn to_mut<'a>(
-		&self,
-		con: &'a data::Connection,
-	) -> data::ConnectionMut<'a>
-	{
-		data::ConnectionMut {
-			connection: self.inner.clone(),
-			inner: &con,
-		}
+		ConnectionLock::new(self.inner.clone(), self.inner.connection.read())
 	}
 
 	/// Disconnect from the server.
@@ -721,8 +710,15 @@ impl Drop for Connection {
 }
 
 impl<'a> ConnectionLock<'a> {
-	fn new(guard: RwLockReadGuard<'a, data::Connection>) -> Self {
-		Self { guard }
+	fn new(connection: InnerConnection, guard: RwLockReadGuard<'a, data::Connection>) -> Self {
+		Self { connection, guard }
+	}
+
+	pub fn to_mut(&'a self) -> data::ConnectionMut<'a> {
+		data::ConnectionMut {
+			connection: self.connection.clone(),
+			inner: &*self.guard,
+		}
 	}
 }
 

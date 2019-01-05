@@ -79,7 +79,7 @@ fn main() -> Result<(), failure::Error> {
 				.log_udp_packets(args.verbose >= 3);
 
 			// Optionally set the key of this client, otherwise a new key is generated.
-			let con_config = con_config.private_key_ts(
+			let con_config = con_config.private_key_str(
 				"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 				k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
 				C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -88,13 +88,6 @@ fn main() -> Result<(), failure::Error> {
 			Connection::new(con_config)
 		})
 		.and_then(|con| {
-			{
-				let con = con.lock();
-				println!(
-					"Server welcome message: {}",
-					sanitize(&con.server.welcome_message)
-				);
-			}
 			let packet = OutCommand::new::<
 				String,
 				String,
@@ -131,6 +124,15 @@ fn main() -> Result<(), failure::Error> {
 				clients.sort_by_key(|c| c.talk_power);
 				println!("{}", con.server.name);
 				print_channels(&clients, &channels, ChannelId(0), 0);
+
+				// Change channel name
+				if let Some(c) = con.to_mut().get_server().get_channel(&channels[0].id) {
+					tokio::spawn(c.set_name(format!("{}1", channels[0].name)).map_err(|e| {
+						println!("Failed to set channel name: {:?}", e);
+					}));
+				} else {
+					println!("Channel not found");
+				}
 			}
 
 			// Disconnect
@@ -144,18 +146,4 @@ fn main() -> Result<(), failure::Error> {
 	);
 
 	Ok(())
-}
-
-/// Only retain a certain set of characters.
-fn sanitize(s: &str) -> String {
-	s.chars()
-		.filter(|c| {
-			c.is_alphanumeric()
-				|| [
-					' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')',
-					'[', ']', '{', '}',
-				]
-				.contains(c)
-		})
-		.collect()
 }
