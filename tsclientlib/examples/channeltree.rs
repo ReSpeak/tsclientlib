@@ -125,16 +125,27 @@ fn main() -> Result<(), failure::Error> {
 				println!("{}", con.server.name);
 				print_channels(&clients, &channels, ChannelId(0), 0);
 
-				// Change channel name
-				if let Some(c) = con.to_mut().get_server().get_channel(&channels[0].id) {
-					tokio::spawn(c.set_name(format!("{}1", channels[0].name)).map_err(|e| {
-						println!("Failed to set channel name: {:?}", e);
+				// Change name
+				if let Some(c) = con.to_mut().get_server().get_client(&clients[0].id) {
+					tokio::spawn(c.set_name(&format!("{}1", clients[0].name)).map_err(|e| {
+						println!("Failed to set client name: {:?}", e);
+					}));
+					tokio::spawn(c.set_input_muted(true).map_err(|e| {
+						println!("Failed to set muted: {:?}", e);
 					}));
 				} else {
 					println!("Channel not found");
 				}
 			}
-
+			Ok(con)
+		})
+		.and_then(|con| {
+			// Wait some time
+			Delay::new(Instant::now() + Duration::from_secs(3))
+				.map(move |_| con)
+				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
+		})
+		.and_then(|con| {
 			// Disconnect
 			con.disconnect(
 				DisconnectOptions::new()

@@ -371,7 +371,7 @@ fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String
 		"i32" | "u32" |
 		"i64" | "u64" |
 		"f32" | "f64" => format!("Cow::Owned({}.to_string())", name),
-		"bool" => format!("Cow::Borrowed(if {} {{ \"0\" }} else {{ \"1\" }})", name),
+		"bool" => format!("Cow::Borrowed(if {} {{ \"1\" }} else {{ \"0\" }})", name),
 		"&str" => format!("Cow::Borrowed({})", name),
 		"UidRef" => format!("Cow::Borrowed({}.0)", name),
 		"ClientId" |

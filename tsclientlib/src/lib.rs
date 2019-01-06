@@ -20,6 +20,7 @@
 #[macro_use]
 extern crate failure;
 
+use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
@@ -53,6 +54,7 @@ macro_rules! copy_attrs {
 }
 
 pub mod data;
+pub mod events;
 mod packet_handler;
 pub mod resolver;
 
@@ -68,6 +70,7 @@ pub use tsproto_commands::{
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
+type EventListener = Box<Fn(&data::Connection, &[events::Events]) + Send + Sync>;
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -195,6 +198,7 @@ struct InnerConnection {
 	client_data: client::ClientDataM<SimplePacketHandler>,
 	client_connection: client::ClientConVal,
 	return_code_handler: Arc<ReturnCodeHandler>,
+	event_listeners: Arc<RwLock<HashMap<String, EventListener>>>,
 }
 
 #[derive(Clone)]
@@ -456,6 +460,7 @@ impl Connection {
 						client_data: client2,
 						client_connection: con,
 						return_code_handler,
+						event_listeners: Arc::new(RwLock::new(HashMap::new())),
 					};
 
 					// Send connection to packet handler
@@ -673,6 +678,22 @@ impl Connection {
 		self.inner.client_data.lock().connection_listeners.push(Box::new(
 			DisconnectListener(Some(f))
 		));
+	}
+
+	/// Set a function which will be called on events.
+	///
+	/// An event is generated e.g. when a property of a client or channel
+	/// changes.
+	pub fn add_on_event(&self, key: String, f: EventListener) {
+		self.inner.event_listeners.write().insert(key, f);
+	}
+
+	/// Set a function which will be called on events.
+	///
+	/// An event is generated e.g. when a property of a client or channel
+	/// changes.
+	pub fn remove_on_event(&self, key: &str) -> Option<EventListener> {
+		self.inner.event_listeners.write().remove(key)
 	}
 }
 

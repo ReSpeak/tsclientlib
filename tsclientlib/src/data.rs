@@ -292,6 +292,4 @@ impl Connection {
 		};
 		Some(SocketAddr::new(ip, cmd.port))
 	}
-
-	fn default_disconnect_reason(&self) -> Reason { Reason::Clientdisconnect }
 }
