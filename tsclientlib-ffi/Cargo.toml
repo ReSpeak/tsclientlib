@@ -22,8 +22,8 @@ slog-term = "2"
 tokio = "0.1"
 tsclientlib = { path = "../tsclientlib", features = ["audio"] }
 tsproto = { path = "../tsproto" }
-tsproto-audio = { path = "../tsproto-audio" }
+tsproto-audio = { path = "../utils/tsproto-audio" }
 
 [build-dependencies]
-tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
-tsproto-util = { path = "../tsproto-util" }
+tsproto-structs = { path = "../utils/tsproto-structs" }
+tsproto-util = { path = "../utils/tsproto-util" }

@@ -1,3 +1,14 @@
 [workspace]
-members = ["gst-plugin-ts3", "tsclientlib", "tsclientlib-ffi", "tsproto",
-	"tsproto-audio", "tsproto-commands", "tsproto-util"]
+members = [
+	"tsclientlib",
+	"tsclientlib-ffi",
+	"tsproto",
+	"utils/analyzer",
+	"utils/cli-completer",
+	"utils/dev-client",
+	"utils/gst-plugin-ts3",
+	"utils/tsproto-audio",
+	"utils/tsproto-commands",
+	"utils/tsproto-structs",
+	"utils/tsproto-util",
+]

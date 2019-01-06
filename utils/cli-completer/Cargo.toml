@@ -1,0 +1,13 @@
+[package]
+name = "ts-cli-completer"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+edition = "2018"
+
+[dependencies]
+lazy_static = "1"
+#rustyline = "2"
+rustyline = { git = "https://github.com/Flakebi/rustyline", branch = "complete-hint" }
+termion = "1"
+tsproto = { path = "../../tsproto" }
+tsproto-structs = { path = "../tsproto-structs" }

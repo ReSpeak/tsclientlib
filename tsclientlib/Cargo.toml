@@ -28,13 +28,13 @@ tokio-threadpool = "0.1"
 trust-dns-proto = "0.5.0-alpha.1"
 trust-dns-resolver = "0.10.0-alpha.2"
 tsproto = { path = "../tsproto" }
-tsproto-audio = { path = "../tsproto-audio", optional = true }
-tsproto-commands = { path = "../tsproto-commands" }
+tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
+tsproto-commands = { path = "../utils/tsproto-commands" }
 
 [build-dependencies]
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
-tsproto-util = { path = "../tsproto-util" }
-tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools.git" }
+tsproto-util = { path = "../utils/tsproto-util" }
+tsproto-structs = { path = "../utils/tsproto-structs" }
 
 [dev-dependencies]
 structopt = "0.2"

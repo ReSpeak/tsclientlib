@@ -11,10 +11,10 @@ failure = "0.1"
 futures = "0.1"
 num-traits = "0.2"
 num-derive = "0.2"
-tsproto = { path = "../tsproto" }
+tsproto = { path = "../../tsproto" }
 
 [build-dependencies]
 itertools = "0.8"
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
-tsproto-structs = { git = "https://github.com/ReSpeak/ts-dev-tools" }
+tsproto-structs = { path = "../tsproto-structs" }
 tsproto-util = { path = "../tsproto-util" }
