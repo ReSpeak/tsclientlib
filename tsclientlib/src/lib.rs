@@ -179,7 +179,7 @@ pub trait PacketHandler {
 }
 
 pub struct ConnectionLock<'a> {
-	connection: InnerConnection,
+	connection: Connection,
 	guard: RwLockReadGuard<'a, data::Connection>,
 }
 
@@ -551,7 +551,7 @@ impl Connection {
 	}
 
 	pub fn lock(&self) -> ConnectionLock {
-		ConnectionLock::new(self.inner.clone(), self.inner.connection.read())
+		ConnectionLock::new(self.clone(), self.inner.connection.read())
 	}
 
 	/// Disconnect from the server.
@@ -710,7 +710,7 @@ impl Drop for Connection {
 }
 
 impl<'a> ConnectionLock<'a> {
-	fn new(connection: InnerConnection, guard: RwLockReadGuard<'a, data::Connection>) -> Self {
+	fn new(connection: Connection, guard: RwLockReadGuard<'a, data::Connection>) -> Self {
 		Self { connection, guard }
 	}
 

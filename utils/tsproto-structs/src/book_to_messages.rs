@@ -55,7 +55,7 @@ lazy_static!{
 
 					if p.function.is_some() {
 						let rule = RuleKind::Function {
-							from: find_prop(&p.from, book_struct),
+							from: p.from.as_ref().map(|p| find_prop(p, book_struct)),
 							name: p.function.unwrap(),
 							to: p.tolist.unwrap()
 								.into_iter()
@@ -66,7 +66,7 @@ lazy_static!{
 					} else {
 						RuleKind::Map {
 							from: find_prop(
-								&p.from,
+								p.from.as_ref().unwrap(),
 								book_struct,
 							),
 							to: find_field(&p.to.unwrap(), &msg_fields),
@@ -166,7 +166,7 @@ pub enum RuleKind<'a> {
 		to: &'a Field,
 	},
 	Function {
-		from: &'a Property,
+		from: Option<&'a Property>,
 		name: String,
 		to: Vec<&'a Field>,
 	},
@@ -200,7 +200,7 @@ struct Rule {
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct RuleProperty {
-	from: String,
+	from: Option<String>,
 	to: Option<String>,
 
 	function: Option<String>,
@@ -210,7 +210,8 @@ struct RuleProperty {
 impl RuleProperty {
 	fn is_valid(&self) -> bool {
 		if self.to.is_some() {
-			self.function.is_none() && self.tolist.is_none()
+			self.from.is_some() && self.function.is_none()
+				&& self.tolist.is_none()
 		} else {
 			self.to.is_none()
 				&& self.function.is_some()
@@ -246,8 +247,9 @@ fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
 impl<'a> RuleKind<'a> {
 	pub fn from(&self) -> &'a Property {
 		match self {
-			RuleKind::Map { from, .. } |
-			RuleKind::Function { from, .. } => from,
+			RuleKind::Map { from, .. } => from,
+			RuleKind::Function { from, name, .. } => from.unwrap_or_else(||
+				panic!("From not set for function {}", name)),
 		}
 	}
 

@@ -2,7 +2,7 @@
 <# for struc in &self.0.structs { #>
 <#= doc_comment(&struc.doc) #>
 pub struct <#= struc.name #>Mut<'a> {
-	pub(crate) connection: InnerConnection,
+	pub(crate) connection: crate::Connection,
 	pub(crate) inner: &'a <#= struc.name #>,
 }
 
@@ -134,7 +134,7 @@ for (struc, p) in &props {
 #>
 
 pub struct <#= name #>Mut<'a> {
-	pub(crate) connection: InnerConnection,
+	pub(crate) connection: crate::Connection,
 	pub(crate) inner: &'a <#= p.type_s #>,
 }
 

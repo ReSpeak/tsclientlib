@@ -2,6 +2,7 @@ use std::default::Default;
 use std::ops::Deref;
 use tsproto_structs::book_to_messages;
 use tsproto_structs::book_to_messages::*;
+use tsproto_structs::messages::{Field, Message};
 use tsproto_util::*;
 
 #[derive(Template)]
@@ -18,4 +19,40 @@ impl<'a> Deref for BookToMessagesDeclarations<'a> {
 
 impl Default for BookToMessagesDeclarations<'static> {
 	fn default() -> Self { BookToMessagesDeclarations(&DATA) }
+}
+
+fn to_ref_type(s: &str) -> String {
+	if s == "String" {
+		"&str".into()
+	} else {
+		s.into()
+	}
+}
+
+/// Creates `to: from,`
+fn struct_assign(r: &RuleKind, msg: &Message) -> String {
+	match r {
+		RuleKind::Map { from, to } => {
+			let fr = to_snake_case(&from.name);
+			let fr = if to.is_opt(msg) {
+				format!("Some({})", fr)
+			} else {
+				fr
+			};
+			format!("{}: {},", to.get_rust_name(), fr)
+		}
+		RuleKind::Function { from, name, to } => {
+			let mut res = String::new();
+			for to in to {
+				let name = to.get_rust_name();
+				if to.is_opt(msg) {
+					res.push_str(&format!("{}: Some({}),", name, name));
+				} else {
+					res.push_str(&name);
+					res.push(',');
+				}
+			}
+			res
+		}
+	}
 }

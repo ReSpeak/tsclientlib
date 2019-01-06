@@ -12,7 +12,7 @@ use futures::Future;
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
-use crate::{InnerConnection, Error, Result};
+use crate::{Error, Result};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
@@ -292,4 +292,6 @@ impl Connection {
 		};
 		Some(SocketAddr::new(ip, cmd.port))
 	}
+
+	fn default_disconnect_reason(&self) -> Reason { Reason::Clientdisconnect }
 }

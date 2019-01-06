@@ -1,48 +1,75 @@
 <#@ template cleanws="true" #>
 <# for e in &self.0.decls { #>
+<# if e.op == RuleOp::Update { #>
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
-<# if e.op == RuleOp::Update {
-	for r in &e.rules { #>
+<# for r in &e.rules { #>
 	pub fn set_<#= to_snake_case(&r.from().name) #>(&self, <#=
-		to_snake_case(&r.from().name) #>: <#= r.from().get_rust_type() #>) -> impl Future<Item=(), Error=Error> {
-		// TODO Take a reference (or the type from the message, but without Option<>)
-		crate::Connection { inner: self.connection.clone() }.send_packet(
-			messages::c2s::Out<#= e.msg.name #>Message::new(vec![messages::c2s::<#= e.msg.name #>Part {
-		<#
-		let mut tos = Vec::new();
+		to_snake_case(&r.from().name) #>: <#= to_ref_type(&r.from().get_rust_type()) #>) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
+			vec![messages::c2s::<#= e.msg.name #>Part {
+		<# let mut tos = Vec::new();
+		// Ids
+		for r in &e.ids {
+			match r {
+				RuleKind::Map { from, to } => tos.push(*to),
+				RuleKind::Function { from, name, to } =>  {
+					tos.extend_from_slice(to.as_slice());
+				}
+			} #>
+				<#= struct_assign(r, &e.msg).replace(": ", ": self.inner.") #><# }
+
+		// Dynamic data
+		match r {
+			RuleKind::Map { from, to } => tos.push(*to),
+			RuleKind::Function { from, name, to } =>  {
+				tos.extend_from_slice(to.as_slice());
+			}
+		} #>
+				<#= struct_assign(r, &e.msg) #><#
+
+		// All other fields
+		for field in e.msg.attributes.iter().filter_map(|a| {
+			let f = self.0.messages.get_field(a);
+			if tos.contains(&f) { None } else { Some(f) }
+		}) { #>
+				<#= field.get_rust_name() #>: None,<# } #>
+				phantom: PhantomData,
+			}].into_iter()))
+	}
+
+<# } #>
+}
+<# } else if e.op == RuleOp::Remove { #>
+impl<'a> <#= e.book_struct.name #>Mut<'a> {
+	pub fn remove(&self) -> impl Future<Item=(), Error=Error> {
+	<# // Call functions
+	for r in &e.ids {
+		match r {
+			RuleKind::Function { from, name, to } => {
+				let mut to = to.iter().map(|t| t.get_rust_name()).collect::<Vec<_>>();
+				let tos = if to.len() == 1 {
+					to.remove(0)
+				} else {
+					format!("({})", to.as_slice().join(", "))
+				};
+				#>
+		let <#= tos #> = self.inner.<#= to_snake_case(name) #>();
+			<# }
+			_ => {}
+		}
+	}
+	#>
+		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
+			vec![messages::c2s::<#= e.msg.name #>Part {<# let mut tos = Vec::new();
 		// Ids
 		for r in &e.ids {
 			match r {
 				RuleKind::Map { from, to } => {
-					tos.push(*to);
-					let is_ref = to.get_rust_type("", true).starts_with('&');
-				#>
-				<#= to.get_rust_name() #>: <#= if is_ref { "&" } else { "" }
-					#>self.inner.<#= to_snake_case(&from.name) #>,
-				<# }
+					tos.push(*to); #>
+				<#= struct_assign(r, &e.msg).replace(": ", ": self.inner.") #><# }
 				RuleKind::Function { from, name, to } =>  {
-					tos.extend_from_slice(to.as_slice());
-				}
-			}
-		}
-
-		// Dynamic data
-		match r {
-			RuleKind::Map { from, to } => {
-				tos.push(*to);
-				// If the field in the message is optional
-				let opt = to.is_opt(&e.msg);
-				let is_ref = to.get_rust_type("", true).starts_with('&');
-				if to.is_opt(&e.msg) { #>
-				<#= to.get_rust_name() #>: Some(<#= if is_ref { "&" } else { "" }
-					#><#= to_snake_case(&from.name) #>),
-				<# } else { #>
-				<#= to.get_rust_name() #>: <#= if is_ref { "&" } else { "" }
-					#><#= to_snake_case(&from.name) #>,
-				<# } #>
-			<# }
-			RuleKind::Function { from, name, to } =>  {
-				tos.extend_from_slice(to.as_slice());
+					tos.extend_from_slice(to.as_slice()); #>
+				<#= struct_assign(r, &e.msg) #><# }
 			}
 		}
 
@@ -51,14 +78,11 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 			let f = self.0.messages.get_field(a);
 			if tos.contains(&f) { None } else { Some(f) }
 		}) { #>
-				<#= field.get_rust_name() #>: None,
-		<# } #>
+				<#= field.get_rust_name() #>: None,<# } #>
 				phantom: PhantomData,
 			}].into_iter()))
 	}
-
-<# }
-} #>
 }
+<# } #>
 
 <# } #>
