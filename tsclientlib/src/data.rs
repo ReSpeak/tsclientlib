@@ -163,6 +163,7 @@ impl Connection {
 	fn return_false<T>(&self, _: T) -> bool { false }
 	fn return_none<T, O>(&self, _: T) -> Option<O> { None }
 	fn void_fun<T, U>(&self, _: T, _: U) {}
+	fn return_some<T>(&self, t: T) -> Option<T> { Some(t) }
 
 	fn max_clients_cc_fun(
 		&self,
@@ -288,4 +289,11 @@ impl Connection {
 		};
 		Some(SocketAddr::new(ip, cmd.port))
 	}
+
+
+	// Book to messages
+	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (Option<bool>, Option<&'a str>) {
+		(Some(msg.is_some()), msg)
+	}
+
 }

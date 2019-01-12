@@ -55,6 +55,10 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 			return format!("Vec<{}>", convert_type(inner, is_ref));
 		}
 	}
+	if t.ends_with('?') {
+		let inner = &t[..(t.len() - 1)];
+		return format!("Option<{}>", convert_type(inner, is_ref));
+	}
 	if t.ends_with("T") {
 		return convert_type(&t[..(t.len() - 1)], is_ref);
 	}

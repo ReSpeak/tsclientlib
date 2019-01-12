@@ -26,6 +26,10 @@ fn is_special_type(s: &str) -> bool {
 }
 
 fn get_ffi_type(s: &str) -> String {
+	if s.ends_with('?') {
+		let inner = &s[..s.len() - 1];
+		return format!("Option<{}>", get_ffi_type(inner));
+	}
 	match s {
 		"str" => "*mut c_char",
 		"ClientId" => "u16",
@@ -97,6 +101,10 @@ fn convert_val(type_s: &str) -> String {
 
 /// Convert ffi type to rust type
 fn convert_to_rust(name: &str, type_s: &str) -> String {
+	if type_s.ends_with('?') {
+		let inner = &type_s[..type_s.len() - 1];
+		return format!("{}.map(|v| {})", name, convert_to_rust("v", inner));
+	}
 	// TODO Don't unwrap
 	match type_s {
 		"str" => format!("unsafe {{ CStr::from_ptr({}).to_str().unwrap() }}", name),

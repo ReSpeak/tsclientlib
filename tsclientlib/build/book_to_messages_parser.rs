@@ -42,8 +42,7 @@ fn struct_assign(r: &RuleKind, msg: &Message) -> String {
 			};
 			format!("{}: {},", to.get_rust_name(), fr)
 		}
-		RuleKind::Function { to, .. } |
-		RuleKind::ArgumentFunction { to, .. } => {
+		RuleKind::Function { to, .. } => {
 			let mut res = String::new();
 			for to in to {
 				let name = to.get_rust_name();
@@ -53,6 +52,14 @@ fn struct_assign(r: &RuleKind, msg: &Message) -> String {
 					res.push_str(&name);
 					res.push(',');
 				}
+			}
+			res
+		}
+		RuleKind::ArgumentFunction { to, .. } => {
+			let mut res = String::new();
+			for to in to {
+				res.push_str(&to.get_rust_name());
+				res.push(',');
 			}
 			res
 		}

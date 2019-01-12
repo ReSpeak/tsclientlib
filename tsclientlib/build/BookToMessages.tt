@@ -5,6 +5,33 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 <# for r in &e.rules { #>
 	pub fn set_<#= to_snake_case(r.from_name()) #>(&self, <#=
 		get_arguments(r) #>) -> impl Future<Item=(), Error=Error> {
+	<# // Call functions
+	for r in e.ids.iter().chain(std::iter::once(r)) {
+		match r {
+			RuleKind::Function { name, to, .. } => {
+				let mut to = to.iter().map(|t| t.get_rust_name()).collect::<Vec<_>>();
+				let tos = if to.len() == 1 {
+					to.remove(0)
+				} else {
+					format!("({})", to.as_slice().join(", "))
+				};
+				#>
+		let <#= tos #> = self.inner.<#= to_snake_case(name) #>();
+			<# }
+			RuleKind::ArgumentFunction { from, name, to, .. } => {
+				let mut to = to.iter().map(|t| t.get_rust_name()).collect::<Vec<_>>();
+				let tos = if to.len() == 1 {
+					to.remove(0)
+				} else {
+					format!("({})", to.as_slice().join(", "))
+				};
+				#>
+		let <#= tos #> = self.inner.<#= to_snake_case(name) #>(<#= to_snake_case(from) #>);
+			<# }
+			_ => {}
+		}
+	}
+	#>
 		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
 			vec![messages::c2s::<#= e.msg.name #>Part {
 		<# let mut tos = Vec::new();
@@ -67,7 +94,7 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 					format!("({})", to.as_slice().join(", "))
 				};
 				#>
-		let <#= tos #> = self.inner.<#= to_snake_case(name) #>(<#= from #>);
+		let <#= tos #> = self.inner.<#= to_snake_case(name) #>(<#= to_snake_case(from) #>);
 			<# }
 			_ => {}
 		}
