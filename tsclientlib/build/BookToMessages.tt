@@ -3,16 +3,17 @@
 <# if e.op == RuleOp::Update { #>
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
 <# for r in &e.rules { #>
-	pub fn set_<#= to_snake_case(&r.from().name) #>(&self, <#=
-		to_snake_case(&r.from().name) #>: <#= to_ref_type(&r.from().get_rust_type()) #>) -> impl Future<Item=(), Error=Error> {
+	pub fn set_<#= to_snake_case(r.from_name()) #>(&self, <#=
+		get_arguments(r) #>) -> impl Future<Item=(), Error=Error> {
 		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
 			vec![messages::c2s::<#= e.msg.name #>Part {
 		<# let mut tos = Vec::new();
 		// Ids
 		for r in &e.ids {
 			match r {
-				RuleKind::Map { from, to } => tos.push(*to),
-				RuleKind::Function { from, name, to } =>  {
+				RuleKind::Map { to, .. } => tos.push(*to),
+				RuleKind::Function { name, to, .. } |
+				RuleKind::ArgumentFunction { name, to, .. } =>  {
 					tos.extend_from_slice(to.as_slice());
 				}
 			} #>
@@ -20,8 +21,9 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 
 		// Dynamic data
 		match r {
-			RuleKind::Map { from, to } => tos.push(*to),
-			RuleKind::Function { from, name, to } =>  {
+			RuleKind::Map { to, .. } => tos.push(*to),
+			RuleKind::Function { to, .. } |
+			RuleKind::ArgumentFunction { to, .. } =>  {
 				tos.extend_from_slice(to.as_slice());
 			}
 		} #>
@@ -45,7 +47,7 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 	<# // Call functions
 	for r in &e.ids {
 		match r {
-			RuleKind::Function { from, name, to } => {
+			RuleKind::Function { name, to, .. } => {
 				let mut to = to.iter().map(|t| t.get_rust_name()).collect::<Vec<_>>();
 				let tos = if to.len() == 1 {
 					to.remove(0)
@@ -54,6 +56,16 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 				};
 				#>
 		let <#= tos #> = self.inner.<#= to_snake_case(name) #>();
+			<# }
+			RuleKind::ArgumentFunction { from, name, to, .. } => {
+				let mut to = to.iter().map(|t| t.get_rust_name()).collect::<Vec<_>>();
+				let tos = if to.len() == 1 {
+					to.remove(0)
+				} else {
+					format!("({})", to.as_slice().join(", "))
+				};
+				#>
+		let <#= tos #> = self.inner.<#= to_snake_case(name) #>(<#= from #>);
 			<# }
 			_ => {}
 		}
@@ -64,10 +76,11 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 		// Ids
 		for r in &e.ids {
 			match r {
-				RuleKind::Map { from, to } => {
+				RuleKind::Map { to, .. } => {
 					tos.push(*to); #>
 				<#= struct_assign(r, &e.msg).replace(": ", ": self.inner.") #><# }
-				RuleKind::Function { from, name, to } =>  {
+				RuleKind::Function { name, to, .. } |
+				RuleKind::ArgumentFunction { name, to, .. } =>  {
 					tos.extend_from_slice(to.as_slice()); #>
 				<#= struct_assign(r, &e.msg) #><# }
 			}

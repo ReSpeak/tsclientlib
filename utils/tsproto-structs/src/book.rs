@@ -95,7 +95,7 @@ impl Property {
 		self.set.unwrap_or_else(|| struc.accessor.set)
 	}
 	pub fn get_rust_type(&self) -> String {
-		let mut res = convert_type(&self.type_s);
+		let mut res = convert_type(&self.type_s, false);
 
 		if self
 			.modifier
@@ -160,17 +160,5 @@ impl<'a> From<&'a Property> for PropId<'a> {
 impl<'a> From<&'a Id> for PropId<'a> {
 	fn from(p: &'a Id) -> Self {
 		PropId::Id(p)
-	}
-}
-
-pub fn convert_type(t: &str) -> String {
-	if t == "str" {
-		String::from("String")
-	} else if t == "DateTime" {
-		String::from("DateTime<Utc>")
-	} else if t == "TimeSpan" {
-		String::from("Duration")
-	} else {
-		t.into()
 	}
 }

@@ -1,5 +1,6 @@
 use std::default::Default;
 use std::ops::Deref;
+use tsproto_structs::convert_type;
 use tsproto_structs::book_to_messages;
 use tsproto_structs::book_to_messages::*;
 use tsproto_structs::messages::Message;
@@ -41,7 +42,8 @@ fn struct_assign(r: &RuleKind, msg: &Message) -> String {
 			};
 			format!("{}: {},", to.get_rust_name(), fr)
 		}
-		RuleKind::Function { to, .. } => {
+		RuleKind::Function { to, .. } |
+		RuleKind::ArgumentFunction { to, .. } => {
 			let mut res = String::new();
 			for to in to {
 				let name = to.get_rust_name();
@@ -54,5 +56,14 @@ fn struct_assign(r: &RuleKind, msg: &Message) -> String {
 			}
 			res
 		}
+	}
+}
+
+fn get_arguments(r: &RuleKind) -> String {
+	match r {
+		RuleKind::Map { .. } | RuleKind::Function { .. } =>
+			format!("{}: {}", to_snake_case(r.from_name()), to_ref_type(&r.from().get_rust_type())),
+		RuleKind::ArgumentFunction { from, type_s, .. } =>
+			format!("{}: {}", to_snake_case(from), convert_type(type_s, true)),
 	}
 }

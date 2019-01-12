@@ -45,6 +45,63 @@ pub fn is_ref_type(s: &str) -> bool {
 	}
 }
 
+/// If `is_ref` is `true`, you get e.g. `&str` instead of `String`.
+pub fn convert_type(t: &str, is_ref: bool) -> String {
+	if t.ends_with("[]") {
+		let inner = &t[..(t.len() - 2)];
+		if is_ref {
+			return format!("&[{}]", convert_type(inner, is_ref));
+		} else {
+			return format!("Vec<{}>", convert_type(inner, is_ref));
+		}
+	}
+	if t.ends_with("T") {
+		return convert_type(&t[..(t.len() - 1)], is_ref);
+	}
+
+	if t == "str" || t == "string" {
+		if is_ref {
+			String::from("&str")
+		} else {
+			String::from("String")
+		}
+	} else if t == "byte" {
+		String::from("u8")
+	} else if t == "ushort" {
+		String::from("u16")
+	} else if t == "int" {
+		String::from("i32")
+	} else if t == "uint" {
+		String::from("u32")
+	} else if t == "float" {
+		String::from("f32")
+	} else if t == "long" {
+		String::from("i64")
+	} else if t == "ulong" {
+		String::from("u64")
+	} else if t == "ushort" {
+		String::from("u16")
+	} else if t == "DateTime" {
+		String::from("DateTime<Utc>")
+	} else if t.starts_with("Duration") {
+		String::from("Duration")
+	} else if t == "ClientUid" {
+		if is_ref {
+			String::from("UidRef")
+		} else {
+			String::from("Uid")
+		}
+	} else if t == "Ts3ErrorCode" {
+		String::from("Error")
+	} else if t == "PermissionId" {
+		String::from("Permission")
+	} else if t == "Uid" && is_ref {
+		String::from("UidRef")
+	} else {
+		t.into()
+	}
+}
+
 fn get_false() -> bool {
 	false
 }

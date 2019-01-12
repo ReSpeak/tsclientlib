@@ -54,15 +54,28 @@ lazy_static!{
 					assert!(p.is_valid());
 
 					if p.function.is_some() {
-						let rule = RuleKind::Function {
-							from: p.from.as_ref().map(|p| find_prop(p, book_struct)),
-							name: p.function.unwrap(),
-							to: p.tolist.unwrap()
-								.into_iter()
-								.map(|p| find_field(&p, &msg_fields))
-								.collect(),
-						};
-						rule
+						if p.type_s.is_some() {
+							let rule = RuleKind::ArgumentFunction {
+								type_s: p.type_s.unwrap(),
+								from: p.from.unwrap(),
+								name: p.function.unwrap(),
+								to: p.tolist.unwrap()
+									.into_iter()
+									.map(|p| find_field(&p, &msg_fields))
+									.collect(),
+							};
+							rule
+						} else {
+							let rule = RuleKind::Function {
+								from: p.from.as_ref().map(|p| find_prop(p, book_struct)),
+								name: p.function.unwrap(),
+								to: p.tolist.unwrap()
+									.into_iter()
+									.map(|p| find_field(&p, &msg_fields))
+									.collect(),
+							};
+							rule
+						}
 					} else {
 						RuleKind::Map {
 							from: find_prop(
@@ -88,7 +101,8 @@ lazy_static!{
 					.filter(|f| msg.attributes.iter().any(|a| *a == f.map)) {
 					if !ev.ids.iter().any(|i| match i {
 						RuleKind::Map { to, .. } => to == field,
-						RuleKind::Function { to, .. } => to.contains(field),
+						RuleKind::Function { to, .. } |
+						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
 					}) {
 						// Try to find matching property
 						if let Some(prop) = book
@@ -113,7 +127,8 @@ lazy_static!{
 					.filter(|f| !msg.attributes.iter().any(|a| *a == f.map)) {
 					if !ev.ids.iter().chain(ev.rules.iter()).any(|i| match i {
 						RuleKind::Map { to, .. } => to == field,
-						RuleKind::Function { to, .. } => to.contains(field),
+						RuleKind::Function { to, .. } |
+						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
 					}) {
 						// Try to find matching property
 						if let Some(prop) = book
@@ -170,6 +185,12 @@ pub enum RuleKind<'a> {
 		name: String,
 		to: Vec<&'a Field>,
 	},
+	ArgumentFunction {
+		from: String,
+		type_s: String,
+		name: String,
+		to: Vec<&'a Field>,
+	},
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -203,6 +224,8 @@ struct RuleProperty {
 	from: Option<String>,
 	to: Option<String>,
 
+	#[serde(rename = "type")]
+	type_s: Option<String>,
 	function: Option<String>,
 	tolist: Option<Vec<String>>,
 }
@@ -211,11 +234,13 @@ impl RuleProperty {
 	fn is_valid(&self) -> bool {
 		if self.to.is_some() {
 			self.from.is_some() && self.function.is_none()
-				&& self.tolist.is_none()
+				&& self.tolist.is_none() && self.type_s.is_none()
 		} else {
 			self.to.is_none()
 				&& self.function.is_some()
 				&& self.tolist.is_some()
+				// If the type is set, from must be set too
+				&& (self.type_s.is_none() || self.from.is_some())
 		}
 	}
 }
@@ -245,16 +270,29 @@ fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
 }
 
 impl<'a> RuleKind<'a> {
+	pub fn from_name(&'a self) -> &'a str {
+		match self {
+			RuleKind::Map { from, .. } => &from.name,
+			RuleKind::Function { from, name, .. } => &from.unwrap_or_else(||
+				panic!("From not set for function {}", name)).name,
+			RuleKind::ArgumentFunction { from, .. } => &from,
+		}
+	}
+
 	pub fn from(&self) -> &'a Property {
 		match self {
 			RuleKind::Map { from, .. } => from,
 			RuleKind::Function { from, name, .. } => from.unwrap_or_else(||
 				panic!("From not set for function {}", name)),
+			RuleKind::ArgumentFunction { .. } =>
+				panic!("From is not a property for argument functions"),
 		}
 	}
 
 	pub fn is_function(&self) -> bool {
 		if let RuleKind::Function { .. } = *self {
+			true
+		} else if let RuleKind::ArgumentFunction { .. } = *self {
 			true
 		} else {
 			false

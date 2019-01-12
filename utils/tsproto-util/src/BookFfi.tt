@@ -52,10 +52,11 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 	std::mem::forget(val);
 	res
 }
+
 	<#
 		continue;
 	} #>
-	<#= convert_val(type_s, prop.opt) #>
+	<# #><#= convert_val(type_s, prop.opt) #>
 }
 
 <# }
