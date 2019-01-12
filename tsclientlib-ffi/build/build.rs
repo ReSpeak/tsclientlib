@@ -15,6 +15,5 @@ fn main() {
 	// Write declarations
 	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("book_ffi.rs")).unwrap();
-	let book_ffi = BookFfi(&tsproto_structs::book::DATA);
-	write!(&mut structs, "{}", book_ffi).unwrap();
+	write!(&mut structs, "{}", BookFfi::default()).unwrap();
 }

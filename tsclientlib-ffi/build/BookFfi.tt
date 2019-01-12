@@ -1,19 +1,31 @@
 <#@ template cleanws="true" #>
-<# for struc in &self.0.structs {
+<#
+// These functions are not generally marked as unsafe, even if they are unsafe
+// to use. This is done to keep the amount of safe code high (so the compiler
+// errors when there is a fault in the code) and we expect that these functions
+// are only used via ffi, so not called from Rust.
+
+// Getter
+for struc in &self.0.structs {
 	// TODO Don't unwrap, throw exceptions
 	for prop in struc.properties.iter().filter(|p|
 		// Nested struct which is not a map
 		(!self.0.structs.iter().any(|s| s.name == p.type_s)
 			|| p.modifier.as_ref().map(|s| s == "map").unwrap_or(false))
 		&& !is_special_type(&p.type_s)) {
-		let id_args = get_id_args(&self.0.structs, &struc);
+		let mut id_args = get_id_args(&self.0.structs, &struc);
 		let is_map = prop.modifier.as_ref().map(|s| s == "map").unwrap_or(false);
 		let is_array = prop.modifier.as_ref().map(|s| s == "array").unwrap_or(false);
-		let type_s; #>
+
+		if !id_args.is_empty() {
+			id_args.push_str(", ");
+		}
+		let type_s;
+		#>
 #[no_mangle]
 pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.name) #>(con_id: ConnectionId,
 	<#= id_args #><#
-		if is_array || is_map { #><# if !id_args.is_empty() { #>, <# } #>len: *mut usize<# } #>) -> <#=
+		if is_array || is_map { #>len: *mut usize, <# } #>error: *mut *mut c_char) -> <#=
 
 		if is_map {
 			// Return keys for map
@@ -28,12 +40,14 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 		}
 
 		#> {
+	unsafe { *error = std::ptr::null_mut(); }
 	// Get connection
 	let con = if let Some(con) = CONNECTIONS.get(&con_id) {
 		con.clone()
 	} else {
-		// TODO Somehow throw an exception in C#
-		println!("FAILED TO GET PROPERTY <#= struc.name #>.<#= prop.name #>");
+		// Throw an exception
+		unsafe { *error = CString::new(format!("Connection {:?} does not exist",
+			con_id).as_bytes()).unwrap().into_raw(); }
 		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map || is_array { #>
 		return std::ptr::null_mut();
 		<# } else { #>
@@ -42,11 +56,26 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 	};
 	let con = con.lock();
 	let val = con.get_<#= to_snake_case(&struc.name) #>(<#= get_id_arg_names(&self.0.structs, &struc) #>);
-	let val = &val.<#= to_snake_case(&prop.name) #><# if prop.opt { /* TODO */ #>.as_ref().unwrap()<# } #>;
+	<# if prop.opt { #>
+	let val = if let Some(r) = val.<#= to_snake_case(&prop.name) #>.as_ref() {
+		r
+	} else {
+		// Throw an exception
+		unsafe { *error = CString::new("<#= prop.name #> does not exist"
+			.as_bytes()).unwrap().into_raw(); }
+		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map || is_array { #>
+		return std::ptr::null_mut();
+		<# } else { #>
+		return Default::default();
+		<# } #>
+	};
+	<# } else { #>
+	let val = &val.<#= to_snake_case(&prop.name) #>;
+	<# } #>
 
 	<# if is_map || is_array { #>
 	let mut val = val.<#= if is_map { "keys" } else { "iter" }
-	#>().map(|val| <#= convert_val(type_s, false) #>).collect::<Vec<_>>().into_boxed_slice();
+	#>().map(|val| <#= convert_val(type_s) #>).collect::<Vec<_>>().into_boxed_slice();
 	unsafe { *len = val.len(); }
 	let res = val.as_mut_ptr();
 	std::mem::forget(val);
@@ -56,8 +85,57 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 	<#
 		continue;
 	} #>
-	<# #><#= convert_val(type_s, prop.opt) #>
+	<# #><#= convert_val(type_s) #>
 }
 
 <# }
-} #>
+}
+
+// Setter
+for e in &self.1.decls {
+	if e.op == RuleOp::Update {
+		// If the `error` is not null, an exception with the given message
+		// should be thrown.
+		for r in &e.rules {
+			let mut id_args = get_id_args(&self.0.structs, &e.book_struct);
+			if !id_args.is_empty() {
+				id_args.push_str(", ");
+			}
+			#>
+#[no_mangle]
+pub extern "C" fn set_<#= to_snake_case(&e.book_struct.name) #>_<#= to_snake_case(r.from_name()) #>(con_id: ConnectionId,
+	<#= id_args #><#= get_ffi_arguments_def(r) #>, error: *mut *mut c_char) {
+	unsafe { *error = std::ptr::null_mut(); }
+	// Get connection
+	let con = if let Some(con) = CONNECTIONS.get(&con_id) {
+		con.clone()
+	} else {
+		// Throw an exception
+		unsafe { *error = CString::new(format!("Connection {:?} does not exist",
+			con_id).as_bytes()).unwrap().into_raw(); }
+		return;
+	};
+	let con = con.lock();
+	let con = con.to_mut();
+	<# if e.book_struct.name == "Connection" { #>
+	let val = con;
+	<# } else { #>
+	let val = if let Some(r) = con.get_mut_<#= to_snake_case(&e.book_struct.name) #>(<#= get_id_arg_names(&self.0.structs, &e.book_struct) #>) {
+		r
+	} else {
+		// Throw an exception
+		unsafe { *error = CString::new("<#= e.book_struct.name #> does not exist"
+			.as_bytes()).unwrap().into_raw(); }
+		return;
+	};
+	<# } #>
+	// TODO Return Future
+	tokio::spawn(val.set_<#= to_snake_case(r.from_name()) #>(<#= get_ffi_arguments(r) #>)
+		.map_err(|e| println!("Failed to set <#= r.from_name() #> ({:?})", e)));
+}
+
+		<# }
+	}
+	// TODO Add, Remove
+}
+#>

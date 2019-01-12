@@ -41,7 +41,9 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 
 <# } #>
 }
-<# } else if e.op == RuleOp::Remove { #>
+<# } else if e.op == RuleOp::Remove {
+	// TODO Take the properties as arguments, same for add
+#>
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
 	pub fn remove(&self) -> impl Future<Item=(), Error=Error> {
 	<# // Call functions

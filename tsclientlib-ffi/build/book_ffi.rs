@@ -2,19 +2,22 @@ use std::default::Default;
 use tsproto_util::to_snake_case;
 use tsproto_structs::*;
 use tsproto_structs::book::{BookDeclarations, Struct};
+use tsproto_structs::book_to_messages::{BookToMessagesDeclarations, RuleKind,
+	RuleOp};
 
 #[derive(Template)]
 #[TemplatePath = "build/BookFfi.tt"]
 #[derive(Debug)]
-pub struct BookFfi<'a>(pub &'a BookDeclarations);
+pub struct BookFfi<'a>(pub &'a BookDeclarations, pub &'a BookToMessagesDeclarations<'a>);
 
 impl Default for BookFfi<'static> {
 	fn default() -> Self {
-		BookFfi(&tsproto_structs::book::DATA)
+		BookFfi(&tsproto_structs::book::DATA, &tsproto_structs::book_to_messages::DATA)
 	}
 }
 
 /// If the type is a more complex struct which cannot be returned easily.
+// TODO Solve all these cases in the generation
 fn is_special_type(s: &str) -> bool {
 	match s {
 		"SocketAddr" | "MaxClients" | "TalkPowerRequest" => true,
@@ -73,7 +76,7 @@ fn get_id_arg_names(structs: &[Struct], struc: &Struct) -> String {
 }
 
 /// Convert to ffi type
-fn convert_val(type_s: &str, opt: bool,) -> String {
+fn convert_val(type_s: &str) -> String {
 	match type_s {
 		"str" => "CString::new(val.as_bytes()).unwrap().into_raw()".into(),
 		"Uid" => "CString::new(val.0.as_bytes()).unwrap().into_raw()".into(),
@@ -88,10 +91,45 @@ fn convert_val(type_s: &str, opt: bool,) -> String {
 		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
 		| "LicenseType" | "TextMessageTargetMode" =>
 		"val.to_u32().unwrap()".into(),
-		_ => if opt {
-			"**val".into()
-		} else {
-			"*val".into()
-		}
+		_ => "*val".into(),
+	}
+}
+
+/// Convert ffi type to rust type
+fn convert_to_rust(name: &str, type_s: &str) -> String {
+	// TODO Don't unwrap
+	match type_s {
+		"str" => format!("unsafe {{ CStr::from_ptr({}).to_str().unwrap() }}", name),
+		"Uid" => format!("unsafe {{ UidRef(CStr::from_ptr({}).to_str().unwrap()) }}", name),
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
+		| "ChannelGroupId" | "IconHash" => format!("{}({})", type_s, name),
+		"DateTime" => format!("DateTime::from_utc(NaiveDateTime::from_timestamp({}, 0), Utc)", name),
+		"Duration" => format!("Duration::new({}, 0)", name),
+		// Enum
+		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
+		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
+		| "LicenseType" | "TextMessageTargetMode" =>
+		format!("{}.from_u32({}).unwrap()", type_s, name),
+		_ => name.into(),
+	}
+}
+
+fn get_ffi_arguments_def(r: &RuleKind) -> String {
+	match r {
+		RuleKind::Map { .. } | RuleKind::Function { .. } =>
+			format!("{}: {}", to_snake_case(r.from_name()),
+				get_ffi_type(&r.from().type_s).replace("mut", "const")),
+		RuleKind::ArgumentFunction { from, type_s, .. } =>
+			format!("{}: {}", to_snake_case(from),
+				get_ffi_type(type_s).replace("mut", "const")),
+	}
+}
+
+fn get_ffi_arguments(r: &RuleKind) -> String {
+	match r {
+		RuleKind::Map { .. } | RuleKind::Function { .. } =>
+			convert_to_rust(&to_snake_case(r.from_name()), &r.from().type_s),
+		RuleKind::ArgumentFunction { from, type_s, .. } =>
+			convert_to_rust(&to_snake_case(from), type_s),
 	}
 }

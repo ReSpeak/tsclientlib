@@ -266,6 +266,20 @@ impl ConnectionExt for tsclientlib::data::Connection {
 	}
 }
 
+trait ConnectionMutExt<'a> {
+	fn get_mut_client(&self, id: u16) -> Option<tsclientlib::data::ClientMut<'a>>;
+	fn get_mut_channel(&self, id: u64) -> Option<tsclientlib::data::ChannelMut<'a>>;
+}
+
+impl<'a> ConnectionMutExt<'a> for tsclientlib::data::ConnectionMut<'a> {
+	fn get_mut_client(&self, id: u16) -> Option<tsclientlib::data::ClientMut<'a>> {
+		self.get_server().get_client(&ClientId(id))
+	}
+	fn get_mut_channel(&self, id: u64) -> Option<tsclientlib::data::ChannelMut<'a>> {
+		self.get_server().get_channel(&ChannelId(id))
+	}
+}
+
 // TODO On future errors, send event
 
 impl ConnectionId {
