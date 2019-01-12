@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::ClientId;
 use crate::data::ServerGroup;
 
@@ -9,6 +11,6 @@ pub enum Events<'a> {
 
 // TODO Generate from book
 pub enum Property<'a> {
-	ClientNickname(&'a str),
-	ClientServerGroup(ClientId, &'a ServerGroup),
+	ClientNickname(Cow<'a, str>),
+	//ClientServerGroup(ClientId, Cow<'a, ServerGroup>),
 }

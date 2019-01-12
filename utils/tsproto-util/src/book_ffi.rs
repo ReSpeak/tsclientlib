@@ -16,7 +16,7 @@ impl Default for BookFfi<'static> {
 /// If the type is a more complex struct which cannot be returned easily.
 fn is_special_type(s: &str) -> bool {
 	match s {
-		"SocketAddr" | "MaxFamilyClients" | "TalkPowerRequest" => true,
+		"SocketAddr" | "MaxClients" | "TalkPowerRequest" => true,
 		_ => false,
 	}
 }
@@ -69,4 +69,28 @@ fn get_id_arg_names(structs: &[Struct], struc: &Struct) -> String {
 		res.push_str(&to_snake_case(&p.name));
 	}
 	res
+}
+
+/// Convert to ffi type
+fn convert_val(type_s: &str, opt: bool,) -> String {
+	match type_s {
+		"str" => "CString::new(val.as_bytes()).unwrap().into_raw()".into(),
+		"Uid" => "CString::new(val.0.as_bytes()).unwrap().into_raw()".into(),
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
+		| "ChannelGroupId" | "IconHash" => "val.0".into(),
+		// TODO With higher resulution than seconds?
+		"DateTime" => "val.timestamp() as u64".into(),
+		// TODO With higher resulution than seconds?
+		"Duration" => "val.num_seconds() as u64".into(),
+		// Enum
+		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
+		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
+		| "LicenseType" | "TextMessageTargetMode" =>
+		"val.to_u32().unwrap()".into(),
+		_ => if opt {
+			"**val".into()
+		} else {
+			"*val".into()
+		}
+	}
 }

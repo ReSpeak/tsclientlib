@@ -2,7 +2,7 @@ use std::default::Default;
 use std::ops::Deref;
 use tsproto_structs::book_to_messages;
 use tsproto_structs::book_to_messages::*;
-use tsproto_structs::messages::{Field, Message};
+use tsproto_structs::messages::Message;
 use tsproto_util::*;
 
 #[derive(Template)]
@@ -41,7 +41,7 @@ fn struct_assign(r: &RuleKind, msg: &Message) -> String {
 			};
 			format!("{}: {},", to.get_rust_name(), fr)
 		}
-		RuleKind::Function { from, name, to } => {
+		RuleKind::Function { to, .. } => {
 			let mut res = String::new();
 			for to in to {
 				let name = to.get_rust_name();

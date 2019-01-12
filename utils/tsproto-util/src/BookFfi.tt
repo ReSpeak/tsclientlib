@@ -8,19 +8,23 @@
 		&& !is_special_type(&p.type_s)) {
 		let id_args = get_id_args(&self.0.structs, &struc);
 		let is_map = prop.modifier.as_ref().map(|s| s == "map").unwrap_or(false);
-		let is_array = prop.modifier.as_ref().map(|s| s == "array").unwrap_or(false); #>
+		let is_array = prop.modifier.as_ref().map(|s| s == "array").unwrap_or(false);
+		let type_s; #>
 #[no_mangle]
 pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.name) #>(con_id: ConnectionId,
 	<#= id_args #><#
-		if is_array {
-		#><# if !id_args.is_empty() { #>, <# } #>index: usize<#
-		} else if is_map { #><# if !id_args.is_empty() { #>, <# } #>len: *mut usize<# } #>) -> <#=
+		if is_array || is_map { #><# if !id_args.is_empty() { #>, <# } #>len: *mut usize<# } #>) -> <#=
 
 		if is_map {
 			// Return keys for map
-			format!("*mut {}", get_ffi_type(prop.key.as_ref().unwrap()))
+			type_s = prop.key.as_ref().unwrap();
+			format!("*mut {}", get_ffi_type(type_s))
+		} else if is_array {
+			type_s = &prop.type_s;
+			format!("*mut {}", get_ffi_type(type_s))
 		} else {
-			get_ffi_type(&prop.type_s)
+			type_s = &prop.type_s;
+			get_ffi_type(type_s)
 		}
 
 		#> {
@@ -30,7 +34,7 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 	} else {
 		// TODO Somehow throw an exception in C#
 		println!("FAILED TO GET PROPERTY <#= struc.name #>.<#= prop.name #>");
-		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map { #>
+		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map || is_array { #>
 		return std::ptr::null_mut();
 		<# } else { #>
 		return Default::default();
@@ -39,12 +43,10 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 	let con = con.lock();
 	let val = con.get_<#= to_snake_case(&struc.name) #>(<#= get_id_arg_names(&self.0.structs, &struc) #>);
 	let val = &val.<#= to_snake_case(&prop.name) #><# if prop.opt { /* TODO */ #>.as_ref().unwrap()<# } #>;
-	<# if is_array { #>
-	let val = val.get(index).unwrap();
-	<# }
 
-	if is_map { #>
-	let mut val = val.keys().map(|v| v.0).collect::<Vec<_>>().into_boxed_slice();
+	<# if is_map || is_array { #>
+	let mut val = val.<#= if is_map { "keys" } else { "iter" }
+	#>().map(|val| <#= convert_val(type_s, false) #>).collect::<Vec<_>>().into_boxed_slice();
 	unsafe { *len = val.len(); }
 	let res = val.as_mut_ptr();
 	std::mem::forget(val);
@@ -53,54 +55,8 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 	<#
 		continue;
 	} #>
-	<# // Convert to ffi type
-	match prop.type_s.as_str() {
-		"str" => { #>
-	CString::new(val.as_bytes()).unwrap().into_raw()
-		<# }
-		"Uid" => { #>
-	CString::new(val.0.as_bytes()).unwrap().into_raw()
-		<# }
-		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
-		| "ChannelGroupId" | "IconHash" => { #>
-	val.0
-		<# }
-		// TODO With higher resulution than seconds?
-		"DateTime" => { #>
-	val.timestamp() as u64
-		<# }
-		// TODO With higher resulution than seconds?
-		"Duration" => { #>
-	val.num_seconds() as u64
-		<# }
-		// Enum
-		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
-		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
-		| "LicenseType" | "TextMessageTargetMode" => { #>
-	val.to_u32().unwrap()
-		<# }
-		_ => { #>
-	*<# if prop.opt { #>*<# } #>val
-		<# }
-	} #>
+	<#= convert_val(type_s, prop.opt) #>
 }
 
-<# if is_array { #>
-pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.name) #>_len(con_id: ConnectionId,
-	<#= get_id_args(&self.0.structs, &struc) #>) -> usize {
-	// Get connection
-	let con = if let Some(con) = CONNECTIONS.get(&con_id) {
-		con.clone()
-	} else {
-		// TODO Somehow throw an exception in C#
-		println!("FAILED TO GET PROPERTY <#= struc.name #>.<#= prop.name #>");
-		return Default::default();
-	};
-	let con = con.lock();
-	let val = con.get_<#= to_snake_case(&struc.name) #>(<#= get_id_arg_names(&self.0.structs, &struc) #>);
-	let val = &val.<#= to_snake_case(&prop.name) #><# if prop.opt { /* TODO */ #>.as_ref().unwrap()<# } #>;
-	val.len()
-}
-<# } #>
 <# }
 } #>

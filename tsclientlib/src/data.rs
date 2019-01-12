@@ -276,10 +276,6 @@ impl Connection {
 		}
 	}
 
-	fn badges_fun(&self, cmd: &s2c::ClientEnterViewPart) -> Vec<String> {
-		cmd.badges.split(',').map(|s| s.into()).collect()
-	}
-
 	fn address_fun(
 		&self,
 		cmd: &s2c::ClientConnectionInfoPart,

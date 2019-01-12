@@ -65,7 +65,7 @@ mod tests;
 pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;
 pub use tsproto_commands::{
-	messages, ChannelId, ClientId, Reason, ServerGroupId, Uid,
+	messages, ChannelId, ClientId, MaxClients, Reason, ServerGroupId, Uid,
 };
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
