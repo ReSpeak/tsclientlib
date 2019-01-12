@@ -1,9 +1,10 @@
 use std::default::Default;
+use tsproto_util::to_snake_case;
+use tsproto_structs::*;
 use tsproto_structs::book::{BookDeclarations, Struct};
-use *;
 
 #[derive(Template)]
-#[TemplatePath = "src/BookFfi.tt"]
+#[TemplatePath = "build/BookFfi.tt"]
 #[derive(Debug)]
 pub struct BookFfi<'a>(pub &'a BookDeclarations);
 

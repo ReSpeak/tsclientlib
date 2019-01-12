@@ -2,13 +2,11 @@
 extern crate t4rust_derive;
 extern crate tsproto_structs;
 
-mod book_ffi;
 mod error_parser;
 mod version_parser;
 
 pub use tsproto_structs::EnumValue;
 
-pub use book_ffi::BookFfi;
 pub use error_parser::Errors;
 pub use version_parser::Versions;
 

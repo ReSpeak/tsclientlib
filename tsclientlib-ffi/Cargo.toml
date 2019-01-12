@@ -25,5 +25,6 @@ tsproto = { path = "../tsproto" }
 tsproto-audio = { path = "../utils/tsproto-audio" }
 
 [build-dependencies]
+t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
 tsproto-structs = { path = "../utils/tsproto-structs" }
 tsproto-util = { path = "../utils/tsproto-util" }
