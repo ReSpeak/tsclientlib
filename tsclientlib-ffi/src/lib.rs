@@ -444,3 +444,8 @@ pub unsafe extern "C" fn free_u64s(ptr: *mut u64, len: usize) {
 pub unsafe extern "C" fn free_u16s(ptr: *mut u16, len: usize) {
 	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 }
+
+#[no_mangle]
+pub unsafe extern "C" fn free_char_ptrs(ptr: *mut *mut c_char, len: usize) {
+	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+}
