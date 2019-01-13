@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::default::Default;
 use std::ops::Deref;
 
@@ -57,20 +58,19 @@ pub fn get_property_name(p: &Property) -> &str {
 pub fn get_event_properties<'a>(structs: &'a [Struct],
 	m2b: &'a MessagesToBookDeclarations<'a>, s: &'a Struct)
 	-> Vec<&'a Property> {
-	s.properties.iter().filter(|p| {
-		if structs.iter().any(|s| s.name == p.type_s) {
-			return false;
-		}
-		if m2b.decls.iter().filter(|e| e.book_struct.name == s.name)
+	// All properties which are set at some point
+	let set_props = m2b.decls.iter().filter(|e| e.book_struct.name == s.name)
 		.flat_map(|e| e.rules.iter()).flat_map(|r| -> Box<Iterator<Item=_>> {
 			match r {
 				RuleKind::Map { to, .. } => Box::new(std::iter::once(to)),
 				RuleKind::Function { to, .. } => Box::new(to.iter()),
 			}
-		}).any(|prop| prop.name == p.name) {
-			true
-		} else {
-			false
+		}).map(|p| &p.name).collect::<HashSet<_>>();
+
+	s.properties.iter().filter(|p| {
+		if structs.iter().any(|s| s.name == p.type_s) {
+			return false;
 		}
+		set_props.contains(&p.name)
 	}).collect()
 }

@@ -74,7 +74,7 @@ pub use tsproto_commands::{
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-type EventListener = Box<Fn(&ConnectionLock, &[events::Events]) + Send + Sync>;
+pub type EventListener = Box<Fn(&ConnectionLock, &[events::Events]) + Send + Sync>;
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -689,14 +689,19 @@ impl Connection {
 	///
 	/// An event is generated e.g. when a property of a client or channel
 	/// changes.
-	pub fn add_on_event(&self, key: String, f: EventListener) {
-		self.inner.event_listeners.write().insert(key, f);
+	///
+	/// The `key` can be freely chosen, it is needed to remove the the listener
+	/// again. It should be unique as any old event listener with this key will
+	/// be removed and returned. Internally all listeners are stored in a
+	/// `HashMap`.
+	pub fn add_on_event(&self, key: String, f: EventListener) -> Option<EventListener> {
+		self.inner.event_listeners.write().insert(key, f)
 	}
 
-	/// Set a function which will be called on events.
+	/// Remove an event listener which was registered with the specified `key`.
 	///
-	/// An event is generated e.g. when a property of a client or channel
-	/// changes.
+	/// The removed event listener is returned if the key was found in the
+	/// listeners.
 	pub fn remove_on_event(&self, key: &str) -> Option<EventListener> {
 		self.inner.event_listeners.write().remove(key)
 	}
