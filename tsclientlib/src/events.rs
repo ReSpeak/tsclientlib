@@ -1,16 +1,33 @@
-use std::borrow::Cow;
+use std::net::SocketAddr;
 
-use crate::ClientId;
-use crate::data::ServerGroup;
+use chrono::Duration;
 
-pub enum Events<'a> {
-	PropertyChanged { old: Property<'a>, new: Property<'a> },
-	PropertyAdded(Property<'a>),
-	PropertyRemoved(Property<'a>),
+use crate::*;
+use crate::data::{ServerGroup, Server, OptionalChannelData, File, Channel,
+	OptionalClientData, ConnectionClientData, Client, OptionalServerData,
+	ConnectionServerData, ChatEntry, Connection,
+};
+
+include!(concat!(env!("OUT_DIR"), "/events.rs"));
+// TODO Add connection.get(id: PropertyId)
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Events {
+	/// An object of this property was added.
+	/// You can get the value of the new object with [`Connection::get`].
+	///
+	/// [`Connection::get`]: TODO
+	PropertyAdded(PropertyId),
+	PropertyChanged(PropertyId, Property),
+	PropertyRemoved(PropertyId, Property),
 }
 
-// TODO Generate from book
-pub enum Property<'a> {
-	ClientNickname(Cow<'a, str>),
-	//ClientServerGroup(ClientId, Cow<'a, ServerGroup>),
+impl Events {
+	pub fn id(&self) -> &PropertyId {
+		match self {
+			Events::PropertyAdded(id) |
+			Events::PropertyChanged(id, _) |
+			Events::PropertyRemoved(id, _) => id,
+		}
+	}
 }

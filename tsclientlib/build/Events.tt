@@ -1,0 +1,55 @@
+<#@ template cleanws="true" #>
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PropertyId {
+<# for struc in &self.structs {
+	let mut ids = get_ids(&self.structs, struc);
+	if !ids.is_empty() {
+		ids = format!("({})", ids);
+	} #>
+	<#= struc.name #><#= ids #>,
+<# } #>
+
+<# for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let mut ids = get_ids(&self.structs, struc);
+		if let Some(m) = &p.modifier {
+			if !ids.is_empty() {
+				ids.push_str(", ");
+			}
+			if m == "map" {
+				// The key is port of the id
+				ids.push_str(p.key.as_ref().unwrap());
+			} else if m == "array" {
+				// Take the element itself as port of the id.
+				// It has to be copied but most of the times it is an id itself.
+				ids.push_str(&p.type_s);
+			} else {
+				panic!("Unknown modifier {}", m);
+			}
+		}
+
+		if !ids.is_empty() {
+			ids = format!("({})", ids);
+		}
+		#>
+	<#= struc.name #><#= get_property_name(p) #><#= ids #>,
+<# }
+} #>
+	#[doc(hidden)]
+	_NonExhaustive,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Property {
+<# for struc in &self.structs { #>
+	<#= struc.name #>(<#= struc.name #>),
+<# } #>
+
+<# for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) { #>
+	<#= struc.name #><#= get_property_name(p) #>(<#= &get_rust_type(p) #>),
+<# }
+} #>
+	#[doc(hidden)]
+	_NonExhaustive,
+}

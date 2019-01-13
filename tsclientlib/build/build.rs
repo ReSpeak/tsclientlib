@@ -8,11 +8,13 @@ use std::path::Path;
 
 mod book_parser;
 mod book_to_messages_parser;
+mod events;
 mod facade_parser;
 mod messages_to_book_parser;
 
 use crate::book_parser::BookDeclarations;
 use crate::book_to_messages_parser::BookToMessagesDeclarations;
+use crate::events::EventDeclarations;
 use crate::facade_parser::FacadeDeclarations;
 use crate::messages_to_book_parser::MessagesToBookDeclarations;
 
@@ -35,4 +37,8 @@ fn main() {
 	// Book to messages
 	let mut structs = File::create(&path.join("b2mdecls.rs")).unwrap();
 	write!(&mut structs, "{}", BookToMessagesDeclarations::default()).unwrap();
+
+	// Events
+	let mut structs = File::create(&path.join("events.rs")).unwrap();
+	write!(&mut structs, "{}", EventDeclarations::default()).unwrap();
 }

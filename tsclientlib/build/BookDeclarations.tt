@@ -8,6 +8,7 @@
 
 #>
 <#= doc_comment(&struc.doc) #>
+#[derive(Clone, Debug, PartialEq)]
 pub struct <#= struc.name #> {
 <# for p in all_props {
 	if let Some(ref doc) = p.get_doc() { #>

@@ -13,7 +13,7 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 
-use tsclientlib::data::{Channel, Client};
+use tsclientlib::data::{self, Channel, Client};
 use tsclientlib::{
 	ChannelId, ConnectOptions, Connection, DisconnectOptions, Reason,
 };
@@ -67,6 +67,16 @@ fn print_channels(
 	}
 }
 
+fn print_channel_tree(con: &data::Connection) {
+	let mut channels: Vec<_> =
+		con.server.channels.values().collect();
+	let mut clients: Vec<_> = con.server.clients.values().collect();
+	channels.sort_by_key(|ch| ch.order);
+	clients.sort_by_key(|c| c.talk_power);
+	println!("{}", con.server.name);
+	print_channels(&clients, &channels, ChannelId(0), 0);
+}
+
 fn main() -> Result<(), failure::Error> {
 	// Parse command line options
 	let args = Args::from_args();
@@ -117,31 +127,29 @@ fn main() -> Result<(), failure::Error> {
 			// Print channel tree
 			{
 				let con = con.lock();
-				let mut channels: Vec<_> =
-					con.server.channels.values().collect();
-				let mut clients: Vec<_> = con.server.clients.values().collect();
-				channels.sort_by_key(|ch| ch.order);
-				clients.sort_by_key(|c| c.talk_power);
-				println!("{}", con.server.name);
-				print_channels(&clients, &channels, ChannelId(0), 0);
+				print_channel_tree(&*con);
 
 				// Change name
-				if let Some(c) = con.to_mut().get_server().get_client(&clients[0].id) {
-					tokio::spawn(c.set_name(&format!("{}1", clients[0].name)).map_err(|e| {
-						println!("Failed to set client name: {:?}", e);
-					}));
-					tokio::spawn(c.set_input_muted(true).map_err(|e| {
-						println!("Failed to set muted: {:?}", e);
-					}));
-				} else {
-					println!("Channel not found");
-				}
+				let con_mut = con.to_mut();
+				tokio::spawn(con_mut.set_name(&format!("{}1", con.server.clients[&con.own_client].name)).map_err(|e| {
+					println!("Failed to set client name: {:?}", e);
+				}));
+				tokio::spawn(con_mut.set_input_muted(true).map_err(|e| {
+					println!("Failed to set muted: {:?}", e);
+				}));
 			}
+
+			// Listen to events
+			con.add_on_event("listener".into(), Box::new(|con, ev| {
+				println!("Got events: {:?}", ev);
+				print_channel_tree(&*con);
+			}));
+
 			Ok(con)
 		})
 		.and_then(|con| {
 			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(3))
+			Delay::new(Instant::now() + Duration::from_secs(10))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		})

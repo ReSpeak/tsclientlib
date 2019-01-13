@@ -15,6 +15,7 @@
 // TODO Needed to call a Box<FnOnce>
 #![feature(unsized_locals)]
 
+// Needed for futures on windows.
 #![recursion_limit="128"]
 
 #[macro_use]
@@ -66,11 +67,14 @@ pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;
 pub use tsproto_commands::{
 	messages, ChannelId, ClientId, MaxClients, Reason, ServerGroupId, Uid,
+	TextMessageTargetMode, GroupType, IconHash, GroupNamingMode, Codec,
+	ChannelType, ClientDbId, ChannelGroupId, TalkPowerRequest, ClientType,
+	LicenseType, HostBannerMode, HostMessageMode, CodecEncryptionMode, UidRef,
 };
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-type EventListener = Box<Fn(&data::Connection, &[events::Events]) + Send + Sync>;
+type EventListener = Box<Fn(&ConnectionLock, &[events::Events]) + Send + Sync>;
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -464,11 +468,12 @@ impl Connection {
 					};
 
 					// Send connection to packet handler
-					connection_send.send(con.connection.clone()).map_err(|_|
+					let con = Connection { inner: con };
+					connection_send.send(con.clone()).map_err(|_|
 						format_err!("Failed to send connection to packet \
 							handler"))?;
 
-					Ok(Connection { inner: con })
+					Ok(con)
 				}),
 					)
 				},

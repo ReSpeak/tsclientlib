@@ -1,5 +1,6 @@
 use std::default::Default;
 use std::ops::Deref;
+
 use tsproto_structs::book::{PropId, Property};
 use tsproto_structs::messages::{Field, Message};
 use tsproto_structs::messages_to_book;
@@ -72,4 +73,33 @@ fn try_result(s: &str) -> &'static str {
 		}
 		_ => "",
 	}
+}
+
+fn get_property_name(e: &Event, p: &Property) -> String {
+	format!("{}{}", e.book_struct.name, crate::events::get_property_name(p))
+}
+
+fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
+	let mut ids = get_id_args(e);
+	if let Some(m) = &p.modifier {
+		if !ids.is_empty() {
+			ids.push_str(", ");
+		}
+		if m == "map" {
+			ids.push_str(&format!("cmd.{}", from.get_rust_name()));
+		} else if m == "array" {
+			ids.push_str(&format!("cmd.{}", from.get_rust_name()));
+		} else {
+			panic!("Unknown modifier {}", m);
+		}
+	}
+
+	if !ids.is_empty() {
+		ids = format!("({})", ids);
+	}
+	format!("PropertyId::{}{}", get_property_name(e, p), ids)
+}
+
+fn get_property(e: &Event, p: &Property, name: &str) -> String {
+	format!("Property::{}({})", get_property_name(e, p), name)
 }

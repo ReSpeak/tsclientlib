@@ -4,7 +4,6 @@ use std::sync::Arc;
 use chashmap::CHashMap;
 use futures::sync::oneshot;
 use futures::{task, try_ready, Async, Future, Poll, Stream};
-use parking_lot::RwLock;
 use slog::{error, warn, Logger};
 use tsproto::handler_data::ConnectionValue;
 use tsproto::packets::*;
@@ -12,8 +11,7 @@ use tsproto::packets::*;
 use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
-use crate::data::Connection;
-use crate::{PHBox, TsError};
+use crate::{Connection, PHBox, TsError};
 
 pub(crate) struct ReturnCodeHandler {
 	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,
@@ -29,7 +27,7 @@ pub struct SimplePacketHandler {
 	logger: Logger,
 	handle_packets: Option<PHBox>,
 	initserver_sender: Option<oneshot::Sender<InCommand>>,
-	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
+	connection_recv: Option<oneshot::Receiver<Connection>>,
 	#[cfg(feature = "audio")]
 	audio_packet_handler: Option<AudioPacketHandler>,
 	pub(crate) return_codes: Arc<ReturnCodeHandler>,
@@ -41,8 +39,8 @@ struct SimplePacketStreamHandler<
 	inner: Inner,
 	logger: Logger,
 	initserver_sender: Option<oneshot::Sender<InCommand>>,
-	connection_recv: Option<oneshot::Receiver<Arc<RwLock<Connection>>>>,
-	connection: Option<Arc<RwLock<Connection>>>,
+	connection_recv: Option<oneshot::Receiver<Connection>>,
+	connection: Option<Connection>,
 	return_codes: Arc<ReturnCodeHandler>,
 }
 
@@ -52,7 +50,7 @@ impl SimplePacketHandler {
 		logger: Logger,
 		handle_packets: Option<PHBox>,
 		initserver_sender: oneshot::Sender<InCommand>,
-		connection_recv: oneshot::Receiver<Arc<RwLock<Connection>>>,
+		connection_recv: oneshot::Receiver<Connection>,
 	) -> Self
 	{
 		Self {
@@ -72,7 +70,7 @@ impl SimplePacketHandler {
 		logger: Logger,
 		handle_packets: Option<PHBox>,
 		initserver_sender: oneshot::Sender<InCommand>,
-		connection_recv: oneshot::Receiver<Arc<RwLock<Connection>>>,
+		connection_recv: oneshot::Receiver<Connection>,
 		audio_packet_handler: Option<AudioPacketHandler>,
 	) -> Self
 	{
@@ -181,7 +179,7 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 	///	4. Output packet
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
 		let con;
-		if let Some(con) = &self.connection {
+		if let Some(connection) = &self.connection {
 			let cmd = if let Some(p) = try_ready!(self.inner.poll()) {
 				p
 			} else {
@@ -189,7 +187,7 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 			};
 
 			// 3.
-			let mut con = con.write();
+			let mut con = connection.inner.connection.write();
 			let name = cmd.name().to_string();
 			let msg = InMessage::new(cmd);
 			let cmd;
@@ -219,11 +217,30 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 
 					// 3.2
 					// Apply
-					if let Err(e) = con.handle_message(&msg) {
-						warn!(self.logger, "Failed to handle message";
-							"command" => name,
-							"error" => ?e);
+					let events = match con.handle_message(&msg, &self.logger) {
+						Ok(e) => if e.len() > 0 {
+							Some(e)
+						} else {
+							None
+						},
+						Err(e) => {
+							warn!(self.logger, "Failed to handle message";
+								"command" => name,
+								"error" => ?e);
+							None
+						}
+					};
+
+					// Call event handler
+					drop(con);
+					if let Some(events) = events {
+						let con = connection.lock();
+						let listeners = connection.inner.event_listeners.read();
+						for l in listeners.values() {
+							l(&con, &events);
+						}
 					}
+
 					cmd = msg.into_command();
 				}
 			}

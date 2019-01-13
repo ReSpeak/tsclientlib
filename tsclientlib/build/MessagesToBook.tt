@@ -1,68 +1,102 @@
 <#@ template cleanws="true" #>
 impl Connection {
-	fn handle_message_generated(&mut self, msg: &InMessage) -> Result<()> {
-		// TODO Also raise events for changes, adds, removes
+	fn handle_message_generated(&mut self, msg: &InMessage, logger: &Logger) -> Result<Vec<Events>> {
+		let mut events = Vec::new();
 		match msg.msg() {
 <# for event in &self.decls {
 	let enum_name = &event.msg.name;
 #>
 			InMessages::<#= enum_name #>(cmd) => for cmd in cmd.iter() {
 			<# if event.op == RuleOp::Remove {
-				let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name)); #>
-				self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
+				let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name));
+				let ids = get_id_args(event);
+				let ids2 = if !ids.is_empty() {
+					format!("({})", ids)
+				} else {
+					ids.clone()
+				};
+				#>
+				let old = self.<#= function_name #>(<#= ids #>)<#= try_result(&function_name) #>
+					.ok_or_else(|| format_err!("<#= event.book_struct.name #> {:?} \
+						should be removed but does not exist", <#= ids2 #>))?;
+				events.push(Events::PropertyRemoved(
+					PropertyId::<#= event.book_struct.name #><#= ids2 #>,
+					Property::<#= event.book_struct.name #>(old),
+				));
 			<# } else if event.op == RuleOp::Update { #>
 				<# // Update the object
 				// Functions first
 				for rule in &event.rules {
-					if let RuleKind::Function { ref name, ref to } = *rule { #>
+					if let RuleKind::Function { name, to } = rule { #>
 				self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd);
 					<# }
 				}
-				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name)); #>
+				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name));
+				#>
 				let r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
 				<#
 				for rule in &event.rules {
-					match *rule {
-						RuleKind::Map { ref from, ref to, op } => {
+					match rule {
+						RuleKind::Map { from, to, op } => {
 							// Put field from packet into bookkeeping struct
 							match op {
 								RuleOp::Update => {
-									// to is optional, but from not
 									let from_opt = from.is_opt(&event.msg);
-									if to.opt && !from_opt { #>
-				r.<#= to_snake_case(&to.name) #> = Some(cmd.<#= get_notification_field(from, &event.msg) #>);
+									// to/book is optional, but from/message not
+									if to.opt && !from_opt {
+									#>
+				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,
+					Some(cmd.<#= get_notification_field(from, &event.msg) #>));
+				events.push(Events::PropertyChanged(
+					<#= get_property_id(event, to, from) #>,
+					<#= get_property(event, to, "old") #>,
+				));
 									<# } else if from_opt { #>
 				if let Some(val) = cmd.<#= get_notification_field(from, &event.msg) #> {
 									<# if to.opt { #>
-					r.<#= to_snake_case(&to.name) #> = Some(val);
+					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, Some(val));
 									<# } else { #>
-					r.<#= to_snake_case(&to.name) #> = val;
+					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
 									<# } #>
+					events.push(Events::PropertyChanged(
+						<#= get_property_id(event, to, from) #>,
+						<#= get_property(event, to, "old") #>,
+					));
 				}
 									<# } else { #>
-				r.<#= to_snake_case(&to.name) #> = cmd.<#= get_notification_field(from, &event.msg) #>;
+				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,
+					cmd.<#= get_notification_field(from, &event.msg) #>);
+				events.push(Events::PropertyChanged(
+					<#= get_property_id(event, to, from) #>,
+					<#= get_property(event, to, "old") #>,
+				));
 								<# }
 								}
 								// The field in the struct is a vector
 								RuleOp::Add => { #>
 				r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
+				events.push(Events::PropertyAdded(<#= get_property_id(event, to, from) #>));
 								<# }
 								RuleOp::Remove => { #>
 									// Find index and remove
 				let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.get_rust_name() #>);
-				r.<#= to_snake_case(&to.name) #>.remove(i);
+				let old = r.<#= to_snake_case(&to.name) #>.remove(i);
+				events.push(Events::PropertyRemoved(
+					<#= get_property_id(event, to, from) #>,
+					<#= get_property(event, to, "old") #>,
+				));
 								<# }
 							}
 						}
 
-						RuleKind::Function { ref to, .. } => {}
+						RuleKind::Function { to, .. } => {}
 					}
 				}
 			} else if event.op == RuleOp::Add {
 				// Create a new object
 				// First, call all functions
 				for fun in event.rules.iter().filter(|r| r.is_function()) {
-					if let RuleKind::Function { ref name, ref to } = *fun { #>
+					if let RuleKind::Function { name, to } = fun { #>
 				let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(cmd);
 					<# }
 				} #>
@@ -76,7 +110,7 @@ impl Connection {
 				let v = vec![];
 				// Function return values
 				for p in event.rules.iter()
-					.flat_map(|f| if let RuleKind::Function { ref to, .. } = *f {
+					.flat_map(|f| if let RuleKind::Function { to, .. } = f {
 						to
 					} else {
 						&v
@@ -84,8 +118,8 @@ impl Connection {
 					<#= to_snake_case(&p.name) #>,
 				<# }
 				for p in event.rules.iter() {
-					if let RuleKind::Map { from, to, op } = *p {
-						if op != RuleOp::Update {
+					if let RuleKind::Map { from, to, op } = p {
+						if *op != RuleOp::Update {
 							panic!("Cannot add or remove when adding a new struct");
 						}
 						// to is optional, but from not
@@ -97,14 +131,24 @@ impl Connection {
 						<# } #>
 					<# }
 				}
-				let function_name = format!("add_{}", to_snake_case(&event.book_struct.name)); #>
+				let function_name = format!("add_{}", to_snake_case(&event.book_struct.name));
+				let ids = get_id_args(event);
+				let ids2 = if !ids.is_empty() {
+					format!("({})", ids)
+				} else {
+					ids.clone()
+				}; #>
 				};
-				self.<#= function_name #>(<#= get_id_args(event) #>, r)<#= try_result(&function_name) #>;
+				self.<#= function_name #>(<#= ids #>, r)<#= try_result(&function_name) #>;
+				events.push(Events::PropertyAdded(PropertyId::<#= event.book_struct.name #><#= ids2 #>));
 			<# } #>
 			}
 <# } #>
-			_ => {} // Ignore unmentioned messages
+			_ => {
+				// Ignore unmentioned messages
+				debug!(logger, "Unknown message for book"; "message" => msg.command().name());
+			}
 		}
-		Ok(())
+		Ok(events)
 	}
 }

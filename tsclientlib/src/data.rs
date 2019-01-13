@@ -9,10 +9,12 @@ use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
 use futures::Future;
+use slog::{debug, Logger};
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
 use crate::{Error, Result};
+use crate::events::{Events, Property, PropertyId};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
@@ -95,14 +97,9 @@ impl Connection {
 		}
 	}
 
-	pub(crate) fn handle_message(&mut self, msg: &InMessage) -> Result<()> {
-		self.handle_message_generated(msg)?;
-
-		// Also raise events
-		match msg {
-			_ => {} // TODO
-		}
-		Ok(())
+	pub(crate) fn handle_message(&mut self, msg: &InMessage, logger: &Logger)
+		-> Result<Vec<Events>> {
+		self.handle_message_generated(msg, logger)
 	}
 
 	fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
@@ -178,6 +175,7 @@ impl Connection {
 		cmd: &s2c::ChannelEditedPart,
 	)
 	{
+		// TODO Generate event
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let (ch, ch_fam) = max_clients!(cmd);
 			channel.max_clients = ch;
