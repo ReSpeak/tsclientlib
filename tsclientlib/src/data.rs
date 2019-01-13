@@ -159,7 +159,7 @@ impl Connection {
 
 	fn return_false<T>(&self, _: T) -> bool { false }
 	fn return_none<T, O>(&self, _: T) -> Option<O> { None }
-	fn void_fun<T, U>(&self, _: T, _: U) {}
+	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) {}
 	fn return_some<T>(&self, t: T) -> Option<T> { Some(t) }
 
 	fn max_clients_cc_fun(
@@ -173,13 +173,25 @@ impl Connection {
 		&mut self,
 		channel_id: ChannelId,
 		cmd: &s2c::ChannelEditedPart,
+		events: &mut Vec<Events>,
 	)
 	{
-		// TODO Generate event
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let (ch, ch_fam) = max_clients!(cmd);
-			channel.max_clients = ch;
-			channel.max_family_clients = ch_fam;
+			if let Some(ch) = ch {
+				events.push(Events::PropertyChanged(
+					PropertyId::ChannelMaxClients(channel_id),
+					Property::ChannelMaxClients(channel.max_clients.take()),
+				));
+				channel.max_clients = Some(ch);
+			}
+			if let Some(ch_fam) = ch_fam {
+				events.push(Events::PropertyChanged(
+					PropertyId::ChannelMaxFamilyClients(channel_id),
+					Property::ChannelMaxFamilyClients(channel.max_family_clients.take()),
+				));
+				channel.max_family_clients = Some(ch_fam);
+			}
 		}
 	}
 	fn max_clients_cl_fun(
@@ -228,16 +240,25 @@ impl Connection {
 		&mut self,
 		channel_id: ChannelId,
 		cmd: &s2c::ChannelEditedPart,
+		events: &mut Vec<Events>,
 	)
 	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			let typ = if cmd.is_permanent == Some(true) {
-				ChannelType::Permanent
+			let typ = if let Some(perm) = cmd.is_permanent {
+				if perm {
+					ChannelType::Permanent
+				} else {
+					ChannelType::Temporary
+				}
 			} else if cmd.is_semi_permanent == Some(true) {
 				ChannelType::SemiPermanent
 			} else {
-				ChannelType::Temporary
+				return;
 			};
+			events.push(Events::PropertyChanged(
+				PropertyId::ChannelChannelType(channel_id),
+				Property::ChannelChannelType(channel.channel_type),
+			));
 			channel.channel_type = typ;
 		}
 	}

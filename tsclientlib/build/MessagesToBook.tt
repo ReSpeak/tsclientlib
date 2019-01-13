@@ -28,7 +28,7 @@ impl Connection {
 				// Functions first
 				for rule in &event.rules {
 					if let RuleKind::Function { name, to } = rule { #>
-				self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd);
+				self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd, &mut events);
 					<# }
 				}
 				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name));
