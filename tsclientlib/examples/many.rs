@@ -1,13 +1,8 @@
-#[macro_use]
-extern crate failure;
-extern crate futures;
-extern crate structopt;
-extern crate tokio;
-extern crate tsclientlib;
-
 use std::time::{Duration, Instant};
 
+use failure::format_err;
 use futures::{stream, Future, Stream};
+use slog::{o, Drain};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
@@ -44,16 +39,25 @@ fn main() -> Result<(), failure::Error> {
 	// Parse command line options
 	let args = Args::from_args();
 
+	let logger = {
+		let decorator = slog_term::TermDecorator::new().build();
+		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+		let drain = slog_async::Async::new(drain).build().fuse();
+
+		slog::Logger::root(drain, o!())
+	};
+
 	tokio::run(
-		futures::lazy(|| {
-			stream::futures_ordered((0..args.count).map(move |_| {
+		futures::lazy(move || {
+			stream::futures_ordered((0..args.count).map(move |i| {
 				let con_config = ConnectOptions::new(args.address.as_str())
+					.logger(logger.new(o!("i" => i)))
 					.log_commands(args.verbose >= 1)
 					.log_packets(args.verbose >= 2)
 					.log_udp_packets(args.verbose >= 3);
 
 				// Optionally set the key of this client, otherwise a new key is generated.
-				let con_config = con_config.private_key_ts(
+				let con_config = con_config.private_key_str(
 					"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 					k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
 					C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
@@ -63,16 +67,8 @@ fn main() -> Result<(), failure::Error> {
 			})).collect()
 		})
 		.and_then(|cons| {
-			{
-				let con = cons[0].lock();
-				println!(
-					"Server welcome message: {}",
-					sanitize(&con.server.welcome_message)
-				);
-			}
-
 			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(10))
+			Delay::new(Instant::now() + Duration::from_secs(5))
 				.map(move |_| cons)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		})
@@ -85,18 +81,4 @@ fn main() -> Result<(), failure::Error> {
 	);
 
 	Ok(())
-}
-
-/// Only retain a certain set of characters.
-fn sanitize(s: &str) -> String {
-	s.chars()
-		.filter(|c| {
-			c.is_alphanumeric()
-				|| [
-					' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')',
-					'[', ']', '{', '}',
-				]
-				.contains(c)
-		})
-		.collect()
 }

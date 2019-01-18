@@ -31,7 +31,7 @@ use failure::ResultExt;
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Once, RwLock, RwLockReadGuard, ONCE_INIT};
-use slog::{debug, error, info, o, Drain, Logger};
+use slog::{debug, info, o, warn, Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::{client, crypto, log};
 use tsproto::connectionmanager::ConnectionManager;
@@ -39,6 +39,7 @@ use tsproto::handler_data::{ConnectionListener, ConnectionValue};
 use tsproto::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
+use tsproto::connectionmanager::Resender;
 #[cfg(feature = "audio")]
 use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
@@ -733,8 +734,17 @@ impl Drop for Connection {
 			// The last 2 references are in the packet handler and this one
 			// Disconnect
 			let logger = self.inner.client_data.lock().logger.clone();
+			// Check that we are not yet disconnecting
+			if let Some(con) = self.inner.client_connection.upgrade() {
+				if con.mutex.lock().1.resender.is_disconnecting() {
+					return;
+				}
+			} else {
+				return;
+			}
 			tokio::spawn(self.disconnect(None).map_err(
-				move |e| error!(logger, "Failed to disconnect"; "error" => ?e),
+				move |e| warn!(logger, "Failed to disconnect from destructor";
+					"error" => ?e),
 			));
 		}
 	}

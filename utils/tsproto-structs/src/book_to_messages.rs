@@ -34,19 +34,16 @@ lazy_static!{
 
 				let find_prop = |name: &str,
 							     book_struct: &'static Struct|
-				 -> &'static Property {
+				 -> Option<&'static Property> {
 					if let Some(prop) = book_struct
 						.properties
 						.iter()
 						.find(|p| p.name == *name)
 					{
-						return prop;
+						Some(prop)
+					} else {
+						None
 					}
-					panic!(
-						"No such (nested) property {} found in \
-						 struct",
-						name
-					);
 				};
 
 				// Map RuleProperty to RuleKind
@@ -67,7 +64,10 @@ lazy_static!{
 							rule
 						} else {
 							let rule = RuleKind::Function {
-								from: p.from.as_ref().map(|p| find_prop(p, book_struct)),
+								from: p.from.as_ref().map(|p|
+									find_prop(p, book_struct)
+									.unwrap_or_else(|| panic!("No such (nested) \
+										property {} found in struct", p))),
 								name: p.function.unwrap(),
 								to: p.tolist.unwrap()
 									.into_iter()
@@ -77,12 +77,19 @@ lazy_static!{
 							rule
 						}
 					} else {
-						RuleKind::Map {
-							from: find_prop(
-								p.from.as_ref().unwrap(),
-								book_struct,
-							),
-							to: find_field(&p.to.unwrap(), &msg_fields),
+						if let Some(prop) = find_prop(
+							p.from.as_ref().unwrap(),
+							book_struct,
+						) {
+							RuleKind::Map {
+								from: prop,
+								to: find_field(&p.to.unwrap(), &msg_fields),
+							}
+						} else {
+							RuleKind::ArgumentMap {
+								from: p.from.unwrap(),
+								to: find_field(&p.to.unwrap(), &msg_fields),
+							}
 						}
 					}
 				};
@@ -101,6 +108,7 @@ lazy_static!{
 					.filter(|f| msg.attributes.iter().any(|a| *a == f.map)) {
 					if !ev.ids.iter().any(|i| match i {
 						RuleKind::Map { to, .. } => to == field,
+						RuleKind::ArgumentMap { to, .. } => to == field,
 						RuleKind::Function { to, .. } |
 						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
 					}) {
@@ -114,7 +122,8 @@ lazy_static!{
 								from: prop,
 								to: field,
 							})
-						} else {
+						} else if ev.op == RuleOp::Update {
+							// For add and remove, these may be in the properties
 							panic!("No matching property found for field {} \
 								in message {}, but it is needed", field.pretty,
 								msg.name);
@@ -127,6 +136,7 @@ lazy_static!{
 					.filter(|f| !msg.attributes.iter().any(|a| *a == f.map)) {
 					if !ev.ids.iter().chain(ev.rules.iter()).any(|i| match i {
 						RuleKind::Map { to, .. } => to == field,
+						RuleKind::ArgumentMap { to, .. } => to == field,
 						RuleKind::Function { to, .. } |
 						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
 					}) {
@@ -178,6 +188,10 @@ pub struct Event<'a> {
 pub enum RuleKind<'a> {
 	Map {
 		from: &'a Property,
+		to: &'a Field,
+	},
+	ArgumentMap {
+		from: String,
 		to: &'a Field,
 	},
 	Function {
@@ -273,6 +287,7 @@ impl<'a> RuleKind<'a> {
 	pub fn from_name(&'a self) -> &'a str {
 		match self {
 			RuleKind::Map { from, .. } => &from.name,
+			RuleKind::ArgumentMap { from, .. } => &from,
 			RuleKind::Function { from, name, .. } => &from.unwrap_or_else(||
 				panic!("From not set for function {}", name)).name,
 			RuleKind::ArgumentFunction { from, .. } => &from,
@@ -284,6 +299,7 @@ impl<'a> RuleKind<'a> {
 			RuleKind::Map { from, .. } => from,
 			RuleKind::Function { from, name, .. } => from.unwrap_or_else(||
 				panic!("From not set for function {}", name)),
+			RuleKind::ArgumentMap { .. } |
 			RuleKind::ArgumentFunction { .. } =>
 				panic!("From is not a property for argument functions"),
 		}

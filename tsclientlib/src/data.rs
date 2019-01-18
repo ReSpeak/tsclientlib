@@ -316,3 +316,7 @@ impl Connection {
 	}
 
 }
+
+impl ClientServerGroupMut<'_> {
+	fn get_id(&self) -> ServerGroupId { *self.inner }
+}

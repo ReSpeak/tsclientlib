@@ -322,7 +322,8 @@ fn remove_connection(con_id: ConnectionId) {
 #[no_mangle]
 pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 	let address = unsafe { CStr::from_ptr(address) };
-	let options = ConnectOptions::new(address.to_str().unwrap());
+	let options = ConnectOptions::new(address.to_str().unwrap())
+		.logger(LOGGER.clone());
 	let con_id = ConnectionId::next_free();
 
 	RUNTIME.executor().spawn(

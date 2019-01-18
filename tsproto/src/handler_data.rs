@@ -1,9 +1,10 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::mem;
 use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Mutex, RwLock};
@@ -342,6 +343,42 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let local_addr = socket.local_addr().unwrap_or(local_addr);
 		debug!(logger, "Listening"; "local_addr" => %local_addr);
 		let (sink, stream) = UdpFramed::new(socket, BytesCodec::new()).split();
+
+		Self::new_with_socket(
+			local_addr,
+			private_key,
+			is_client,
+			unknown_udp_packet_sink,
+			packet_handler,
+			connection_manager,
+			sink,
+			stream,
+			logger,
+		)
+	}
+
+	/// Creates a new connection without creating the socket.
+	///
+	/// The stream and sink of the socket have to be provided.
+	pub fn new_with_socket<L: Into<Option<slog::Logger>>, E1: Debug, E2: Debug>(
+		local_addr: SocketAddr,
+		private_key: EccKeyPrivP256,
+		is_client: bool,
+		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, InPacket)>>,
+		packet_handler: CM::PacketHandler,
+		connection_manager: CM,
+		sink: impl Sink<SinkItem=(Bytes, SocketAddr), SinkError=E1> + Send + 'static,
+		stream: impl Stream<Item=(BytesMut, SocketAddr), Error=E2> + Send + 'static,
+		logger: L,
+	) -> Result<Arc<Mutex<Self>>>
+	{
+		let logger = logger.into().unwrap_or_else(|| {
+			let decorator = slog_term::TermDecorator::new().build();
+			let drain = slog_term::FullFormat::new(decorator).build().fuse();
+			let drain = slog_async::Async::new(drain).build().fuse();
+
+			slog::Logger::root(drain, o!())
+		});
 
 		let (exit_send, exit_recv) = oneshot::channel();
 		let (udp_packet_sink, udp_packet_sink_sender) =

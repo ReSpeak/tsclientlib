@@ -367,6 +367,14 @@ impl Resender for DefaultResender {
 			}
 		}
 	}
+
+	fn is_disconnecting(&self) -> bool {
+		if let ResendStates::Disconnecting { .. } = self.state {
+			true
+		} else {
+			false
+		}
+	}
 }
 
 impl Sink for DefaultResender {

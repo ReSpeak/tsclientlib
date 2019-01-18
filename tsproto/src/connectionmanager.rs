@@ -81,6 +81,9 @@ pub trait Resender:
 
 	/// Called for received udp packets.
 	fn udp_packet_received(&mut self, packet: &Bytes);
+
+	/// Return `true` if the connection is trying to disconnect.
+	fn is_disconnecting(&self) -> bool;
 }
 
 /// An implementation of a connectionmanager, that identifies a connection its

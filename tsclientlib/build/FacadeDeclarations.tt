@@ -79,6 +79,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 		self.inner.<#= pid.get_attr_name(&struc) #>.get(key).map(|i| <#= name #>Mut {
 			connection: self.connection.clone(),
 			inner: i,
+			parent: self.inner,
 		})
 	}
 	<# } else if p.modifier.as_ref().map(|s| s == "array").unwrap_or(false) { #>
@@ -86,6 +87,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 		self.inner.<#= pid.get_attr_name(&struc) #>.get(index).map(|i| <#= name #>Mut {
 			connection: self.connection.clone(),
 			inner: i,
+			parent: self.inner,
 		})
 	}
 	<# } else if p.modifier.is_none() {
@@ -95,6 +97,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 		<#= name #>Mut {
 			connection: self.connection.clone(),
 			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
+			parent: self.inner,
 		}
 	}
 		<# } else { #>
@@ -102,6 +105,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 		self.inner.<#= pid.get_attr_name(&struc) #>.as_ref().map(|i| <#= name #>Mut {
 			connection: self.connection.clone(),
 			inner: i,
+			parent: self.inner,
 		})
 	}
 		<# } #>
@@ -136,6 +140,7 @@ for (struc, p) in &props {
 pub struct <#= name #>Mut<'a> {
 	pub(crate) connection: crate::Connection,
 	pub(crate) inner: &'a <#= p.type_s #>,
+	pub(crate) parent: &'a <#= struc.name #>,
 }
 
 impl<'a> Deref for <#= name #>Mut<'a> {
