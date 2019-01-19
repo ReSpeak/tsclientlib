@@ -101,9 +101,14 @@ pub fn wait_for_state<
 			false
 		}
 	}));
-	Box::new(recv.into_future().map(|_| ()).map_err(|e| {
+	Box::new(recv.into_future()
+	.map_err(|e| {
 		format_err!("Failed to receive while waiting for state ({:?})", e)
 			.into()
+	})
+	.and_then(|(r, _)| match r {
+		Some(()) => Ok(()),
+		None => Err(format_err!("Connection is gone").into()),
 	}))
 }
 
@@ -936,5 +941,204 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 			}
 		};
 		Ok(res)
+	}
+}
+
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use byteorder::{NetworkEndian, ReadBytesExt};
+	use bytes::{Bytes, BytesMut};
+	use futures::sync::mpsc::{UnboundedSender, UnboundedReceiver};
+	use slog::{o, Drain};
+	use tokio::runtime::current_thread::Runtime;
+
+	pub struct TestPacketHandler;
+
+	impl<T: 'static> PacketHandler<T> for TestPacketHandler {
+		fn new_connection<S1, S2, S3, S4>(
+			&mut self,
+			_con_val: &ConnectionValue<T>,
+			s2c_init_stream: S1,
+			_c2s_init_stream: S2,
+			command_stream: S3,
+			audio_stream: S4,
+		) where
+			S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
+			S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
+			S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
+			S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
+		{
+			tokio::spawn(s2c_init_stream.for_each(|_| Ok(()))
+				.map_err(|e| panic!("s2c_init_stream errored: {:?}", e)));
+			tokio::spawn(command_stream.for_each(|_| Ok(()))
+				.map_err(|e| panic!("command_stream errored: {:?}", e)));
+			tokio::spawn(audio_stream.for_each(|_| Ok(()))
+				.map_err(|e| panic!("audio_stream errored: {:?}", e)));
+		}
+	}
+
+	pub struct TestConnection {
+		pub client: Arc<Mutex<ClientData<TestPacketHandler>>>,
+		pub sink: UnboundedSender<(BytesMut, SocketAddr)>,
+		pub stream: UnboundedReceiver<(Bytes, SocketAddr)>,
+	}
+
+	impl TestConnection {
+		pub fn new() -> (Runtime, Self) {
+			let mut runtime = Runtime::new().unwrap();
+
+			let (send_sink, send_stream) = mpsc::unbounded();
+			let (recv_sink, recv_stream) = mpsc::unbounded();
+
+			let logger = {
+				// TODO Write to stdout, somehow does not work
+				//let decorator = slog_term::PlainDecorator::new(std::io::stdout());
+				let decorator = slog_term::TermDecorator::new().stdout().build();
+				let drain = slog_term::FullFormat::new(decorator).build().fuse();
+				let drain = slog_async::Async::new(drain).build().fuse();
+
+				slog::Logger::root(drain, o!())
+			};
+
+			let c = runtime.block_on(future::lazy(|| -> Result<Arc<Mutex<ClientData<TestPacketHandler>>>> {
+				let c = ClientData::new_with_socket(
+					"127.0.0.1:0".parse().unwrap(),
+					EccKeyPrivP256::create().unwrap(),
+					true,
+					None,
+					DefaultPacketHandler::new(TestPacketHandler),
+					SocketConnectionManager::new(),
+					send_sink,
+					recv_stream,
+					logger,
+				).expect("Failed to create client");
+
+				let c2 = Arc::downgrade(&c);
+				{
+					let mut c = c.lock();
+					let c = &mut *c;
+					// Set the data reference
+					c.packet_handler.complete(c2.clone());
+
+					// Change state on disconnect
+					c.add_out_packet_observer(
+						"tsproto::client".into(),
+						Box::new(ClientOutPacketObserver),
+					);
+				}
+				Ok(c)
+			})).unwrap();
+
+			let res = Self {
+				client: c,
+				sink: recv_sink,
+				stream: send_stream,
+			};
+			(runtime, res)
+		}
+
+		/// Set the connection to connected.
+		pub fn set_connected(&self) {
+			let mut client = self.client.lock();
+			let con_key = client.add_connection(
+				Arc::downgrade(&self.client),
+				ServerConnectionData {
+					state_change_listener: Vec::new(),
+					state: ServerConnectionState::Connected,
+				},
+				"127.0.0.1:1".parse().unwrap(),
+			);
+			let connection = client.get_connection(&con_key).unwrap();
+			let mut con = connection.mutex.lock();
+			con.1.resender.handle_event(ResenderEvent::Connected);
+
+			// Set params
+			con.1.params = Some(ConnectedParams::new(
+				client.private_key.to_pub(),
+				SharedIv::Protocol31([0; 64]),
+				[0; 8],
+			));
+			let params = con.1.params.as_mut().unwrap();
+			params.c_id = 1;
+		}
+
+		/// Encrypts the packet content and sends it to the connection.
+		pub fn send_packet(&self, packet: OutPacket) {
+			self.sink.unbounded_send((packet.into_vec().into(),
+				"127.0.0.1:1".parse().unwrap()))
+				.expect("Failed to send simulated packet");
+		}
+	}
+
+	#[test]
+	fn test_first_connect() {
+		let (mut runtime, client) = TestConnection::new();
+
+		runtime.block_on(future::lazy(|| {
+			let cw = Arc::downgrade(&client.client);
+			tokio::spawn(connect(cw, &mut *client.client.lock(), "127.0.0.1:1".parse().unwrap())
+				.then(|_| {
+					panic!("Should not connect completely");
+					#[allow(unreachable_code)]
+					Ok(())
+				}));
+			let c = client.client;
+			client.stream.into_future().map(move |_| {
+				println!("Received packet");
+				drop(c);
+			})
+			.map_err(|_| panic!("Failed to receive packet"))
+		})).unwrap();
+	}
+
+	#[test]
+	fn test_connect_timeout() {
+		let (mut runtime, client) = TestConnection::new();
+
+		runtime.spawn(future::lazy(move || {
+			let cw = Arc::downgrade(&client.client);
+			tokio::spawn(client.stream.for_each(|_| Ok(()) )
+				.map_err(|_| panic!("Failed to receive packet")));
+
+			let r = connect(cw, &mut *client.client.lock(), "127.0.0.1:1".parse().unwrap());
+			let c = client.client;
+			r
+				.map(|_| panic!("Should not connect"))
+				.then(|_| {
+					// Drop client in the end
+					drop(c);
+					Ok(())
+				})
+		}));
+		runtime.run().unwrap();
+	}
+
+	/// Send ping and check that a pong is received.
+	#[test]
+	fn test_pong() {
+		let (mut runtime, client) = TestConnection::new();
+
+		runtime.block_on(future::lazy(|| {
+			client.set_connected();
+			let mut packet = OutPacket::new_with_dir(Direction::S2C, Flags::UNENCRYPTED, PacketType::Ping);
+			packet.packet_id(42);
+			client.send_packet(packet);
+
+			let c = client.client;
+			client.stream.into_future().and_then(move |(p, _)| if let Some((p, _)) = p {
+				// Check for pong
+				let p = InPacket::try_new(p, Direction::C2S).unwrap();
+				assert_eq!(p.header().packet_type(), PacketType::Pong);
+				assert_eq!(p.content().read_u16::<NetworkEndian>().unwrap(), 42);
+				drop(c);
+				Ok(())
+			} else {
+				panic!("Failed to receive pong");
+			})
+			.map_err(|_| panic!("Failed to receive pong"))
+		})).unwrap();
 	}
 }

@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -13,7 +14,7 @@ use crate::Error;
 /// The unique identification of a connection is handled by the implementation.
 pub trait ConnectionManager: Send {
 	/// The key wihch identifies a connection.
-	type Key: Clone + Eq + Hash + Send + Sync;
+	type Key: Clone + Debug + Eq + Hash + Send + Sync;
 
 	/// Data which is associated with each connection. This can be used to store
 	/// additional connection information.
