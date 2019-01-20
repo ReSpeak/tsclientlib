@@ -11,7 +11,7 @@ use ring::digest;
 use crate::connection::{CachedKey, SharedIv};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::packets::*;
-use crate::{crypto, Result};
+use crate::{crypto, Error, Result};
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -125,11 +125,12 @@ fn create_key_nonce(
 	p_id: u16,
 	generation_id: u32,
 	iv: &SharedIv,
-	cache: &mut [CachedKey; 8],
+	cache: &mut [[CachedKey; 2]; 8],
 ) -> ([u8; 16], [u8; 16])
 {
 	// Check if this generation is cached
-	let cache = &mut cache[p_type.to_usize().unwrap()];
+	let cache = &mut cache[p_type.to_usize().unwrap()]
+		[if c_id.is_some() { 1 } else { 0 }];
 	if cache.generation_id != generation_id {
 		// Update the cache
 		let mut temp = [0; 70];
@@ -139,16 +140,14 @@ fn create_key_nonce(
 			temp[0] = 0x30;
 		}
 		temp[1] = p_type.to_u8().unwrap();
-		let mut buf = Vec::with_capacity(4);
-		buf.write_u32::<NetworkEndian>(generation_id).unwrap();
-		temp[2..6].copy_from_slice(&buf);
+		(&mut temp[2..6]).write_u32::<NetworkEndian>(generation_id).unwrap();
 		let len;
-		match *iv {
-			SharedIv::ProtocolOrig(ref data) => {
+		match iv {
+			SharedIv::ProtocolOrig(data) => {
 				temp[6..26].copy_from_slice(data);
 				len = 26;
 			}
-			SharedIv::Protocol31(ref data) => {
+			SharedIv::Protocol31(data) => {
 				temp[6..].copy_from_slice(data);
 				len = 70;
 			}
@@ -156,6 +155,7 @@ fn create_key_nonce(
 
 		let keynonce = digest::digest(&digest::SHA256, &temp[..len]);
 		let keynonce = keynonce.as_ref();
+		cache.generation_id = generation_id;
 		cache.key.copy_from_slice(&keynonce[..16]);
 		cache.nonce.copy_from_slice(&keynonce[16..]);
 	}
@@ -189,7 +189,7 @@ pub fn encrypt(
 	packet: &mut OutPacket,
 	generation_id: u32,
 	iv: &SharedIv,
-	cache: &mut [CachedKey; 8],
+	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<()>
 {
 	let header = packet.header();
@@ -212,13 +212,16 @@ pub fn decrypt_key_nonce(
 {
 	let header = packet.header();
 	let meta = header.get_meta();
-	Ok(crypto::Eax::decrypt(
+	crypto::Eax::decrypt(
 		key,
 		nonce,
 		&meta,
 		packet.content(),
 		header.mac(),
-	)?)
+	)
+	.map_err(|e| if let Error::WrongMac(_, _, _) = e {
+		Error::WrongMac(header.packet_type(), 0, header.packet_id())
+	} else { e })
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
@@ -229,7 +232,7 @@ pub fn decrypt(
 	packet: &InPacket,
 	generation_id: u32,
 	iv: &SharedIv,
-	cache: &mut [CachedKey; 8],
+	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<Vec<u8>>
 {
 	let header = packet.header();
@@ -242,6 +245,9 @@ pub fn decrypt(
 		cache,
 	);
 	decrypt_key_nonce(packet, &key, &nonce)
+		.map_err(|e| if let Error::WrongMac(t, _, i) = e {
+			Error::WrongMac(t, generation_id, i)
+		} else { e })
 }
 
 /// Compute shared iv and shared mac.

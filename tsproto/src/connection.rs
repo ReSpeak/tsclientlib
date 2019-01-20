@@ -74,8 +74,9 @@ pub struct ConnectedParams {
 	pub shared_iv: SharedIv,
 	/// The mac used for unencrypted packets.
 	pub shared_mac: [u8; 8],
-	/// Cached key and nonce per packet type.
-	pub key_cache: [CachedKey; 8],
+	/// Cached key and nonce per packet type and for server to client (without
+	/// client id inside the packet) and client to server communication.
+	pub key_cache: [[CachedKey; 2]; 8],
 }
 
 impl ConnectedParams {
@@ -200,13 +201,12 @@ impl Connection {
 		let type_i = p_type.to_usize().unwrap();
 		// Receive window is the next half of ids
 		let cur_next = self.incoming_p_ids[type_i].1;
-		let limit = ((u32::from(cur_next) + u32::from(u16::MAX) / 2)
-			% u32::from(u16::MAX)) as u16;
+		let (limit, next_gen) = cur_next.overflowing_add(u16::MAX / 2);
 		let gen = self.incoming_p_ids[type_i].0;
 		(
-			(cur_next < limit && p_id >= cur_next && p_id < limit)
-				|| (cur_next > limit && (p_id >= cur_next || p_id < limit)),
-			if p_id >= cur_next { gen } else { gen + 1 },
+			(!next_gen && p_id >= cur_next && p_id < limit)
+				|| (next_gen && (p_id >= cur_next || p_id < limit)),
+			if next_gen && p_id < limit { gen + 1 } else { gen },
 			cur_next,
 			limit,
 		)

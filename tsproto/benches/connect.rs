@@ -38,11 +38,12 @@ fn connect(b: &mut Bencher) {
 
 			info!(logger, "Connecting");
 			let logger2 = logger.clone();
+			let c2 = c.clone();
 			utils::connect(logger.clone(), c.clone(), address)
 				.map_err(|e| panic!("Failed to connect ({:?})", e))
 				.and_then(move |con| {
 					info!(logger, "Disconnecting");
-					disconnect(con)
+					disconnect(&c2, con)
 						.map_err(|e| panic!("Failed to disconnect ({:?})", e))
 				})
 				.and_then(move |_| {

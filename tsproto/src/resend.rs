@@ -768,7 +768,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 
 		if let StateChange::NewState(next_state) = next_state {
 			con.resender.set_state(next_state);
-			// Queue the next immideate update
+			// Queue the next immediate update
 			task::current().notify();
 			return Ok(futures::Async::NotReady);
 		} else if let StateChange::EndConnection = next_state {
@@ -792,16 +792,18 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 		let packet_interval =
 			con.resender.state.get_packet_interval(&con.resender.config);
 
-		// Retransmission timeout
-		let rto = if let Some(interval) = packet_interval {
-			interval
-		} else {
-			con.resender.srtt + con.resender.srtt_dev * 4
-		};
-		let last_threshold = now - rto;
-
+		let mut rto;
+		let mut last_threshold;
 		#[allow(clippy::let_and_return)]
 		while let Some(packet) = {
+			// Retransmission timeout
+			rto = if let Some(interval) = packet_interval {
+				interval
+			} else {
+				con.resender.srtt + con.resender.srtt_dev * 4
+			};
+			last_threshold = now - rto;
+
 			let packet = if let Some(rec) =
 				&mut con.resender.state.peek_mut_next_record()
 			{
@@ -895,6 +897,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 							"srtt" => %con.resender.srtt,
 							"srtt_dev" => %con.resender.srtt_dev,
 							"rto" => %rto,
+							"threshold" => %last_threshold,
 						);
 					}
 				}

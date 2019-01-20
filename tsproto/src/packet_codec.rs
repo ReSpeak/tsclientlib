@@ -70,7 +70,10 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			let logger = self.logger.new(o!("addr" => addr));
 			let in_packet_observer = self.in_packet_observer.clone();
 			let in_command_observer = self.in_command_observer.clone();
-			if self.is_client && cons.len() == 1 {
+			// TODO Testing, command packets get handled in the wrong order if
+			// we spawn a new future for each packet.
+			// Send it to a channel per connection.
+			if self.is_client && cons.len() == 1 || true {
 				drop(cons);
 				Self::connection_handle_udp_packet(
 					&logger,
@@ -200,7 +203,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 						packet.set_content(dec_res?);
 					} else {
 						// Failed to fake decrypt the packet
-						return Err(Error::WrongMac);
+						return Err(Error::WrongMac(p_type, gen_id, id));
 					}
 				}
 			} else if algs::must_encrypt(p_type) {
@@ -451,10 +454,9 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			// Out of order
 			warn!(logger, "Out of order command packet"; "got" => id,
 				"expected" => cur_next);
-			let limit = ((u32::from(cur_next) + MAX_QUEUE_LEN as u32)
-				% u32::from(u16::MAX)) as u16;
-			if (cur_next < limit && id >= cur_next && id < limit)
-				|| (cur_next > limit && (id >= cur_next || id < limit))
+			let (limit, next_gen) = cur_next.overflowing_add(MAX_QUEUE_LEN);
+			if (!next_gen && id >= cur_next && id < limit)
+				|| (next_gen && (id >= cur_next || id < limit))
 			{
 				r_queue.push(packet);
 				Ok(vec![])
@@ -634,12 +636,13 @@ impl PacketCodecSender {
 				} else {
 					con.outgoing_p_ids[type_i]
 				};
-				if p_type != PacketType::Init {
+				let packet_id = if p_type != PacketType::Init {
 					packet.packet_id(p_id);
-				}
-
-				// Identify init packets by their number
-				let packet_id = packet_id.unwrap_or(p_id);
+					p_id
+				} else {
+					// Identify init packets by their number
+					packet_id.unwrap()
+				};
 
 				// Encrypt if necessary
 				if fake_encrypt {

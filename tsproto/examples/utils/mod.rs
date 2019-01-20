@@ -11,8 +11,6 @@ use tsproto::packets::*;
 use tsproto::*;
 use {slog, slog_perf};
 
-//pub mod voice;
-
 pub struct SimplePacketHandler;
 
 impl<T: 'static> PacketHandler<T> for SimplePacketHandler {

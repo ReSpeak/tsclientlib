@@ -34,7 +34,7 @@ type LockedHashMap<K, V> =
 const MAX_FRAGMENTS_LENGTH: usize = 40960;
 /// The maximum number of packets which are stored, if they are received
 /// out-of-order.
-const MAX_QUEUE_LEN: usize = 50;
+const MAX_QUEUE_LEN: u16 = 50;
 /// The maximum decompressed size of a packet.
 #[allow(clippy::unreadable_literal)]
 const MAX_DECOMPRESSED_SIZE: u32 = 40960;
@@ -97,8 +97,9 @@ pub enum Error {
 	UnallowedUnencryptedPacket,
 	#[fail(display = "Got unexpected init packet")]
 	UnexpectedInitPacket,
-	#[fail(display = "Wrong mac")]
-	WrongMac,
+	/// Store packet type, generation id and packet id.
+	#[fail(display = "{:?} Packet {}:{} has a wrong mac", _0, _1, _2)]
+	WrongMac(packets::PacketType, u32, u16),
 	#[fail(display = "Got a packet with unknown type ({})", _0)]
 	UnknownPacketType(u8),
 	#[fail(display = "Maximum length exceeded for {}", _0)]

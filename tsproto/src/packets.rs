@@ -533,6 +533,7 @@ impl<'a> InHeader<'a> {
 		if let Some(c_id) = self.client_id() {
 			res.write_u16::<NetworkEndian>(c_id).unwrap();
 		}
+		// Packet type and flags
 		res.write_u8(self.0[self.get_off()]).unwrap();
 		res
 	}

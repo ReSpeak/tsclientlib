@@ -948,12 +948,16 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 #[cfg(test)]
 mod tests {
 	use super::*;
+	use crate::handler_data::InPacketObserver;
 
-	use byteorder::{NetworkEndian, ReadBytesExt};
+	use std::time::Duration;
+
 	use bytes::{Bytes, BytesMut};
-	use futures::sync::mpsc::{UnboundedSender, UnboundedReceiver};
+	use futures::stream;
+	use num_traits::ToPrimitive;
 	use slog::{o, Drain};
 	use tokio::runtime::current_thread::Runtime;
+	use tokio::util::FutureExt;
 
 	pub struct TestPacketHandler;
 
@@ -982,16 +986,18 @@ mod tests {
 
 	pub struct TestConnection {
 		pub client: Arc<Mutex<ClientData<TestPacketHandler>>>,
-		pub sink: UnboundedSender<(BytesMut, SocketAddr)>,
-		pub stream: UnboundedReceiver<(Bytes, SocketAddr)>,
+		pub client_con: ClientConVal,
+		// Mocked "server" to send and receive packets
+		pub server: Arc<Mutex<ClientData<TestPacketHandler>>>,
+		pub server_con: ClientConVal,
 	}
 
 	impl TestConnection {
 		pub fn new() -> (Runtime, Self) {
 			let mut runtime = Runtime::new().unwrap();
 
-			let (send_sink, send_stream) = mpsc::unbounded();
-			let (recv_sink, recv_stream) = mpsc::unbounded();
+			let (send_sink, send_stream) = mpsc::unbounded::<(Bytes, SocketAddr)>();
+			let (recv_sink, recv_stream) = mpsc::unbounded::<(BytesMut, SocketAddr)>();
 
 			let logger = {
 				// TODO Write to stdout, somehow does not work
@@ -1003,7 +1009,8 @@ mod tests {
 				slog::Logger::root(drain, o!())
 			};
 
-			let c = runtime.block_on(future::lazy(|| -> Result<Arc<Mutex<ClientData<TestPacketHandler>>>> {
+			let res = runtime.block_on(future::lazy(|| -> Result<_> {
+				// Create client
 				let c = ClientData::new_with_socket(
 					"127.0.0.1:0".parse().unwrap(),
 					EccKeyPrivP256::create().unwrap(),
@@ -1013,7 +1020,7 @@ mod tests {
 					SocketConnectionManager::new(),
 					send_sink,
 					recv_stream,
-					logger,
+					logger.clone(),
 				).expect("Failed to create client");
 
 				let c2 = Arc::downgrade(&c);
@@ -1023,28 +1030,58 @@ mod tests {
 					// Set the data reference
 					c.packet_handler.complete(c2.clone());
 
+					//crate::log::add_udp_packet_logger(c);
 					// Change state on disconnect
 					c.add_out_packet_observer(
 						"tsproto::client".into(),
 						Box::new(ClientOutPacketObserver),
 					);
 				}
-				Ok(c)
+
+				// Create "server"
+				let s = ClientData::new_with_socket(
+					"127.0.0.1:0".parse().unwrap(),
+					EccKeyPrivP256::create().unwrap(),
+					false,
+					None,
+					DefaultPacketHandler::new(TestPacketHandler),
+					SocketConnectionManager::new(),
+					recv_sink.sink_map_err(|e| format_err!("Failed to send from server: {:?}", e))
+						.with(|(b, a): (Bytes, SocketAddr)| -> Result<_> { Ok((b.into(), a)) }),
+					send_stream.map(|(b, a)| (b.into(), a)),
+					logger.new(o!("server" => true)),
+				).expect("Failed to create \"server\" mock");
+
+				let s2 = Arc::downgrade(&s);
+				{
+					let mut c = s.lock();
+					let c = &mut *c;
+					// Set the data reference
+					c.packet_handler.complete(s2.clone());
+					//crate::log::add_udp_packet_logger(c);
+				}
+
+
+				let client_con = Self::set_connected(&c);
+				let server_con = Self::set_connected(&s);
+				let res = Self {
+					client: c,
+					server: s,
+					client_con,
+					server_con,
+				};
+
+				Ok(res)
 			})).unwrap();
 
-			let res = Self {
-				client: c,
-				sink: recv_sink,
-				stream: send_stream,
-			};
 			(runtime, res)
 		}
 
 		/// Set the connection to connected.
-		pub fn set_connected(&self) {
-			let mut client = self.client.lock();
+		fn set_connected(data: &Arc<Mutex<ClientData<TestPacketHandler>>>) -> ClientConVal {
+			let mut client = data.lock();
 			let con_key = client.add_connection(
-				Arc::downgrade(&self.client),
+				Arc::downgrade(&data),
 				ServerConnectionData {
 					state_change_listener: Vec::new(),
 					state: ServerConnectionState::Connected,
@@ -1054,6 +1091,10 @@ mod tests {
 			let connection = client.get_connection(&con_key).unwrap();
 			let mut con = connection.mutex.lock();
 			con.1.resender.handle_event(ResenderEvent::Connected);
+			con.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
+			con.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
+			con.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
+			con.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
 
 			// Set params
 			con.1.params = Some(ConnectedParams::new(
@@ -1063,82 +1104,144 @@ mod tests {
 			));
 			let params = con.1.params.as_mut().unwrap();
 			params.c_id = 1;
+
+			connection.downgrade()
 		}
 
 		/// Encrypts the packet content and sends it to the connection.
-		pub fn send_packet(&self, packet: OutPacket) {
-			self.sink.unbounded_send((packet.into_vec().into(),
-				"127.0.0.1:1".parse().unwrap()))
-				.expect("Failed to send simulated packet");
+		pub fn send_packet(&self, packet: OutPacket) -> impl Future<Item=(), Error=Error> {
+			self.server_con.as_packet_sink().send(packet)
+				.map_err(|e| panic!("Failed to send simulated packet: {:?}", e))
+				.map(|_| ())
 		}
 	}
 
-	#[test]
-	fn test_first_connect() {
-		let (mut runtime, client) = TestConnection::new();
-
-		runtime.block_on(future::lazy(|| {
-			let cw = Arc::downgrade(&client.client);
-			tokio::spawn(connect(cw, &mut *client.client.lock(), "127.0.0.1:1".parse().unwrap())
-				.then(|_| {
-					panic!("Should not connect completely");
-					#[allow(unreachable_code)]
-					Ok(())
-				}));
-			let c = client.client;
-			client.stream.into_future().map(move |_| {
-				println!("Received packet");
-				drop(c);
-			})
-			.map_err(|_| panic!("Failed to receive packet"))
-		})).unwrap();
+	struct InitObserver(mpsc::UnboundedSender<()>);
+	impl<T> InPacketObserver<T> for InitObserver {
+		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
+			let header = packet.header();
+			if header.packet_type() == PacketType::Init {
+				tokio::spawn(self.0.clone().send(()).map(|_| ())
+					.map_err(|e| panic!("Failed to send: {:?}", e)));
+			}
+		}
 	}
 
 	#[test]
 	fn test_connect_timeout() {
-		let (mut runtime, client) = TestConnection::new();
+		let (mut runtime, con) = TestConnection::new();
 
 		runtime.spawn(future::lazy(move || {
-			let cw = Arc::downgrade(&client.client);
-			tokio::spawn(client.stream.for_each(|_| Ok(()) )
-				.map_err(|_| panic!("Failed to receive packet")));
+			let cw = Arc::downgrade(&con.client);
+			// Add observer
+			let (send, recv) = mpsc::unbounded();
+			con.server.lock().add_in_packet_observer(
+				"tsproto::test".into(),
+				Box::new(InitObserver(send)),
+			);
 
-			let r = connect(cw, &mut *client.client.lock(), "127.0.0.1:1".parse().unwrap());
-			let c = client.client;
+			let r = connect(cw, &mut *con.client.lock(), "127.0.0.1:1".parse().unwrap());
 			r
 				.map(|_| panic!("Should not connect"))
 				.then(|_| {
 					// Drop client in the end
-					drop(c);
-					Ok(())
+					drop(con);
+					recv.into_future().map(|_| ())
+						.map_err(|_| panic!("Failed to receive init packet"))
 				})
 		}));
 		runtime.run().unwrap();
 	}
 
+	struct PongObserver(mpsc::UnboundedSender<()>);
+	impl<T> InPacketObserver<T> for PongObserver {
+		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
+			let header = packet.header();
+			if header.packet_type() == PacketType::Pong && header.packet_id() == 1 {
+				tokio::spawn(self.0.clone().send(()).map(|_| ())
+					.map_err(|e| panic!("Failed to send: {:?}", e)));
+			}
+		}
+	}
+
 	/// Send ping and check that a pong is received.
 	#[test]
 	fn test_pong() {
-		let (mut runtime, client) = TestConnection::new();
+		let (mut runtime, con) = TestConnection::new();
 
 		runtime.block_on(future::lazy(|| {
-			client.set_connected();
-			let mut packet = OutPacket::new_with_dir(Direction::S2C, Flags::UNENCRYPTED, PacketType::Ping);
-			packet.packet_id(42);
-			client.send_packet(packet);
+			let packet = OutPacket::new_with_dir(Direction::S2C, Flags::UNENCRYPTED, PacketType::Ping);
+			tokio::spawn(con.send_packet(packet.clone())
+				.map_err(|e| panic!("Failed to send packet: {:?}", e)));
+			tokio::spawn(con.send_packet(packet)
+				.map_err(|e| panic!("Failed to send packet: {:?}", e)));
 
-			let c = client.client;
-			client.stream.into_future().and_then(move |(p, _)| if let Some((p, _)) = p {
-				// Check for pong
-				let p = InPacket::try_new(p, Direction::C2S).unwrap();
-				assert_eq!(p.header().packet_type(), PacketType::Pong);
-				assert_eq!(p.content().read_u16::<NetworkEndian>().unwrap(), 42);
-				drop(c);
-				Ok(())
-			} else {
-				panic!("Failed to receive pong");
-			})
-			.map_err(|_| panic!("Failed to receive pong"))
+			// Add observer
+			let (send, recv) = mpsc::unbounded();
+			con.server.lock().add_in_packet_observer(
+				"tsproto::test".into(),
+				Box::new(PongObserver(send)),
+			);
+			recv.into_future().map(|_| drop(con))
+				.timeout(Duration::from_secs(5))
+				.map_err(|_| panic!("Failed to receive pong"))
 		})).unwrap();
+	}
+
+	struct CounterObserver(mpsc::UnboundedSender<()>, Mutex<usize>);
+	impl<T> InPacketObserver<T> for CounterObserver {
+		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
+			let header = packet.header();
+			if header.packet_type() == PacketType::Command && *self.1.lock() == 0 {
+				tokio::spawn(self.0.clone().send(()).map(|_| ())
+					.map_err(|e| panic!("Failed to send: {:?}", e)));
+			} else {
+				*self.1.lock() -= 1;
+			}
+		}
+	}
+
+	#[test]
+	fn test_generation_id() {
+		let (mut runtime, con) = TestConnection::new();
+
+		runtime.spawn(future::lazy(move || {
+			// TODO Send 70_000 msgs and check that there is no warning.
+			// Takes about 7 minutes
+			let mut msgs = Vec::new();
+			let count = 70_0/*00*/;
+			let (send, recv) = mpsc::unbounded();
+			con.client.lock().add_in_packet_observer(
+				"tsproto::test".into(),
+				Box::new(CounterObserver(send, Mutex::new(count - 1))),
+			);
+
+			for i in 0..count {
+				let packet = OutCommand::new::<
+					_,
+					_,
+					String,
+					String,
+					_,
+					_,
+					std::iter::Empty<_>,
+				>(
+					Direction::S2C,
+					PacketType::Command,
+					"notifytextmessage",
+					vec![("msg", format!("message {}", i))].into_iter(),
+					std::iter::empty(),
+				);
+				msgs.push(con.send_packet(packet.clone())
+					.map_err(|e| panic!("Failed to send packet: {:?}", e)));
+			}
+
+			tokio::spawn(stream::futures_ordered(msgs).for_each(|_| Ok(())));
+
+			recv.into_future()
+				.map(|_| drop(con))
+				.map_err(|_| panic!("Failed to receive all packets"))
+		}));
+		runtime.run().unwrap();
 	}
 }

@@ -574,7 +574,7 @@ impl Eax {
 
 		// Check mac using secure comparison
 		if !::openssl::memcmp::eq(mac, &mac2) {
-			return Err(Error::WrongMac);
+			return Err(Error::WrongMac(crate::packets::PacketType::Command, 0, 0));
 		}
 
 		// Decrypt
