@@ -1205,11 +1205,21 @@ mod tests {
 	fn test_generation_id() {
 		let (mut runtime, con) = TestConnection::new();
 
+		// Set current id
+		for c in &[&con.client_con, &con.server_con] {
+			let c = c.upgrade().unwrap();
+			let mut c = c.mutex.lock();
+			c.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 65_000);
+			c.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 65_000);
+			c.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 65_000);
+			c.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 65_000);
+		}
+
 		runtime.spawn(future::lazy(move || {
-			// TODO Send 70_000 msgs and check that there is no warning.
-			// Takes about 7 minutes
+			// Sending 70 000 messages takes about 7 minutes (in debug mode) so
+			// we start at 65 000 and send only 5 000
 			let mut msgs = Vec::new();
-			let count = 70_0/*00*/;
+			let count = 5_000;
 			let (send, recv) = mpsc::unbounded();
 			con.client.lock().add_in_packet_observer(
 				"tsproto::test".into(),

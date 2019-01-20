@@ -86,12 +86,12 @@ fn main() {
 			let logger3 = logger.clone();
 			let c2 = c.clone();
 			connect(logger.clone(), c.clone(), args.address)
-				.map_err(|e| panic!("Failed to connect ({:?})", e))
 				.and_then(move |con| {
 					info!(logger2, "Connected");
 					// Wait some time
 					Delay::new(Instant::now() + Duration::from_secs(5))
 						.map(move |_| con)
+						.map_err(|e| e.into())
 				})
 				/*.and_then(move |con| {
 					info!(logger, "Waited");
@@ -134,6 +134,6 @@ fn main() {
 				})
 			}).buffered(10000).for_each(|_| Ok(()))
 		})
-		.map_err(|e| panic!("An error occurred {:?}", e)),
+		.map_err(|e| println!("An error occurred {:?}", e)),
 	);
 }

@@ -132,7 +132,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 	fn encode_packet(
 		&self,
 		mut packet: OutPacket,
-	) -> Box<Stream<Item = (PacketType, u16, Bytes), Error = Error> + Send>
+	) -> Box<Stream<Item = (PacketType, u32, u16, Bytes), Error = Error> + Send>
 	{
 		let mut con = self.mutex.lock();
 		let con = &mut *con;
@@ -151,7 +151,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 
 		let udp_packets = udp_packets
 			.into_iter()
-			.map(|(p_id, p)| (p_type, p_id, p))
+			.map(|(p_gen, p_id, p)| (p_type, p_gen, p_id, p))
 			.collect::<Vec<_>>();
 		Box::new(stream::iter_ok(udp_packets))
 	}
@@ -196,7 +196,7 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 
 	pub fn as_udp_packet_sink(
 		&self,
-	) -> Box<Sink<SinkItem = (PacketType, u16, Bytes), SinkError = Error> + Send>
+	) -> Box<Sink<SinkItem = (PacketType, u32, u16, Bytes), SinkError = Error> + Send>
 	{
 		if let Some(con_val) = self.upgrade() {
 			Box::new(ConnectionUdpPacketSink::new(&con_val))
@@ -360,7 +360,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	/// Creates a new connection without creating the socket.
 	///
 	/// The stream and sink of the socket have to be provided.
-	pub fn new_with_socket<L: Into<Option<slog::Logger>>, E1: Debug, E2: Debug>(
+	pub fn new_with_socket<E1: Debug, E2: Debug>(
 		local_addr: SocketAddr,
 		private_key: EccKeyPrivP256,
 		is_client: bool,
@@ -369,17 +369,9 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		connection_manager: CM,
 		sink: impl Sink<SinkItem=(Bytes, SocketAddr), SinkError=E1> + Send + 'static,
 		stream: impl Stream<Item=(BytesMut, SocketAddr), Error=E2> + Send + 'static,
-		logger: L,
+		logger: slog::Logger,
 	) -> Result<Arc<Mutex<Self>>>
 	{
-		let logger = logger.into().unwrap_or_else(|| {
-			let decorator = slog_term::TermDecorator::new().build();
-			let drain = slog_term::FullFormat::new(decorator).build().fuse();
-			let drain = slog_async::Async::new(drain).build().fuse();
-
-			slog::Logger::root(drain, o!())
-		});
-
 		let (exit_send, exit_recv) = oneshot::channel();
 		let (udp_packet_sink, udp_packet_sink_sender) =
 			mpsc::channel(crate::UDP_SINK_CAPACITY);

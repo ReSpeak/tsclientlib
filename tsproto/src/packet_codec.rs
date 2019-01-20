@@ -534,7 +534,7 @@ impl PacketCodecSender {
 		&self,
 		con: &mut Connection,
 		mut packet: OutPacket,
-	) -> Result<Vec<(u16, Bytes)>>
+	) -> Result<Vec<(u32, u16, Bytes)>>
 	{
 		let p_type = packet.header().packet_type();
 		let type_i = p_type.to_usize().unwrap();
@@ -631,7 +631,7 @@ impl PacketCodecSender {
 			.into_iter()
 			.map(|mut packet| -> Result<_> {
 				// Get packet id
-				let (mut gen, mut p_id) = if p_type == PacketType::Init {
+				let (gen, mut p_id) = if p_type == PacketType::Init {
 					(0, 0)
 				} else {
 					con.outgoing_p_ids[type_i]
@@ -660,13 +660,15 @@ impl PacketCodecSender {
 
 				// Increment outgoing_p_ids
 				p_id = p_id.wrapping_add(1);
-				if p_id == 0 {
-					gen = gen.wrapping_add(1);
-				}
+				let new_gen = if p_id == 0 {
+					gen.wrapping_add(1)
+				} else {
+					gen
+				};
 				if p_type != PacketType::Init {
-					con.outgoing_p_ids[type_i] = (gen, p_id);
+					con.outgoing_p_ids[type_i] = (new_gen, p_id);
 				}
-				Ok((packet_id, packet.into_vec().into()))
+				Ok((gen, packet_id, packet.into_vec().into()))
 			})
 			.collect::<Result<Vec<_>>>()?;
 		Ok(packets)

@@ -238,19 +238,19 @@ impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
 }
 
 impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
-	type SinkItem = (PacketType, u16, Bytes);
+	type SinkItem = (PacketType, u32, u16, Bytes);
 	type SinkError = Error;
 
 	fn start_send(
 		&mut self,
-		(p_type, p_id, udp_packet): Self::SinkItem,
+		(p_type, p_gen, p_id, udp_packet): Self::SinkItem,
 	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
 	{
 		match p_type {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
 				if let Some(mutex) = self.con.mutex.upgrade() {
 					let mut con = mutex.lock();
-					con.1.resender.start_send((p_type, p_id, udp_packet))
+					con.1.resender.start_send((p_type, p_gen, p_id, udp_packet))
 				} else {
 					Err(format_err!("Connection is gone").into())
 				}
@@ -264,7 +264,7 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 					})? {
 					AsyncSink::Ready => AsyncSink::Ready,
 					AsyncSink::NotReady((_, p)) => {
-						AsyncSink::NotReady((p_type, p_id, p))
+						AsyncSink::NotReady((p_type, p_gen, p_id, p))
 					}
 				},
 			),

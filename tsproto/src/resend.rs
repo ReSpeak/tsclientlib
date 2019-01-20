@@ -22,8 +22,9 @@ use crate::handler_data::{ConnectionValue, ConnectionValueWeak, Data};
 use crate::packets::*;
 use crate::{Error, LockedHashMap};
 
+/// Identify a packet with type, generation id and packet id.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct PacketId(PacketType, u16);
+struct PacketId(PacketType, u32, u16);
 
 /// A record of a packet that can be resent.
 #[derive(Clone, Debug)]
@@ -55,7 +56,8 @@ impl Ord for SendRecord {
 		// If the packet was not already sent, it is more important
 		if self.tries == 0 {
 			if other.tries == 0 {
-				self.id.1.cmp(&other.id.1).reverse()
+				self.id.1.cmp(&other.id.1).reverse().then_with(||
+					self.id.2.cmp(&other.id.2).reverse())
 			} else {
 				Ordering::Greater
 			}
@@ -63,11 +65,11 @@ impl Ord for SendRecord {
 			Ordering::Less
 		} else {
 			// The smallest time is the most important time
-			match self.last.cmp(&other.last).reverse() {
+			self.last.cmp(&other.last).reverse().then_with(||
 				// Else, the lower packet id is more important
-				Ordering::Equal => self.id.1.cmp(&other.id.1).reverse(),
-				c => c,
-			}
+				self.id.1.cmp(&other.id.1).reverse().then_with(||
+					self.id.2.cmp(&other.id.2).reverse())
+			)
 		}
 	}
 }
@@ -203,7 +205,7 @@ impl Resender for DefaultResender {
 			| ResendStates::Dead { to_send, .. } => {
 				if let Some(i) = to_send
 					.iter()
-					.position(|rec| rec.id.0 == p_type && rec.id.1 == p_id)
+					.position(|rec| rec.id.0 == p_type && rec.id.2 == p_id)
 				{
 					Some(to_send.remove(i))
 				} else {
@@ -215,7 +217,7 @@ impl Resender for DefaultResender {
 			| ResendStates::Disconnecting { to_send, .. } => {
 				if let Some(is_first) = to_send
 					.peek()
-					.map(|rec| rec.id.0 == p_type && rec.id.1 == p_id)
+					.map(|rec| rec.id.0 == p_type && rec.id.2 == p_id)
 				{
 					if is_first {
 						// Optimized to remove the first element
@@ -226,7 +228,7 @@ impl Resender for DefaultResender {
 						let mut v = tmp.into_vec();
 						let mut rec = None;
 						if let Some(i) = v.iter().position(|rec| {
-							rec.id.0 == p_type && rec.id.1 == p_id
+							rec.id.0 == p_type && rec.id.2 == p_id
 						}) {
 							rec = Some(v.remove(i));
 						}
@@ -378,19 +380,20 @@ impl Resender for DefaultResender {
 }
 
 impl Sink for DefaultResender {
-	type SinkItem = (PacketType, u16, Bytes);
+	/// Packet type, generation id, packet id, packet content
+	type SinkItem = (PacketType, u32, u16, Bytes);
 	type SinkError = Error;
 
 	fn start_send(
 		&mut self,
-		(p_type, p_id, packet): Self::SinkItem,
+		(p_type, p_gen, p_id, packet): Self::SinkItem,
 	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
 	{
 		let rec = SendRecord {
 			sent: Utc::now(),
 			last: Utc::now(),
 			tries: 0,
-			id: PacketId(p_type, p_id),
+			id: PacketId(p_type, p_gen, p_id),
 			packet,
 		};
 
@@ -436,7 +439,7 @@ impl Sink for DefaultResender {
 			// free.
 			self.resender_task.push(task::current());
 			Ok(futures::AsyncSink::NotReady((
-				rec.id.0, rec.id.1, rec.packet,
+				rec.id.0, rec.id.1, rec.id.2, rec.packet,
 			)))
 		} else {
 			// Notify the resender future that a new packet is available
@@ -807,6 +810,13 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 			let packet = if let Some(rec) =
 				&mut con.resender.state.peek_mut_next_record()
 			{
+				// Print packet for debugging
+				//info!(con.logger, "Packet in send queue";
+					//"id" => ?rec.id,
+					//"last" => ?rec.last,
+					//"tries" => rec.tries,
+				//);
+
 				// Check if we should resend this packet or not
 				if rec.tries != 0 && rec.last > last_threshold {
 					// Schedule next send
@@ -821,13 +831,6 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 					}
 					return Ok(futures::Async::NotReady);
 				}
-
-				// Print packet for debugging
-				//info!(con.logger, "Packet in send queue";
-				//"p_id" => rec.id.1,
-				//"p_type" => ?rec.id.0,
-				//"last" => ?rec.last,
-				//);
 				Some(rec.packet.clone())
 			} else {
 				//info!(con.logger, "No packet in send queue");
