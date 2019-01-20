@@ -13,7 +13,7 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 /// An event gets fired when something in the data structure of a connection
 /// changes.
 ///
-/// The three different types are
+/// The different types are
 ///
 /// - [`PropertyAdded`]: When a new item is added, like a client gets assigned
 ///   a new server group or a new client joins the server.
@@ -27,7 +27,7 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 /// [`PropertyChanged`]: #variant.PropertyChanged
 /// [`PropertyRemoved`]: #variant.PropertyRemoved
 #[derive(Clone, Debug, PartialEq)]
-pub enum Events {
+pub enum Event {
 	/// The object with this id was added.
 	///
 	/// You can find the new object inside the connection data structure.
@@ -49,18 +49,4 @@ pub enum Events {
 	/// This happens when a client leaves the server (including our own client)
 	/// or a channel is removed.
 	PropertyRemoved(PropertyId, Property),
-}
-
-impl Events {
-	/// Get the id of the affected property.
-	///
-	/// For a removed object, you can no longer access it in the connection data
-	/// structure but the object is available in the second tuple item.
-	pub fn id(&self) -> &PropertyId {
-		match self {
-			Events::PropertyAdded(id) |
-			Events::PropertyChanged(id, _) |
-			Events::PropertyRemoved(id, _) => id,
-		}
-	}
 }

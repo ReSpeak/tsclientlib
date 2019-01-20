@@ -1,6 +1,6 @@
 <#@ template cleanws="true" #>
 impl Connection {
-	fn handle_message_generated(&mut self, msg: &InMessage, logger: &Logger) -> Result<Vec<Events>> {
+	fn handle_message_generated(&mut self, msg: &InMessage, logger: &Logger) -> Result<Vec<Event>> {
 		let mut events = Vec::new();
 		match msg.msg() {
 <# for event in &self.decls {
@@ -19,7 +19,7 @@ impl Connection {
 				let old = self.<#= function_name #>(<#= ids #>)<#= try_result(&function_name) #>
 					.ok_or_else(|| format_err!("<#= event.book_struct.name #> {:?} \
 						should be removed but does not exist", <#= ids2 #>))?;
-				events.push(Events::PropertyRemoved(
+				events.push(Event::PropertyRemoved(
 					PropertyId::<#= event.book_struct.name #><#= ids2 #>,
 					Property::<#= event.book_struct.name #>(old),
 				));
@@ -47,7 +47,7 @@ impl Connection {
 									#>
 				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,
 					Some(cmd.<#= get_notification_field(from, &event.msg) #>));
-				events.push(Events::PropertyChanged(
+				events.push(Event::PropertyChanged(
 					<#= get_property_id(event, to, from) #>,
 					<#= get_property(event, to, "old") #>,
 				));
@@ -58,7 +58,7 @@ impl Connection {
 									<# } else { #>
 					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
 									<# } #>
-					events.push(Events::PropertyChanged(
+					events.push(Event::PropertyChanged(
 						<#= get_property_id(event, to, from) #>,
 						<#= get_property(event, to, "old") #>,
 					));
@@ -66,7 +66,7 @@ impl Connection {
 									<# } else { #>
 				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,
 					cmd.<#= get_notification_field(from, &event.msg) #>);
-				events.push(Events::PropertyChanged(
+				events.push(Event::PropertyChanged(
 					<#= get_property_id(event, to, from) #>,
 					<#= get_property(event, to, "old") #>,
 				));
@@ -75,13 +75,13 @@ impl Connection {
 								// The field in the struct is a vector
 								RuleOp::Add => { #>
 				r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
-				events.push(Events::PropertyAdded(<#= get_property_id(event, to, from) #>));
+				events.push(Event::PropertyAdded(<#= get_property_id(event, to, from) #>));
 								<# }
 								RuleOp::Remove => { #>
 									// Find index and remove
 				let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.get_rust_name() #>);
 				let old = r.<#= to_snake_case(&to.name) #>.remove(i);
-				events.push(Events::PropertyRemoved(
+				events.push(Event::PropertyRemoved(
 					<#= get_property_id(event, to, from) #>,
 					<#= get_property(event, to, "old") #>,
 				));
@@ -140,7 +140,7 @@ impl Connection {
 				}; #>
 				};
 				self.<#= function_name #>(<#= ids #>, r)<#= try_result(&function_name) #>;
-				events.push(Events::PropertyAdded(PropertyId::<#= event.book_struct.name #><#= ids2 #>));
+				events.push(Event::PropertyAdded(PropertyId::<#= event.book_struct.name #><#= ids2 #>));
 			<# } #>
 			}
 <# } #>

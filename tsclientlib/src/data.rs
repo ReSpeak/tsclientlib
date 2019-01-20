@@ -14,7 +14,7 @@ use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
 use crate::{Error, Result};
-use crate::events::{Events, Property, PropertyId};
+use crate::events::{Event, Property, PropertyId};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
@@ -98,7 +98,7 @@ impl Connection {
 	}
 
 	pub(crate) fn handle_message(&mut self, msg: &InMessage, logger: &Logger)
-		-> Result<Vec<Events>> {
+		-> Result<Vec<Event>> {
 		self.handle_message_generated(msg, logger)
 	}
 
@@ -173,20 +173,20 @@ impl Connection {
 		&mut self,
 		channel_id: ChannelId,
 		cmd: &s2c::ChannelEditedPart,
-		events: &mut Vec<Events>,
+		events: &mut Vec<Event>,
 	)
 	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			let (ch, ch_fam) = max_clients!(cmd);
 			if let Some(ch) = ch {
-				events.push(Events::PropertyChanged(
+				events.push(Event::PropertyChanged(
 					PropertyId::ChannelMaxClients(channel_id),
 					Property::ChannelMaxClients(channel.max_clients.take()),
 				));
 				channel.max_clients = Some(ch);
 			}
 			if let Some(ch_fam) = ch_fam {
-				events.push(Events::PropertyChanged(
+				events.push(Event::PropertyChanged(
 					PropertyId::ChannelMaxFamilyClients(channel_id),
 					Property::ChannelMaxFamilyClients(channel.max_family_clients.take()),
 				));
@@ -240,7 +240,7 @@ impl Connection {
 		&mut self,
 		channel_id: ChannelId,
 		cmd: &s2c::ChannelEditedPart,
-		events: &mut Vec<Events>,
+		events: &mut Vec<Event>,
 	)
 	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
@@ -255,7 +255,7 @@ impl Connection {
 			} else {
 				return;
 			};
-			events.push(Events::PropertyChanged(
+			events.push(Event::PropertyChanged(
 				PropertyId::ChannelChannelType(channel_id),
 				Property::ChannelChannelType(channel.channel_type),
 			));
@@ -319,4 +319,150 @@ impl Connection {
 
 impl ClientServerGroupMut<'_> {
 	fn get_id(&self) -> ServerGroupId { *self.inner }
+}
+
+/// The `ChannelOptions` are used to set initial properties of a new channel.
+///
+/// A channel can be created with [`ServerMut::add_channel`]. The only necessary
+/// property of a channel is the name, all other properties will be set to their
+/// default value.
+///
+/// [`ServerMut::add_channel`]: struct.ServerMut.html#method.add_channel
+pub struct ChannelOptions<'a> {
+	name: &'a str,
+}
+
+impl<'a> ChannelOptions<'a> {
+	/// Create new `ChannelOptions` to add a new channel to a server.
+	///
+	/// # Arguments
+	/// You have to supply a name for the new channel. All other properties are
+	/// optional.
+	pub fn new(name: &'a str) -> Self { Self { name } }
+}
+
+impl ServerMut<'_> {
+	/// Create a new channel.
+	///
+	/// # Arguments
+	/// All initial properties of the channel can be set through the
+	/// [`ChannelOptions`] argument.
+	///
+	/// # Examples
+	/// ```rust,no_run
+	/// use tsclientlib::data::ChannelOptions;
+	/// # use futures::Future;
+	/// # let connection: tsclientlib::Connection = panic!();
+	///
+	/// let con_lock = connection.lock();
+	/// let con_mut = con_lock.to_mut();
+	/// // Send a message
+	/// tokio::spawn(con_mut.get_server().add_channel(ChannelOptions::new("My new channel"))
+	///	    .map_err(|e| println!("Failed to create channel ({:?})", e)));
+	/// ```
+	///
+	/// [`ChannelOptions`]: struct.ChannelOptions.html
+	pub fn add_channel(&self, options: ChannelOptions) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::OutChannelCreateMessage::new(
+			vec![messages::c2s::ChannelCreatePart {
+				name: options.name,
+				phantom: PhantomData,
+			}].into_iter()))
+	}
+
+	/// Send a text message in the server chat.
+	///
+	/// # Examples
+	/// ```rust,no_run
+	/// # use futures::Future;
+	/// # let connection: tsclientlib::Connection = panic!();
+	/// let con_lock = connection.lock();
+	/// let con_mut = con_lock.to_mut();
+	/// // Send a message
+	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
+	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
+	/// ```
+	pub fn send_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
+			vec![messages::c2s::SendTextMessagePart {
+				target: TextMessageTargetMode::Server,
+				target_client_id: None,
+				message,
+				phantom: PhantomData,
+			}].into_iter()))
+	}
+}
+
+impl ConnectionMut<'_> {
+	/// Send a text message to the current channel.
+	///
+	/// # Examples
+	/// ```rust,no_run
+	/// # use futures::Future;
+	/// # let connection: tsclientlib::Connection = panic!();
+	/// let con_lock = connection.lock();
+	/// let con_mut = con_lock.to_mut();
+	/// // Send a message
+	/// tokio::spawn(con_mut.send_channel_textmessage("Hi channel")
+	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
+	/// ```
+	pub fn send_channel_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
+			vec![messages::c2s::SendTextMessagePart {
+				target: TextMessageTargetMode::Channel,
+				target_client_id: None,
+				message,
+				phantom: PhantomData,
+			}].into_iter()))
+	}
+}
+
+impl ClientMut<'_> {
+	/// Send a text message to this client.
+	///
+	/// # Examples
+	/// Greet a user:
+	/// ```rust,no_run
+	/// # use futures::Future;
+	/// # let connection: tsclientlib::Connection = panic!();
+	/// let con_lock = connection.lock();
+	/// let con_mut = con_lock.to_mut();
+	/// // Get our own client in mutable form
+	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
+	/// // Send a message
+	/// tokio::spawn(client.send_textmessage("Hi me!")
+	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
+	/// ```
+	pub fn send_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
+			vec![messages::c2s::SendTextMessagePart {
+				target: TextMessageTargetMode::Client,
+				target_client_id: Some(self.inner.id),
+				message,
+				phantom: PhantomData,
+			}].into_iter()))
+	}
+
+	/// Poke this client with a message.
+	///
+	/// # Examples
+	/// ```rust,no_run
+	/// # use futures::Future;
+	/// # let connection: tsclientlib::Connection = panic!();
+	/// let con_lock = connection.lock();
+	/// let con_mut = con_lock.to_mut();
+	/// // Get our own client in mutable form
+	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
+	/// // Send a message
+	/// tokio::spawn(client.poke("Hihihi")
+	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
+	/// ```
+	pub fn poke(&self, message: &str) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::OutClientPokeRequestMessage::new(
+			vec![messages::c2s::ClientPokeRequestPart {
+				client_id: self.inner.id,
+				message,
+				phantom: PhantomData,
+			}].into_iter()))
+	}
 }

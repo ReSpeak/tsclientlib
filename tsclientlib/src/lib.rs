@@ -75,7 +75,7 @@ pub use tsproto_commands::{
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-pub type EventListener = Box<Fn(&ConnectionLock, &[events::Events]) + Send + Sync>;
+pub type EventListener = Box<Fn(&ConnectionLock, &[events::Event]) + Send + Sync>;
 
 #[derive(Fail, Debug)]
 pub enum Error {
@@ -515,7 +515,7 @@ impl Connection {
 	/// interface may change on any version changes.
 	pub fn get_udp_packet_sink(
 		&self,
-	) -> impl Sink<SinkItem = (PacketType, u16, bytes::Bytes), SinkError = Error>
+	) -> impl Sink<SinkItem = (PacketType, u32, u16, bytes::Bytes), SinkError = Error>
 	{
 		self.inner
 			.client_connection
@@ -672,7 +672,7 @@ impl Connection {
 	///     .and_then(|connection| {
 	///         connection.add_on_disconnect(Box::new(|| {
 	///             println!("Disconnected");
-	///         }))
+	///         }));
 	///
 	///         connection.disconnect(None)
 	///     })

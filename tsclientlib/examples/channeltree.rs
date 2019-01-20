@@ -131,12 +131,30 @@ fn main() -> Result<(), failure::Error> {
 
 				// Change name
 				let con_mut = con.to_mut();
-				tokio::spawn(con_mut.set_name(&format!("{}1", con.server.clients[&con.own_client].name)).map_err(|e| {
+				let name = &con.server.clients[&con.own_client].name;
+				tokio::spawn(con_mut.set_name(&format!("{}1", name)).map_err(|e| {
 					println!("Failed to set client name: {:?}", e);
 				}));
 				tokio::spawn(con_mut.set_input_muted(true).map_err(|e| {
 					println!("Failed to set muted: {:?}", e);
 				}));
+
+				// Find a client
+				if let Some(client) = con.server.clients.keys()
+					.filter(|i| **i != con.own_client)
+					.next() {
+					let client = con_mut.get_server().get_client(client).unwrap();
+
+					// Send message
+					//tokio::spawn(client.send_textmessage(&format!("Hi {}", client.name)).map_err(|e| {
+						//println!("Failed to send message: {:?}", e);
+					//}));
+
+					// Poke
+					tokio::spawn(client.poke("Hihihi").map_err(|e| {
+						println!("Failed to poke: {:?}", e);
+					}));
+				}
 			}
 
 			// Listen to events
