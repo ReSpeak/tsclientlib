@@ -1,13 +1,6 @@
-#[macro_use]
-extern crate failure;
-extern crate futures;
-extern crate structopt;
-extern crate tokio;
-extern crate tsclientlib;
-extern crate tsproto;
-
 use std::time::{Duration, Instant};
 
+use failure::format_err;
 use futures::{Future, Sink};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;

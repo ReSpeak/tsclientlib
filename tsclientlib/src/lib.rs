@@ -71,6 +71,7 @@ pub use tsproto_commands::{
 	TextMessageTargetMode, GroupType, IconHash, GroupNamingMode, Codec,
 	ChannelType, ClientDbId, ChannelGroupId, TalkPowerRequest, ClientType,
 	LicenseType, HostBannerMode, HostMessageMode, CodecEncryptionMode, UidRef,
+	Invoker, InvokerRef,
 };
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
@@ -265,6 +266,7 @@ impl Connection {
 	/// ```
 	///
 	/// [`ConnectOptions`]: struct.ConnectOptions.html
+	#[must_use = "futures do nothing unless polled"]
 	pub fn new(mut options: ConnectOptions) -> BoxFuture<Connection> {
 		// Initialize tsproto if it was not done yet
 		static TSPROTO_INIT: Once = ONCE_INIT;
@@ -530,6 +532,7 @@ impl Connection {
 	///
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
+	#[must_use = "futures do nothing unless polled"]
 	pub fn send_packet(
 		&self,
 		mut packet: OutPacket,
@@ -547,11 +550,7 @@ impl Connection {
 		// Send a message and wait until we get an answer for the return code
 		self.get_packet_sink()
 			.send(packet)
-			.and_then(|_| {
-				recv.map_err(|e| {
-					format_err!("Too many return codes ({:?})", e).into()
-				})
-			})
+			.and_then(|_| recv.from_err())
 			.and_then(|r| {
 				if r == TsError::Ok {
 					Ok(())
@@ -614,6 +613,7 @@ impl Connection {
 	/// );
 	/// # }
 	/// ```
+	#[must_use = "futures do nothing unless polled"]
 	pub fn disconnect<O: Into<Option<DisconnectOptions>>>(
 		&self,
 		options: O,
@@ -803,6 +803,15 @@ impl fmt::Display for ServerAddress {
 	}
 }
 
+/// All possible targets to send messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageTarget {
+	Server,
+	Channel,
+	Client(ClientId),
+	Poke(ClientId),
+}
+
 /// The configuration to create a new connection.
 ///
 /// # Example
@@ -847,12 +856,11 @@ impl ConnectOptions {
 	///
 	/// # Arguments
 	/// The address of the server has to be supplied. The address can be a
-	/// [`SocketAddr`], a [`String`] or directly a [`ServerAddress`]. A string
+	/// [`SocketAddr`], a string or directly a [`ServerAddress`]. A string
 	/// will automatically be resolved from all formats supported by TeamSpeak.
 	/// For details, see [`resolver::resolve`].
 	///
 	/// [`SocketAddr`]: ../../std/net/enum.SocketAddr.html
-	/// [`String`]: ../../std/string/struct.String.html
 	/// [`ServerAddress`]: enum.ServerAddress.html
 	/// [`resolver::resolve`]: resolver/method.resolve.html
 	#[inline]

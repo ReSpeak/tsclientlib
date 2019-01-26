@@ -29,6 +29,11 @@ impl<'a> Into<Uid> for UidRef<'a> {
 		Uid(self.0.into())
 	}
 }
+impl Uid {
+	pub fn as_ref(&self) -> UidRef {
+		UidRef(self.0.as_ref())
+	}
+}
 
 /// The database id of a client.
 ///
@@ -271,6 +276,30 @@ pub enum MaxClients {
 pub struct TalkPowerRequest {
 	pub time: DateTime<Utc>,
 	pub message: String,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct Invoker {
+	pub name: String,
+	pub id: ClientId,
+	pub uid: Option<Uid>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct InvokerRef<'a> {
+	pub name: &'a str,
+	pub id: ClientId,
+	pub uid: Option<UidRef<'a>>,
+}
+
+impl Invoker {
+	pub fn as_ref(&self) -> InvokerRef {
+		InvokerRef {
+			name: &self.name,
+			id: self.id,
+			uid: self.uid.as_ref().map(|u| u.as_ref()),
+		}
+	}
 }
 
 impl fmt::Display for ClientId {

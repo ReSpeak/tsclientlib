@@ -1,6 +1,7 @@
 <#@ template cleanws="true" #>
 impl Connection {
-	fn handle_message_generated(&mut self, msg: &InMessage, logger: &Logger) -> Result<Vec<Event>> {
+	/// Return if the message was handled and the generated events.
+	fn handle_message_generated(&mut self, msg: &InMessage, logger: &Logger) -> Result<(bool, Vec<Event>)> {
 		let mut events = Vec::new();
 		match msg.msg() {
 <# for event in &self.decls {
@@ -146,9 +147,9 @@ impl Connection {
 <# } #>
 			_ => {
 				// Ignore unmentioned messages
-				debug!(logger, "Unknown message for book"; "message" => msg.command().name());
+				return Ok((false, events));
 			}
 		}
-		Ok(events)
+		Ok((true, events))
 	}
 }

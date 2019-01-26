@@ -11,21 +11,7 @@ use crate::data::{ServerGroup, Server, OptionalChannelData, File, Channel,
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
 
 /// An event gets fired when something in the data structure of a connection
-/// changes.
-///
-/// The different types are
-///
-/// - [`PropertyAdded`]: When a new item is added, like a client gets assigned
-///   a new server group or a new client joins the server.
-/// - [`PropertyChanged`]: When an attribute gets updated, e.g. a client changes
-///   its nickname or switches to another channel.
-/// - [`PropertyRemoved`]: When an item is removed from the data structure. This
-///   happens when a client leaves the server (including our own client) or a
-///   channel is removed.
-///
-/// [`PropertyAdded`]: #variant.PropertyAdded
-/// [`PropertyChanged`]: #variant.PropertyChanged
-/// [`PropertyRemoved`]: #variant.PropertyRemoved
+/// changes or something happens like we receive a text message or get poked.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
 	/// The object with this id was added.
@@ -49,4 +35,14 @@ pub enum Event {
 	/// This happens when a client leaves the server (including our own client)
 	/// or a channel is removed.
 	PropertyRemoved(PropertyId, Property),
+
+	Message {
+		/// Where we received the message, in the server or channel chat or
+		/// directly from another client.
+		from: MessageTarget,
+		/// The user who wrote the message.
+		invoker: Invoker,
+		/// The content of the message.
+		message: String,
+	},
 }

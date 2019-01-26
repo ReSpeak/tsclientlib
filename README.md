@@ -8,7 +8,10 @@ If you are searching for a usable client instead of a library, [Qint](https://gi
 ## Dependencies
 - [OpenSSL](https://www.openssl.org) 1.1
 - [GStreamer](https://gstreamer.freedesktop.org)
-- [Rust](https://rust-lang.org) (preferred installation method is [rustup](https://rustup.rs))
+- [Rust](https://rust-lang.org) (preferred installation method is [rustup](https://rustup.rs)), currently the nightly version is needed
+
+## Getting Started
+An example of a simple chat bot can be found [here](https://github.com/ReSpeak/SimpleBot).
 
 ## Clone
 This repository embeds the [declarations](https://github.com/ReSpeak/tsdeclarations) as submodule. You can clone with
@@ -68,7 +71,7 @@ where `<name>` is `connect` or `message`.
 On a i7-5280K with 6 cores/12 threads @3.6 GHz, which uses more or less only one thread because we only test a single connection, we get:
 
 - 170 ms for creating one connection, which means 5.9 connections per second. This comes down to solving the RSA puzzle at the beginning of a connection, not much else plays a role. Be sure to run the benchmark with `--features rug` to get an efficient big integer implementation, otherwise it will fall back to a slower implementation.
-- 160 µs for sending a message, which means 6250 messages per second.
+- 135 µs for sending a message, which means 7400 messages per second.
 
 ## Miscellaneous
 This project is not an official TeamSpeak project. We started to write an own client for fun and because we want some features (and bugfixes) which are not available in the official client.

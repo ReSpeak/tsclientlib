@@ -70,6 +70,7 @@ for e in &self.0.decls {
 	if e.op == RuleOp::Update { #>
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
 <# for r in &e.rules { #>
+	#[must_use = "futures do nothing unless polled"]
 	pub fn set_<#= to_snake_case(r.from_name()) #>(&self, <#=
 		get_arguments(r) #>) -> impl Future<Item=(), Error=Error> {
 	<# call_functions(f, e.ids.iter().chain(std::iter::once(r)), "self.inner.")?; #>
@@ -110,6 +111,7 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 			"".into()
 		}; #>
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
+	#[must_use = "futures do nothing unless polled"]
 	pub fn remove<#= name_add #>(&self<#= args #>) -> impl Future<Item=(), Error=Error> {
 	<# call_functions(f, e.ids.iter(), "self.inner.")?; #>
 		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
@@ -151,6 +153,7 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 		}; #>
 
 impl<'a> <#= name #>Mut<'a> {
+	#[must_use = "futures do nothing unless polled"]
 	pub fn remove<#= name_add #>(&self<#= args #>) -> impl Future<Item=(), Error=Error> {
 	<# call_functions(f, e.ids.iter().chain(std::iter::once(r)), "self.")?; #>
 		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
@@ -188,6 +191,7 @@ impl<'a> <#= name #>Mut<'a> {
 		#>
 
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
+	#[must_use = "futures do nothing unless polled"]
 	pub fn add_<#= to_snake_case(name) #>(&self
 		<#= get_all_arguments(e, Some(r)) #>) -> impl Future<Item=(), Error=Error> {
 	<# call_functions(f, e.ids.iter().chain(std::iter::once(r)), "self.")?; #>

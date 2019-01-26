@@ -13,7 +13,7 @@ use slog::{debug, Logger};
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
-use crate::{Error, Result};
+use crate::{Error, MessageTarget, Result};
 use crate::events::{Event, Property, PropertyId};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
@@ -23,26 +23,15 @@ include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 
 macro_rules! max_clients {
 	($cmd:ident) => {{
-		let ch = if $cmd.is_max_clients_unlimited == Some(true) {
+		if $cmd.is_max_clients_unlimited == Some(true) {
 			Some(MaxClients::Unlimited)
 		} else if $cmd.max_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
 			Some(MaxClients::Limited($cmd.max_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
-			};
-		let ch_fam = if $cmd.is_max_family_clients_unlimited == Some(true) {
-			Some(MaxClients::Unlimited)
-		} else if $cmd.inherits_max_family_clients == Some(true) {
-			Some(MaxClients::Inherited)
-		} else if $cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
-			Some(MaxClients::Limited($cmd.max_family_clients.unwrap() as u16))
-		} else {
-			// Max clients is less than zero or too high so ignore it
-			None
-			};
-		(ch, ch_fam)
-		}};
+		}
+	}};
 }
 
 impl Connection {
@@ -99,7 +88,50 @@ impl Connection {
 
 	pub(crate) fn handle_message(&mut self, msg: &InMessage, logger: &Logger)
 		-> Result<Vec<Event>> {
-		self.handle_message_generated(msg, logger)
+		// Returns if it handled the message so we can warn if a message is
+		// unhandled.
+		let (mut handled, mut events) = self.handle_message_generated(msg, logger)?;
+		// Handle special messages
+		match msg.msg() {
+			InMessages::TextMessage(cmd) => for cmd in cmd.iter() {
+				let from = match cmd.target {
+					TextMessageTargetMode::Server => MessageTarget::Server,
+					TextMessageTargetMode::Channel => MessageTarget::Channel,
+					TextMessageTargetMode::Client => MessageTarget::Client(cmd.invoker_id),
+					TextMessageTargetMode::Unknown => return Err(format_err!(
+						"Unknown TextMessageTargetMode").into()),
+				};
+				events.push(Event::Message {
+					from,
+					invoker: Invoker {
+						name: cmd.invoker_name.into(),
+						id: cmd.invoker_id,
+						uid: Some(cmd.invoker_uid.clone().into()),
+					},
+					message: cmd.message.to_string(),
+				});
+				handled = true;
+			}
+			InMessages::ClientPoke(cmd) => for cmd in cmd.iter() {
+				events.push(Event::Message {
+					from: MessageTarget::Poke(cmd.invoker_id),
+					invoker: Invoker {
+						name: cmd.invoker_name.into(),
+						id: cmd.invoker_id,
+						uid: Some(cmd.invoker_uid.clone().into()),
+					},
+					message: cmd.message.to_string(),
+				});
+				handled = true;
+			}
+			_ => {}
+		}
+
+		if !handled {
+			debug!(logger, "Unknown message"; "message" => msg.command().name());
+		}
+
+		Ok(events)
 	}
 
 	fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
@@ -167,7 +199,18 @@ impl Connection {
 		cmd: &s2c::ChannelCreatedPart,
 	) -> (Option<MaxClients>, Option<MaxClients>)
 	{
-		max_clients!(cmd)
+		let ch = max_clients!(cmd);
+		let ch_fam = if cmd.is_max_family_clients_unlimited {
+			Some(MaxClients::Unlimited)
+		} else if cmd.inherits_max_family_clients {
+			Some(MaxClients::Inherited)
+		} else if cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
+			Some(MaxClients::Limited(cmd.max_family_clients.unwrap() as u16))
+		} else {
+			// Max clients is less than zero or too high so ignore it
+			None
+		};
+		(ch, ch_fam)
 	}
 	fn max_clients_ce_fun(
 		&mut self,
@@ -177,7 +220,7 @@ impl Connection {
 	)
 	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			let (ch, ch_fam) = max_clients!(cmd);
+			let ch = max_clients!(cmd);
 			if let Some(ch) = ch {
 				events.push(Event::PropertyChanged(
 					PropertyId::ChannelMaxClients(channel_id),
@@ -185,6 +228,16 @@ impl Connection {
 				));
 				channel.max_clients = Some(ch);
 			}
+			let ch_fam = if cmd.is_max_family_clients_unlimited == Some(true) {
+				Some(MaxClients::Unlimited)
+			} else if cmd.inherits_max_family_clients == Some(true) {
+				Some(MaxClients::Inherited)
+			} else if cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
+				Some(MaxClients::Limited(cmd.max_family_clients.unwrap() as u16))
+			} else {
+				// Max clients is less than zero or too high so ignore it
+				None
+			};
 			if let Some(ch_fam) = ch_fam {
 				events.push(Event::PropertyChanged(
 					PropertyId::ChannelMaxFamilyClients(channel_id),
@@ -362,6 +415,7 @@ impl ServerMut<'_> {
 	/// ```
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
+	#[must_use = "futures do nothing unless polled"]
 	pub fn add_channel(&self, options: ChannelOptions) -> impl Future<Item=(), Error=Error> {
 		self.connection.send_packet(messages::c2s::OutChannelCreateMessage::new(
 			vec![messages::c2s::ChannelCreatePart {
@@ -382,6 +436,7 @@ impl ServerMut<'_> {
 	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
 	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
 	/// ```
+	#[must_use = "futures do nothing unless polled"]
 	pub fn send_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
 		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
 			vec![messages::c2s::SendTextMessagePart {
@@ -394,7 +449,7 @@ impl ServerMut<'_> {
 }
 
 impl ConnectionMut<'_> {
-	/// Send a text message to the current channel.
+	/// A generic method to send a text message or poke a client.
 	///
 	/// # Examples
 	/// ```rust,no_run
@@ -403,17 +458,44 @@ impl ConnectionMut<'_> {
 	/// let con_lock = connection.lock();
 	/// let con_mut = con_lock.to_mut();
 	/// // Send a message
-	/// tokio::spawn(con_mut.send_channel_textmessage("Hi channel")
-	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
+	/// tokio::spawn(con_mut.send_message("Hi")
+	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
-	pub fn send_channel_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
-		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
-			vec![messages::c2s::SendTextMessagePart {
-				target: TextMessageTargetMode::Channel,
-				target_client_id: None,
-				message,
-				phantom: PhantomData,
-			}].into_iter()))
+	#[must_use = "futures do nothing unless polled"]
+	pub fn send_message(&self, target: MessageTarget, message: &str) -> impl Future<Item=(), Error=Error> {
+		match target {
+			MessageTarget::Server => self.connection.send_packet(
+				messages::c2s::OutSendTextMessageMessage::new(
+					vec![messages::c2s::SendTextMessagePart {
+						target: TextMessageTargetMode::Server,
+						target_client_id: None,
+						message,
+						phantom: PhantomData,
+					}].into_iter())),
+			MessageTarget::Channel => self.connection.send_packet(
+				messages::c2s::OutSendTextMessageMessage::new(
+					vec![messages::c2s::SendTextMessagePart {
+						target: TextMessageTargetMode::Channel,
+						target_client_id: None,
+						message,
+						phantom: PhantomData,
+					}].into_iter())),
+			MessageTarget::Client(id) => self.connection.send_packet(
+				messages::c2s::OutSendTextMessageMessage::new(
+					vec![messages::c2s::SendTextMessagePart {
+						target: TextMessageTargetMode::Client,
+						target_client_id: Some(id),
+						message,
+						phantom: PhantomData,
+					}].into_iter())),
+			MessageTarget::Poke(id) => self.connection.send_packet(
+				messages::c2s::OutClientPokeRequestMessage::new(
+					vec![messages::c2s::ClientPokeRequestPart {
+						client_id: id,
+						message,
+						phantom: PhantomData,
+					}].into_iter())),
+		}
 	}
 }
 
@@ -433,6 +515,7 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.send_textmessage("Hi me!")
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
 	/// ```
+	#[must_use = "futures do nothing unless polled"]
 	pub fn send_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
 		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
 			vec![messages::c2s::SendTextMessagePart {
@@ -457,6 +540,7 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.poke("Hihihi")
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
 	/// ```
+	#[must_use = "futures do nothing unless polled"]
 	pub fn poke(&self, message: &str) -> impl Future<Item=(), Error=Error> {
 		self.connection.send_packet(messages::c2s::OutClientPokeRequestMessage::new(
 			vec![messages::c2s::ClientPokeRequestPart {
