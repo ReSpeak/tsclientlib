@@ -29,7 +29,10 @@ lazy_static! {
 		Logger::root(drain, o!())
 	};
 
-	static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Runtime::new()
+	static ref RUNTIME: tokio::runtime::Runtime = tokio::runtime::Builder::new()
+		// Limit to two threads
+		.core_threads(2)
+		.build()
 		.unwrap();
 	static ref FIRST_FREE_CON_ID: Mutex<ConnectionId> =
 		Mutex::new(ConnectionId(0));

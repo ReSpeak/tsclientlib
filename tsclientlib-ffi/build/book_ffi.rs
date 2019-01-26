@@ -127,6 +127,9 @@ fn get_ffi_arguments_def(r: &RuleKind) -> String {
 		RuleKind::Map { .. } | RuleKind::Function { .. } =>
 			format!("{}: {}", to_snake_case(r.from_name()),
 				get_ffi_type(&r.from().type_s).replace("mut", "const")),
+		RuleKind::ArgumentMap { from, .. } =>
+			format!("{}: {}", to_snake_case(from),
+				get_ffi_type(&r.from().type_s).replace("mut", "const")),
 		RuleKind::ArgumentFunction { from, type_s, .. } =>
 			format!("{}: {}", to_snake_case(from),
 				get_ffi_type(type_s).replace("mut", "const")),
@@ -137,6 +140,8 @@ fn get_ffi_arguments(r: &RuleKind) -> String {
 	match r {
 		RuleKind::Map { .. } | RuleKind::Function { .. } =>
 			convert_to_rust(&to_snake_case(r.from_name()), &r.from().type_s),
+		RuleKind::ArgumentMap { from, .. } =>
+			convert_to_rust(&to_snake_case(from), &r.from().type_s),
 		RuleKind::ArgumentFunction { from, type_s, .. } =>
 			convert_to_rust(&to_snake_case(from), type_s),
 	}
