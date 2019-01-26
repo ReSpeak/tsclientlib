@@ -177,7 +177,14 @@ impl<'a> InMessageTrait<'a> for In<#= msg.name #><'a> {
 
 impl<'a> In<#= msg.name #><'a> {
 	#[inline]
-	pub fn iter(&self) -> InMessageIterator<<#= msg.name #>Part> { InMessageIterator(&self.list, 0) }
+	pub fn iter(&self) -> InMessageIterator<<#= msg.name #>Part> { self.into_iter() }
+}
+
+impl<'a> IntoIterator for &'a In<#= msg.name #><'a> {
+	type Item = &'a <#= msg.name #>Part<'a>;
+	type IntoIter = InMessageIterator<'a, <#= msg.name #>Part<'a>>;
+	#[inline]
+	fn into_iter(self) -> Self::IntoIter { InMessageIterator(&self.list, 0) }
 }
 
 <# }

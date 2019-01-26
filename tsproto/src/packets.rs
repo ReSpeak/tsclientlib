@@ -629,7 +629,13 @@ impl InCommand {
 	pub fn data(&self) -> &CommandData { self.inner.suffix() }
 
 	#[inline]
-	pub fn iter(&self) -> CommandDataIterator { self.inner.suffix().iter() }
+	pub fn iter(&self) -> CommandDataIterator { self.into_iter() }
+}
+
+impl<'a> IntoIterator for &'a InCommand {
+	type Item = crate::commands::CanonicalCommand<'a>;
+	type IntoIter = CommandDataIterator<'a>;
+	fn into_iter(self) -> Self::IntoIter { self.inner.suffix().iter() }
 }
 
 impl<'a> AudioData<'a> {

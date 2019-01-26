@@ -155,7 +155,13 @@ impl<'a> CommandData<'a> {
 		})
 	}
 
-	pub fn iter(&self) -> CommandDataIterator {
+	pub fn iter(&self) -> CommandDataIterator { self.into_iter() }
+}
+
+impl<'a> IntoIterator for &'a CommandData<'a> {
+	type Item = crate::commands::CanonicalCommand<'a>;
+	type IntoIter = CommandDataIterator<'a>;
+	fn into_iter(self) -> Self::IntoIter {
 		let statics = self
 			.static_args
 			.iter()
