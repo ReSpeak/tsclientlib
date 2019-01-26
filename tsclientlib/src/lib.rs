@@ -12,9 +12,6 @@
 //!
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
-// TODO Needed to call a Box<FnOnce>
-#![feature(unsized_locals)]
-
 // Needed for futures on windows.
 #![recursion_limit="128"]
 
@@ -212,7 +209,7 @@ pub struct Connection {
 	inner: InnerConnection,
 }
 
-struct DisconnectListener(Option<Box<FnOnce() + Send>>);
+struct DisconnectListener(Option<Box<Fn() + Send>>);
 
 /// The main type of this crate, which represents a connection to a server.
 ///
@@ -680,7 +677,7 @@ impl Connection {
 	/// );
 	/// # }
 	/// ```
-	pub fn add_on_disconnect(&self, f: Box<FnOnce() + Send>) {
+	pub fn add_on_disconnect(&self, f: Box<Fn() + Send>) {
 		self.inner.client_data.lock().connection_listeners.push(Box::new(
 			DisconnectListener(Some(f))
 		));

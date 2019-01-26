@@ -1,7 +1,7 @@
 <#@ template cleanws="true" #>
 impl Connection {
 	/// Return if the message was handled and the generated events.
-	fn handle_message_generated(&mut self, msg: &InMessage, logger: &Logger) -> Result<(bool, Vec<Event>)> {
+	fn handle_message_generated(&mut self, msg: &InMessage) -> Result<(bool, Vec<Event>)> {
 		let mut events = Vec::new();
 		match msg.msg() {
 <# for event in &self.decls {
@@ -27,15 +27,19 @@ impl Connection {
 			<# } else if event.op == RuleOp::Update { #>
 				<# // Update the object
 				// Functions first
+				let mut rule_count = event.rules.len();
 				for rule in &event.rules {
-					if let RuleKind::Function { name, to } = rule { #>
+					if let RuleKind::Function { name, to } = rule {
+						rule_count -= 1; #>
 				self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, cmd, &mut events);
 					<# }
 				}
 				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name));
-				#>
+
+				// Only print if necessary
+				if rule_count > 0 { #>
 				let r = self.<#= function_name #>(<#= get_id_args(event) #>)<#= try_result(&function_name) #>;
-				<#
+				<# }
 				for rule in &event.rules {
 					match rule {
 						RuleKind::Map { from, to, op } => {

@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use failure::format_err;
-use futures::{Future, Sink};
+use futures::Future;
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
@@ -10,7 +10,6 @@ use tsclientlib::data::{self, Channel, Client};
 use tsclientlib::{
 	ChannelId, ConnectOptions, Connection, DisconnectOptions, Reason,
 };
-use tsproto::packets::{Direction, OutCommand, PacketType};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
@@ -90,25 +89,16 @@ fn main() -> Result<(), failure::Error> {
 			// Connect
 			Connection::new(con_config)
 		})
-		.and_then(|con| {
-			let packet = OutCommand::new::<
-				String,
-				String,
-				String,
-				String,
-				_,
-				_,
-				std::iter::Empty<_>,
-			>(
-				Direction::C2S,
-				PacketType::Command,
-				"channelsubscribeall",
-				std::iter::empty(),
-				std::iter::empty(),
-			);
+		.map(|con| {
+			// Listen to events
+			con.add_on_event("listener".into(), Box::new(|con, ev| {
+				println!("Got events: {:?}", ev);
+				print_channel_tree(&*con);
+			}));
 
-			// Send a message and wait until we get an answer for the return code
-			con.get_packet_sink().send(packet).map(|_| con)
+			tokio::spawn(con.lock().to_mut().get_server().set_subscribed(true)
+				.map_err(|e| println!("Failed to subscribe ({:?})", e)));
+			con
 		})
 		.and_then(|con| {
 			// Wait some time
@@ -131,36 +121,13 @@ fn main() -> Result<(), failure::Error> {
 				tokio::spawn(con_mut.set_input_muted(true).map_err(|e| {
 					println!("Failed to set muted: {:?}", e);
 				}));
-
-				// Find a client
-				if let Some(client) = con.server.clients.keys()
-					.filter(|i| **i != con.own_client)
-					.next() {
-					let client = con_mut.get_server().get_client(client).unwrap();
-
-					// Send message
-					//tokio::spawn(client.send_textmessage(&format!("Hi {}", client.name)).map_err(|e| {
-						//println!("Failed to send message: {:?}", e);
-					//}));
-
-					// Poke
-					tokio::spawn(client.poke("Hihihi").map_err(|e| {
-						println!("Failed to poke: {:?}", e);
-					}));
-				}
 			}
-
-			// Listen to events
-			con.add_on_event("listener".into(), Box::new(|con, ev| {
-				println!("Got events: {:?}", ev);
-				print_channel_tree(&*con);
-			}));
 
 			Ok(con)
 		})
 		.and_then(|con| {
 			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(10))
+			Delay::new(Instant::now() + Duration::from_secs(60))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		})

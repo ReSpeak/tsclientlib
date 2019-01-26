@@ -202,7 +202,8 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 					if let InMessages::CommandError(cmd) = msg.msg() {
 						let cmd = cmd.iter().next().unwrap();
 						// 3.1
-						if let Ok(code) = cmd.return_code.parse() {
+						if let Some(code) = cmd.return_code.and_then(|c|
+							c.parse().ok()) {
 							if let Some(return_sender) =
 								self.return_codes.return_codes.remove(&code)
 							{

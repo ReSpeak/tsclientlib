@@ -90,7 +90,7 @@ impl Connection {
 		-> Result<Vec<Event>> {
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
-		let (mut handled, mut events) = self.handle_message_generated(msg, logger)?;
+		let (mut handled, mut events) = self.handle_message_generated(msg)?;
 		// Handle special messages
 		match msg.msg() {
 			InMessages::TextMessage(cmd) => for cmd in cmd.iter() {
@@ -362,6 +362,51 @@ impl Connection {
 		Some(SocketAddr::new(ip, cmd.port))
 	}
 
+	fn channel_subscribe_fun(
+		&mut self,
+		channel_id: ChannelId,
+		_: &s2c::ChannelSubscribedPart,
+		events: &mut Vec<Event>,
+	) {
+		if let Ok(channel) = self.get_mut_channel(channel_id) {
+			events.push(Event::PropertyChanged(
+				PropertyId::ChannelSubscribed(channel_id),
+				Property::ChannelSubscribed(channel.subscribed),
+			));
+			channel.subscribed = true;
+		}
+	}
+
+	fn channel_unsubscribe_fun(
+		&mut self,
+		channel_id: ChannelId,
+		_: &s2c::ChannelUnsubscribedPart,
+		events: &mut Vec<Event>,
+	) {
+		if let Ok(channel) = self.get_mut_channel(channel_id) {
+			events.push(Event::PropertyChanged(
+				PropertyId::ChannelSubscribed(channel_id),
+				Property::ChannelSubscribed(channel.subscribed),
+			));
+			channel.subscribed = false;
+
+			// Remove all known clients from this channel
+			let server = self.get_mut_server();
+			let remove_clients = server.clients.values().filter_map(|c|
+				if c.channel == channel_id {
+					Some(c.id)
+				} else {
+					None
+				}).collect::<Vec<_>>();
+			for id in remove_clients {
+				events.push(Event::PropertyRemoved(
+					PropertyId::Client(id),
+					Property::Client(server.clients.remove(&id).unwrap()),
+				));
+			}
+		}
+	}
+
 
 	// Book to messages
 	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (Option<bool>, Option<&'a str>) {
@@ -445,6 +490,21 @@ impl ServerMut<'_> {
 				message,
 				phantom: PhantomData,
 			}].into_iter()))
+	}
+
+	/// Subscribe or unsubscribe from all channels.
+	pub fn set_subscribed(&self, subscribed: bool) -> impl Future<Item=(), Error=Error> {
+		if subscribed {
+			self.connection.send_packet(messages::c2s::OutChannelSubscribeAllMessage::new(
+				vec![messages::c2s::ChannelSubscribeAllPart {
+					phantom: PhantomData,
+				}].into_iter()))
+		} else {
+			self.connection.send_packet(messages::c2s::OutChannelUnsubscribeAllMessage::new(
+				vec![messages::c2s::ChannelUnsubscribeAllPart {
+					phantom: PhantomData,
+				}].into_iter()))
+		}
 	}
 }
 
