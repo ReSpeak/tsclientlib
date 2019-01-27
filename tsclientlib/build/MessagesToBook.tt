@@ -8,6 +8,31 @@ impl Connection {
 	let enum_name = &event.msg.name;
 #>
 			InMessages::<#= enum_name #>(cmd) => for cmd in cmd.iter() {
+				<# if event.msg.attributes.iter().any(|f| f == "invokerid?") { #>
+				let invoker = if let Some(id) = cmd.invoker_id {
+					if let Some(name) = cmd.invoker_name {
+						Some(Invoker {
+							id,
+							name: name.to_string(),
+							uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
+						})
+					} else {
+						None
+					}
+				} else {
+					None
+				};
+				<# } else if event.msg.attributes.iter().any(|f| f == "invokerid") { #>
+				let invoker = Some(Invoker {
+					id: cmd.invoker_id,
+					name: cmd.invoker_name.to_string(),
+					uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
+				});
+				<# } else { #>
+				#[allow(unused_variables)]
+				let invoker: Option<Invoker> = None;
+				<# } #>
+
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name));
 				let ids = get_id_args(event);
@@ -20,10 +45,11 @@ impl Connection {
 				let old = self.<#= function_name #>(<#= ids #>)<#= try_result(&function_name) #>
 					.ok_or_else(|| format_err!("<#= event.book_struct.name #> {:?} \
 						should be removed but does not exist", <#= ids2 #>))?;
-				events.push(Event::PropertyRemoved(
-					PropertyId::<#= event.book_struct.name #><#= ids2 #>,
-					Property::<#= event.book_struct.name #>(old),
-				));
+				events.push(Event::PropertyRemoved {
+					id: PropertyId::<#= event.book_struct.name #><#= ids2 #>,
+					old: Property::<#= event.book_struct.name #>(old),
+					invoker: invoker.clone(),
+				});
 			<# } else if event.op == RuleOp::Update { #>
 				<# // Update the object
 				// Functions first
@@ -52,10 +78,11 @@ impl Connection {
 									#>
 				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,
 					Some(cmd.<#= get_notification_field(from, &event.msg) #>));
-				events.push(Event::PropertyChanged(
-					<#= get_property_id(event, to, from) #>,
-					<#= get_property(event, to, "old") #>,
-				));
+				events.push(Event::PropertyChanged {
+					id: <#= get_property_id(event, to, from) #>,
+					old: <#= get_property(event, to, "old") #>,
+					invoker: invoker.clone(),
+				});
 									<# } else if from_opt { #>
 				if let Some(val) = cmd.<#= get_notification_field(from, &event.msg) #> {
 									<# if to.opt { #>
@@ -63,33 +90,39 @@ impl Connection {
 									<# } else { #>
 					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
 									<# } #>
-					events.push(Event::PropertyChanged(
-						<#= get_property_id(event, to, from) #>,
-						<#= get_property(event, to, "old") #>,
-					));
+					events.push(Event::PropertyChanged {
+						id: <#= get_property_id(event, to, from) #>,
+						old: <#= get_property(event, to, "old") #>,
+						invoker: invoker.clone(),
+					});
 				}
 									<# } else { #>
 				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,
 					cmd.<#= get_notification_field(from, &event.msg) #>);
-				events.push(Event::PropertyChanged(
-					<#= get_property_id(event, to, from) #>,
-					<#= get_property(event, to, "old") #>,
-				));
+				events.push(Event::PropertyChanged {
+					id: <#= get_property_id(event, to, from) #>,
+					old: <#= get_property(event, to, "old") #>,
+					invoker: invoker.clone(),
+				});
 								<# }
 								}
 								// The field in the struct is a vector
 								RuleOp::Add => { #>
 				r.<#= to_snake_case(&to.name) #>.push(cmd.<#= from.get_rust_name() #>);
-				events.push(Event::PropertyAdded(<#= get_property_id(event, to, from) #>));
+				events.push(Event::PropertyAdded {
+					id: <#= get_property_id(event, to, from) #>,
+					invoker: invoker.clone(),
+				})
 								<# }
 								RuleOp::Remove => { #>
 									// Find index and remove
 				let i = r.<#= to_snake_case(&to.name) #>.iter().position(&cmd.<#= from.get_rust_name() #>);
 				let old = r.<#= to_snake_case(&to.name) #>.remove(i);
-				events.push(Event::PropertyRemoved(
-					<#= get_property_id(event, to, from) #>,
-					<#= get_property(event, to, "old") #>,
-				));
+				events.push(Event::PropertyRemoved {
+					id: <#= get_property_id(event, to, from) #>,
+					old: <#= get_property(event, to, "old") #>,
+					invoker: invoker.clone(),
+				});
 								<# }
 							}
 						}
@@ -145,7 +178,10 @@ impl Connection {
 				}; #>
 				};
 				self.<#= function_name #>(<#= ids #>, r)<#= try_result(&function_name) #>;
-				events.push(Event::PropertyAdded(PropertyId::<#= event.book_struct.name #><#= ids2 #>));
+				events.push(Event::PropertyAdded {
+					id: PropertyId::<#= event.book_struct.name #><#= ids2 #>,
+					invoker: invoker.clone(),
+				});
 			<# } #>
 			}
 <# } #>

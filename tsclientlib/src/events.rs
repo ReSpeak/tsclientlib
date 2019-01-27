@@ -20,13 +20,20 @@ pub enum Event {
 	///
 	/// Like a client gets assigned a new server group or a new client joins the
 	/// server.
-	PropertyAdded(PropertyId),
+	PropertyAdded {
+		id: PropertyId,
+		invoker: Option<Invoker>,
+	},
 	/// The attribute with this id has changed.
 	///
 	/// The second tuple item holds the old value of the changed attribute.
 	///
 	/// E.g. a client changes its nickname or switches to another channel.
-	PropertyChanged(PropertyId, Property),
+	PropertyChanged {
+		id: PropertyId,
+		old: Property,
+		invoker: Option<Invoker>,
+	},
 	/// The object with this id was removed.
 	///
 	/// The object is not accessible anymore in the connection data structure,
@@ -34,7 +41,11 @@ pub enum Event {
 	///
 	/// This happens when a client leaves the server (including our own client)
 	/// or a channel is removed.
-	PropertyRemoved(PropertyId, Property),
+	PropertyRemoved {
+		id: PropertyId,
+		old: Property,
+		invoker: Option<Invoker>,
+	},
 
 	Message {
 		/// Where we received the message, in the server or channel chat or

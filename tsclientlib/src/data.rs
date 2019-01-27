@@ -106,7 +106,7 @@ impl Connection {
 					invoker: Invoker {
 						name: cmd.invoker_name.into(),
 						id: cmd.invoker_id,
-						uid: Some(cmd.invoker_uid.clone().into()),
+						uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
 					},
 					message: cmd.message.to_string(),
 				});
@@ -118,7 +118,7 @@ impl Connection {
 					invoker: Invoker {
 						name: cmd.invoker_name.into(),
 						id: cmd.invoker_id,
-						uid: Some(cmd.invoker_uid.clone().into()),
+						uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
 					},
 					message: cmd.message.to_string(),
 				});
@@ -220,12 +220,27 @@ impl Connection {
 	)
 	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
+			let invoker = if let Some(id) = cmd.invoker_id {
+				if let Some(name) = cmd.invoker_name {
+					Some(Invoker {
+						id,
+						name: name.to_string(),
+						uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
+					})
+				} else {
+					None
+				}
+			} else {
+				None
+			};
+
 			let ch = max_clients!(cmd);
 			if let Some(ch) = ch {
-				events.push(Event::PropertyChanged(
-					PropertyId::ChannelMaxClients(channel_id),
-					Property::ChannelMaxClients(channel.max_clients.take()),
-				));
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ChannelMaxClients(channel_id),
+					old: Property::ChannelMaxClients(channel.max_clients.take()),
+					invoker: invoker.clone(),
+				});
 				channel.max_clients = Some(ch);
 			}
 			let ch_fam = if cmd.is_max_family_clients_unlimited == Some(true) {
@@ -239,10 +254,11 @@ impl Connection {
 				None
 			};
 			if let Some(ch_fam) = ch_fam {
-				events.push(Event::PropertyChanged(
-					PropertyId::ChannelMaxFamilyClients(channel_id),
-					Property::ChannelMaxFamilyClients(channel.max_family_clients.take()),
-				));
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ChannelMaxFamilyClients(channel_id),
+					old: Property::ChannelMaxFamilyClients(channel.max_family_clients.take()),
+					invoker,
+				});
 				channel.max_family_clients = Some(ch_fam);
 			}
 		}
@@ -297,6 +313,20 @@ impl Connection {
 	)
 	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
+			let invoker = if let Some(id) = cmd.invoker_id {
+				if let Some(name) = cmd.invoker_name {
+					Some(Invoker {
+						id,
+						name: name.to_string(),
+						uid: cmd.invoker_uid.clone().map(|i| i.clone().into()),
+					})
+				} else {
+					None
+				}
+			} else {
+				None
+			};
+
 			let typ = if let Some(perm) = cmd.is_permanent {
 				if perm {
 					ChannelType::Permanent
@@ -308,10 +338,11 @@ impl Connection {
 			} else {
 				return;
 			};
-			events.push(Event::PropertyChanged(
-				PropertyId::ChannelChannelType(channel_id),
-				Property::ChannelChannelType(channel.channel_type),
-			));
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelChannelType(channel_id),
+				old: Property::ChannelChannelType(channel.channel_type),
+				invoker,
+			});
 			channel.channel_type = typ;
 		}
 	}
@@ -369,10 +400,11 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			events.push(Event::PropertyChanged(
-				PropertyId::ChannelSubscribed(channel_id),
-				Property::ChannelSubscribed(channel.subscribed),
-			));
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelSubscribed(channel_id),
+				old: Property::ChannelSubscribed(channel.subscribed),
+				invoker: None,
+			});
 			channel.subscribed = true;
 		}
 	}
@@ -384,10 +416,11 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			events.push(Event::PropertyChanged(
-				PropertyId::ChannelSubscribed(channel_id),
-				Property::ChannelSubscribed(channel.subscribed),
-			));
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelSubscribed(channel_id),
+				old: Property::ChannelSubscribed(channel.subscribed),
+				invoker: None,
+			});
 			channel.subscribed = false;
 
 			// Remove all known clients from this channel
@@ -399,10 +432,11 @@ impl Connection {
 					None
 				}).collect::<Vec<_>>();
 			for id in remove_clients {
-				events.push(Event::PropertyRemoved(
-					PropertyId::Client(id),
-					Property::Client(server.clients.remove(&id).unwrap()),
-				));
+				events.push(Event::PropertyRemoved {
+					id: PropertyId::Client(id),
+					old: Property::Client(server.clients.remove(&id).unwrap()),
+					invoker: None,
+				});
 			}
 		}
 	}
