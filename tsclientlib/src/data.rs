@@ -127,6 +127,20 @@ impl Connection {
 			_ => {}
 		}
 
+		if let Some(invoker) = events.first().and_then(Event::get_invoker) {
+			// If we know this client and the name change, adjust the name.
+			if let Ok(client) = self.get_mut_client(invoker.id) {
+				if client.name != invoker.name {
+					let old = mem::replace(&mut client.name, invoker.name.clone());
+					events.push(Event::PropertyChanged {
+						id: PropertyId::ClientName(client.id),
+						old: Property::ClientName(old),
+						invoker: None,
+					});
+				}
+			}
+		}
+
 		if !handled {
 			debug!(logger, "Unknown message"; "message" => msg.command().name());
 		}

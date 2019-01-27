@@ -57,3 +57,14 @@ pub enum Event {
 		message: String,
 	},
 }
+
+impl Event {
+	pub fn get_invoker(&self) -> Option<&Invoker> {
+		match self {
+			Event::PropertyAdded { invoker, .. } |
+			Event::PropertyChanged { invoker, .. } |
+			Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
+			Event::Message { invoker, .. } => Some(invoker),
+		}
+	}
+}
