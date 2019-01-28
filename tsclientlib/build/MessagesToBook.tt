@@ -1,4 +1,32 @@
 <#@ template cleanws="true" #>
+<#
+/// Push into events the difference between two arrays.
+///
+/// The old value is stored in a `Vec` in `old`, the `new` in the book.
+fn diff(f: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
+	let mut ids = get_id_args(event);
+#>
+					// Added
+					for i in <#= new #>.iter().filter(|n| !old.contains(n)) {
+						events.push(Event::PropertyAdded {
+							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
+							invoker: invoker.clone(),
+						});
+					}
+
+					// Removed
+					for i in old.into_iter().filter(|o| !<#= new #>.contains(o)) {
+						events.push(Event::PropertyRemoved {
+							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, i),
+							old: Property::<#= get_property_name(event, p) #>(i),
+							invoker: invoker.clone(),
+						});
+					}
+<#
+	Ok(())
+}
+
+#>
 impl Connection {
 	/// Return if the message was handled and the generated events.
 	fn handle_message_generated(&mut self, msg: &InMessage) -> Result<(bool, Vec<Event>)> {
@@ -90,11 +118,15 @@ impl Connection {
 									<# } else { #>
 					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
 									<# } #>
+				<# if from.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
+					diff(f, &format!("r.{}", to_snake_case(&to.name)), event, to, from)?;
+				} else { #>
 					events.push(Event::PropertyChanged {
 						id: <#= get_property_id(event, to, from) #>,
 						old: <#= get_property(event, to, "old") #>,
 						invoker: invoker.clone(),
 					});
+				<# } #>
 				}
 									<# } else { #>
 				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>,

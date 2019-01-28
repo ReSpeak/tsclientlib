@@ -216,7 +216,7 @@ impl Connection {
 		let ch = max_clients!(cmd);
 		let ch_fam = if cmd.is_max_family_clients_unlimited {
 			Some(MaxClients::Unlimited)
-		} else if cmd.inherits_max_family_clients {
+		} else if cmd.inherits_max_family_clients == Some(true) {
 			Some(MaxClients::Inherited)
 		} else if cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
 			Some(MaxClients::Limited(cmd.max_family_clients.unwrap() as u16))
@@ -476,6 +476,20 @@ impl ClientServerGroupMut<'_> {
 /// [`ServerMut::add_channel`]: struct.ServerMut.html#method.add_channel
 pub struct ChannelOptions<'a> {
 	name: &'a str,
+	description: Option<&'a str>,
+	parent_id: Option<ChannelId>,
+	codec: Option<Codec>,
+	codec_quality: Option<u8>,
+	delete_delay: Option<Duration>,
+	password: Option<&'a str>,
+	is_default: bool,
+	max_clients: Option<MaxClients>,
+	max_family_clients: Option<MaxClients>,
+	channel_type: Option<ChannelType>,
+	is_unencrypted: Option<bool>,
+	order: Option<i32>,
+	phonetic_name: Option<&'a str>,
+	topic: Option<&'a str>,
 }
 
 impl<'a> ChannelOptions<'a> {
@@ -484,7 +498,95 @@ impl<'a> ChannelOptions<'a> {
 	/// # Arguments
 	/// You have to supply a name for the new channel. All other properties are
 	/// optional.
-	pub fn new(name: &'a str) -> Self { Self { name } }
+	pub fn new(name: &'a str) -> Self {
+		Self {
+			name,
+			description: None,
+			parent_id: None,
+			codec: None,
+			codec_quality: None,
+			delete_delay: None,
+			password: None,
+			is_default: false,
+			max_clients: None,
+			max_family_clients: None,
+			channel_type: None,
+			is_unencrypted: None,
+			order: None,
+			phonetic_name: None,
+			topic: None,
+		}
+	}
+
+	pub fn description(mut self, description: &'a str) -> Self {
+		self.description = Some(description);
+		self
+	}
+
+	pub fn parent_id(mut self, parent_id: ChannelId) -> Self {
+		self.parent_id = Some(parent_id);
+		self
+	}
+
+	pub fn codec(mut self, codec: Codec) -> Self {
+		self.codec = Some(codec);
+		self
+	}
+
+	pub fn codec_quality(mut self, codec_quality: u8) -> Self {
+		self.codec_quality = Some(codec_quality);
+		self
+	}
+
+	pub fn delete_delay(mut self, delete_delay: Duration) -> Self {
+		self.delete_delay = Some(delete_delay);
+		self
+	}
+
+	pub fn password(mut self, password: &'a str) -> Self {
+		self.password = Some(password);
+		self
+	}
+
+	pub fn default(mut self) -> Self {
+		self.is_default = true;
+		self
+	}
+
+	pub fn max_clients(mut self, max_clients: MaxClients) -> Self {
+		self.max_clients = Some(max_clients);
+		self
+	}
+
+	pub fn max_family_clients(mut self, max_family_clients: MaxClients) -> Self {
+		self.max_family_clients = Some(max_family_clients);
+		self
+	}
+
+	pub fn channel_type(mut self, channel_type: ChannelType) -> Self {
+		self.channel_type = Some(channel_type);
+		self
+	}
+
+	pub fn is_unencrypted(mut self, is_unencrypted: bool) -> Self {
+		self.is_unencrypted = Some(is_unencrypted);
+		self
+	}
+
+	pub fn order(mut self, order: i32) -> Self {
+		self.order = Some(order);
+		self
+	}
+
+	pub fn phonetic_name(mut self, phonetic_name: &'a str) -> Self {
+		self.phonetic_name = Some(phonetic_name);
+		self
+	}
+
+	pub fn topic(mut self, topic: &'a str) -> Self {
+		self.topic = Some(topic);
+		self
+	}
 }
 
 impl ServerMut<'_> {
@@ -510,9 +612,44 @@ impl ServerMut<'_> {
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
 	#[must_use = "futures do nothing unless polled"]
 	pub fn add_channel(&self, options: ChannelOptions) -> impl Future<Item=(), Error=Error> {
+		let inherits_max_family_clients = options.max_family_clients.as_ref()
+			.and_then(|m| if let MaxClients::Inherited = m { Some(true) } else { None });
+		let is_max_family_clients_unlimited = options.max_family_clients.as_ref()
+			.and_then(|m| if let MaxClients::Unlimited = m { Some(true) } else { None });
+		let max_family_clients = options.max_family_clients.as_ref()
+			.and_then(|m| if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None });
+		let is_max_clients_unlimited = options.max_clients.as_ref()
+			.and_then(|m| if let MaxClients::Unlimited = m { Some(true) } else { None });
+		let max_clients = options.max_clients.as_ref()
+			.and_then(|m| if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None });
+
+		let is_permanent = options.channel_type.as_ref()
+			.and_then(|t| if *t == ChannelType::Permanent { Some(true) } else { None });
+		let is_semi_permanent = options.channel_type.as_ref()
+			.and_then(|t| if *t == ChannelType::SemiPermanent { Some(true) } else { None });
+
 		self.connection.send_packet(messages::c2s::OutChannelCreateMessage::new(
 			vec![messages::c2s::ChannelCreatePart {
 				name: options.name,
+				description: options.description,
+				parent_id: options.parent_id,
+				codec: options.codec,
+				codec_quality: options.codec_quality,
+				delete_delay: options.delete_delay,
+				has_password: if options.password.is_some() { Some(true) } else { None },
+				is_default: if options.is_default { Some(true) } else { None },
+				inherits_max_family_clients,
+				is_max_family_clients_unlimited,
+				is_max_clients_unlimited,
+				is_permanent,
+				is_semi_permanent,
+				max_family_clients,
+				max_clients,
+				is_unencrypted: options.is_unencrypted,
+				order: options.order,
+				password: options.password,
+				phonetic_name: options.phonetic_name,
+				topic: options.topic,
 				phantom: PhantomData,
 			}].into_iter()))
 	}
