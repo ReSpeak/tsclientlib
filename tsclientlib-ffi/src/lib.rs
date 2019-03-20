@@ -15,6 +15,7 @@ use slog::{error, o, Drain, Logger};
 use tsclientlib::{
 	ChannelId, ClientId, ConnectOptions, Connection, ServerGroupId,
 };
+use tsclientlib::events::Event as LibEvent;
 use tsproto::packets::OutPacket;
 use tsproto_audio::{audio_to_ts, ts_to_audio};
 
@@ -69,11 +70,13 @@ pub struct ConnectionId(u32);
 pub enum EventType {
 	ConnectionAdded,
 	ConnectionRemoved,
+	Message,
 }
 
 enum Event {
 	ConnectionAdded(ConnectionId),
 	ConnectionRemoved(ConnectionId),
+	Event(ConnectionId, LibEvent),
 }
 
 #[repr(C)]
@@ -86,6 +89,25 @@ pub struct FfiEvent {
 pub union FfiEventUnion {
 	connection_added: ConnectionId,
 	connection_removed: ConnectionId,
+	message: EventMsg,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct EventMsg {
+	connection: ConnectionId,
+	target_type: MessageTarget,
+	invoker: u16,
+	message: *mut c_char,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[repr(u32)]
+pub enum MessageTarget {
+	Server,
+	Channel,
+	Client,
+	Poke,
 }
 
 impl Event {
@@ -93,6 +115,8 @@ impl Event {
 		match self {
 			Event::ConnectionAdded(_) => EventType::ConnectionAdded,
 			Event::ConnectionRemoved(_) => EventType::ConnectionRemoved,
+			Event::Event(_, LibEvent::Message { .. }) => EventType::Message,
+			Event::Event(_, _) => unimplemented!("Events apart from message are not yet implemented"),
 		}
 	}
 }
@@ -100,6 +124,19 @@ impl Event {
 impl fmt::Display for ConnectionId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{:?}", self)
+	}
+}
+
+impl From<tsclientlib::MessageTarget> for MessageTarget {
+	fn from(t: tsclientlib::MessageTarget) -> Self {
+		use tsclientlib::MessageTarget as MT;
+
+		match t {
+			MT::Server => MessageTarget::Server,
+			MT::Channel => MessageTarget::Channel,
+			MT::Client(_) => MessageTarget::Client,
+			MT::Poke(_) => MessageTarget::Poke,
+		}
 	}
 }
 
@@ -349,6 +386,15 @@ pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 					remove_connection(con_id);
 				}));
 
+				con.add_on_event("tsclientlibffi".into(), Box::new(move |_, events| {
+					// TODO Send all at once? Remember the problem with getting
+					// ServerGroups one by one, so you never know when they are
+					// complete.
+					for e in events {
+						EVENTS.0.send(Event::Event(con_id, e.clone())).unwrap();
+					}
+				}));
+
 				// Create audio to TeamSpeak pipeline
 				if A2T_PIPE.read().is_none() {
 					let mut a2t_pipe = A2T_PIPE.write();
@@ -422,18 +468,52 @@ pub extern "C" fn set_talking(talking: bool) {
 pub extern "C" fn next_event(ev: *mut FfiEvent) {
 	let event = EVENTS.1.recv().unwrap();
 	unsafe {
+		let typ = event.get_type();
 		*ev = FfiEvent {
-			content: match &event {
+			content: match event {
 				Event::ConnectionAdded(c) => FfiEventUnion {
-					connection_added: *c,
+					connection_added: c,
 				},
 				Event::ConnectionRemoved(c) => FfiEventUnion {
-					connection_removed: *c,
+					connection_removed: c,
 				},
+				Event::Event(id, LibEvent::Message { from, invoker, message }) => FfiEventUnion {
+					message: EventMsg {
+						connection: id,
+						target_type: from.into(),
+						invoker: invoker.id.0,
+						message: CString::new(message).unwrap().into_raw(),
+					}
+				},
+				Event::Event(_, _) => unimplemented!("Events apart from message are not yet implemented"),
 			},
-			typ: event.get_type(),
+			typ,
 		}
 	};
+}
+
+/// Send a chat message.
+///
+/// For the targets `Server` and `Channel`, the `target` parameter is ignored.
+#[no_mangle]
+pub extern "C" fn send_message(con_id: ConnectionId, target_type: MessageTarget, target: u16, msg: *const c_char) {
+	use tsclientlib::MessageTarget as MT;
+
+	// TODO Returns future
+	let msg = unsafe { CStr::from_ptr(msg) };
+	let msg = msg.to_str().unwrap();
+	if let Some(con) = CONNECTIONS.get(&con_id) {
+		let target = match target_type {
+			MessageTarget::Server => MT::Server,
+			MessageTarget::Channel => MT::Channel,
+			MessageTarget::Client => MT::Client(ClientId(target)),
+			MessageTarget::Poke => MT::Poke(ClientId(target)),
+		};
+		RUNTIME.executor().spawn(con.lock().to_mut().send_message(target, &msg)
+			.map_err(|e| error!(LOGGER, "Failed to send message"; "error" => ?e)));
+	} else {
+		error!(LOGGER, "Connection not found"; "function" => "send_message");
+	}
 }
 
 #[no_mangle]
