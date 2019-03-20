@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 use nom::types::CompleteStr;
 use nom::{
-	alphanumeric, alt, call, do_parse, eof, error_position, is_not, many0,
-	many1, map, multispace, named, opt, preceded, tag, tuple, tuple_parser,
+	alphanumeric, alt, do_parse, eof, is_not, many0, many1, map,
+	multispace, named, opt, preceded, tag,
 };
 
 use crate::Result;

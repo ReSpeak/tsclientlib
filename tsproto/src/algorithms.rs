@@ -310,6 +310,7 @@ pub fn hash_cash(key: &EccKeyPubP256, level: u8) -> Result<u64> {
 	Ok(offset)
 }
 
+#[inline]
 pub fn get_hash_cash_level(omega: &str, offset: u64) -> u8 {
 	let data = digest::digest(
 		&digest::SHA1,

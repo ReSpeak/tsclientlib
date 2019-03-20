@@ -17,8 +17,6 @@ travis-ci = { repository = "ReSpeak/tsclientlib" }
 
 [dependencies]
 arrayref = "0.3"
-#simple_asn1 = "0.3"
-simple_asn1 = { git = "https://github.com/Flakebi/simple_asn1.git" }
 base64 = "0.10"
 bitflags = "1"
 byteorder = "1"
@@ -38,6 +36,9 @@ rand = "0.6"
 rental = "0.5"
 ring = "0.13"
 rug = { version = "1", optional = true }
+serde = { version = "1", features = ["derive"] }
+#simple_asn1 = "0.3"
+simple_asn1 = { git = "https://github.com/Flakebi/simple_asn1.git" }
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"

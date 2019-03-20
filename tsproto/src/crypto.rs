@@ -185,6 +185,10 @@ impl EccKeyPrivP256 {
 
 	/// Try to import the key from any of the known formats.
 	pub fn import(data: &[u8]) -> Result<Self> {
+		if data.is_empty() {
+			return Err(format_err!("Key data is empty").into());
+		}
+
 		if let Ok(s) = str::from_utf8(data) {
 			if let Ok(r) = Self::import_str(s) {
 				return Ok(r);
@@ -253,6 +257,9 @@ impl EccKeyPrivP256 {
 	///
 	/// This is just the `BigNum` of the private key.
 	pub fn to_short(&self) -> Vec<u8> { self.0.private_key().to_vec() }
+
+	/// The openssl PEM format of a private key.
+	pub fn to_openssl(&self) -> Result<Vec<u8>> { Ok(self.0.private_key_to_pem()?) }
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> {

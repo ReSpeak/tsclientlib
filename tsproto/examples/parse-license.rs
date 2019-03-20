@@ -21,5 +21,5 @@ fn main() {
 	let args = Args::from_args();
 
 	let l = Licenses::parse(&base64::decode(&args.license).unwrap()).unwrap();
-	println!("{:?}", l);
+	println!("{:#?}", l);
 }

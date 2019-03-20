@@ -1,5 +1,7 @@
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
+use std::u64;
 
 use chrono::Utc;
 use futures::sync::mpsc;
@@ -14,6 +16,8 @@ use rand::{self, Rng};
 use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{Unexpected, Visitor};
 use slog::{error, info, Logger};
 use {base64, tokio, tokio_threadpool};
 
@@ -200,6 +204,15 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 		.and_then(move |_| Ok(con2))
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Identity {
+	#[serde(serialize_with = "serialize_id_key",
+		deserialize_with = "deserialize_id_key")]
+	key: EccKeyPrivP256,
+	/// The `client_key_offest`/counter for hash cash.
+	counter: u64,
+}
+
 struct ClientOutPacketObserver;
 impl OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver {
 	fn observe(
@@ -229,6 +242,72 @@ pub struct DefaultPacketHandler<
 	/// The data instance is created after the packet handler so this has to be
 	/// an option.
 	data: Option<Weak<Mutex<ClientData<IPH>>>>,
+}
+
+fn serialize_id_key<S: Serializer>(key: &EccKeyPrivP256, s: S)
+	-> std::result::Result<S::Ok, S::Error> {
+	s.serialize_str(&base64::encode(&key.to_short()))
+}
+
+fn deserialize_id_key<'de, D: Deserializer<'de>>(d: D)
+	-> std::result::Result<EccKeyPrivP256, D::Error> {
+	d.deserialize_str(IdKeyVisitor)
+}
+
+struct IdKeyVisitor;
+
+impl<'de> Visitor<'de> for IdKeyVisitor {
+	type Value = EccKeyPrivP256;
+
+	fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "a P256 private ecc key")
+	}
+
+	fn visit_str<E: serde::de::Error>(self, s: &str)
+		-> std::result::Result<Self::Value, E> {
+		EccKeyPrivP256::import_str(s).map_err(|_| {
+			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
+		})
+	}
+}
+
+impl Identity {
+	#[inline]
+	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
+		Self { key, counter }
+	}
+
+	#[inline]
+	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
+	#[inline]
+	pub fn counter(&self) -> u64 { self.counter }
+
+	#[inline]
+	pub fn set_key(&mut self, key: EccKeyPrivP256) {
+		self.key = key
+	}
+	#[inline]
+	pub fn set_counter(&mut self, counter: u64) {
+		self.counter = counter;
+	}
+
+	/// Compute the current hash cash level.
+	#[inline]
+	pub fn level(&self) -> Result<u8> {
+		let omega = self.key.to_ts()?;
+		Ok(algs::get_hash_cash_level(&omega, self.counter))
+	}
+
+	/// Compute a better hash cash level.
+	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
+		let omega = self.key.to_ts()?;
+		let mut offset = self.counter;
+		while offset < u64::MAX && algs::get_hash_cash_level(&omega, offset) < target {
+			offset += 1;
+		}
+		self.counter = offset;
+		Ok(())
+	}
 }
 
 impl<IPH: PacketHandler<ServerConnectionData> + 'static>
