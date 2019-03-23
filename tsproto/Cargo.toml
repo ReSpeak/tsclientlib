@@ -36,7 +36,9 @@ openssl = "0.10"
 parking_lot = "0.7"
 rand = "0.6"
 rental = "0.5"
-ring = "0.13"
+#ring = "0.13"
+#ring = { git = "https://github.com/Flakebi/ring.git" }
+ring = { path = "../../ring" }
 rug = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 #simple_asn1 = "0.3"
@@ -47,6 +49,8 @@ slog-term = "2"
 stable_deref_trait = "1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
+#untrusted = "0.6"
+untrusted = { git = "https://github.com/briansmith/untrusted", tag = "ring-master" }
 quicklz = "0.2"
 
 [dependencies.slog]

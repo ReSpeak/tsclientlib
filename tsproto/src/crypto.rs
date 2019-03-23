@@ -13,10 +13,9 @@ use curve25519_dalek::scalar::Scalar;
 use openssl::bn::{BigNum, BigNumContext};
 use openssl::derive::Deriver;
 use openssl::ec::{self, EcGroup, EcKey};
-use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
-use openssl::sign::{Signer, Verifier};
+use untrusted::Input;
 
 use crate::{Error, Result};
 
@@ -161,17 +160,17 @@ impl EccKeyPubP256 {
 	}
 
 	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
-		let pkey = PKey::from_ec_key(self.0)?;
-		let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
-
-		// Data
-		verifier.update(data)?;
-		let res = verifier.verify(signature)?;
-		if res {
-			Ok(())
-		} else {
-			Err(Error::WrongSignature)
-		}
+		let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
+		let mut ctx = BigNumContext::new()?;
+		let pubkey_bin = self.0.public_key().to_bytes(
+			&group,
+			ec::PointConversionForm::UNCOMPRESSED,
+			&mut ctx,
+		)?;
+		ring::signature::verify(&ring::signature::ECDSA_P256_SHA256_ASN1,
+			Input::from(&pubkey_bin),
+			Input::from(data),
+			Input::from(signature)).map_err(|_| Error::WrongSignature)
 	}
 }
 
@@ -420,11 +419,16 @@ impl EccKeyPrivP256 {
 	}
 
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
-		let pkey = PKey::from_ec_key(self.0)?;
-		let mut signer = Signer::new(MessageDigest::sha256(), &pkey)?;
-		signer.update(data)?;
-		Ok(signer.sign_to_vec()?)
+		let key_bytes = self.0.private_key().to_vec();
+		let key = ring::signature::EcdsaKeyPair::from_private_key(
+			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+			Input::from(&key_bytes),
+		)?;
+		// TODO Return ring signature
+		Ok(key.sign(&ring::rand::SystemRandom::new(),
+			Input::from(data))?.as_ref().to_vec())
 	}
+
 
 	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }
 }
