@@ -8,6 +8,9 @@ edition = "2018"
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
+[features]
+audio = ["tsclientlib/audio", "tsproto-audio"]
+
 [dependencies]
 chashmap = "2"
 crossbeam = "0.6"
@@ -20,9 +23,9 @@ slog = "2"
 slog-async = "2"
 slog-term = "2"
 tokio = "0.1"
-tsclientlib = { path = "../tsclientlib", features = ["audio"] }
+tsclientlib = { path = "../tsclientlib" }
 tsproto = { path = "../tsproto" }
-tsproto-audio = { path = "../utils/tsproto-audio" }
+tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
 
 [build-dependencies]
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
