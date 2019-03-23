@@ -360,7 +360,7 @@ fn remove_connection(con_id: ConnectionId) {
 }
 
 #[no_mangle]
-pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
+pub extern "C" fn tscl_connect(address: *const c_char) -> ConnectionId {
 	let address = unsafe { CStr::from_ptr(address) };
 	let options = ConnectOptions::new(address.to_str().unwrap())
 		.logger(LOGGER.clone());
@@ -430,7 +430,7 @@ pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 }
 
 #[no_mangle]
-pub extern "C" fn disconnect(con_id: ConnectionId) {
+pub extern "C" fn tscl_disconnect(con_id: ConnectionId) {
 	RUNTIME.executor().spawn(
 		future::lazy(move || {
 			if let Some(con) = CONNECTIONS.get(&con_id) {
