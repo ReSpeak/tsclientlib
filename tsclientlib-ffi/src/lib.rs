@@ -391,7 +391,9 @@ pub extern "C" fn connect(address: *const c_char) -> ConnectionId {
 					// ServerGroups one by one, so you never know when they are
 					// complete.
 					for e in events {
-						EVENTS.0.send(Event::Event(con_id, e.clone())).unwrap();
+						if let LibEvent::Message { .. } = e {
+							EVENTS.0.send(Event::Event(con_id, e.clone())).unwrap();
+						}
 					}
 				}));
 
@@ -481,6 +483,7 @@ pub extern "C" fn next_event(ev: *mut FfiEvent) {
 					message: EventMsg {
 						connection: id,
 						target_type: from.into(),
+						// TODO Send all invoker data instead of id
 						invoker: invoker.id.0,
 						message: CString::new(message).unwrap().into_raw(),
 					}
