@@ -5,7 +5,6 @@ members = [
 	"tsproto",
 	"utils/analyzer",
 	"utils/cli-completer",
-	"utils/dev-client",
 	"utils/gst-plugin-ts3",
 	"utils/tsproto-audio",
 	"utils/tsproto-commands",
