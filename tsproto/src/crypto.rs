@@ -17,7 +17,6 @@ use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private, Public};
 use openssl::sign::{Signer, Verifier};
-use openssl::symm::{self, Cipher};
 
 use crate::{Error, Result};
 
@@ -498,118 +497,6 @@ impl<'a> Into<EccKeyPubEd25519> for &'a EccKeyPrivEd25519 {
 		EccKeyPubEd25519(
 			(&constants::ED25519_BASEPOINT_TABLE * &self.0).compress(),
 		)
-	}
-}
-
-/// This eax implementation uses AES-128 in counter mode for encryption and
-/// AES-128 in CBC mode to generate the OMAC/CMAC/CBCMAC.
-///
-/// EAX is an AEAD (Authenticated Encryption with Associated Data) encryption
-/// scheme.
-pub struct Eax;
-
-impl Eax {
-	/// Encrypt and authenticate data.
-	///
-	/// # Arguments
-	///
-	/// - `header`: Associated data, which will also be authenticated.
-	///
-	/// # Return value
-	///
-	/// - tag/mac
-	/// - Encrypted data
-	pub fn encrypt(
-		key: &[u8; 16],
-		nonce: &[u8; 16],
-		header: &[u8],
-		data: &[u8],
-	) -> Result<(Vec<u8>, Vec<u8>)>
-	{
-		// https://crypto.stackexchange.com/questions/26948/eax-cipher-mode-with-nonce-equal-header
-		// has an explanation of eax.
-
-		// l = block cipher size = 128 (for AES-128) = 16 byte
-		// 1. n ← OMAC(0 || Nonce)
-		// (the 0 means the number zero in l bits)
-		let n = Self::cmac_with_iv(key, 0, nonce)?;
-
-		// 2. h ← OMAC(1 || Nonce)
-		let h = Self::cmac_with_iv(key, 1, header)?;
-
-		// 3. enc ← CTR(M) using n as iv
-		let enc = symm::encrypt(Cipher::aes_128_ctr(), key, Some(&n), data)?;
-
-		// 4. c ← OMAC(2 || enc)
-		let c = Self::cmac_with_iv(key, 2, &enc)?;
-
-		// 5. tag ← n ^ h ^ c
-		// (^ means xor)
-		let mac: Vec<_> = n
-			.iter()
-			.zip(h.iter())
-			.zip(c.iter())
-			.map(|((n, h), c)| n ^ h ^ c)
-			.collect();
-
-		Ok((mac, enc))
-	}
-
-	pub fn decrypt(
-		key: &[u8; 16],
-		nonce: &[u8; 16],
-		header: &[u8],
-		data: &[u8],
-		mac: &[u8],
-	) -> Result<Vec<u8>>
-	{
-		let n = Self::cmac_with_iv(key, 0, nonce)?;
-
-		// 2. h ← OMAC(1 || Nonce)
-		let h = Self::cmac_with_iv(key, 1, header)?;
-
-		// 4. c ← OMAC(2 || enc)
-		let c = Self::cmac_with_iv(key, 2, data)?;
-
-		let mac2: Vec<_> = n
-			.iter()
-			.zip(h.iter())
-			.zip(c.iter())
-			.map(|((n, h), c)| n ^ h ^ c)
-			.take(mac.len())
-			.collect();
-
-		// Check mac using secure comparison
-		if !::openssl::memcmp::eq(mac, &mac2) {
-			return Err(Error::WrongMac(crate::packets::PacketType::Command, 0, 0));
-		}
-
-		// Decrypt
-		let decrypt =
-			symm::decrypt(Cipher::aes_128_ctr(), key, Some(&n), data)?;
-		Ok(decrypt)
-	}
-
-	/// CMAC/OMAC1
-	///
-	/// To avoid constructing new buffers on the heap, an iv encoded into 16
-	/// bytes is prepended inside this function.
-	pub fn cmac_with_iv(
-		key: &[u8; 16],
-		iv: u8,
-		data: &[u8],
-	) -> Result<Vec<u8>>
-	{
-		let cipher = Cipher::aes_128_cbc();
-		let key = PKey::cmac(&cipher, key)?;
-		let mut signer = Signer::new_without_digest(&key)?;
-
-		signer.update(&[0; 15])?;
-		signer.update(&[iv])?;
-		signer.update(data)?;
-
-		let sign = signer.sign_to_vec()?;
-		Ok(sign)
 	}
 }
 

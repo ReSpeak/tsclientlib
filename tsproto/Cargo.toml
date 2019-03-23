@@ -16,6 +16,7 @@ autobenches = false
 travis-ci = { repository = "ReSpeak/tsclientlib" }
 
 [dependencies]
+aes = "0.3"
 arrayref = "0.3"
 base64 = "0.10"
 bitflags = "1"
@@ -24,6 +25,7 @@ bytes = "0.4"
 chrono = "0.4"
 curve25519-dalek = "0.21"
 derive_more = "0.13"
+eax = { git = "https://github.com/Flakebi/eax-rs.git" }
 failure = "0.1"
 futures = "0.1"
 nom = "4"

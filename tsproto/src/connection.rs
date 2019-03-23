@@ -2,6 +2,8 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::u16;
 
+use aes::block_cipher_trait::generic_array::GenericArray;
+use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use bytes::Bytes;
 use futures::sync::mpsc;
 use futures::{self, AsyncSink, Sink};
@@ -21,17 +23,17 @@ pub struct CachedKey {
 	/// The generation id
 	pub generation_id: u32,
 	/// The key
-	pub key: [u8; 16],
+	pub key: GenericArray<u8, U16>,
 	/// The nonce
-	pub nonce: [u8; 16],
+	pub nonce: GenericArray<u8, U16>,
 }
 
 impl Default for CachedKey {
 	fn default() -> Self {
 		CachedKey {
 			generation_id: u32::max_value(),
-			key: [0; 16],
-			nonce: [0; 16],
+			key: [0; 16].into(),
+			nonce: [0; 16].into(),
 		}
 	}
 }

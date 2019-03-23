@@ -1,6 +1,8 @@
 //! Handle packet splitting and cryptography
 use std::u64;
 
+use aes::block_cipher_trait::generic_array::GenericArray;
+use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use byteorder::{NetworkEndian, WriteBytesExt};
 use curve25519_dalek::edwards::EdwardsPoint;
 use num_bigint::BigUint;
@@ -11,7 +13,7 @@ use ring::digest;
 use crate::connection::{CachedKey, SharedIv};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::packets::*;
-use crate::{crypto, Error, Result};
+use crate::{Error, Result};
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -126,7 +128,7 @@ fn create_key_nonce(
 	generation_id: u32,
 	iv: &SharedIv,
 	cache: &mut [[CachedKey; 2]; 8],
-) -> ([u8; 16], [u8; 16])
+) -> (GenericArray<u8, U16>, GenericArray<u8, U16>)
 {
 	// Check if this generation is cached
 	let cache = &mut cache[p_type.to_usize().unwrap()]
@@ -170,19 +172,18 @@ fn create_key_nonce(
 
 pub fn encrypt_key_nonce(
 	packet: &mut OutPacket,
-	key: &[u8; 16],
-	nonce: &[u8; 16],
+	key: &GenericArray<u8, U16>,
+	nonce: &GenericArray<u8, U16>,
 ) -> Result<()>
 {
 	let meta = packet.header().get_meta();
-	let (mac, enc) = crypto::Eax::encrypt(key, nonce, &meta, packet.content())?;
+	let mac = eax::Eax::<aes::Aes128>::encrypt(key, nonce, &meta, packet.content_mut());
 	packet.mac().copy_from_slice(&mac[..8]);
-	packet.content_mut().copy_from_slice(&enc);
 	Ok(())
 }
 
 pub fn encrypt_fake(packet: &mut OutPacket) -> Result<()> {
-	encrypt_key_nonce(packet, &crate::FAKE_KEY, &crate::FAKE_NONCE)
+	encrypt_key_nonce(packet, &crate::FAKE_KEY.into(), &crate::FAKE_NONCE.into())
 }
 
 pub fn encrypt(
@@ -206,26 +207,27 @@ pub fn encrypt(
 
 pub fn decrypt_key_nonce(
 	packet: &InPacket,
-	key: &[u8; 16],
-	nonce: &[u8; 16],
+	key: &GenericArray<u8, U16>,
+	nonce: &GenericArray<u8, U16>,
 ) -> Result<Vec<u8>>
 {
 	let header = packet.header();
 	let meta = header.get_meta();
-	crypto::Eax::decrypt(
+	// TODO decrypt in-place
+	let mut content = packet.content().to_vec();
+	eax::Eax::<aes::Aes128>::decrypt(
 		key,
 		nonce,
 		&meta,
-		packet.content(),
+		&mut content,
 		header.mac(),
 	)
-	.map_err(|e| if let Error::WrongMac(_, _, _) = e {
-		Error::WrongMac(header.packet_type(), 0, header.packet_id())
-	} else { e })
+	.map(|()| content)
+	.map_err(|_| Error::WrongMac(header.packet_type(), 0, header.packet_id()))
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
-	decrypt_key_nonce(packet, &crate::FAKE_KEY, &crate::FAKE_NONCE)
+	decrypt_key_nonce(packet, &crate::FAKE_KEY.into(), &crate::FAKE_NONCE.into())
 }
 
 pub fn decrypt(
