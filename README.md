@@ -6,7 +6,6 @@ This repository implements the TeamSpeak3 protocol for usage in clients and bots
 If you are searching for a usable client instead of a library, [Qint](https://github.com/ReSpeak/Qint) is a cross-platform TeamSpeak client, which is based on this library.
 
 ## Dependencies
-- [OpenSSL](https://www.openssl.org) 1.1
 - [GStreamer](https://gstreamer.freedesktop.org)
 - [Rust](https://rust-lang.org) (preferred installation method is [rustup](https://rustup.rs)), currently the nightly version is needed
 

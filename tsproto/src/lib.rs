@@ -69,8 +69,6 @@ pub enum Error {
 	#[fail(display = "{}", _0)]
 	ParseInt(#[cause] std::num::ParseIntError),
 	#[fail(display = "{}", _0)]
-	Openssl(#[cause] openssl::error::ErrorStack),
-	#[fail(display = "{}", _0)]
 	Quicklz(#[cause] quicklz::Error),
 	#[fail(display = "{}", _0)]
 	Rand(#[cause] rand::Error),
@@ -131,9 +129,4 @@ impl Into<SocketAddr> for ClientId {
 }
 impl Into<SocketAddr> for ServerId {
 	fn into(self) -> SocketAddr { self.0 }
-}
-
-pub fn init() -> Result<()> {
-	openssl::init();
-	Ok(())
 }

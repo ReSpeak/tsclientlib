@@ -5,16 +5,12 @@ use arrayref::array_ref;
 use base64;
 use num_bigint::{BigInt, Sign};
 use ring::digest;
-use simple_asn1::{ASN1Block, ASN1Class};
+use ring::signature::KeyPair;
+use simple_asn1::ASN1Block;
 
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use openssl::bn::{BigNum, BigNumContext};
-use openssl::derive::Deriver;
-use openssl::ec::{self, EcGroup, EcKey};
-use openssl::nid::Nid;
-use openssl::pkey::{PKey, Private, Public};
 use untrusted::Input;
 
 use crate::{Error, Result};
@@ -28,12 +24,12 @@ pub enum KeyType {
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
 #[derive(Clone)]
-pub struct EccKeyPubP256(pub EcKey<Public>);
+pub struct EccKeyPubP256(Vec<u8>);
 /// A private ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
 #[derive(Clone)]
-pub struct EccKeyPrivP256(pub EcKey<Private>);
+pub struct EccKeyPrivP256(Vec<u8>);
 
 /// A public ecc key.
 ///
@@ -101,15 +97,15 @@ impl EccKeyPubP256 {
 					Some(ASN1Block::Integer(_, y)),
 				) = (blocks.get(2), blocks.get(3))
 				{
-					let x = BigNum::from_slice(&x.to_bytes_be().1)?;
-					let y = BigNum::from_slice(&y.to_bytes_be().1)?;
-
-					let group =
-						EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-					let k = EcKey::from_public_key_affine_coordinates(
-						&group, &x, &y,
-					)?;
-					Ok(EccKeyPubP256(k))
+					// Store as uncompressed coordinates:
+					// 0x04
+					// x: 32 bytes
+					// y: 32 bytes
+					let mut data = Vec::with_capacity(65);
+					data.push(4);
+					data.extend_from_slice(&x.to_bytes_be().1);
+					data.extend_from_slice(&y.to_bytes_be().1);
+					Ok(EccKeyPubP256(data))
 				} else {
 					return Err(format_err!("Public key not found").into());
 				}
@@ -127,18 +123,11 @@ impl EccKeyPubP256 {
 	}
 
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
-		let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-		let mut ctx = BigNumContext::new()?;
-		let pubkey_bin = self.0.public_key().to_bytes(
-			&group,
-			ec::PointConversionForm::UNCOMPRESSED,
-			&mut ctx,
-		)?;
-		let pub_len = (pubkey_bin.len() - 1) / 2;
+		let pub_len = (self.0.len() - 1) / 2;
 		let pubkey_x =
-			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
+			BigInt::from_bytes_be(Sign::Plus, &self.0[1..=pub_len]);
 		let pubkey_y =
-			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
+			BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
 
 		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
 			0,
@@ -160,15 +149,8 @@ impl EccKeyPubP256 {
 	}
 
 	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
-		let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-		let mut ctx = BigNumContext::new()?;
-		let pubkey_bin = self.0.public_key().to_bytes(
-			&group,
-			ec::PointConversionForm::UNCOMPRESSED,
-			&mut ctx,
-		)?;
 		ring::signature::verify(&ring::signature::ECDSA_P256_SHA256_ASN1,
-			Input::from(&pubkey_bin),
+			Input::from(&self.0),
 			Input::from(data),
 			Input::from(signature)).map_err(|_| Error::WrongSignature)
 	}
@@ -177,8 +159,10 @@ impl EccKeyPubP256 {
 impl EccKeyPrivP256 {
 	/// Create a new key key pair.
 	pub fn create() -> Result<Self> {
-		let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-		Ok(EccKeyPrivP256(EcKey::generate(&group)?))
+		Ok(EccKeyPrivP256(ring::signature::EcdsaKeyPair::generate_private_key(
+			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+			&ring::rand::SystemRandom::new(),
+		)?))
 	}
 
 	/// Try to import the key from any of the known formats.
@@ -195,7 +179,7 @@ impl EccKeyPrivP256 {
 		if let Ok(r) = Self::from_tomcrypt(data) {
 			return Ok(r);
 		}
-		if let Ok(r) = Self::from_short(data) {
+		if let Ok(r) = Self::from_short(data.to_vec()) {
 			return Ok(r);
 		}
 		Err(format_err!("Any known methods to decode the key failed").into())
@@ -217,47 +201,19 @@ impl EccKeyPrivP256 {
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn from_short<V: Into<Vec<u8>>>(data: V) -> Result<Self> {
-		// Convert to openssl format
-		let der = ::simple_asn1::to_der(&ASN1Block::Sequence(
-			0,
-			vec![
-				// Version
-				ASN1Block::Integer(0, 1.into()),
-				// Private key
-				ASN1Block::OctetString(0, data.into()),
-				// Parameters
-				ASN1Block::Explicit(
-					ASN1Class::ContextSpecific,
-					0,
-					0u8.into(),
-					Box::new(ASN1Block::ObjectIdentifier(
-						0,
-						::simple_asn1::OID::new(vec![
-							1u8.into(),
-							2u8.into(),
-							840u16.into(),
-							10045u16.into(),
-							3u8.into(),
-							1u8.into(),
-							7u8.into(),
-						]),
-					)),
-				),
-			],
-		))?;
-
-		let k = EcKey::private_key_from_der(&der)?;
-		Ok(EccKeyPrivP256(k))
+	pub fn from_short(data: Vec<u8>) -> Result<Self> {
+		// Check if the key is valid by converting it to a ring key
+		let _ = ring::signature::EcdsaKeyPair::from_private_key(
+			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+			Input::from(&data),
+		)?;
+		Ok(Self(data))
 	}
 
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn to_short(&self) -> Vec<u8> { self.0.private_key().to_vec() }
-
-	/// The openssl PEM format of a private key.
-	pub fn to_openssl(&self) -> Result<Vec<u8>> { Ok(self.0.private_key_to_pem()?) }
+	pub fn to_short(&self) -> &[u8] { &self.0 }
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> {
@@ -377,22 +333,14 @@ impl EccKeyPrivP256 {
 	}
 
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
-		let pubkey = self.0.public_key();
-		let group = EcGroup::from_curve_name(Nid::X9_62_PRIME256V1)?;
-		let mut ctx = BigNumContext::new()?;
-		let pubkey_bin = pubkey.to_bytes(
-			&group,
-			ec::PointConversionForm::UNCOMPRESSED,
-			&mut ctx,
-		)?;
+		let pubkey_bin = self.to_pub().0;
 		let pub_len = (pubkey_bin.len() - 1) / 2;
 		let pubkey_x =
 			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
 		let pubkey_y =
 			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
 
-		let privkey =
-			BigInt::from_bytes_be(Sign::Plus, &self.0.private_key().to_vec());
+		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0);
 
 		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
 			0,
@@ -406,24 +354,36 @@ impl EccKeyPrivP256 {
 		))?)
 	}
 
+	/// Create a `ring` key from the stored private key.
+	fn to_ring(&self) -> ring::signature::EcdsaKeyPair {
+		ring::signature::EcdsaKeyPair::from_private_key(
+			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+			Input::from(&self.0),
+		).unwrap()
+	}
+
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(self, other: EccKeyPubP256) -> Result<Vec<u8>> {
-		let privkey = PKey::from_ec_key(self.0)?;
+		use ring::ec::suite_b::ecdh;
+		use ring::ec::keys::Seed;
+
+		let seed = Seed::from_p256_bytes(Input::from(&self.0))?;
+		let mut res = vec![0; 65];
+		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))?;
+		Ok(res)
+
+		/*let privkey = PKey::from_ec_key(self.0)?;
 		let pubkey = PKey::from_ec_key(other.0)?;
 		let mut deriver = Deriver::new(&privkey)?;
 
 		deriver.set_peer(&pubkey)?;
 
 		let secret = deriver.derive_to_vec()?;
-		Ok(secret)
+		Ok(secret)*/
 	}
 
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
-		let key_bytes = self.0.private_key().to_vec();
-		let key = ring::signature::EcdsaKeyPair::from_private_key(
-			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-			Input::from(&key_bytes),
-		)?;
+		let key = self.to_ring();
 		// TODO Return ring signature
 		Ok(key.sign(&ring::rand::SystemRandom::new(),
 			Input::from(data))?.as_ref().to_vec())
@@ -435,10 +395,7 @@ impl EccKeyPrivP256 {
 
 impl<'a> Into<EccKeyPubP256> for &'a EccKeyPrivP256 {
 	fn into(self) -> EccKeyPubP256 {
-		EccKeyPubP256(
-			EcKey::from_public_key(&self.0.group(), &self.0.public_key())
-				.unwrap(),
-		)
+		EccKeyPubP256(self.to_ring().public_key().as_ref().to_vec())
 	}
 }
 

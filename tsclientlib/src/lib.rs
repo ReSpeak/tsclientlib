@@ -27,7 +27,7 @@ use std::sync::Arc;
 use failure::ResultExt;
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
-use parking_lot::{Once, RwLock, RwLockReadGuard, ONCE_INIT};
+use parking_lot::{RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
 use tsproto::algorithms as algs;
 use tsproto::{client, crypto, log};
@@ -265,11 +265,6 @@ impl Connection {
 	/// [`ConnectOptions`]: struct.ConnectOptions.html
 	#[must_use = "futures do nothing unless polled"]
 	pub fn new(mut options: ConnectOptions) -> BoxFuture<Connection> {
-		// Initialize tsproto if it was not done yet
-		static TSPROTO_INIT: Once = ONCE_INIT;
-		TSPROTO_INIT.call_once(|| {
-			tsproto::init().expect("tsproto failed to initialize")
-		});
 		#[cfg(feature = "audio")]
 		tsproto_audio::init();
 

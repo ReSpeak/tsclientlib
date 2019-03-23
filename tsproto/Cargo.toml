@@ -32,13 +32,11 @@ nom = "4"
 num-bigint = "0.2"
 num-derive = "0.2"
 num-traits = "0.2"
-openssl = "0.10"
 parking_lot = "0.7"
 rand = "0.6"
 rental = "0.5"
 #ring = "0.13"
-#ring = { git = "https://github.com/Flakebi/ring.git" }
-ring = { path = "../../ring" }
+ring = { git = "https://github.com/Flakebi/ring.git" }
 rug = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 #simple_asn1 = "0.3"
