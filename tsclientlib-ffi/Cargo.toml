@@ -27,6 +27,10 @@ tsclientlib = { path = "../tsclientlib" }
 tsproto = { path = "../tsproto" }
 tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
 
+# Statically link openssl on platforms that use it except linux
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+native-tls = { version = "0.2", features = ["vendored"] }
+
 [build-dependencies]
 t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
 tsproto-structs = { path = "../utils/tsproto-structs" }

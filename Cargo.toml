@@ -4,7 +4,6 @@ members = [
 	"tsclientlib-ffi",
 	"tsproto",
 	"utils/analyzer",
-	"utils/cli-completer",
 	"utils/gst-plugin-ts3",
 	"utils/tsproto-audio",
 	"utils/tsproto-commands",

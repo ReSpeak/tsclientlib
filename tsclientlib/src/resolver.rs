@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use futures::{future, stream, Async, Future, Poll, Stream};
 use rand::{thread_rng, Rng};
-use slog::{debug, o, Logger};
+use slog::{debug, o, warn, Logger};
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio::util::StreamExt;
 use trust_dns_resolver::{AsyncResolver, Name};
+use trust_dns_resolver::config::ResolverConfig;
 use {reqwest, tokio, tokio_threadpool};
 
 use crate::{Error, Result};
@@ -136,11 +137,24 @@ pub fn resolve(
 		}
 	})();
 
-	let (resolver, background) = match AsyncResolver::from_system_conf() {
-		Ok(r) => r,
-		Err(e) => return Box::new(stream::once(Err(e.into()))),
+	// The system config does not yet work on android:
+	// https://github.com/bluejekyll/trust-dns/issues/652
+	let resolver = match AsyncResolver::from_system_conf() {
+		Ok((resolver, background)) => {
+			tokio::spawn(background);
+			resolver
+		}
+		Err(e) => {
+			warn!(logger, "Failed to use system dns resolver config";
+				"error" => ?e);
+			// Fallback
+			let (resolver, background) = AsyncResolver::new(
+				ResolverConfig::cloudflare(), Default::default());
+			tokio::spawn(background);
+			resolver
+		}
 	};
-	tokio::spawn(background);
+
 	let resolve = resolver.clone();
 	let address = addr.clone();
 	let srv_res =
