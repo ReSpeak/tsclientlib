@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
 
 use bytes::{Bytes, BytesMut};
+use failure::format_err;
 use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Mutex, RwLock};

@@ -7,7 +7,9 @@ use arrayref::{array_mut_ref, array_ref};
 use bitflags::bitflags;
 use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
-use num_traits::{FromPrimitive, ToPrimitive};
+use failure::format_err;
+use num_derive::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::commands::{CommandData, CommandDataIterator};
 use crate::utils::HexSlice;

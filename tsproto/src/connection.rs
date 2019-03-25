@@ -5,6 +5,7 @@ use std::u16;
 use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use bytes::Bytes;
+use failure::format_err;
 use futures::sync::mpsc;
 use futures::{self, AsyncSink, Sink};
 use num_traits::ToPrimitive;

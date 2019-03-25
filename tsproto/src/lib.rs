@@ -1,15 +1,10 @@
 #[macro_use]
-extern crate derive_more;
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate num_derive;
-#[macro_use]
 extern crate rental;
 
 use std::net::SocketAddr;
 
-use failure::ResultExt;
+use derive_more::From;
+use failure::{Fail, ResultExt};
 
 pub mod algorithms;
 pub mod client;

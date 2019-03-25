@@ -11,6 +11,7 @@ use simple_asn1::ASN1Block;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
+use failure::format_err;
 use untrusted::Input;
 
 use crate::{Error, Result};

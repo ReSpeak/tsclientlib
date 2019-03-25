@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 use std::u64;
 
 use chrono::Utc;
+use failure::format_err;
 use futures::sync::mpsc;
 use futures::{future, Future, Sink, Stream};
 #[cfg(not(feature = "rug"))]

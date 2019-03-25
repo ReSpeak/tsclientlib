@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
+use failure::format_err;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::{self, Async, Future, Sink};
