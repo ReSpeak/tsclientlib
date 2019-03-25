@@ -8,6 +8,7 @@ use std::ops::Deref;
 use std::u16;
 
 use chrono::{DateTime, Duration, Utc};
+use failure::format_err;
 use futures::Future;
 use slog::{debug, Logger};
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};

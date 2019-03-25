@@ -6,6 +6,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::str::{self, FromStr};
 use std::time::Duration;
 
+use failure::format_err;
 use futures::{future, stream, Async, Future, Poll, Stream};
 use rand::{thread_rng, Rng};
 use slog::{debug, o, warn, Logger};

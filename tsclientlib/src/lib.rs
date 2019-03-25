@@ -15,16 +15,14 @@
 // Needed for futures on windows.
 #![recursion_limit="128"]
 
-#[macro_use]
-extern crate failure;
-
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
 
-use failure::ResultExt;
+use derive_more::From;
+use failure::{format_err, Fail, ResultExt};
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{RwLock, RwLockReadGuard};
@@ -75,7 +73,7 @@ type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
 pub type EventListener = Box<Fn(&ConnectionLock, &[events::Event]) + Send + Sync>;
 
-#[derive(Fail, Debug)]
+#[derive(Fail, Debug, From)]
 pub enum Error {
 	#[fail(display = "{}", _0)]
 	Base64(#[cause] base64::DecodeError),
@@ -108,58 +106,6 @@ pub enum Error {
 	#[doc(hidden)]
 	#[fail(display = "Nonexhaustive enum – not an error")]
 	__Nonexhaustive,
-}
-
-impl From<base64::DecodeError> for Error {
-	fn from(e: base64::DecodeError) -> Self { Error::Base64(e) }
-}
-
-impl From<futures::Canceled> for Error {
-	fn from(e: futures::Canceled) -> Self { Error::Canceled(e) }
-}
-
-impl From<trust_dns_proto::error::ProtoError> for Error {
-	fn from(e: trust_dns_proto::error::ProtoError) -> Self {
-		Error::DnsProto(e)
-	}
-}
-
-impl From<std::io::Error> for Error {
-	fn from(e: std::io::Error) -> Self { Error::Io(e) }
-}
-
-impl From<tsproto_commands::messages::ParseError> for Error {
-	fn from(e: tsproto_commands::messages::ParseError) -> Self {
-		Error::ParseMessage(e)
-	}
-}
-
-impl From<trust_dns_resolver::error::ResolveError> for Error {
-	fn from(e: trust_dns_resolver::error::ResolveError) -> Self {
-		Error::Resolve(e)
-	}
-}
-
-impl From<reqwest::Error> for Error {
-	fn from(e: reqwest::Error) -> Self { Error::Reqwest(e) }
-}
-
-impl From<tokio_threadpool::BlockingError> for Error {
-	fn from(e: tokio_threadpool::BlockingError) -> Self {
-		Error::ThreadpoolBlocking(e)
-	}
-}
-
-impl From<TsError> for Error {
-	fn from(e: TsError) -> Self { Error::Ts(e) }
-}
-
-impl From<tsproto::Error> for Error {
-	fn from(e: tsproto::Error) -> Self { Error::Tsproto(e) }
-}
-
-impl From<std::str::Utf8Error> for Error {
-	fn from(e: std::str::Utf8Error) -> Self { Error::Utf8(e) }
 }
 
 impl From<failure::Error> for Error {
