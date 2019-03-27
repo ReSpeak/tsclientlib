@@ -11,13 +11,17 @@ use crate::{Error, Event, EVENTS, FutureHandle, LOGGER, Result, RUNTIME};
 /// Returns a null pointer if the string contains a 0 character.
 #[inline]
 fn str_to_ffi(s: &str) -> *mut c_char {
-	CString::new(s).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut())
+	let ptr = CString::new(s).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut());
+	//println!("Create {:?}", ptr);
+	ptr
 }
 
 // Take a reference to get the lifetime of the resulting `str`.
 #[inline]
-pub(crate) fn ffi_to_str(s: &*const c_char) -> Result<&str> {
-	unsafe { CStr::from_ptr(*s) }.to_str().map_err(Error::from)
+pub(crate) fn ffi_to_str(ptr: &*const c_char) -> Result<&str> {
+	let s = unsafe { CStr::from_ptr(*ptr) }.to_str().map_err(Error::from);
+	//println!("Read {:?} Len {:?}", ptr, s.as_ref().map(|s| s.len()));
+	s
 }
 
 pub trait ToFfiStringExt {
@@ -54,8 +58,8 @@ impl<F: Future<Item=(), Error=Error> + Send + 'static> ToFfiFutureExt for F {
 		RUNTIME.executor().spawn(self.then(move |r| {
 			if let Err(e) = &r {
 				warn!(LOGGER, "Future exited with error"; "error" => ?e);
-				EVENTS.0.send(Event::FutureFinished(h, r)).unwrap();
 			}
+			EVENTS.0.send(Event::FutureFinished(h, r)).unwrap();
 			Ok(())
 		}));
 		h

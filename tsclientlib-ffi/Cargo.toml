@@ -29,7 +29,7 @@ tsproto = { path = "../tsproto" }
 tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
 
 # Statically link openssl on platforms that use it except linux
-[target.'cfg(not(target_os = "linux"))'.dependencies]
+[target.'cfg(target_os = "android")'.dependencies]
 native-tls = { version = "0.2", features = ["vendored"] }
 
 [build-dependencies]

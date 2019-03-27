@@ -147,10 +147,9 @@ pub struct Invoker {
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub struct EventMsg {
-	connection: ConnectionId,
-	target_type: MessageTarget,
-	invoker: Invoker,
 	message: *mut c_char,
+	invoker: Invoker,
+	target_type: MessageTarget,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -177,6 +176,8 @@ enum Error {
 	Tsclientlib(#[cause] tsclientlib::Error),
 	#[fail(display = "{}", _0)]
 	Utf8(#[cause] std::str::Utf8Error),
+	#[fail(display = "Connection not found")]
+	ConnectionNotFound,
 
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
@@ -224,9 +225,8 @@ impl Into<FfiEvent> for Event {
 						handle,
 					}
 				},
-				Event::Event(id, LibEvent::Message { from, invoker, message }) => FfiEventUnion {
+				Event::Event(_, LibEvent::Message { from, invoker, message }) => FfiEventUnion {
 					message: EventMsg {
-						connection: id,
 						target_type: from.into(),
 						invoker: Invoker {
 							name: invoker.name.ffi(),
@@ -455,8 +455,6 @@ impl FutureHandle {
 	}
 }
 
-// TODO On future errors, send event
-
 impl ConnectionId {
 	/// This function should be called on a locked `FIRST_FREE_CON_ID`.
 	fn next_free(next_free: &mut Self) -> Self {
@@ -629,9 +627,7 @@ fn disconnect(con_id: ConnectionId) -> BoxFuture<()> {
 			con.disconnect(None).from_err()
 		}))
 	} else {
-		Box::new(future::err(
-			format_err!("Connection not found").into(),
-		))
+		Box::new(future::err(Error::ConnectionNotFound))
 	}
 }
 
@@ -661,11 +657,9 @@ pub extern "C" fn tscl_set_talking(_talking: bool) {
 }
 
 #[no_mangle]
-pub extern "C" fn tscl_next_event(ev: *mut FfiEvent) {
+pub unsafe extern "C" fn tscl_next_event(ev: *mut FfiEvent) {
 	let event = EVENTS.1.recv().unwrap();
-	unsafe {
-		*ev = event.into();
-	};
+	*ev = event.into();
 }
 
 /// Send a chat message.
@@ -699,28 +693,32 @@ fn send_message(
 		};
 		Box::new(con.lock().to_mut().send_message(target, msg).from_err())
 	} else {
-		Box::new(future::err(format_err!("Connection not found").into()))
+		Box::new(future::err(Error::ConnectionNotFound))
 	}
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tscl_free_str(s: *mut c_char) {
-	if !s.is_null() {
-		CString::from_raw(s);
+pub unsafe extern "C" fn tscl_free_str(ptr: *mut c_char) {
+	//println!("Free {:?}", ptr);
+	if !ptr.is_null() {
+		CString::from_raw(ptr);
 	}
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn tscl_free_u64s(ptr: *mut u64, len: usize) {
-	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn tscl_free_u16s(ptr: *mut u16, len: usize) {
+	//println!("Free {:?} Len {}", ptr, len);
+	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tscl_free_u64s(ptr: *mut u64, len: usize) {
+	//println!("Free {:?} Len {}", ptr, len);
 	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn tscl_free_char_ptrs(ptr: *mut *mut c_char, len: usize) {
+	//println!("Free {:?} Len {}", ptr, len);
 	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 }
