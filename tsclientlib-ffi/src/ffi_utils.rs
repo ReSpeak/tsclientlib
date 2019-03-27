@@ -56,9 +56,9 @@ impl<F: Future<Item=(), Error=Error> + Send + 'static> ToFfiFutureExt for F {
 	fn ffi(self) -> FutureHandle {
 		let h = FutureHandle::next_free();
 		RUNTIME.executor().spawn(self.then(move |r| {
-			if let Err(e) = &r {
+			/*if let Err(e) = &r {
 				warn!(LOGGER, "Future exited with error"; "error" => ?e);
-			}
+			}*/
 			EVENTS.0.send(Event::FutureFinished(h, r)).unwrap();
 			Ok(())
 		}));

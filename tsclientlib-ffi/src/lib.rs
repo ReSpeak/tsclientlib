@@ -6,10 +6,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use chashmap::CHashMap;
 use crossbeam::channel;
 use derive_more::From;
-use failure::{format_err, Fail, ResultExt};
+use failure::{Fail, ResultExt};
 use futures::{future, Future};
 #[cfg(feature = "audio")]
 use futures::{Sink, StartSend, Async, AsyncSink, Poll};
+use futures::future::Either;
 use futures::sync::oneshot;
 use lazy_static::lazy_static;
 use num::ToPrimitive;
@@ -178,6 +179,8 @@ enum Error {
 	Utf8(#[cause] std::str::Utf8Error),
 	#[fail(display = "Connection not found")]
 	ConnectionNotFound,
+	#[fail(display = "Future canceled")]
+	Canceled,
 
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
@@ -603,10 +606,14 @@ fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
 	})
 	// Cancel
 	.select2(recv)
-	.then(move |_| {
+	.then(move |r| {
 		// Remove from CONNECTING if it is still in there
 		CONNECTING.remove(&con_id2);
-		Ok(())
+		match r {
+			Ok(_) => Ok(()),
+			Err(Either::A((e, _))) => Err(e.into()),
+			Err(Either::B(_)) => Err(Error::Canceled),
+		}
 	}))
 }
 
