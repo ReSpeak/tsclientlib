@@ -1,6 +1,8 @@
 use std::ops::Deref;
+
+use t4rust_derive::Template;
 use tsproto_structs::errors::*;
-use *;
+use crate::*;
 
 #[derive(Template)]
 #[TemplatePath = "src/ErrorDeclarations.tt"]

@@ -2,6 +2,7 @@ use std::default::Default;
 use std::fmt;
 use std::ops::Deref;
 
+use t4rust_derive::Template;
 use tsproto_structs::convert_type;
 use tsproto_structs::book_to_messages;
 use tsproto_structs::book_to_messages::*;

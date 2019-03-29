@@ -1,4 +1,6 @@
 use std::default::Default;
+
+use t4rust_derive::Template;
 use tsproto_util::to_snake_case;
 use tsproto_structs::*;
 use tsproto_structs::book::{BookDeclarations, Struct};

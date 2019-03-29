@@ -1,6 +1,7 @@
 use std::default::Default;
 
 use itertools::Itertools;
+use t4rust_derive::Template;
 use tsproto_util::indent;
 use tsproto_structs::messages::*;
 use tsproto_structs::messages;

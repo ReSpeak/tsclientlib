@@ -3,7 +3,7 @@
 /// Push into events the difference between two arrays.
 ///
 /// The old value is stored in a `Vec` in `old`, the `new` in the book.
-fn diff(f: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
+fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
 	let mut ids = get_id_args(event);
 #>
 					// Added
@@ -119,7 +119,7 @@ impl Connection {
 					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
 									<# } #>
 				<# if from.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
-					diff(f, &format!("r.{}", to_snake_case(&to.name)), event, to, from)?;
+					diff(_fmt, &format!("r.{}", to_snake_case(&to.name)), event, to, from)?;
 				} else { #>
 					events.push(Event::PropertyChanged {
 						id: <#= get_property_id(event, to, from) #>,

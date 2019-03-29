@@ -2,7 +2,8 @@
 name = "tsproto-util"
 version = "0.1.0"
 authors = ["Splamy <splamyn@gmail.com>"]
+edition = "2018"
 
 [dependencies]
-t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
+t4rust-derive = "0.1.3"
 tsproto-structs = { path = "../tsproto-structs" }

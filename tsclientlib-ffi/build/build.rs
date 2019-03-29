@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate t4rust_derive;
-
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;

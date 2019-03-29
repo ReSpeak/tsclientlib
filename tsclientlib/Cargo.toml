@@ -33,7 +33,7 @@ tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
 tsproto-commands = { path = "../utils/tsproto-commands" }
 
 [build-dependencies]
-t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
+t4rust-derive = "0.1.3"
 tsproto-util = { path = "../utils/tsproto-util" }
 tsproto-structs = { path = "../utils/tsproto-structs" }
 

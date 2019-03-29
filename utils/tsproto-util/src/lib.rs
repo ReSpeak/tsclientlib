@@ -1,7 +1,3 @@
-#[macro_use]
-extern crate t4rust_derive;
-extern crate tsproto_structs;
-
 mod error_parser;
 mod version_parser;
 
