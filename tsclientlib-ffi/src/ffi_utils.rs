@@ -2,9 +2,8 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 use futures::Future;
-use slog::warn;
 
-use crate::{Error, Event, EVENTS, FutureHandle, LOGGER, Result, RUNTIME};
+use crate::{Error, Event, EVENTS, FutureHandle, Result, RUNTIME};
 
 /// Allocates a `CString` which has to be freed by the receiver afterwards.
 ///

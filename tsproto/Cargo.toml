@@ -2,9 +2,7 @@
 name = "tsproto"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
-description = """
-An implementation of the TeamSpeak3 protocol as a library for use in clients and bots.
-"""
+description = "An implementation of the TeamSpeak3 protocol as a library for use in clients and bots."
 repository = "https://github.com/ReSpeak/tsclientlib"
 keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
@@ -23,9 +21,9 @@ bitflags = "1"
 byteorder = "1"
 bytes = "0.4"
 chrono = "0.4"
-curve25519-dalek = "0.21"
-derive_more = "0.13"
-eax = { git = "https://github.com/Flakebi/eax-rs.git" }
+curve25519-dalek = "1"
+derive_more = "0.14"
+eax = "0.1"
 failure = "0.1"
 futures = "0.1"
 nom = "4"
@@ -35,8 +33,7 @@ num-traits = "0.2"
 parking_lot = "0.7"
 rand = "0.6"
 rental = "0.5"
-#ring = "0.13"
-ring = { git = "https://github.com/Flakebi/ring.git" }
+flakebi-ring = "0.14.6"
 rug = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 #simple_asn1 = "0.3"
@@ -47,8 +44,7 @@ slog-term = "2"
 stable_deref_trait = "1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
-#untrusted = "0.6"
-untrusted = { git = "https://github.com/briansmith/untrusted", tag = "ring-master" }
+untrusted = "0.6"
 quicklz = "0.2"
 
 [dependencies.slog]

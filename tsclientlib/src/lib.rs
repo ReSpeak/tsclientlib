@@ -104,7 +104,7 @@ pub enum Error {
 	ConnectionFailed(String),
 
 	#[doc(hidden)]
-	#[fail(display = "Nonexhaustive enum – not an error")]
+	#[fail(display = "Not an error – non exhaustive enum")]
 	__Nonexhaustive,
 }
 

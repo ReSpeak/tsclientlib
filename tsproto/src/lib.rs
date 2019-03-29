@@ -1,8 +1,6 @@
 #[macro_use]
 extern crate rental;
 
-use std::net::SocketAddr;
-
 use derive_more::From;
 use failure::{Fail, ResultExt};
 
@@ -105,6 +103,10 @@ pub enum Error {
 	WrongSignature,
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
+
+	#[fail(display = "Not an error – non exhaustive enum")]
+	#[doc(hidden)]
+    __Nonexhaustive,
 }
 
 impl From<failure::Error> for Error {
@@ -112,16 +114,4 @@ impl From<failure::Error> for Error {
 		let r: std::result::Result<(), _> = Err(e);
 		Error::Other(r.compat().unwrap_err())
 	}
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct ClientId(pub SocketAddr);
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct ServerId(pub SocketAddr);
-
-impl Into<SocketAddr> for ClientId {
-	fn into(self) -> SocketAddr { self.0 }
-}
-impl Into<SocketAddr> for ServerId {
-	fn into(self) -> SocketAddr { self.0 }
 }
