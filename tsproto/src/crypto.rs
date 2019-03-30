@@ -496,7 +496,7 @@ mod tests {
 	fn test_p256_priv_key_short() {
 		let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
 		let short = key.to_short();
-		let key = EccKeyPrivP256::from_short(short.as_slice()).unwrap();
+		let key = EccKeyPrivP256::from_short(short.to_vec()).unwrap();
 		let short2 = key.to_short();
 		assert_eq!(short, short2);
 	}

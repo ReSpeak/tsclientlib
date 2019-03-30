@@ -355,7 +355,6 @@ mod tests {
 
 	#[test]
 	fn test_fake_crypt() {
-		crate::init().unwrap();
 		let data = (0..100).into_iter().collect::<Vec<_>>();
 		let mut packet = OutPacket::new_with_dir(
 			Direction::C2S,
