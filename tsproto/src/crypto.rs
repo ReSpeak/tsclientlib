@@ -229,7 +229,7 @@ impl EccKeyPrivP256 {
 	/// This function takes only the obfuscated key without the level.
 	///
 	/// Thanks to landave, who put
-	/// [his deobfuscate code](https://github.com/landave/TSIdentityTool)
+	/// [his deobfuscation code](https://github.com/landave/TSIdentityTool)
 	/// under the MIT license.
 	pub fn from_ts_obfuscated(data: &str) -> Result<Self> {
 		let mut data = base64::decode(data)?;
@@ -369,7 +369,7 @@ impl EccKeyPrivP256 {
 		use ring::ec::keys::Seed;
 
 		let seed = Seed::from_p256_bytes(Input::from(&self.0))?;
-		let mut res = vec![0; 65];
+		let mut res = vec![0; 32];
 		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))?;
 		Ok(res)
 
@@ -473,6 +473,18 @@ mod tests {
 	#[test]
 	fn parse_p256_priv_key() {
 		EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
+	}
+
+	#[test]
+	fn p256_ecdh() {
+		let priv_key1 = EccKeyPrivP256::create().unwrap();
+		let pub_key1 = priv_key1.to_pub();
+		let priv_key2 = EccKeyPrivP256::create().unwrap();
+		let pub_key2 = priv_key2.to_pub();
+
+		let res1 = priv_key1.create_shared_secret(pub_key2).unwrap();
+		let res2 = priv_key2.create_shared_secret(pub_key1).unwrap();
+		assert_eq!(res1, res2);
 	}
 
 	#[test]
