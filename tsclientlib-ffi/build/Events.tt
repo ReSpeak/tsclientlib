@@ -73,7 +73,6 @@ pub struct <#= n #> {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union FfiPropertyValue {
-	empty: (),
 	struc: *mut c_void,
 <#
 let mut done = HashSet::new();

@@ -71,8 +71,8 @@ for e in &self.0.decls {
 impl<'a> <#= e.book_struct.name #>Mut<'a> {
 <# for r in &e.rules { #>
 	#[must_use = "futures do nothing unless polled"]
-	pub fn set_<#= to_snake_case(r.from_name()) #>(&self, <#=
-		get_arguments(r) #>) -> impl Future<Item=(), Error=Error> + Send + 'static {
+	pub fn set_<#= to_snake_case(r.from_name()) #>(&self<#=
+		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> impl Future<Item=(), Error=Error> + Send + 'static {
 	<# call_functions(_fmt, e.ids.iter().chain(std::iter::once(r)), "self.inner.")?; #>
 		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
 			vec![messages::c2s::<#= e.msg.name #>Part {<# // Ids

@@ -466,9 +466,9 @@ impl Connection {
 
 impl Client {
 	// Book to messages
-	fn get_empty_string(&self) -> &str {
-		""
-	}
+	fn get_empty_string(&self) -> &str { "" }
+	fn identity<T>(&self, t: T) -> T { t }
+	fn return_some<T>(&self, t: T) -> Option<T> { Some(t) }
 }
 
 impl ClientServerGroupMut<'_> {
@@ -753,8 +753,8 @@ impl ConnectionMut<'_> {
 }
 
 impl ClientMut<'_> {
-	/// Move this client to another channel.
-	///
+	// TODO
+	/*/// Move this client to another channel.
 	/// This function takes a password so it is possible to join protected
 	/// channels.
 	///
@@ -769,17 +769,7 @@ impl ClientMut<'_> {
 	/// // Switch to channel 2
 	/// tokio::spawn(client.set_channel_with_password(ChannelId(2), "secure password")
 	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
-	/// ```
-	#[must_use = "futures do nothing unless polled"]
-	pub fn set_channel_with_password(&self, channel: ChannelId, password: &str) -> impl Future<Item=(), Error=Error> {
-		self.connection.send_packet(messages::c2s::OutClientMoveMessage::new(
-			vec![messages::c2s::ClientMovePart {
-				client_id: self.inner.id,
-				channel_id: channel,
-				channel_password: Some(password),
-				phantom: PhantomData,
-			}].into_iter()))
-	}
+	/// ```*/
 
 	/// Send a text message to this client.
 	///

@@ -4,8 +4,8 @@ use t4rust_derive::Template;
 use tsproto_util::to_snake_case;
 use tsproto_structs::*;
 use tsproto_structs::book::{BookDeclarations, Struct};
-use tsproto_structs::book_to_messages::{BookToMessagesDeclarations, RuleKind,
-	RuleOp};
+use tsproto_structs::book_to_messages::{BookToMessagesDeclarations, Event,
+	RuleKind, RuleOp};
 
 use crate::*;
 
@@ -117,4 +117,36 @@ fn get_ffi_arguments(r: &RuleKind) -> String {
 		RuleKind::ArgumentFunction { from, type_s, .. } =>
 			convert_to_rust(&to_snake_case(from), type_s),
 	}
+}
+
+fn get_all_arguments_def<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> String {
+	let mut args = String::new();
+	for r in e.ids.iter().chain(r.iter().cloned()) {
+		match r {
+			RuleKind::ArgumentMap { .. } |
+			RuleKind::ArgumentFunction { .. } => {
+				let arg = get_ffi_arguments_def(r);
+					args.push_str(&arg);
+					args.push_str(", ");
+			}
+			_ => {}
+		}
+	}
+	args
+}
+
+fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> String {
+	let mut args = String::new();
+	for r in e.ids.iter().chain(r.iter().cloned()) {
+		match r {
+			RuleKind::ArgumentMap { .. } |
+			RuleKind::ArgumentFunction { .. } => {
+				let arg = get_ffi_arguments(r);
+					args.push_str(&arg);
+					args.push_str(", ");
+			}
+			_ => {}
+		}
+	}
+	args
 }
