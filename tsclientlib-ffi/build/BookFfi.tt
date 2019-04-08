@@ -7,12 +7,10 @@
 
 // Getter
 for struc in &self.0.structs {
-	// TODO Don't unwrap, throw exceptions
 	for prop in struc.properties.iter().filter(|p|
 		// Nested struct which is not a map
 		(!self.0.structs.iter().any(|s| s.name == p.type_s)
-			|| p.modifier.as_ref().map(|s| s == "map").unwrap_or(false))
-		&& !is_special_type(&p.type_s)) {
+			|| p.modifier.as_ref().map(|s| s == "map").unwrap_or(false))) {
 		let mut id_args = get_id_args(&self.0.structs, &struc);
 		let is_map = prop.modifier.as_ref().map(|s| s == "map").unwrap_or(false);
 		let is_array = prop.modifier.as_ref().map(|s| s == "array").unwrap_or(false);
@@ -23,7 +21,7 @@ for struc in &self.0.structs {
 		let type_s;
 		#>
 #[no_mangle]
-pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.name) #>(con_id: ConnectionId,
+pub extern "C" fn tscl_get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.name) #>(con_id: ConnectionId,
 	<#= id_args #><#
 		if is_array || is_map { #>len: *mut usize, <# } #>error: *mut *mut c_char) -> <#=
 
@@ -46,8 +44,7 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 		con.clone()
 	} else {
 		// Throw an exception
-		unsafe { *error = CString::new(format!("Connection {:?} does not exist",
-			con_id).as_bytes()).unwrap().into_raw(); }
+		unsafe { *error = Error::ConnectionNotFound.ffi(); }
 		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map || is_array { #>
 		return std::ptr::null_mut();
 		<# } else { #>
@@ -61,8 +58,7 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 		r
 	} else {
 		// Throw an exception
-		unsafe { *error = CString::new("<#= prop.name #> does not exist"
-			.as_bytes()).unwrap().into_raw(); }
+		unsafe { *error = "<#= prop.name #> does not exist".ffi(); }
 		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map || is_array { #>
 		return std::ptr::null_mut();
 		<# } else { #>
@@ -94,8 +90,6 @@ pub extern "C" fn get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.
 // Setter
 for e in &self.1.decls {
 	if e.op == RuleOp::Update {
-		// If the `error` is not null, an exception with the given message
-		// should be thrown.
 		for r in &e.rules {
 			let mut id_args = get_id_args(&self.0.structs, &e.book_struct);
 			if !id_args.is_empty() {
@@ -103,17 +97,14 @@ for e in &self.1.decls {
 			}
 			#>
 #[no_mangle]
-pub extern "C" fn set_<#= to_snake_case(&e.book_struct.name) #>_<#= to_snake_case(r.from_name()) #>(con_id: ConnectionId,
-	<#= id_args #><#= get_ffi_arguments_def(r) #>, error: *mut *mut c_char) {
-	unsafe { *error = std::ptr::null_mut(); }
+pub extern "C" fn tscl_set_<#= to_snake_case(&e.book_struct.name) #>_<#= to_snake_case(r.from_name()) #>(con_id: ConnectionId,
+	<#= id_args #><#= get_ffi_arguments_def(r) #>) -> FutureHandle {
 	// Get connection
 	let con = if let Some(con) = CONNECTIONS.get(&con_id) {
 		con.clone()
 	} else {
 		// Throw an exception
-		unsafe { *error = CString::new(format!("Connection {:?} does not exist",
-			con_id).as_bytes()).unwrap().into_raw(); }
-		return;
+		return Error::ConnectionNotFound.fut_ffi();
 	};
 	let con = con.lock();
 	let con = con.to_mut();
@@ -124,14 +115,10 @@ pub extern "C" fn set_<#= to_snake_case(&e.book_struct.name) #>_<#= to_snake_cas
 		r
 	} else {
 		// Throw an exception
-		unsafe { *error = CString::new("<#= e.book_struct.name #> does not exist"
-			.as_bytes()).unwrap().into_raw(); }
-		return;
+		return Error::from(format_err!("<#= e.book_struct.name #> does not exist")).fut_ffi();
 	};
 	<# } #>
-	// TODO Return Future
-	tokio::spawn(val.set_<#= to_snake_case(r.from_name()) #>(<#= get_ffi_arguments(r) #>)
-		.map_err(|e| println!("Failed to set <#= r.from_name() #> ({:?})", e)));
+	val.set_<#= to_snake_case(r.from_name()) #>(<#= get_ffi_arguments(r) #>).from_err().fut_ffi()
 }
 
 		<# }

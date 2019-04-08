@@ -7,6 +7,8 @@ use tsproto_structs::book::{BookDeclarations, Struct};
 use tsproto_structs::book_to_messages::{BookToMessagesDeclarations, RuleKind,
 	RuleOp};
 
+use crate::*;
+
 #[derive(Template)]
 #[TemplatePath = "build/BookFfi.tt"]
 #[derive(Debug)]
@@ -16,40 +18,6 @@ impl Default for BookFfi<'static> {
 	fn default() -> Self {
 		BookFfi(&tsproto_structs::book::DATA, &tsproto_structs::book_to_messages::DATA)
 	}
-}
-
-/// If the type is a more complex struct which cannot be returned easily.
-// TODO Solve all these cases in the generation
-fn is_special_type(s: &str) -> bool {
-	match s {
-		"SocketAddr" | "MaxClients" | "TalkPowerRequest" => true,
-		_ => false,
-	}
-}
-
-fn get_ffi_type(s: &str) -> String {
-	if s.ends_with('?') {
-		let inner = &s[..s.len() - 1];
-		return format!("Option<{}>", get_ffi_type(inner));
-	}
-	match s {
-		"str" => "*mut c_char",
-		"ClientId" => "u16",
-		"Uid" => "*mut c_char",
-		"ClientDbId" => "u64",
-		"ChannelId" => "u64",
-		"ServerGroupId" => "u64",
-		"ChannelGroupId" => "u64",
-		"IconHash" => "u32",
-		"DateTime" => "u64",
-		"Duration" => "u64",
-
-		// Enum
-		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
-		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
-		| "LicenseType" | "TextMessageTargetMode" => "u32",
-		_ => s,
-	}.into()
 }
 
 fn get_id_args(structs: &[Struct], struc: &Struct) -> String {
@@ -84,14 +52,17 @@ fn get_id_arg_names(structs: &[Struct], struc: &Struct) -> String {
 /// Convert to ffi type
 fn convert_val(type_s: &str) -> String {
 	match type_s {
-		"str" => "CString::new(val.as_bytes()).unwrap().into_raw()".into(),
-		"Uid" => "CString::new(val.0.as_bytes()).unwrap().into_raw()".into(),
+		"str" => "val.ffi()".into(),
+		"Uid" => "val.0.ffi()".into(),
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
 		| "ChannelGroupId" | "IconHash" => "val.0".into(),
 		// TODO With higher resulution than seconds?
 		"DateTime" => "val.timestamp() as u64".into(),
 		// TODO With higher resulution than seconds?
 		"Duration" => "val.num_seconds() as u64".into(),
+		"SocketAddr" => "val.to_string().ffi()".into(),
+		"MaxClients" => "val.ffi()".into(),
+		"TalkPowerRequest" => "val.ffi()".into(),
 		// Enum
 		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
 		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
@@ -107,7 +78,6 @@ fn convert_to_rust(name: &str, type_s: &str) -> String {
 		let inner = &type_s[..type_s.len() - 1];
 		return format!("{}.map(|v| {})", name, convert_to_rust("v", inner));
 	}
-	// TODO Don't unwrap
 	match type_s {
 		"str" => format!("unsafe {{ CStr::from_ptr({}).to_str().unwrap() }}", name),
 		"Uid" => format!("unsafe {{ UidRef(CStr::from_ptr({}).to_str().unwrap()) }}", name),

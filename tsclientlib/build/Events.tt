@@ -43,7 +43,7 @@ pub enum PropertyId {
 <# }
 } #>
 	#[doc(hidden)]
-	_NonExhaustive,
+	__NonExhaustive,
 }
 
 /// A `Property` contains the value of an attribute in the data structures.
@@ -64,5 +64,5 @@ pub enum Property {
 <# }
 } #>
 	#[doc(hidden)]
-	_NonExhaustive,
+	__NonExhaustive,
 }

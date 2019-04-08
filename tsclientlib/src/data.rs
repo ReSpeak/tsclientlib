@@ -464,6 +464,13 @@ impl Connection {
 
 }
 
+impl Client {
+	// Book to messages
+	fn get_empty_string(&self) -> &str {
+		""
+	}
+}
+
 impl ClientServerGroupMut<'_> {
 	fn get_id(&self) -> ServerGroupId { *self.inner }
 }
@@ -746,6 +753,34 @@ impl ConnectionMut<'_> {
 }
 
 impl ClientMut<'_> {
+	/// Move this client to another channel.
+	///
+	/// This function takes a password so it is possible to join protected
+	/// channels.
+	///
+	/// # Examples
+	/// ```rust,no_run
+	/// # use futures::Future;
+	/// # let connection: tsclientlib::Connection = panic!();
+	/// let con_lock = connection.lock();
+	/// let con_mut = con_lock.to_mut();
+	/// // Get our own client in mutable form
+	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
+	/// // Switch to channel 2
+	/// tokio::spawn(client.set_channel_with_password(ChannelId(2), "secure password")
+	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
+	/// ```
+	#[must_use = "futures do nothing unless polled"]
+	pub fn set_channel_with_password(&self, channel: ChannelId, password: &str) -> impl Future<Item=(), Error=Error> {
+		self.connection.send_packet(messages::c2s::OutClientMoveMessage::new(
+			vec![messages::c2s::ClientMovePart {
+				client_id: self.inner.id,
+				channel_id: channel,
+				channel_password: Some(password),
+				phantom: PhantomData,
+			}].into_iter()))
+	}
+
 	/// Send a text message to this client.
 	///
 	/// # Examples

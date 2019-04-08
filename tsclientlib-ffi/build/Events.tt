@@ -1,0 +1,95 @@
+<#@ template cleanws="true" #>
+#[repr(u32)]
+#[derive(Clone, Copy, Debug)]
+pub enum FfiPropertyType {
+<# for struc in &self.structs { #>
+	<#= struc.name #>,
+<# } #>
+
+<# for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) { #>
+	<#= struc.name #><#= get_property_name(p) #>,
+<# }
+} #>
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union FfiPropertyId {
+	empty: (),
+	// Simple ids
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	if struc.id.len() == 1 {
+		let p = struc.id[0].find_property(&self.structs);
+		let type_s = get_ffi_type(&p.type_s);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		#>
+	u_<#= to_snake_case(&type_s) #>: <#= type_s #>,
+<# }
+} #>
+
+	// Complex ids
+<#
+let mut needed_structs = Vec::new();
+for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let ids = get_ids(&self.structs, struc, p);
+		if ids.len() == 1 {
+			let type_s = &ids[0];
+			if !done.insert(type_s.clone()) {
+				continue;
+			} #>
+	<#= to_pascal_case(type_s) #>: <#= type_s #>,
+		<# } else if ids.len() > 1 {
+			let mut name = String::new();
+			for i in &ids {
+				name.push_str(&to_pascal_case(i));
+			}
+			if !done.insert(name.clone()) {
+				continue;
+			}
+			needed_structs.push((name.clone(), ids));
+			#>
+	u_<#= to_snake_case(&name) #>: <#= name #>,
+		<# }
+	}
+} #>
+}
+<# for (n, ids) in &needed_structs { #>
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct <#= n #> {
+	<# for (i, id) in ids.iter().enumerate() { #>
+	s<#= i #>: <#= id #>,
+	<# } #>
+}
+<# } #>
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub union FfiPropertyValue {
+	empty: (),
+	struc: *mut c_void,
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let type_s = get_ffi_type(&p.type_s);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		let name = if type_s == "*mut c_char" {
+			"str".to_string()
+		} else {
+			to_snake_case(&type_s)
+		};
+		#>
+	u_<#= name #>: <#= type_s #>,
+<# }
+} #>
+}

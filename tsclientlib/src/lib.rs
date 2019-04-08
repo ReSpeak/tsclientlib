@@ -474,7 +474,7 @@ impl Connection {
 	pub fn send_packet(
 		&self,
 		mut packet: OutPacket,
-	) -> impl Future<Item=(), Error=Error>
+	) -> impl Future<Item=(), Error=Error> + Send + 'static
 	{
 		// Store waiting in HashMap<usize (return code), oneshot::Sender>
 		// The packet handler then sends a result to the sender if the answer is

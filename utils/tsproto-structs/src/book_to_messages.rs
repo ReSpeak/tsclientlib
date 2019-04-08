@@ -122,12 +122,8 @@ lazy_static!{
 								from: prop,
 								to: field,
 							})
-						} else if ev.op == RuleOp::Update {
-							// For add and remove, these may be in the properties
-							panic!("No matching property found for field {} \
-								in message {}, but it is needed", field.pretty,
-								msg.name);
 						}
+						// The property may be in the properties
 					}
 				}
 

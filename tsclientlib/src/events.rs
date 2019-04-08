@@ -58,7 +58,7 @@ pub enum Event {
 	},
 
 	#[doc(hidden)]
-    __Nonexhaustive,
+	__Nonexhaustive,
 }
 
 impl Event {

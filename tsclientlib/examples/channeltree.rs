@@ -13,7 +13,7 @@ use tsclientlib::{
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -115,11 +115,15 @@ fn main() -> Result<(), failure::Error> {
 				// Change name
 				let con_mut = con.to_mut();
 				let name = &con.server.clients[&con.own_client].name;
-				tokio::spawn(con_mut.set_name(&format!("{}1", name)).map_err(|e| {
+				/*tokio::spawn(con_mut.set_name(&format!("{}1", name)).map_err(|e| {
 					println!("Failed to set client name: {:?}", e);
 				}));
 				tokio::spawn(con_mut.set_input_muted(true).map_err(|e| {
 					println!("Failed to set muted: {:?}", e);
+				}));*/
+				let client_mut = con_mut.get_server().get_client(&con.own_client).unwrap();
+				tokio::spawn(client_mut.set_channel(ChannelId(24)).map_err(|e| {
+					println!("Failed to change channel: {:?}", e);
 				}));
 			}
 
@@ -127,7 +131,7 @@ fn main() -> Result<(), failure::Error> {
 		})
 		.and_then(|con| {
 			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(60))
+			Delay::new(Instant::now() + Duration::from_secs(5))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		})

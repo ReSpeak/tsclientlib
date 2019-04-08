@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use chashmap::CHashMap;
 use crossbeam::channel;
 use derive_more::From;
-use failure::{Fail, ResultExt};
+use failure::{format_err, Fail, ResultExt};
 use futures::{future, Future};
 #[cfg(feature = "audio")]
 use futures::{Sink, StartSend, Async, AsyncSink, Poll};
@@ -30,9 +30,23 @@ use tsproto_audio::{audio_to_ts, ts_to_audio};
 type Result<T> = std::result::Result<T, Error>;
 type BoxFuture<T> = Box<Future<Item=T, Error=Error> + Send + 'static>;
 
+pub mod events;
 mod ffi_utils;
+pub mod special_types;
 
+use events::*;
 use ffi_utils::*;
+use special_types::*;
+
+/// To obtain a unique id for a future, we just increment this counter.
+///
+/// Use `FutureHandle::next_free` to obtain a handle.
+///
+/// In theory, this could lead to two futures using the same counter if we
+/// wrap arount in between. We ignore this case because futures are likely
+/// short lived and a user does not spawn 4 billion futures while another
+/// future is still running.
+static NEXT_FUTURE_HANDLE: AtomicU32 = AtomicU32::new(0);
 
 lazy_static! {
 	static ref LOGGER: Logger = {
@@ -58,16 +72,6 @@ lazy_static! {
 	/// All currently open connections.
 	static ref CONNECTIONS: CHashMap<ConnectionId, Connection> =
 		CHashMap::new();
-
-	/// To obtain a unique id for a future, we just increment this counter.
-	///
-	/// Use `FutureHandle::next_free` to obtain a handle.
-	///
-	/// In theory, this could lead to two futures using the same counter if we
-	/// wrap arount in between. We ignore this case because futures are likely
-	/// short lived and a user does not spawn 4 billion futures while another
-	/// future is still running.
-	static ref NEXT_FUTURE_HANDLE: AtomicU32 = AtomicU32::new(0);
 
 	/// Transfer events to whoever is listening on the `next_event` method.
 	static ref EVENTS: (channel::Sender<Event>, channel::Receiver<Event>) =
@@ -111,6 +115,9 @@ pub enum EventType {
 	ConnectionRemoved,
 	FutureFinished,
 	Message,
+	PropertyAdded,
+	PropertyChanged,
+	PropertyRemoved,
 }
 
 #[repr(C)]
@@ -126,6 +133,10 @@ pub union FfiEventUnion {
 	empty: (),
 	future_result: FfiFutureResult,
 	message: EventMsg,
+	/// Property added or removed
+	property: FfiProperty,
+	/// Old and new property
+	property_changed: PropertyChanged,
 }
 
 #[repr(C)]
@@ -519,7 +530,7 @@ pub unsafe extern "C" fn tscl_connect(
 ) -> FutureHandle {
 	let res = connect(ffi_to_str(&address).unwrap());
 	*con_id = res.0;
-	res.1.ffi()
+	res.1.fut_ffi()
 }
 
 fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
@@ -619,7 +630,7 @@ fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
 
 #[no_mangle]
 pub extern "C" fn tscl_disconnect(con_id: ConnectionId) -> FutureHandle {
-	disconnect(con_id).ffi()
+	disconnect(con_id).fut_ffi()
 }
 
 fn disconnect(con_id: ConnectionId) -> BoxFuture<()> {
@@ -680,7 +691,7 @@ pub unsafe extern "C" fn tscl_send_message(
 	msg: *const c_char,
 ) -> FutureHandle {
 	let msg = ffi_to_str(&msg).unwrap();
-	send_message(con_id, target_type, target, msg).ffi()
+	send_message(con_id, target_type, target, msg).fut_ffi()
 }
 
 fn send_message(
