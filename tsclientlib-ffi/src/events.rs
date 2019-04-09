@@ -4,7 +4,7 @@ use std::os::raw::{c_char, c_void};
 use num::ToPrimitive;
 use tsclientlib::events::{Property, PropertyId};
 
-use crate::{FfiMaxClients, FfiTalkPowerRequest, Invoker};
+use crate::{FfiMaxClients, FfiTalkPowerRequest, FfiInvoker};
 use crate::ffi_utils::ToFfi;
 
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
@@ -13,27 +13,27 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct FfiProperty {
-	value: FfiPropertyValue,
+	pub value: FfiPropertyValue,
 	/// If the name of the invoker is `null`, there is no invoker.
-	invoker: Invoker,
-	p_type: FfiPropertyType,
-	id: FfiPropertyId,
+	pub invoker: FfiInvoker,
+	pub p_type: FfiPropertyType,
+	pub id: FfiPropertyId,
 	/// When the value is an optional and it is `None`, this boolean is `false`.
-	value_exists: bool,
+	pub value_exists: bool,
 }
 
 /// A property was modified.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PropertyChanged {
-	old: FfiPropertyValue,
-	new: FfiPropertyValue,
+	pub old: FfiPropertyValue,
+	pub new: FfiPropertyValue,
 	/// If the name of the invoker is `null`, there is no invoker.
-	invoker: Invoker,
-	p_type: FfiPropertyType,
-	id: FfiPropertyId,
+	pub invoker: FfiInvoker,
+	pub p_type: FfiPropertyType,
+	pub id: FfiPropertyId,
 	/// When the value is an optional and it is `None`, this boolean is `false`.
-	old_exists: bool,
+	pub old_exists: bool,
 	/// When the value is an optional and it is `None`, this boolean is `false`.
-	new_exists: bool,
+	pub new_exists: bool,
 }

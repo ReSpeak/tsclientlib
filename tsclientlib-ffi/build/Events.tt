@@ -111,7 +111,7 @@ for struc in &self.structs {
 } #>
 }
 
-trait PropertyExt {
+pub trait PropertyExt {
 	fn prop_ffi(&self) -> FfiPropertyValue;
 	fn is_none(&self) -> bool;
 }
@@ -158,7 +158,7 @@ for struc in &self.structs {
 	}
 }
 
-trait PropertyIdExt {
+pub trait PropertyIdExt {
 	fn prop_ffi(&self) -> FfiPropertyId;
 	fn prop_type(&self) -> FfiPropertyType;
 }

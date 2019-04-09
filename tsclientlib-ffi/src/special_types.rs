@@ -2,9 +2,18 @@ use std::default::Default;
 use std::os::raw::c_char;
 use std::ptr;
 
-use tsclientlib::{MaxClients, TalkPowerRequest};
+use tsclientlib::{Invoker, MaxClients, TalkPowerRequest};
 
 use crate::ffi_utils::ToFfi;
+
+#[derive(Clone, Copy, Debug)]
+#[repr(C)]
+pub struct FfiInvoker {
+	name: *mut c_char,
+	/// The uid may be null.
+	uid: *mut c_char,
+	id: u16,
+}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -28,6 +37,12 @@ pub struct FfiTalkPowerRequest {
 	message: *mut c_char,
 }
 
+impl Default for FfiInvoker {
+	fn default() -> Self {
+		Self { name: ptr::null_mut(), uid: ptr::null_mut(), id: 0 }
+	}
+}
+
 impl Default for FfiMaxClients {
 	fn default() -> Self {
 		Self { limit: 0, kind: FfiMaxClientsKind::Unlimited }
@@ -37,6 +52,17 @@ impl Default for FfiMaxClients {
 impl Default for FfiTalkPowerRequest {
 	fn default() -> Self {
 		Self { time: 0, message: ptr::null_mut() }
+	}
+}
+
+impl ToFfi for Invoker {
+	type FfiType = FfiInvoker;
+	fn ffi(&self) -> Self::FfiType {
+		FfiInvoker {
+			name: self.name.ffi(),
+			uid: self.uid.as_ref().map(|uid| uid.0.ffi()).unwrap_or(std::ptr::null_mut()),
+			id: self.id.0,
+		}
 	}
 }
 

@@ -58,7 +58,7 @@ pub enum Event {
 	},
 
 	#[doc(hidden)]
-	__Nonexhaustive,
+	__NonExhaustive,
 }
 
 impl Event {
@@ -68,7 +68,7 @@ impl Event {
 			Event::PropertyChanged { invoker, .. } |
 			Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
 			Event::Message { invoker, .. } => Some(invoker),
-			Event::__Nonexhaustive => panic!("Non exhaustive event should not be created"),
+			Event::__NonExhaustive => panic!("Non exhaustive event should not be created"),
 		}
 	}
 }

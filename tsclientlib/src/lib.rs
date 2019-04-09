@@ -105,7 +105,7 @@ pub enum Error {
 
 	#[doc(hidden)]
 	#[fail(display = "Not an error – non exhaustive enum")]
-	__Nonexhaustive,
+	__NonExhaustive,
 }
 
 impl From<failure::Error> for Error {

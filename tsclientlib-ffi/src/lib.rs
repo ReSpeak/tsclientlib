@@ -149,18 +149,9 @@ pub struct FfiFutureResult {
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
-pub struct Invoker {
-	name: *mut c_char,
-	/// The uid may be null.
-	uid: *mut c_char,
-	id: u16,
-}
-
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
 pub struct EventMsg {
 	message: *mut c_char,
-	invoker: Invoker,
+	invoker: FfiInvoker,
 	target_type: MessageTarget,
 }
 
@@ -213,7 +204,10 @@ impl Event {
 			Event::ConnectionRemoved(_) => EventType::ConnectionRemoved,
 			Event::FutureFinished(_, _) => EventType::FutureFinished,
 			Event::Event(_, LibEvent::Message { .. }) => EventType::Message,
-			Event::Event(_, _) => unimplemented!("Events apart from message are not yet implemented"),
+			Event::Event(_, LibEvent::PropertyAdded { .. }) => EventType::PropertyAdded,
+			Event::Event(_, LibEvent::PropertyChanged { .. }) => EventType::PropertyChanged,
+			Event::Event(_, LibEvent::PropertyRemoved { .. }) => EventType::PropertyRemoved,
+			Event::Event(_, LibEvent::__NonExhaustive) => panic!("Non exhaustive should not be created"),
 		}
 	}
 
@@ -242,12 +236,17 @@ impl Into<FfiEvent> for Event {
 				Event::Event(_, LibEvent::Message { from, invoker, message }) => FfiEventUnion {
 					message: EventMsg {
 						target_type: from.into(),
-						invoker: Invoker {
-							name: invoker.name.ffi(),
-							uid: invoker.uid.map(|uid| uid.0.ffi()).unwrap_or(std::ptr::null_mut()),
-							id: invoker.id.0,
-						},
+						invoker: invoker.ffi(),
 						message: message.ffi(),
+					}
+				},
+				Event::Event(_, LibEvent::PropertyRemoved { id, old, invoker }) => FfiEventUnion {
+					property: FfiProperty {
+						value: old.prop_ffi(),
+						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						p_type: id.prop_type(),
+						id: id.prop_ffi(),
+						value_exists: !old.is_none(),
 					}
 				},
 				Event::Event(_, _) => unimplemented!("Events apart from message are not yet implemented"),
