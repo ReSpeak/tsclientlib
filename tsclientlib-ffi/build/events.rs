@@ -28,11 +28,10 @@ impl Default for Events<'static> {
 }
 
 fn get_ids(structs: &[Struct], struc: &Struct, p: &Property) -> Vec<String> {
-	let mut ids: Vec<_> = struc.id.iter().map(|i|
-		get_ffi_type(&i.find_property(structs).type_s)).collect();
+	let mut ids = get_struct_ids(structs, struc);
 	if let Some(m) = &p.modifier {
 		if m == "map" {
-			// The key is port of the id
+			// The key is part of the id
 			ids.push(p.key.as_ref().unwrap().to_string());
 		} else if m == "array" {
 			// Take the element itself as port of the id.
@@ -43,6 +42,11 @@ fn get_ids(structs: &[Struct], struc: &Struct, p: &Property) -> Vec<String> {
 		}
 	}
 	ids
+}
+
+fn get_struct_ids(structs: &[Struct], struc: &Struct) -> Vec<String> {
+	struc.id.iter().map(|i| get_ffi_type(&i.find_property(structs).type_s))
+		.collect()
 }
 
 pub fn get_property_name(p: &Property) -> &str {

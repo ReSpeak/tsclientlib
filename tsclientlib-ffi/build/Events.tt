@@ -20,6 +20,8 @@ pub union FfiPropertyId {
 	// Simple ids
 <#
 let mut done = HashSet::new();
+let mut needed_structs = Vec::new();
+
 for struc in &self.structs {
 	if struc.id.len() == 1 {
 		let p = struc.id[0].find_property(&self.structs);
@@ -29,12 +31,28 @@ for struc in &self.structs {
 		}
 		#>
 	u_<#= to_snake_case(&type_s) #>: <#= type_s #>,
-<# }
+<# } else if struc.id.len() > 1 {
+		let mut name = String::new();
+		let ids = get_struct_ids(&self.structs, struc);
+		for i in &ids {
+			let i = if i == "*mut c_char" {
+				"str"
+			} else {
+				i
+			};
+			name.push_str(&to_pascal_case(i));
+		}
+		if !done.insert(name.clone()) {
+			continue;
+		}
+		needed_structs.push((name.clone(), ids));
+		#>
+	u_<#= to_snake_case(&name) #>: <#= name #>,
+	<# }
 } #>
 
 	// Complex ids
 <#
-let mut needed_structs = Vec::new();
 for struc in &self.structs {
 	for p in get_event_properties(&self.structs, self.1, struc) {
 		let ids = get_ids(&self.structs, struc, p);
@@ -91,4 +109,202 @@ for struc in &self.structs {
 	u_<#= name #>: <#= type_s #>,
 <# }
 } #>
+}
+
+trait PropertyExt {
+	fn prop_ffi(&self) -> FfiPropertyValue;
+	fn is_none(&self) -> bool;
+}
+
+impl PropertyExt for Property {
+	fn prop_ffi(&self) -> FfiPropertyValue {
+		match self {
+			Property::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
+<#
+for struc in &self.structs { #>
+			Property::<#= struc.name #>(val) => FfiPropertyValue {
+				struc: Box::into_raw(Box::new(val)) as *mut c_void,
+			},
+<# }
+
+for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let type_s = get_ffi_type(&p.type_s);
+		let name = if type_s == "*mut c_char" {
+			"str".to_string()
+		} else {
+			to_snake_case(&type_s)
+		}; #>
+			Property::<#= struc.name #><#= get_property_name(p) #>(val) =>
+				FfiPropertyValue {
+					u_<#= name #>: <#= convert_property(p) #>,
+				},
+	<# }
+} #>
+		}
+	}
+
+	fn is_none(&self) -> bool {
+		match self {
+<# for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		if p.opt { #>
+			Property::<#= struc.name #><#= get_property_name(p) #>(val) => val.is_none(),
+		<# }
+	}
+} #>
+			_ => false,
+		}
+	}
+}
+
+trait PropertyIdExt {
+	fn prop_ffi(&self) -> FfiPropertyId;
+	fn prop_type(&self) -> FfiPropertyType;
+}
+
+impl PropertyIdExt for PropertyId {
+	fn prop_ffi(&self) -> FfiPropertyId {
+		match self {
+			PropertyId::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
+<# for struc in &self.structs {
+	if struc.id.is_empty() { #>
+			PropertyId::<#= struc.name #> => FfiPropertyId { empty: () },
+	<# } else if struc.id.len() == 1 {
+		let p = struc.id[0].find_property(&self.structs);
+		let type_s = get_ffi_type(&p.type_s);
+		#>
+			PropertyId::<#= struc.name #>(val) => FfiPropertyId {
+				u_<#= to_snake_case(&type_s) #>: <#= convert_val(&p.type_s) #>,
+			},
+	<# } else {
+		let mut name = String::new();
+		let ids = get_struct_ids(&self.structs, struc);
+		for i in &ids {
+			let i = if i == "*mut c_char" {
+				"str"
+			} else {
+				i
+			};
+			name.push_str(&to_pascal_case(i));
+		}
+
+		let mut match_ids = String::from("(s0");
+		for i in 1..ids.len() {
+			match_ids.push_str(&format!(", s{}", i));
+		}
+		match_ids.push(')');
+		#>
+			PropertyId::<#= struc.name #><#= match_ids #> => FfiPropertyId {
+				u_<#= to_snake_case(&name) #>: <#= name #> {
+					<# for (i, id) in struc.id.iter().enumerate() {
+						let p = id.find_property(&self.structs);
+						#>
+					s<#= i #>: <#= convert_val(&p.type_s).replace("val", &format!("s{}", i)) #>,
+					<# } #>
+				},
+			},
+	<# }
+} #>
+
+<# for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let ids = get_ids(&self.structs, struc, p);
+		match ids.len() {
+			0 => { #>
+			PropertyId::<#= struc.name #><#= get_property_name(p) #> => FfiPropertyId { empty: () },
+			<# }
+			1 => {
+				let id_p = struc.id[0].find_property(&self.structs);
+				let type_s = &ids[0];
+				#>
+			PropertyId::<#= struc.name #><#= get_property_name(p) #>(val) => FfiPropertyId {
+				u_<#= to_snake_case(&type_s) #>: <#= convert_val(&id_p.type_s) #>,
+			},
+			<# }
+			n => {
+				let mut name = String::new();
+				for i in &ids {
+					let i = if i == "*mut c_char" {
+						"str"
+					} else {
+						i
+					};
+					name.push_str(&to_pascal_case(i));
+				}
+
+				let mut match_ids = String::from("(s0");
+				for i in 1..ids.len() {
+					match_ids.push_str(&format!(", s{}", i));
+				}
+				match_ids.push(')');
+				#>
+			PropertyId::<#= struc.name #><#= get_property_name(p) #><#= match_ids #> => FfiPropertyId {
+				u_<#= to_snake_case(&name) #>: <#= name #> {
+					<# for (i, id) in struc.id.iter().enumerate() {
+						let p = id.find_property(&self.structs);
+						#>
+					s<#= i #>: <#= convert_val(&p.type_s).replace("val", &format!("s{}", i)) #>,
+					<# }
+
+					if let Some(m) = &p.modifier {
+						if m == "map" { #>
+					s<#= n - 1 #>: <#= convert_val(&p.key.as_ref().unwrap()).replace("val", &format!("s{}", n - 1)) #>,
+						<# } else if m == "array" { #>
+					s<#= n - 1 #>: <#= convert_val(&p.type_s).replace("val", &format!("s{}", n - 1)) #>,
+						<# } else {
+							panic!("Unknown modifier {}", m);
+						}
+					}
+					#>
+				},
+			},
+			<# }
+		}
+	}
+} #>
+		}
+	}
+
+	fn prop_type(&self) -> FfiPropertyType {
+		match self {
+			PropertyId::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
+<# for struc in &self.structs {
+	let ids = match struc.id.len() {
+		0 => "".into(),
+		n => {
+			let mut res = String::from("(_");
+			for _ in 1..n {
+				res.push_str(", _");
+			}
+			res.push(')');
+			res
+		}
+	}; #>
+			PropertyId::<#= struc.name #><#= ids #> => FfiPropertyType::<#= struc.name #>,
+<# } #>
+
+<# for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let mut n = struc.id.len();
+		if p.modifier.is_some() {
+			n += 1;
+		}
+		let ids = match n {
+			0 => "".into(),
+			n => {
+				let mut res = String::from("(_");
+				for _ in 1..n {
+					res.push_str(", _");
+				}
+				res.push(')');
+				res
+			}
+		}; #>
+			PropertyId::<#= struc.name #><#= get_property_name(p) #><#= ids #> =>
+				FfiPropertyType::<#= struc.name #><#= get_property_name(p) #>,
+<# }
+} #>
+		}
+	}
 }

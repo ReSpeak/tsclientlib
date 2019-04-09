@@ -49,29 +49,6 @@ fn get_id_arg_names(structs: &[Struct], struc: &Struct) -> String {
 	res
 }
 
-/// Convert to ffi type
-fn convert_val(type_s: &str) -> String {
-	match type_s {
-		"str" => "val.ffi()".into(),
-		"Uid" => "val.0.ffi()".into(),
-		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
-		| "ChannelGroupId" | "IconHash" => "val.0".into(),
-		// TODO With higher resulution than seconds?
-		"DateTime" => "val.timestamp() as u64".into(),
-		// TODO With higher resulution than seconds?
-		"Duration" => "val.num_seconds() as u64".into(),
-		"SocketAddr" => "val.to_string().ffi()".into(),
-		"MaxClients" => "val.ffi()".into(),
-		"TalkPowerRequest" => "val.ffi()".into(),
-		// Enum
-		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
-		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
-		| "LicenseType" | "TextMessageTargetMode" =>
-		"val.to_u32().unwrap()".into(),
-		_ => "*val".into(),
-	}
-}
-
 /// Convert ffi type to rust type
 fn convert_to_rust(name: &str, type_s: &str) -> String {
 	if type_s.ends_with('?') {
