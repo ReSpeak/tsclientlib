@@ -3,6 +3,7 @@ use std::default::Default;
 use std::ops::Deref;
 
 use t4rust_derive::Template;
+use tsproto_structs::convert_type;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations,
 	RuleKind};
@@ -25,6 +26,15 @@ impl<'a> Deref for Events<'a> {
 
 impl Default for Events<'static> {
 	fn default() -> Self { Events(&DATA, &messages_to_book::DATA) }
+}
+
+pub fn get_rust_type(p: &Property) -> String {
+	let res = convert_type(&p.type_s, false);
+	if p.opt {
+		format!("Option<{}>", res)
+	} else {
+		res
+	}
 }
 
 fn get_ids(structs: &[Struct], struc: &Struct, p: &Property) -> Vec<String> {

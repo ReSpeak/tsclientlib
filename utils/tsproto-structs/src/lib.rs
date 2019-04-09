@@ -95,6 +95,8 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 		} else {
 			String::from("Uid")
 		}
+	} else if t == "TalkPowerRequest" && is_ref {
+		String::from("&TalkPowerRequest")
 	} else if t == "Ts3ErrorCode" {
 		String::from("Error")
 	} else if t == "PermissionId" {

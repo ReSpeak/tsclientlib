@@ -8,6 +8,8 @@ use tsproto_structs::messages_to_book;
 use tsproto_structs::messages_to_book::*;
 use tsproto_util::*;
 
+use crate::events::get_rust_type;
+
 #[derive(Template)]
 #[TemplatePath = "build/MessagesToBook.tt"]
 #[derive(Debug)]
@@ -101,6 +103,8 @@ fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
 	format!("PropertyId::{}{}", get_property_name(e, p), ids)
 }
 
-fn get_property(e: &Event, p: &Property, name: &str) -> String {
-	format!("Property::{}({})", get_property_name(e, p), name)
+fn get_property(p: &Property, name: &str) -> String {
+	let type_s = get_rust_type(p);
+	let type_s = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
+	format!("PropertyValue::{}({})", type_s, name)
 }

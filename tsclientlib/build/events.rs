@@ -7,6 +7,7 @@ use tsproto_structs::convert_type;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations,
 	RuleKind};
+use tsproto_util::to_pascal_case;
 
 #[derive(Template)]
 #[TemplatePath = "build/Events.tt"]
@@ -25,8 +26,17 @@ impl Default for EventDeclarations<'static> {
 	fn default() -> Self { EventDeclarations(&DATA, &messages_to_book::DATA) }
 }
 
-fn get_rust_type(p: &Property) -> String {
+pub fn get_rust_type(p: &Property) -> String {
 	let res = convert_type(&p.type_s, false);
+	if p.opt {
+		format!("Option<{}>", res)
+	} else {
+		res
+	}
+}
+
+pub fn get_rust_ref_type(p: &Property) -> String {
+	let res = convert_type(&p.type_s, true);
 	if p.opt {
 		format!("Option<{}>", res)
 	} else {

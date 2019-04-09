@@ -8,12 +8,14 @@ mod book_to_messages_parser;
 mod events;
 mod facade_parser;
 mod messages_to_book_parser;
+mod properties;
 
 use crate::book_parser::BookDeclarations;
 use crate::book_to_messages_parser::BookToMessagesDeclarations;
 use crate::events::EventDeclarations;
 use crate::facade_parser::FacadeDeclarations;
 use crate::messages_to_book_parser::MessagesToBookDeclarations;
+use crate::properties::Properties;
 
 fn main() {
 	let out_dir = env::var("OUT_DIR").unwrap();
@@ -38,4 +40,8 @@ fn main() {
 	// Events
 	let mut structs = File::create(&path.join("events.rs")).unwrap();
 	write!(&mut structs, "{}", EventDeclarations::default()).unwrap();
+
+	// Properties
+	let mut structs = File::create(&path.join("properties.rs")).unwrap();
+	write!(&mut structs, "{}", Properties::default()).unwrap();
 }

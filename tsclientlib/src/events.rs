@@ -31,7 +31,7 @@ pub enum Event {
 	/// E.g. a client changes its nickname or switches to another channel.
 	PropertyChanged {
 		id: PropertyId,
-		old: Property,
+		old: PropertyValue,
 		invoker: Option<Invoker>,
 	},
 	/// The object with this id was removed.
@@ -43,7 +43,7 @@ pub enum Event {
 	/// or a channel is removed.
 	PropertyRemoved {
 		id: PropertyId,
-		old: Property,
+		old: PropertyValue,
 		invoker: Option<Invoker>,
 	},
 

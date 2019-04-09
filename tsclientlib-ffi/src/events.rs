@@ -2,12 +2,15 @@
 use std::os::raw::{c_char, c_void};
 
 use num::ToPrimitive;
-use tsclientlib::events::{Property, PropertyId};
+use tsclientlib::events::{PropertyValueRef, PropertyId};
 
 use crate::{FfiMaxClients, FfiTalkPowerRequest, FfiInvoker};
 use crate::ffi_utils::ToFfi;
 
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
+unsafe impl Send for FfiProperty {}
+unsafe impl Send for FfiPropertyId {}
+unsafe impl Send for FfiPropertyValue {}
 
 /// A property was added or removed.
 #[repr(C)]
@@ -25,7 +28,7 @@ pub struct FfiProperty {
 /// A property was modified.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct PropertyChanged {
+pub struct FfiPropertyChanged {
 	pub old: FfiPropertyValue,
 	pub new: FfiPropertyValue,
 	/// If the name of the invoker is `null`, there is no invoker.

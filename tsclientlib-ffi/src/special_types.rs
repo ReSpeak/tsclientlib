@@ -14,6 +14,7 @@ pub struct FfiInvoker {
 	uid: *mut c_char,
 	id: u16,
 }
+unsafe impl Send for FfiInvoker {}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -36,6 +37,7 @@ pub struct FfiTalkPowerRequest {
 	time: u64,
 	message: *mut c_char,
 }
+unsafe impl Send for FfiTalkPowerRequest {}
 
 impl Default for FfiInvoker {
 	fn default() -> Self {

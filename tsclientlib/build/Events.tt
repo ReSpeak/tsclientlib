@@ -46,23 +46,94 @@ pub enum PropertyId {
 	__NonExhaustive,
 }
 
-/// A `Property` contains the value of an attribute in the data structures.
+/// A `PropertyValue` contains the value of an attribute in the data structures.
 ///
 /// This is used in [`EventListener`]s to get e.g. the attributes of a deleted
 /// channel.
 ///
 /// [`EventListener`]: ../type.EventListener.html
 #[derive(Clone, Debug, PartialEq)]
-pub enum Property {
+pub enum PropertyValue {
 <# for struc in &self.structs { #>
 	<#= struc.name #>(<#= struc.name #>),
 <# } #>
 
-<# for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) { #>
-	<#= struc.name #><#= get_property_name(p) #>(<#= &get_rust_type(p) #>),
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let type_s = get_rust_type(p);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		#>
+	<#= to_pascal_case(&type_s.replace('<', "_").replace('>', "")) #>(<#= type_s #>),
 <# }
 } #>
 	#[doc(hidden)]
 	__NonExhaustive,
+}
+
+/// A `PropertyValueRef` contains a reference to the value of an attribute in
+/// the data structures.
+///
+/// See [`PropertyValue`] for the owned variant.
+///
+/// [`PropertyValue`]: enum.PropertyValue.html
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropertyValueRef<'a> {
+<# for struc in &self.structs { #>
+	<#= struc.name #>(&'a <#= struc.name #>),
+<# } #>
+
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let type_s = get_rust_type(p);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		#>
+	<#= to_pascal_case(&type_s.replace('<', "_").replace('>', "")) #>(<#= get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>),
+<# }
+} #>
+	#[doc(hidden)]
+	__NonExhaustive,
+}
+
+impl PropertyValue {
+	pub fn as_ref(&self) -> PropertyValueRef {
+		match self {
+			PropertyValue::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
+<# for struc in &self.structs { #>
+			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(s),
+<# } #>
+
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_event_properties(&self.structs, self.1, struc) {
+		let type_s = get_rust_type(p);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		let name = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
+		let ref_name = get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>");
+		let has_ref = ref_name.contains('&');
+		if p.opt && p.type_s == "str" { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref().map(String::as_ref)),
+		<# } else if p.type_s == "Uid" { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
+		<# } else if p.opt && has_ref { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
+		<# } else if has_ref { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s),
+		<# } else { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(*s),
+		<# }
+	}
+} #>
+		}
+	}
 }

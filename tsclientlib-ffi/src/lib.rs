@@ -136,7 +136,7 @@ pub union FfiEventUnion {
 	/// Property added or removed
 	property: FfiProperty,
 	/// Old and new property
-	property_changed: PropertyChanged,
+	property_changed: FfiPropertyChanged,
 }
 
 #[repr(C)]
@@ -146,6 +146,7 @@ pub struct FfiFutureResult {
 	error: *mut c_char,
 	handle: FutureHandle,
 }
+unsafe impl Send for FfiFutureResult {}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -154,6 +155,7 @@ pub struct EventMsg {
 	invoker: FfiInvoker,
 	target_type: MessageTarget,
 }
+unsafe impl Send for EventMsg {}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(u32)]
@@ -171,6 +173,8 @@ enum Event {
 	ConnectionRemoved(ConnectionId),
 	FutureFinished(FutureHandle, Result<()>),
 	Event(ConnectionId, LibEvent),
+	/// Used for property lib events, which have to be converted before sending.
+	FfiEvent(ConnectionId, EventType, FfiEventUnion),
 }
 
 #[derive(Fail, Debug, From)]
@@ -208,6 +212,7 @@ impl Event {
 			Event::Event(_, LibEvent::PropertyChanged { .. }) => EventType::PropertyChanged,
 			Event::Event(_, LibEvent::PropertyRemoved { .. }) => EventType::PropertyRemoved,
 			Event::Event(_, LibEvent::__NonExhaustive) => panic!("Non exhaustive should not be created"),
+			Event::FfiEvent(_, t, _) => *t,
 		}
 	}
 
@@ -217,6 +222,7 @@ impl Event {
 			Event::ConnectionRemoved(id) => Some(*id),
 			Event::FutureFinished(_, _) => None,
 			Event::Event(id, _) => Some(*id),
+			Event::FfiEvent(id, _, _) => Some(*id),
 		}
 	}
 }
@@ -240,22 +246,85 @@ impl Into<FfiEvent> for Event {
 						message: message.ffi(),
 					}
 				},
-				Event::Event(_, LibEvent::PropertyRemoved { id, old, invoker }) => FfiEventUnion {
-					property: FfiProperty {
-						value: old.prop_ffi(),
-						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
-						p_type: id.prop_type(),
-						id: id.prop_ffi(),
-						value_exists: !old.is_none(),
+				Event::Event(_, LibEvent::PropertyRemoved { id, old, invoker }) => {
+					let old_ref = old.as_ref();
+					FfiEventUnion {
+						property: FfiProperty {
+							value: old_ref.prop_ffi(),
+							invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+							p_type: id.prop_type(),
+							id: id.prop_ffi(),
+							value_exists: !old_ref.is_none(),
+						}
 					}
-				},
-				Event::Event(_, _) => unimplemented!("Events apart from message are not yet implemented"),
+				}
+				Event::Event(_, _) => unimplemented!("Property events have to be converted before"),
+				Event::FfiEvent(_, _, f) => f,
 				_ => FfiEventUnion { empty: () },
 			},
 			typ,
 			connection: id.unwrap_or(ConnectionId(0)),
 			has_connection_id: id.is_some(),
 		}
+	}
+}
+
+trait LibEventExt {
+	fn into_event(self, con_id: ConnectionId, con: &tsclientlib::data::Connection) -> Event;
+}
+
+impl LibEventExt for LibEvent {
+	/// Used to convert into an `FfiEvent` where a connection is needed to fetch
+	/// further information.
+	fn into_event(self, con_id: ConnectionId, con: &tsclientlib::data::Connection) -> Event {
+		let typ;
+		let event = match self {
+			LibEvent::PropertyAdded { id, invoker } => {
+				typ = EventType::PropertyAdded;
+				let new_ref = con.get_property(&id).expect("Failed to get value of property");
+				FfiEventUnion {
+					property: FfiProperty {
+						value: new_ref.prop_ffi(),
+						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						p_type: id.prop_type(),
+						id: id.prop_ffi(),
+						value_exists: !new_ref.is_none(),
+					}
+				}
+			}
+			LibEvent::PropertyChanged { id, old, invoker } => {
+				typ = EventType::PropertyChanged;
+				let new_ref = con.get_property(&id).expect("Failed to get value of property");
+				let old_ref = old.as_ref();
+				FfiEventUnion {
+					property_changed: FfiPropertyChanged {
+						old: old_ref.prop_ffi(),
+						new: new_ref.prop_ffi(),
+						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						p_type: id.prop_type(),
+						id: id.prop_ffi(),
+						old_exists: !old_ref.is_none(),
+						new_exists: !new_ref.is_none(),
+					}
+				}
+			}
+			LibEvent::PropertyRemoved { id, old, invoker } => {
+				typ = EventType::PropertyRemoved;
+				let old_ref = old.as_ref();
+				FfiEventUnion {
+					property: FfiProperty {
+						value: old_ref.prop_ffi(),
+						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						p_type: id.prop_type(),
+						id: id.prop_ffi(),
+						value_exists: !old_ref.is_none(),
+					}
+				}
+			}
+			_ => panic!("Unsupported conversion"),
+		};
+
+		Event::FfiEvent(con_id, typ, event)
 	}
 }
 
@@ -572,13 +641,15 @@ fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
 				remove_connection(con_id);
 			}));
 
-			con.add_on_event("tsclientlibffi".into(), Box::new(move |_, events| {
+			con.add_on_event("tsclientlibffi".into(), Box::new(move |con, events| {
 				// TODO Send all at once? Remember the problem with getting
 				// ServerGroups one by one, so you never know when they are
 				// complete.
 				for e in events {
 					if let LibEvent::Message { .. } = e {
 						EVENTS.0.send(Event::Event(con_id, e.clone())).unwrap();
+					} else {
+						EVENTS.0.send(e.clone().into_event(con_id, &**con)).unwrap();
 					}
 				}
 			}));

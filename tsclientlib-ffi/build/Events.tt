@@ -116,29 +116,35 @@ pub trait PropertyExt {
 	fn is_none(&self) -> bool;
 }
 
-impl PropertyExt for Property {
+impl PropertyExt for PropertyValueRef<'_> {
 	fn prop_ffi(&self) -> FfiPropertyValue {
 		match self {
-			Property::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
+			PropertyValueRef::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
 <#
 for struc in &self.structs { #>
-			Property::<#= struc.name #>(val) => FfiPropertyValue {
+			PropertyValueRef::<#= struc.name #>(val) => FfiPropertyValue {
 				struc: Box::into_raw(Box::new(val)) as *mut c_void,
 			},
 <# }
 
+let mut done = HashSet::new();
 for struc in &self.structs {
 	for p in get_event_properties(&self.structs, self.1, struc) {
+		let rust_name = get_rust_type(p);
+		if !done.insert(rust_name.clone()) {
+			continue;
+		}
+		let rust_name = to_pascal_case(&rust_name.replace('<', "_").replace('>', ""));
+
 		let type_s = get_ffi_type(&p.type_s);
 		let name = if type_s == "*mut c_char" {
 			"str".to_string()
 		} else {
 			to_snake_case(&type_s)
 		}; #>
-			Property::<#= struc.name #><#= get_property_name(p) #>(val) =>
-				FfiPropertyValue {
-					u_<#= name #>: <#= convert_property(p) #>,
-				},
+			PropertyValueRef::<#= rust_name #>(val) => FfiPropertyValue {
+				u_<#= name #>: <#= convert_property(p) #>,
+			},
 	<# }
 } #>
 		}
@@ -146,10 +152,18 @@ for struc in &self.structs {
 
 	fn is_none(&self) -> bool {
 		match self {
-<# for struc in &self.structs {
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
 	for p in get_event_properties(&self.structs, self.1, struc) {
-		if p.opt { #>
-			Property::<#= struc.name #><#= get_property_name(p) #>(val) => val.is_none(),
+		if p.opt {
+			let rust_name = get_rust_type(p);
+			if !done.insert(rust_name.clone()) {
+				continue;
+			}
+			let rust_name = to_pascal_case(&rust_name.replace('<', "_").replace('>', ""));
+			#>
+			PropertyValueRef::<#= rust_name #>(val) => val.is_none(),
 		<# }
 	}
 } #>

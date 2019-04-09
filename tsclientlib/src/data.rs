@@ -15,12 +15,13 @@ use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
 use crate::{Error, MessageTarget, Result};
-use crate::events::{Event, Property, PropertyId};
+use crate::events::{Event, PropertyValue, PropertyValueRef, PropertyId};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
+include!(concat!(env!("OUT_DIR"), "/properties.rs"));
 
 macro_rules! max_clients {
 	($cmd:ident) => {{
@@ -135,7 +136,7 @@ impl Connection {
 					let old = mem::replace(&mut client.name, invoker.name.clone());
 					events.push(Event::PropertyChanged {
 						id: PropertyId::ClientName(client.id),
-						old: Property::ClientName(old),
+						old: PropertyValue::String(old),
 						invoker: None,
 					});
 				}
@@ -149,7 +150,13 @@ impl Connection {
 		Ok(events)
 	}
 
+	fn get_server(&self) -> &Server { &self.server }
 	fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
+
+	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
+		self.server.groups.get(&group)
+			.ok_or_else(|| format_err!("ServerGroup {} not found", group).into())
+	}
 	fn add_server_group(
 		&mut self,
 		group: ServerGroupId,
@@ -159,6 +166,24 @@ impl Connection {
 		self.server.groups.insert(group, r)
 	}
 
+	fn get_optional_server_data(&self) -> Result<&OptionalServerData> {
+		self.server.optional_data.as_ref()
+			.ok_or_else(|| format_err!("Server has no optional data").into())
+	}
+
+	fn get_connection_server_data(&self) -> Result<&ConnectionServerData> {
+		self.server.connection_data.as_ref()
+			.ok_or_else(|| format_err!("Server has no connection data").into())
+	}
+
+	fn get_connection(&self) -> &Connection { &self }
+
+	fn get_client(&self, client: ClientId) -> Result<&Client> {
+		self.server
+			.clients
+			.get(&client)
+			.ok_or_else(|| format_err!("Client {} not found", client).into())
+	}
 	fn get_mut_client(&mut self, client: ClientId) -> Result<&mut Client> {
 		self.server
 			.clients
@@ -170,6 +195,15 @@ impl Connection {
 	}
 	fn remove_client(&mut self, client: ClientId) -> Option<Client> {
 		self.server.clients.remove(&client)
+	}
+
+	fn get_connection_client_data(&self, client: ClientId) -> Result<&ConnectionClientData> {
+		if let Some(c) = self.server.clients.get(&client) {
+			c.connection_data.as_ref()
+				.ok_or_else(|| format_err!("Client {} has no connection data", client).into())
+		} else {
+			Err(format_err!("Client {} not found", client).into())
+		}
 	}
 	fn add_connection_client_data(
 		&mut self,
@@ -184,6 +218,21 @@ impl Connection {
 		}
 	}
 
+	fn get_optional_client_data(&self, client: ClientId) -> Result<&OptionalClientData> {
+		if let Some(c) = self.server.clients.get(&client) {
+			c.optional_data.as_ref()
+				.ok_or_else(|| format_err!("Client {} has no optional data", client).into())
+		} else {
+			Err(format_err!("Client {} not found", client).into())
+		}
+	}
+
+	fn get_channel(&self, channel: ChannelId) -> Result<&Channel> {
+		self.server
+			.channels
+			.get(&channel)
+			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
+	}
 	fn get_mut_channel(&mut self, channel: ChannelId) -> Result<&mut Channel> {
 		self.server
 			.channels
@@ -200,6 +249,23 @@ impl Connection {
 	}
 	fn remove_channel(&mut self, channel: ChannelId) -> Option<Channel> {
 		self.server.channels.remove(&channel)
+	}
+
+	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<&OptionalChannelData> {
+		if let Some(c) = self.server.channels.get(&channel) {
+			c.optional_data.as_ref()
+				.ok_or_else(|| format_err!("Channel {} has no optional data", channel).into())
+		} else {
+			Err(format_err!("Channel {} not found", channel).into())
+		}
+	}
+
+	fn get_file(&self, _channel: ChannelId, _path: &str, _name: &str) -> Result<&File> {
+		unimplemented!("Files are not yet implemented")
+	}
+
+	fn get_chat_entry(&self, _sender: ClientId) -> Result<&ChatEntry> {
+		unimplemented!("Files are not yet implemented")
 	}
 
 	// Backing functions for MessageToBook declarations
@@ -253,7 +319,7 @@ impl Connection {
 			if let Some(ch) = ch {
 				events.push(Event::PropertyChanged {
 					id: PropertyId::ChannelMaxClients(channel_id),
-					old: Property::ChannelMaxClients(channel.max_clients.take()),
+					old: PropertyValue::OptionMaxClients(channel.max_clients.take()),
 					invoker: invoker.clone(),
 				});
 				channel.max_clients = Some(ch);
@@ -271,7 +337,7 @@ impl Connection {
 			if let Some(ch_fam) = ch_fam {
 				events.push(Event::PropertyChanged {
 					id: PropertyId::ChannelMaxFamilyClients(channel_id),
-					old: Property::ChannelMaxFamilyClients(channel.max_family_clients.take()),
+					old: PropertyValue::OptionMaxClients(channel.max_family_clients.take()),
 					invoker,
 				});
 				channel.max_family_clients = Some(ch_fam);
@@ -355,7 +421,7 @@ impl Connection {
 			};
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelChannelType(channel_id),
-				old: Property::ChannelChannelType(channel.channel_type),
+				old: PropertyValue::ChannelType(channel.channel_type),
 				invoker,
 			});
 			channel.channel_type = typ;
@@ -417,7 +483,7 @@ impl Connection {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelSubscribed(channel_id),
-				old: Property::ChannelSubscribed(channel.subscribed),
+				old: PropertyValue::Bool(channel.subscribed),
 				invoker: None,
 			});
 			channel.subscribed = true;
@@ -433,7 +499,7 @@ impl Connection {
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelSubscribed(channel_id),
-				old: Property::ChannelSubscribed(channel.subscribed),
+				old: PropertyValue::Bool(channel.subscribed),
 				invoker: None,
 			});
 			channel.subscribed = false;
@@ -449,7 +515,7 @@ impl Connection {
 			for id in remove_clients {
 				events.push(Event::PropertyRemoved {
 					id: PropertyId::Client(id),
-					old: Property::Client(server.clients.remove(&id).unwrap()),
+					old: PropertyValue::Client(server.clients.remove(&id).unwrap()),
 					invoker: None,
 				});
 			}
