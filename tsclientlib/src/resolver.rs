@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use failure::format_err;
 use futures::{future, stream, Async, Future, Poll, Stream};
+use itertools::Itertools;
 use rand::{thread_rng, Rng};
 use slog::{debug, o, warn, Logger};
 use tokio::io;
@@ -417,10 +418,10 @@ fn resolve_srv_raw(
 				return Err(format_err!("Found no SRV entry").into());
 			};
 
-			// Move all SRV records into entries and only retain the ones with the
-			// lowest priority.
+			// Move all SRV records into entries and only retain the ones with
+			// the lowest priority.
 			for srv in lookup.iter() {
-				if srv.priority() > max_prio {
+				if srv.priority() < max_prio {
 					max_prio = srv.priority();
 					entries.clear();
 					entries.push(srv);
@@ -429,28 +430,46 @@ fn resolve_srv_raw(
 				}
 			}
 
+			let prios = lookup.iter()
+				.group_by(|e| e.priority());
+			let entries = prios
+				.into_iter()
+				.sorted_by_key(|(p, _)| *p);
+
 			// Select by weight
 			let mut sorted_entries = Vec::new();
-			while !entries.is_empty() {
-				let weight: u32 =
-					entries.iter().map(|e| e.weight() as u32).sum();
-				let mut rng = thread_rng();
-				let mut w = rng.gen_range(0, weight + 1);
-				if w == 0 {
-					// Pick the first entry with weight 0
-					if let Some(i) =
-						entries.iter().position(|e| e.weight() == 0)
-					{
-						sorted_entries.push(entries.remove(i));
+			for (_, es) in entries {
+				let mut zero_entries = Vec::new();
+
+				// All non-zero entries
+				let mut entries = es.filter_map(|e| if e.weight() == 0 {
+					zero_entries.push(e);
+					None
+				} else { Some(e) }).collect::<Vec<_>>();
+
+				while !entries.is_empty() {
+					let weight: u32 =
+						entries.iter().map(|e| e.weight() as u32).sum();
+					let mut rng = thread_rng();
+					let mut w = rng.gen_range(0, weight + 1);
+					if w == 0 {
+						// Pick the first entry with weight 0
+						if let Some(i) =
+							entries.iter().position(|e| e.weight() == 0)
+						{
+							sorted_entries.push(entries.remove(i));
+						}
+					}
+					for i in 0..entries.len() {
+						let weight = entries[i].weight() as u32;
+						if w <= weight {
+							sorted_entries.push(entries.remove(i));
+							break;
+						}
+						w -= weight;
 					}
 				}
-				for i in 0..entries.len() {
-					let weight = entries[i].weight() as u32;
-					if w <= weight {
-						sorted_entries.push(entries.remove(i));
-					}
-					w -= weight;
-				}
+
 			}
 
 			let entries: Vec<_> = sorted_entries

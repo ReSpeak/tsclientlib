@@ -17,6 +17,7 @@ derive_more = "0.14"
 failure = "0.1"
 futures = "0.1"
 gstreamer = { version = "0.11", optional = true }
+itertools = "0.8"
 parking_lot = "0.7"
 rand = "0.6"
 reqwest = "0.9"
