@@ -930,11 +930,12 @@ impl ConnectionMut<'_> {
 	/// # Examples
 	/// ```rust,no_run
 	/// # use futures::Future;
+	/// # use tsclientlib::MessageTarget;
 	/// # let connection: tsclientlib::Connection = panic!();
 	/// let con_lock = connection.lock();
 	/// let con_mut = con_lock.to_mut();
 	/// // Send a message
-	/// tokio::spawn(con_mut.send_message("Hi")
+	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
 	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
 	#[must_use = "futures do nothing unless polled"]

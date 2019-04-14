@@ -1065,6 +1065,7 @@ impl fmt::Debug for ConnectOptions {
 			log_commands,
 			log_packets,
 			log_udp_packets,
+			#[cfg(feature = "audio")]
 			audio_packet_handler,
 			handle_packets: _,
 			prepare_client: _,

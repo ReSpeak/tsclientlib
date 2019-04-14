@@ -1,12 +1,17 @@
+#[cfg(feature = "audio")]
 use failure::format_err;
+#[cfg(feature = "audio")]
 use futures::{Future, Stream};
+#[cfg(feature = "audio")]
 use slog::{o, Drain};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
+#[cfg(feature = "audio")]
 use tokio::runtime::Runtime;
 #[cfg(feature = "audio")]
 use tsproto_audio::{audio_to_ts, ts_to_audio};
 
+#[cfg(feature = "audio")]
 use tsclientlib::{ConnectOptions, Connection, ConnectionPacketSinkCreator};
 
 #[derive(StructOpt, Debug)]
