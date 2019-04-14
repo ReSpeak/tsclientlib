@@ -35,4 +35,3 @@ native-tls = { version = "0.2", features = ["vendored"] }
 [build-dependencies]
 t4rust-derive = "0.1.3"
 tsproto-structs = { path = "../utils/tsproto-structs" }
-tsproto-util = { path = "../utils/tsproto-util" }

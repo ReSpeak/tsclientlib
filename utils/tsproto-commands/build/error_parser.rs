@@ -1,11 +1,12 @@
 use std::ops::Deref;
 
 use t4rust_derive::Template;
+use tsproto_structs::{doc_comment, indent, to_pascal_case};
 use tsproto_structs::errors::*;
-use crate::*;
+use tsproto_structs::EnumValue;
 
 #[derive(Template)]
-#[TemplatePath = "src/ErrorDeclarations.tt"]
+#[TemplatePath = "build/ErrorDeclarations.tt"]
 #[derive(Default, Debug)]
 pub struct Errors;
 

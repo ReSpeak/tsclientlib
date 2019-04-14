@@ -5,7 +5,7 @@
 //! repository.
 //!
 //! The contained data may change with any version so the suggested way of
-//! referring to this crate is using `tsproto-structs = "=<version>"`.
+//! referring to this crate is using `tsproto-structs = "=0.1.0"`.
 //!
 //! The helper functions found in the root of this crate may also change with
 //! any version.
@@ -30,10 +30,27 @@ pub struct EnumValue {
 	pub num: String,
 }
 
-fn to_snake_case<S: AsRef<str>>(text: S) -> String {
-	let sref = text.as_ref();
-	let mut s = String::with_capacity(sref.len());
-	for c in sref.chars() {
+fn get_false() -> bool { false }
+
+pub fn to_pascal_case(text: &str) -> String {
+	let mut s = String::with_capacity(text.len());
+	let mut uppercase = true;
+	for c in text.chars() {
+		if c == '_' {
+			uppercase = true;
+		} else if uppercase {
+			s.push(c.to_uppercase().next().unwrap());
+			uppercase = false;
+		} else {
+			s.push(c);
+		}
+	}
+	s
+}
+
+pub fn to_snake_case(text: &str) -> String {
+	let mut s = String::with_capacity(text.len());
+	for c in text.chars() {
 		if c.is_uppercase() {
 			if !s.is_empty() {
 				s.push('_');
@@ -123,8 +140,29 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 	}
 }
 
-fn get_false() -> bool {
-	false
+/// Prepend `/// ` to each line of a string.
+pub fn doc_comment(s: &str) -> String {
+	s.lines().map(|l| format!("/// {}\n", l)).collect()
+}
+
+/// Indent a string by a given count using tabs.
+pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
+	let sref = s.as_ref();
+	let line_count = sref.lines().count();
+	let mut result = String::with_capacity(sref.len() + line_count * count * 4);
+	for l in sref.lines() {
+		if !l.is_empty() {
+			result.push_str(
+				std::iter::repeat("\t")
+					.take(count)
+					.collect::<String>()
+					.as_str(),
+			);
+		}
+		result.push_str(l);
+		result.push('\n');
+	}
+	result
 }
 
 /// Unindent a string by a given count of tabs.

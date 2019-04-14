@@ -1,19 +1,12 @@
 <#@ template cleanws="true" #>
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
-pub enum VersionChannel {
-	Stable,
-	Beta,
-	Alpha,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[allow(non_camel_case_types)]
 pub enum Version {
 <# for v in &**self { #>
 	<#= v.get_enum_name() #>,
 <# } #>
-	Custom { platform: String, version: String, signature: Vec<u8>, channel: VersionChannel },
+	Custom { platform: String, version: String, signature: Vec<u8> },
 }
 
 impl Version {
@@ -41,15 +34,6 @@ impl Version {
 			Version::<#= v.get_enum_name() #> => &[<#= v.get_sign_array() #>],
 		<# } #>
 			Version::Custom { ref signature, .. } => signature,
-		}
-	}
-
-	pub fn get_channel(&self) -> VersionChannel {
-		match *self {
-		<# for v in &**self { #>
-			Version::<#= v.get_enum_name() #> => VersionChannel::<#= v.channel #>,
-		<# } #>
-			Version::Custom { channel, .. } => channel,
 		}
 	}
 }

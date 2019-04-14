@@ -36,10 +36,11 @@ lazy_static!{
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Version {
-	pub channel: String,
 	pub version: String,
 	pub platform: String,
 	pub hash: String,
+	// TODO Deprecated
+	channel: String,
 	#[serde(default)]
 	count: u32,
 }
@@ -57,10 +58,6 @@ impl Version {
 				res.push('_');
 				res.push('X');
 			}
-		}
-		if self.channel != "Stable" {
-			res.push('_');
-			res.push_str(&self.channel);
 		}
 		if self.count != 0 {
 			res.push_str("__");
@@ -83,7 +80,6 @@ impl Version {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct VersionKey {
-	pub channel: String,
 	pub version: String,
 	pub platform: String,
 }
@@ -91,7 +87,6 @@ struct VersionKey {
 impl VersionKey {
 	fn new(v: &Version) -> Self {
 		Self {
-			channel: v.channel.clone(),
 			version: v.version.split(' ').next().unwrap().to_string(),
 			platform: v.platform.clone(),
 		}

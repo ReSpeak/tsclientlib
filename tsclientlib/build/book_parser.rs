@@ -1,9 +1,8 @@
 use std::default::Default;
 
 use t4rust_derive::Template;
-use tsproto_structs::book;
+use tsproto_structs::*;
 use tsproto_structs::book::*;
-use tsproto_util::*;
 
 #[derive(Template)]
 #[TemplatePath = "build/BookDeclarations.tt"]

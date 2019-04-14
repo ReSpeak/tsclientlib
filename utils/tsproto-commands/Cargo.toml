@@ -17,4 +17,3 @@ tsproto = { path = "../../tsproto" }
 itertools = "0.8"
 t4rust-derive = "0.1.3"
 tsproto-structs = { path = "../tsproto-structs" }
-tsproto-util = { path = "../tsproto-util" }

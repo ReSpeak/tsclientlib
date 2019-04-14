@@ -8,5 +8,4 @@ members = [
 	"utils/tsproto-audio",
 	"utils/tsproto-commands",
 	"utils/tsproto-structs",
-	"utils/tsproto-util",
 ]

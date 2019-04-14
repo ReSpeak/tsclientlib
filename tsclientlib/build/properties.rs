@@ -2,9 +2,9 @@
 use std::default::Default;
 
 use t4rust_derive::Template;
+use tsproto_structs::*;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
-use tsproto_util::*;
 
 use crate::events::{get_event_properties, get_property_name, get_rust_type};
 

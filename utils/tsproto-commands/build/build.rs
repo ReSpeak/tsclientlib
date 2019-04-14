@@ -3,10 +3,13 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-use tsproto_util::{Errors, Versions};
-
+mod error_parser;
 mod message_parser;
+mod version_parser;
+
+use crate::error_parser::Errors;
 use crate::message_parser::MessageDeclarations;
+use crate::version_parser::Versions;
 
 fn main() {
 	let out_dir = env::var("OUT_DIR").unwrap();

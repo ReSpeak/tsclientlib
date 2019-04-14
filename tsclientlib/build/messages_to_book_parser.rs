@@ -2,11 +2,10 @@ use std::default::Default;
 use std::ops::Deref;
 
 use t4rust_derive::Template;
+use tsproto_structs::*;
 use tsproto_structs::book::{PropId, Property};
 use tsproto_structs::messages::{Field, Message};
-use tsproto_structs::messages_to_book;
 use tsproto_structs::messages_to_book::*;
-use tsproto_util::*;
 
 use crate::events::get_rust_type;
 
@@ -64,7 +63,7 @@ fn gen_return_match(to: &[&Property]) -> String {
 	} else {
 		format!(
 			"({})",
-			join(to.iter().map(|p| to_snake_case(&p.name)), ", ")
+			to.iter().map(|p| to_snake_case(&p.name)).collect::<Vec<_>>().join(", ")
 		)
 	}
 }

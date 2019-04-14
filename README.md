@@ -51,8 +51,7 @@ The utils folder contains smaller building blocks for the library.
 - `gst-plugin-ts3`: A gstreamer demuxer that takes TeamSpeak audio data and creates a new pad for every client and codec.
 - `tsproto-audio`: Creates gstreamer pipelines and generally manages audio stuff to be easy to use.
 - `tsproto-commands`: Parse commands into structs (messages) and contains basic types and enums for TeamSpeak.
-- `tsproto-structs`: Contains parsed versions of the declarations.
-- `tsproto-util`: Contains some utility for code generation from [tsdeclarations](https://github.com/ReSpeak/tsdeclarations).
+- `tsproto-structs`: Contains parsed versions of the [tsdeclarations](https://github.com/ReSpeak/tsdeclarations).
 
 ## How this works
 `tsproto` implements the basic TeamSpeak protocol stuff (uh, who would have expected that), which comes down to creating a connection, make sure that udp packets are delivered, encrypt and compress the communication and give access to all these low-level things.
