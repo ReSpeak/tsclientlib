@@ -1,13 +1,25 @@
 # TsClientlib
-The various libraries in this repository are currently a work in progress so don‘t expect things to work. At the moment, connecting and basic audio is working.
+TsClientlib is a library that enables you to write voip clients and bots using
+the TeamSpeak protocol.
 
-This repository implements the TeamSpeak3 protocol for usage in clients and bots.
+> TeamSpeak is a proprietary voice-over-Internet Protocol (VoIP) application for
+> audio communication between users on a chat channel, much like a telephone
+> conference call. Users typically use headphones with a microphone. The client
+> software connects to a TeamSpeak server of the user's choice, from which the
+> user may join chat channels. – [Wikipedia](https://en.wikipedia.org/wiki/Teamspeak)
+
+The various libraries in this repository are currently a work in progress so
+don‘t expect everything to work. Many things you would expect from a
+library are working, like connecting, getting events, writing and receiving
+messages, etc. Some features like automatic reconnects are not yet there.
+Audio support is currently work in progress.
 
 If you are searching for a usable client instead of a library, [Qint](https://github.com/ReSpeak/Qint) is a cross-platform TeamSpeak client, which is based on this library.
 
 ## Dependencies
 - [GStreamer](https://gstreamer.freedesktop.org)
 - [Rust](https://rust-lang.org) (preferred installation method is [rustup](https://rustup.rs)), currently the nightly version is needed
+- [OpenSSL](https://www.openssl.org) 1.1 (linux only)
 
 ## Getting Started
 An example of a simple chat bot can be found [here](https://github.com/ReSpeak/SimpleBot).

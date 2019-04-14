@@ -31,6 +31,11 @@ pub mod packets;
 pub mod resend;
 pub mod utils;
 
+/// Access the build environment of tsproto.
+pub mod built_info {
+	include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 type Result<T> = std::result::Result<T, Error>;
 type LockedHashMap<K, V> =
 	std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<K, V>>>;
@@ -119,7 +124,7 @@ pub enum Error {
 
 	#[fail(display = "Not an error – non exhaustive enum")]
 	#[doc(hidden)]
-    __Nonexhaustive,
+	__Nonexhaustive,
 }
 
 impl From<failure::Error> for Error {

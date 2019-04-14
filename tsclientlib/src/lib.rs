@@ -55,6 +55,12 @@ pub mod events;
 mod packet_handler;
 pub mod resolver;
 
+/// Access the build environment of tsclientlib.
+#[allow(dead_code)]
+mod built_info {
+	include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -221,6 +227,21 @@ impl Connection {
 
 			slog::Logger::root(drain, o!())
 		});
+		info!(logger, "TsClientlib";
+			"version" => built_info::PKG_VERSION,
+			"commit" => built_info::GIT_VERSION,
+			"target" => built_info::TARGET,
+			"host" => built_info::HOST,
+			"profile" => built_info::PROFILE,
+			"features" => built_info::FEATURES_STR,
+			"rustc" => built_info::RUSTC_VERSION,
+		);
+		info!(logger, "TsProto";
+			"version" => tsproto::built_info::PKG_VERSION,
+			"commit" => tsproto::built_info::GIT_VERSION,
+			"features" => tsproto::built_info::FEATURES_STR,
+		);
+
 		let logger = logger.new(o!("addr" => options.address.to_string()));
 
 		// Try all addresses

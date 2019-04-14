@@ -68,6 +68,12 @@ impl fmt::Debug for EccKeyPrivEd25519 {
 }
 
 impl EccKeyPubP256 {
+	/// The shortest format of a public key.
+	///
+	/// This is just the `BigNum` of the x and y coordinates concatenated in
+	/// this order. Each of the coordinates takes half of the size.
+	pub fn from_short(data: Vec<u8>) -> Self { Self(data) }
+
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> {
 		Self::from_tomcrypt(&base64::decode(data)?)

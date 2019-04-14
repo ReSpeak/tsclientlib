@@ -14,9 +14,14 @@ pub mod messages;
 pub mod versions;
 
 use std::fmt;
+use std::u64;
 
 use chrono::{DateTime, Utc};
 use num_derive::{FromPrimitive, ToPrimitive};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{Unexpected, Visitor};
+use tsproto::algorithms as algs;
+use tsproto::crypto::EccKeyPrivP256;
 
 /// A `ClientId` identifies a client which is connected to a server.
 ///
@@ -299,6 +304,15 @@ pub struct InvokerRef<'a> {
 	pub uid: Option<UidRef<'a>>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Identity {
+	#[serde(serialize_with = "serialize_id_key",
+		deserialize_with = "deserialize_id_key")]
+	key: EccKeyPrivP256,
+	/// The `client_key_offest`/counter for hash cash.
+	counter: u64,
+}
+
 impl Invoker {
 	pub fn as_ref(&self) -> InvokerRef {
 		InvokerRef {
@@ -306,6 +320,71 @@ impl Invoker {
 			id: self.id,
 			uid: self.uid.as_ref().map(|u| u.as_ref()),
 		}
+	}
+}
+
+struct IdKeyVisitor;
+impl<'de> Visitor<'de> for IdKeyVisitor {
+	type Value = EccKeyPrivP256;
+
+	fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "a P256 private ecc key")
+	}
+
+	fn visit_str<E: serde::de::Error>(self, s: &str)
+		-> std::result::Result<Self::Value, E> {
+		EccKeyPrivP256::import_str(s).map_err(|_| {
+			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
+		})
+	}
+}
+
+fn serialize_id_key<S: Serializer>(key: &EccKeyPrivP256, s: S)
+	-> std::result::Result<S::Ok, S::Error> {
+	s.serialize_str(&base64::encode(&key.to_short()))
+}
+
+fn deserialize_id_key<'de, D: Deserializer<'de>>(d: D)
+	-> std::result::Result<EccKeyPrivP256, D::Error> {
+	d.deserialize_str(IdKeyVisitor)
+}
+
+impl Identity {
+	#[inline]
+	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
+		Self { key, counter }
+	}
+
+	#[inline]
+	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
+	#[inline]
+	pub fn counter(&self) -> u64 { self.counter }
+
+	#[inline]
+	pub fn set_key(&mut self, key: EccKeyPrivP256) {
+		self.key = key
+	}
+	#[inline]
+	pub fn set_counter(&mut self, counter: u64) {
+		self.counter = counter;
+	}
+
+	/// Compute the current hash cash level.
+	#[inline]
+	pub fn level(&self) -> Result<u8, tsproto::Error> {
+		let omega = self.key.to_ts()?;
+		Ok(algs::get_hash_cash_level(&omega, self.counter))
+	}
+
+	/// Compute a better hash cash level.
+	pub fn upgrade_level(&mut self, target: u8) -> Result<(), tsproto::Error> {
+		let omega = self.key.to_ts()?;
+		let mut offset = self.counter;
+		while offset < u64::MAX && algs::get_hash_cash_level(&omega, offset) < target {
+			offset += 1;
+		}
+		self.counter = offset;
+		Ok(())
 	}
 }
 

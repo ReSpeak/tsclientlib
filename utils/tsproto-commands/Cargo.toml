@@ -16,11 +16,13 @@ include = [
 ]
 
 [dependencies]
+base64 = "0.10"
 chrono = "0.4"
 failure = "0.1"
 futures = "0.1"
 num-traits = "0.2"
 num-derive = "0.2"
+serde = { version = "1", features = ["derive"] }
 tsproto = { path = "../../tsproto", version = "=0.1.0" }
 
 [build-dependencies]
