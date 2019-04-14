@@ -10,8 +10,8 @@ keywords = ["TeamSpeak3", "TS3"]
 build = "build/build.rs"
 edition = "2018"
 include = [
-	"Cargo.toml",
-	"README.md",
+	"/Cargo.toml",
+	"/README.md",
 	"**/*.rs",
 ]
 

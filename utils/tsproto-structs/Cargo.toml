@@ -9,16 +9,16 @@ readme = "README.md"
 keywords = ["TeamSpeak3", "TS3"]
 edition = "2018"
 include = [
-	"Cargo.toml",
-	"README.md",
-	"src/*.rs",
-	"declarations/BookDeclarations.toml",
-	"declarations/BookToMessages.toml",
-	"declarations/Errors.csv",
-	"declarations/Messages.toml",
-	"declarations/MessagesToBook.toml",
-	"declarations/Permissions.csv",
-	"declarations/Versions.csv",
+	"/Cargo.toml",
+	"/README.md",
+	"/src/*.rs",
+	"/declarations/BookDeclarations.toml",
+	"/declarations/BookToMessages.toml",
+	"/declarations/Errors.csv",
+	"/declarations/Messages.toml",
+	"/declarations/MessagesToBook.toml",
+	"/declarations/Permissions.csv",
+	"/declarations/Versions.csv",
 ]
 
 [dependencies]

@@ -11,8 +11,8 @@ license = "MIT/Apache-2.0"
 build = "build/build.rs"
 edition = "2018"
 include = [
-	"Cargo.toml",
-	"README.md",
+	"/Cargo.toml",
+	"/README.md",
 	"**/*.rs",
 ]
 

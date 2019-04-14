@@ -12,8 +12,8 @@ edition = "2018"
 autobenches = false
 build = "build/build.rs"
 include = [
-	"Cargo.toml",
-	"README.md",
+	"/Cargo.toml",
+	"/README.md",
 	"**/*.rs",
 ]
 
