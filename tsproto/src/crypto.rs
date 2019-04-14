@@ -141,6 +141,12 @@ impl EccKeyPubP256 {
 		))?)
 	}
 
+	/// The shortest format of a public key.
+	///
+	/// This is just the `BigNum` of the x and y coordinates concatenated in
+	/// this order. Each of the coordinates takes half of the size.
+	pub fn to_short(&self) -> &[u8] { &self.0 }
+
 	/// Compute the uid of this key.
 	///
 	/// Uid = base64(sha1(ts encoded key))

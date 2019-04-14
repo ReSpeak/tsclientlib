@@ -19,7 +19,7 @@ use rug::integer::Order;
 use rug::Integer;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{Unexpected, Visitor};
-use slog::{error, info, Logger};
+use slog::{debug, error, info, Logger};
 use {base64, tokio, tokio_threadpool};
 
 use crate::algorithms as algs;
@@ -976,41 +976,87 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						None
 					}
 				} else if command.name() == "notifyplugincmd"
-					&& cmd.get("name") == Some("cliententerview")
-					&& cmd.get("data") == Some("version")
+					&& cmd.get("name") == Some("getversion")
+					&& cmd.has("data")
 				{
-					// TODO Send to clientid
-					//command.push("target", 0);
+					let res: Result<_> = (|| {
+						// Format: sender,nonce
+						// sender is the client id of the sender who asks for
+						// information.
+						// The nonce is base64 encoded.
+						let data = cmd.0["data"].split(',').collect::<Vec<_>>();
+						if data.len() != 2 {
+							return Err(format_err!("Cannot parse getversion: {}", cmd.0["data"]).into());
+						}
 
-					let p = Some(OutCommand::new::<
-						_,
-						_,
-						String,
-						String,
-						_,
-						_,
-						std::iter::Empty<_>,
-					>(
-						Direction::C2S,
-						PacketType::Command,
-						"plugincmd",
-						vec![
-							("name", "cliententerview".to_string()),
-							(
-								"data",
-								format!(
-									"{},{}-{}",
-									con.params.as_ref().unwrap().c_id,
-									env!("CARGO_PKG_NAME"),
-									env!("CARGO_PKG_VERSION"),
+						let sender: u16 = data[0].parse()?;
+						let nonce = base64::decode(&data[1])?;
+						if nonce.is_empty() {
+							return Err(format_err!("Empty nonce").into());
+						}
+
+						let version = format!("{}-{}", env!("CARGO_PKG_NAME"),
+							env!("CARGO_PKG_VERSION"));
+
+						let mut sign_data = version.as_bytes().to_vec();
+						sign_data.extend_from_slice(&nonce);
+
+						let pub_key = private_key.to_pub();
+						let signature = private_key.sign(&sign_data)?;
+
+						// Return format: sender,version,identity,nonce,signature
+						//
+						// The identity is the public key of this client. The
+						// receiver can check it if he knows the uid, because
+						// uid = sha1(public key of identity)
+						//
+						// The signature is a base64 encoded ecdsa signature of
+						// version || nonce
+						// The response is signed because there is no way for
+						// clients to find the originator of a plugin message.
+						// With the signature, a client can verify the origin.
+						let p = Some(OutCommand::new::<
+							_,
+							_,
+							String,
+							String,
+							_,
+							_,
+							std::iter::Empty<_>,
+						>(
+							Direction::C2S,
+							PacketType::Command,
+							"plugincmd",
+							vec![
+								("name", "getversion".into()),
+								(
+									"data",
+									format!(
+										"{},{},{},{},{}",
+										con.params.as_ref().unwrap().c_id,
+										version,
+										base64::encode(pub_key.to_short()),
+										data[1],
+										base64::encode(&signature),
+									),
 								),
-							),
-							("targetmode", 2.to_string()),
-						]
-						.into_iter(),
-						std::iter::empty(),
-					));
-					Some((ServerConnectionState::Connected, p))
+								// PluginTargetMode::Client
+								("targetmode", 2.to_string()),
+								("target", sender.to_string()),
+							]
+							.into_iter(),
+							std::iter::empty(),
+						));
+						Ok(p)
+					})();
+
+					match res {
+						Ok(r) => Some((ServerConnectionState::Connected, r)),
+						Err(e) => {
+							debug!(logger, "Cannot handle getversion"; "error" => ?e);
+							None
+						}
+					}
 				} else {
 					None
 				}
