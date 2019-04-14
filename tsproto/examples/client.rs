@@ -26,7 +26,7 @@ use crate::utils::*;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",

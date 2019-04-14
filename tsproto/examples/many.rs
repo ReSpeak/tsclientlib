@@ -26,7 +26,7 @@ use crate::utils::*;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(
 		short = "a",
@@ -72,20 +72,21 @@ fn main() {
 
 	tokio::run(
 		future::lazy(move || {
-			stream::iter_ok(0..args.count).map(move |_| {
-			let c = create_client(
-				args.local_address.clone(),
-				logger.clone(),
-				SimplePacketHandler,
-				args.verbose,
-			);
+			stream::iter_ok(0..args.count)
+				.map(move |_| {
+					let c = create_client(
+						args.local_address.clone(),
+						logger.clone(),
+						SimplePacketHandler,
+						args.verbose,
+					);
 
-			// Connect
-			let logger = logger.clone();
-			let logger2 = logger.clone();
-			let logger3 = logger.clone();
-			let c2 = c.clone();
-			connect(logger.clone(), c.clone(), args.address)
+					// Connect
+					let logger = logger.clone();
+					let logger2 = logger.clone();
+					let logger3 = logger.clone();
+					let c2 = c.clone();
+					connect(logger.clone(), c.clone(), args.address)
 				.and_then(move |con| {
 					info!(logger2, "Connected");
 					// Wait some time
@@ -132,7 +133,9 @@ fn main() {
 					drop(c);
 					Ok(())
 				})
-			}).buffered(10000).for_each(|_| Ok(()))
+				})
+				.buffered(10000)
+				.for_each(|_| Ok(()))
 		})
 		.map_err(|e| println!("An error occurred {:?}", e)),
 	);

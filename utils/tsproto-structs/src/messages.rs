@@ -1,12 +1,15 @@
+use crate::*;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
-use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/declarations/Messages.toml"));
+pub const DATA_STR: &str = include_str!(concat!(
+	env!("CARGO_MANIFEST_DIR"),
+	"/declarations/Messages.toml"
+));
 
-lazy_static!{
-	pub static ref DATA: MessageDeclarations = toml::from_str(DATA_STR).unwrap();
+lazy_static! {
+	pub static ref DATA: MessageDeclarations =
+		toml::from_str(DATA_STR).unwrap();
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -25,8 +28,8 @@ impl MessageDeclarations {
 	}
 
 	pub fn get_message(&self, name: &str) -> &Message {
-		self.get_message_opt(name).unwrap_or_else(||
-			panic!("Cannot find message {}", name))
+		self.get_message_opt(name)
+			.unwrap_or_else(|| panic!("Cannot find message {}", name))
 	}
 
 	pub fn get_field(&self, mut map: &str) -> &Field {
@@ -84,9 +87,7 @@ pub struct Message {
 }
 
 impl Field {
-	pub fn get_rust_name(&self) -> String {
-		to_snake_case(&self.pretty)
-	}
+	pub fn get_rust_name(&self) -> String { to_snake_case(&self.pretty) }
 
 	/// Takes the attribute to look if it is optional
 	pub fn get_rust_type(&self, a: &str, is_ref: bool) -> String {

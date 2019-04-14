@@ -10,7 +10,7 @@ use tsproto::utils;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(help = "Data (hex)")]
 	data: String,

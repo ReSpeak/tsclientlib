@@ -11,7 +11,7 @@ use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(short = "e", long = "pub", help = "Public key")]
 	pub_key: String,

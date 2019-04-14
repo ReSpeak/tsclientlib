@@ -3,14 +3,16 @@ use std::str::FromStr;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 
-use crate::*;
 use crate::book::{BookDeclarations, Property, Struct};
-use crate::messages::{MessageDeclarations, Field, Message};
+use crate::messages::{Field, Message, MessageDeclarations};
+use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/declarations/BookToMessages.toml"));
+pub const DATA_STR: &str = include_str!(concat!(
+	env!("CARGO_MANIFEST_DIR"),
+	"/declarations/BookToMessages.toml"
+));
 
-lazy_static!{
+lazy_static! {
 	pub static ref DATA: BookToMessagesDeclarations<'static> = {
 		let rules: TomlStruct = toml::from_str(DATA_STR).unwrap();
 		let book = &book::DATA;
@@ -33,7 +35,7 @@ lazy_static!{
 					.unwrap_or_else(|| panic!("Cannot find struct {}", r.from));
 
 				let find_prop = |name: &str,
-							     book_struct: &'static Struct|
+								 book_struct: &'static Struct|
 				 -> Option<&'static Property> {
 					if let Some(prop) = book_struct
 						.properties
@@ -243,8 +245,10 @@ struct RuleProperty {
 impl RuleProperty {
 	fn is_valid(&self) -> bool {
 		if self.to.is_some() {
-			self.from.is_some() && self.function.is_none()
-				&& self.tolist.is_none() && self.type_s.is_none()
+			self.from.is_some()
+				&& self.function.is_none()
+				&& self.tolist.is_none()
+				&& self.type_s.is_none()
 		} else {
 			self.to.is_none()
 				&& self.function.is_some()
@@ -284,8 +288,13 @@ impl<'a> RuleKind<'a> {
 		match self {
 			RuleKind::Map { from, .. } => &from.name,
 			RuleKind::ArgumentMap { from, .. } => &from,
-			RuleKind::Function { from, name, .. } => &from.unwrap_or_else(||
-				panic!("From not set for function {}", name)).name,
+			RuleKind::Function { from, name, .. } => {
+				&from
+					.unwrap_or_else(|| {
+						panic!("From not set for function {}", name)
+					})
+					.name
+			}
 			RuleKind::ArgumentFunction { from, .. } => &from,
 		}
 	}
@@ -293,11 +302,15 @@ impl<'a> RuleKind<'a> {
 	pub fn from(&self) -> &'a Property {
 		match self {
 			RuleKind::Map { from, .. } => from,
-			RuleKind::Function { from, name, .. } => from.unwrap_or_else(||
-				panic!("From not set for function {}", name)),
-			RuleKind::ArgumentMap { .. } |
-			RuleKind::ArgumentFunction { .. } =>
-				panic!("From is not a property for argument functions"),
+			RuleKind::Function { from, name, .. } => {
+				from.unwrap_or_else(|| {
+					panic!("From not set for function {}", name)
+				})
+			}
+			RuleKind::ArgumentMap { .. }
+			| RuleKind::ArgumentFunction { .. } => {
+				panic!("From is not a property for argument functions")
+			}
 		}
 	}
 

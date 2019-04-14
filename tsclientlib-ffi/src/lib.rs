@@ -7,28 +7,28 @@ use chashmap::CHashMap;
 use crossbeam::channel;
 use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
-use futures::{future, Future};
-#[cfg(feature = "audio")]
-use futures::{Sink, StartSend, Async, AsyncSink, Poll};
 use futures::future::Either;
 use futures::sync::oneshot;
+use futures::{future, Future};
+#[cfg(feature = "audio")]
+use futures::{Async, AsyncSink, Poll, Sink, StartSend};
 use lazy_static::lazy_static;
 use num::ToPrimitive;
 use parking_lot::Mutex;
 #[cfg(feature = "audio")]
 use parking_lot::RwLock;
 use slog::{error, o, Drain, Logger};
+use tsclientlib::events::Event as LibEvent;
 use tsclientlib::{
 	ChannelId, ClientId, ConnectOptions, Connection, ServerGroupId,
 };
-use tsclientlib::events::Event as LibEvent;
 #[cfg(feature = "audio")]
 use tsproto::packets::OutPacket;
 #[cfg(feature = "audio")]
 use tsproto_audio::{audio_to_ts, ts_to_audio};
 
 type Result<T> = std::result::Result<T, Error>;
-type BoxFuture<T> = Box<Future<Item=T, Error=Error> + Send + 'static>;
+type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send + 'static>;
 
 pub mod events;
 mod ffi_utils;
@@ -208,10 +208,18 @@ impl Event {
 			Event::ConnectionRemoved(_) => EventType::ConnectionRemoved,
 			Event::FutureFinished(_, _) => EventType::FutureFinished,
 			Event::Event(_, LibEvent::Message { .. }) => EventType::Message,
-			Event::Event(_, LibEvent::PropertyAdded { .. }) => EventType::PropertyAdded,
-			Event::Event(_, LibEvent::PropertyChanged { .. }) => EventType::PropertyChanged,
-			Event::Event(_, LibEvent::PropertyRemoved { .. }) => EventType::PropertyRemoved,
-			Event::Event(_, LibEvent::__NonExhaustive) => panic!("Non exhaustive should not be created"),
+			Event::Event(_, LibEvent::PropertyAdded { .. }) => {
+				EventType::PropertyAdded
+			}
+			Event::Event(_, LibEvent::PropertyChanged { .. }) => {
+				EventType::PropertyChanged
+			}
+			Event::Event(_, LibEvent::PropertyRemoved { .. }) => {
+				EventType::PropertyRemoved
+			}
+			Event::Event(_, LibEvent::__NonExhaustive) => {
+				panic!("Non exhaustive should not be created")
+			}
 			Event::FfiEvent(_, t, _) => *t,
 		}
 	}
@@ -237,28 +245,42 @@ impl Into<FfiEvent> for Event {
 					future_result: FfiFutureResult {
 						error: r.ffi(),
 						handle,
-					}
+					},
 				},
-				Event::Event(_, LibEvent::Message { from, invoker, message }) => FfiEventUnion {
+				Event::Event(
+					_,
+					LibEvent::Message {
+						from,
+						invoker,
+						message,
+					},
+				) => FfiEventUnion {
 					message: EventMsg {
 						target_type: from.into(),
 						invoker: invoker.ffi(),
 						message: message.ffi(),
-					}
+					},
 				},
-				Event::Event(_, LibEvent::PropertyRemoved { id, old, invoker }) => {
+				Event::Event(
+					_,
+					LibEvent::PropertyRemoved { id, old, invoker },
+				) => {
 					let old_ref = old.as_ref();
 					FfiEventUnion {
 						property: FfiProperty {
 							value: old_ref.prop_ffi(),
-							invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+							invoker: invoker
+								.map(|i| i.ffi())
+								.unwrap_or_else(Default::default),
 							p_type: id.prop_type(),
 							id: id.prop_ffi(),
 							value_exists: !old_ref.is_none(),
-						}
+						},
 					}
 				}
-				Event::Event(_, _) => unimplemented!("Property events have to be converted before"),
+				Event::Event(_, _) => unimplemented!(
+					"Property events have to be converted before"
+				),
 				Event::FfiEvent(_, _, f) => f,
 				_ => FfiEventUnion { empty: () },
 			},
@@ -270,42 +292,59 @@ impl Into<FfiEvent> for Event {
 }
 
 trait LibEventExt {
-	fn into_event(self, con_id: ConnectionId, con: &tsclientlib::data::Connection) -> Event;
+	fn into_event(
+		self,
+		con_id: ConnectionId,
+		con: &tsclientlib::data::Connection,
+	) -> Event;
 }
 
 impl LibEventExt for LibEvent {
 	/// Used to convert into an `FfiEvent` where a connection is needed to fetch
 	/// further information.
-	fn into_event(self, con_id: ConnectionId, con: &tsclientlib::data::Connection) -> Event {
+	fn into_event(
+		self,
+		con_id: ConnectionId,
+		con: &tsclientlib::data::Connection,
+	) -> Event
+	{
 		let typ;
 		let event = match self {
 			LibEvent::PropertyAdded { id, invoker } => {
 				typ = EventType::PropertyAdded;
-				let new_ref = con.get_property(&id).expect("Failed to get value of property");
+				let new_ref = con
+					.get_property(&id)
+					.expect("Failed to get value of property");
 				FfiEventUnion {
 					property: FfiProperty {
 						value: new_ref.prop_ffi(),
-						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						invoker: invoker
+							.map(|i| i.ffi())
+							.unwrap_or_else(Default::default),
 						p_type: id.prop_type(),
 						id: id.prop_ffi(),
 						value_exists: !new_ref.is_none(),
-					}
+					},
 				}
 			}
 			LibEvent::PropertyChanged { id, old, invoker } => {
 				typ = EventType::PropertyChanged;
-				let new_ref = con.get_property(&id).expect("Failed to get value of property");
+				let new_ref = con
+					.get_property(&id)
+					.expect("Failed to get value of property");
 				let old_ref = old.as_ref();
 				FfiEventUnion {
 					property_changed: FfiPropertyChanged {
 						old: old_ref.prop_ffi(),
 						new: new_ref.prop_ffi(),
-						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						invoker: invoker
+							.map(|i| i.ffi())
+							.unwrap_or_else(Default::default),
 						p_type: id.prop_type(),
 						id: id.prop_ffi(),
 						old_exists: !old_ref.is_none(),
 						new_exists: !new_ref.is_none(),
-					}
+					},
 				}
 			}
 			LibEvent::PropertyRemoved { id, old, invoker } => {
@@ -314,11 +353,13 @@ impl LibEventExt for LibEvent {
 				FfiEventUnion {
 					property: FfiProperty {
 						value: old_ref.prop_ffi(),
-						invoker: invoker.map(|i| i.ffi()).unwrap_or_else(Default::default),
+						invoker: invoker
+							.map(|i| i.ffi())
+							.unwrap_or_else(Default::default),
 						p_type: id.prop_type(),
 						id: id.prop_ffi(),
 						value_exists: !old_ref.is_none(),
-					}
+					},
 				}
 			}
 			_ => panic!("Unsupported conversion"),
@@ -357,8 +398,9 @@ impl Sink for CurrentAudioSink {
 
 	fn start_send(
 		&mut self,
-		item: Self::SinkItem
-	) -> StartSend<Self::SinkItem, Self::SinkError> {
+		item: Self::SinkItem,
+	) -> StartSend<Self::SinkItem, Self::SinkError>
+	{
 		let mut cas = CURRENT_AUDIO_SINK.lock();
 		if let Some(sink) = &mut *cas {
 			sink.1.start_send(item)
@@ -517,15 +559,29 @@ impl ConnectionExt for tsclientlib::data::Connection {
 }
 
 trait ConnectionMutExt<'a> {
-	fn get_mut_client(&self, id: u16) -> Option<tsclientlib::data::ClientMut<'a>>;
-	fn get_mut_channel(&self, id: u64) -> Option<tsclientlib::data::ChannelMut<'a>>;
+	fn get_mut_client(
+		&self,
+		id: u16,
+	) -> Option<tsclientlib::data::ClientMut<'a>>;
+	fn get_mut_channel(
+		&self,
+		id: u64,
+	) -> Option<tsclientlib::data::ChannelMut<'a>>;
 }
 
 impl<'a> ConnectionMutExt<'a> for tsclientlib::data::ConnectionMut<'a> {
-	fn get_mut_client(&self, id: u16) -> Option<tsclientlib::data::ClientMut<'a>> {
+	fn get_mut_client(
+		&self,
+		id: u16,
+	) -> Option<tsclientlib::data::ClientMut<'a>>
+	{
 		self.get_server().get_client(&ClientId(id))
 	}
-	fn get_mut_channel(&self, id: u64) -> Option<tsclientlib::data::ChannelMut<'a>> {
+	fn get_mut_channel(
+		&self,
+		id: u64,
+	) -> Option<tsclientlib::data::ChannelMut<'a>>
+	{
 		self.get_server().get_channel(&ChannelId(id))
 	}
 }
@@ -543,7 +599,8 @@ impl ConnectionId {
 		let res = *next_free;
 		let mut next = res.0 + 1;
 		while CONNECTIONS.contains_key(&ConnectionId(next))
-			|| CONNECTING.contains_key(&ConnectionId(next)) {
+			|| CONNECTING.contains_key(&ConnectionId(next))
+		{
 			next += 1;
 		}
 		*next_free = ConnectionId(next);
@@ -560,7 +617,8 @@ impl ConnectionId {
 }
 
 fn remove_connection(con_id: ConnectionId) {
-	#[cfg(feature = "audio")] {
+	#[cfg(feature = "audio")]
+	{
 		// Disable sound for this connection
 		let mut cas = CURRENT_AUDIO_SINK.lock();
 		if let Some((id, _)) = &*cas {
@@ -595,15 +653,17 @@ fn remove_connection(con_id: ConnectionId) {
 pub unsafe extern "C" fn tscl_connect(
 	address: *const c_char,
 	con_id: *mut ConnectionId,
-) -> FutureHandle {
+) -> FutureHandle
+{
 	let res = connect(ffi_to_str(&address).unwrap());
 	*con_id = res.0;
 	res.1.fut_ffi()
 }
 
-fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
-	let options = ConnectOptions::new(address)
-		.logger(LOGGER.clone());
+fn connect(
+	address: &str,
+) -> (ConnectionId, impl Future<Item = (), Error = Error>) {
+	let options = ConnectOptions::new(address).logger(LOGGER.clone());
 	let (send, recv) = oneshot::channel();
 
 	// Lock until we inserted the connection
@@ -619,7 +679,9 @@ fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
 	//EVENTS.0.send(Event::ConnectionAdded(con_id)).unwrap();
 
 	let con_id2 = con_id;
-	(con_id, future::lazy(move || {
+	(
+		con_id,
+		future::lazy(move || {
 		#[cfg(feature = "audio")]
 		let mut options = options;
 		#[cfg(feature = "audio")] {
@@ -695,7 +757,8 @@ fn connect(address: &str) -> (ConnectionId, impl Future<Item=(), Error=Error>) {
 			Err(Either::A((e, _))) => Err(e.into()),
 			Err(Either::B(_)) => Err(Error::Canceled),
 		}
-	}))
+	}),
+	)
 }
 
 #[no_mangle]
@@ -711,9 +774,7 @@ fn disconnect(con_id: ConnectionId) -> BoxFuture<()> {
 	}
 
 	if let Some(con) = CONNECTIONS.get(&con_id) {
-		Box::new(future::lazy(move || {
-			con.disconnect(None).from_err()
-		}))
+		Box::new(future::lazy(move || con.disconnect(None).from_err()))
 	} else {
 		Box::new(future::err(Error::ConnectionNotFound))
 	}
@@ -721,7 +782,8 @@ fn disconnect(con_id: ConnectionId) -> BoxFuture<()> {
 
 #[no_mangle]
 pub extern "C" fn tscl_is_talking() -> bool {
-	#[cfg(feature = "audio")] {
+	#[cfg(feature = "audio")]
+	{
 		let a2t_pipe = A2T_PIPE.read();
 		if let Some(a2t_pipe) = &*a2t_pipe {
 			if let Ok(true) = a2t_pipe.is_playing() {
@@ -734,7 +796,8 @@ pub extern "C" fn tscl_is_talking() -> bool {
 
 #[no_mangle]
 pub extern "C" fn tscl_set_talking(_talking: bool) {
-	#[cfg(feature = "audio")] {
+	#[cfg(feature = "audio")]
+	{
 		let a2t_pipe = A2T_PIPE.read();
 		if let Some(a2t_pipe) = &*a2t_pipe {
 			if let Err(e) = a2t_pipe.set_playing(_talking) {
@@ -759,7 +822,8 @@ pub unsafe extern "C" fn tscl_send_message(
 	target_type: MessageTarget,
 	target: u16,
 	msg: *const c_char,
-) -> FutureHandle {
+) -> FutureHandle
+{
 	let msg = ffi_to_str(&msg).unwrap();
 	send_message(con_id, target_type, target, msg).fut_ffi()
 }
@@ -769,7 +833,8 @@ fn send_message(
 	target_type: MessageTarget,
 	target: u16,
 	msg: &str,
-) -> BoxFuture<()> {
+) -> BoxFuture<()>
+{
 	use tsclientlib::MessageTarget as MT;
 
 	if let Some(con) = CONNECTIONS.get(&con_id) {
@@ -806,7 +871,11 @@ pub unsafe extern "C" fn tscl_free_u64s(ptr: *mut u64, len: usize) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tscl_free_char_ptrs(ptr: *mut *mut c_char, len: usize) {
+pub unsafe extern "C" fn tscl_free_char_ptrs(
+	ptr: *mut *mut c_char,
+	len: usize,
+)
+{
 	//println!("Free {:?} Len {}", ptr, len);
 	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 }

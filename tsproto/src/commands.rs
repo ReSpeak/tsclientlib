@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 use nom::types::CompleteStr;
 use nom::{
-	alphanumeric, alt, do_parse, eof, is_not, many0, many1, map,
-	multispace, named, opt, preceded, tag,
+	alphanumeric, alt, do_parse, eof, is_not, many0, many1, map, multispace,
+	named, opt, preceded, tag,
 };
 
 use crate::Result;
@@ -275,7 +275,12 @@ mod tests {
 
 	#[test]
 	fn clientinitiv() {
-		let cmd = test_loop("clientinitiv alpha=41Te9Ar7hMPx+A== omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 ip");
+		let cmd = test_loop(
+			"clientinitiv alpha=41Te9Ar7hMPx+A== \
+			 omega=MEwDAgcAAgEgAiEAq2iCMfcijKDZ5tn2tuZcH+\\/\
+			 GF+dmdxlXjDSFXLPGadACIHzUnbsPQ0FDt34Su4UXF46VFI0+4wjMDNszdoDYocu0 \
+			 ip",
+		);
 		assert_eq!(cmd.name, "clientinitiv");
 	}
 

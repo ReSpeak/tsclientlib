@@ -57,8 +57,11 @@ impl Ord for SendRecord {
 		// If the packet was not already sent, it is more important
 		if self.tries == 0 {
 			if other.tries == 0 {
-				self.id.1.cmp(&other.id.1).reverse().then_with(||
-					self.id.2.cmp(&other.id.2).reverse())
+				self.id
+					.1
+					.cmp(&other.id.1)
+					.reverse()
+					.then_with(|| self.id.2.cmp(&other.id.2).reverse())
 			} else {
 				Ordering::Greater
 			}
@@ -69,8 +72,7 @@ impl Ord for SendRecord {
 			self.last.cmp(&other.last).reverse().then_with(||
 				// Else, the lower packet id is more important
 				self.id.1.cmp(&other.id.1).reverse().then_with(||
-					self.id.2.cmp(&other.id.2).reverse())
-			)
+					self.id.2.cmp(&other.id.2).reverse()))
 		}
 	}
 }
@@ -813,9 +815,9 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 			{
 				// Print packet for debugging
 				//info!(con.logger, "Packet in send queue";
-					//"id" => ?rec.id,
-					//"last" => ?rec.last,
-					//"tries" => rec.tries,
+				//"id" => ?rec.id,
+				//"last" => ?rec.last,
+				//"tries" => rec.tries,
 				//);
 
 				// Check if we should resend this packet or not

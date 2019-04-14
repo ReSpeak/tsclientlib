@@ -3,14 +3,16 @@ use std::os::raw::c_char;
 
 use futures::Future;
 
-use crate::{Error, Event, EVENTS, FutureHandle, Result, RUNTIME};
+use crate::{Error, Event, FutureHandle, Result, EVENTS, RUNTIME};
 
 /// Allocates a `CString` which has to be freed by the receiver afterwards.
 ///
 /// Returns a null pointer if the string contains a 0 character.
 #[inline]
 fn str_to_ffi(s: &str) -> *mut c_char {
-	let ptr = CString::new(s).map(|s| s.into_raw()).unwrap_or(std::ptr::null_mut());
+	let ptr = CString::new(s)
+		.map(|s| s.into_raw())
+		.unwrap_or(std::ptr::null_mut());
 	//println!("Create {:?}", ptr);
 	ptr
 }
@@ -18,7 +20,9 @@ fn str_to_ffi(s: &str) -> *mut c_char {
 // Take a reference to get the lifetime of the resulting `str`.
 #[inline]
 pub(crate) fn ffi_to_str(ptr: &*const c_char) -> Result<&str> {
-	let s = unsafe { CStr::from_ptr(*ptr) }.to_str().map_err(Error::from);
+	let s = unsafe { CStr::from_ptr(*ptr) }
+		.to_str()
+		.map_err(Error::from);
 	//println!("Read {:?} Len {:?}", ptr, s.as_ref().map(|s| s.len()));
 	s
 }
@@ -39,23 +43,25 @@ impl ToFfi for Error {
 impl<T> ToFfi for Result<T> {
 	type FfiType = *mut c_char;
 	fn ffi(&self) -> Self::FfiType {
-		self.as_ref().err().map(ToFfi::ffi)
+		self.as_ref()
+			.err()
+			.map(ToFfi::ffi)
 			.unwrap_or(std::ptr::null_mut())
 	}
 }
 
 impl ToFfi for str {
 	type FfiType = *mut c_char;
-	fn ffi(&self) -> Self::FfiType {
-		str_to_ffi(self)
-	}
+	fn ffi(&self) -> Self::FfiType { str_to_ffi(self) }
 }
 
 pub(crate) trait ToFfiFutureExt {
 	fn fut_ffi(self) -> FutureHandle;
 }
 
-impl<F: Future<Item=(), Error=Error> + Send + 'static> ToFfiFutureExt for F {
+impl<F: Future<Item = (), Error = Error> + Send + 'static> ToFfiFutureExt
+	for F
+{
 	fn fut_ffi(self) -> FutureHandle {
 		let h = FutureHandle::next_free();
 		RUNTIME.executor().spawn(self.then(move |r| {

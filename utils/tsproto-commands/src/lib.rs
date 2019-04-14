@@ -18,8 +18,8 @@ use std::u64;
 
 use chrono::{DateTime, Utc};
 use num_derive::{FromPrimitive, ToPrimitive};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tsproto::algorithms as algs;
 use tsproto::crypto::EccKeyPrivP256;
 
@@ -37,14 +37,10 @@ pub struct Uid(pub String);
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UidRef<'a>(pub &'a str);
 impl<'a> Into<Uid> for UidRef<'a> {
-	fn into(self) -> Uid {
-		Uid(self.0.into())
-	}
+	fn into(self) -> Uid { Uid(self.0.into()) }
 }
 impl Uid {
-	pub fn as_ref(&self) -> UidRef {
-		UidRef(self.0.as_ref())
-	}
+	pub fn as_ref(&self) -> UidRef { UidRef(self.0.as_ref()) }
 }
 
 /// The database id of a client.
@@ -223,7 +219,9 @@ pub enum GroupType {
 	Query,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum LicenseType {
 	/// No licence
 	NoLicense,
@@ -237,14 +235,18 @@ pub enum LicenseType {
 	Unknown,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum ChannelType {
 	Permanent,
 	SemiPermanent,
 	Temporary,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum TokenType {
 	/// Server group token (`id1={groupId}, id2=0`)
 	ServerGroup,
@@ -252,7 +254,9 @@ pub enum TokenType {
 	ChannelGroup,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum PluginTargetMode {
 	/// Send to all clients in the current channel.
 	CurrentChannel,
@@ -265,7 +269,9 @@ pub enum PluginTargetMode {
 	CurrentChannelSubsribedClients,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
+#[derive(
+	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+)]
 pub enum LogLevel {
 	/// Everything that is really bad.
 	Error = 1,
@@ -306,8 +312,10 @@ pub struct InvokerRef<'a> {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Identity {
-	#[serde(serialize_with = "serialize_id_key",
-		deserialize_with = "deserialize_id_key")]
+	#[serde(
+		serialize_with = "serialize_id_key",
+		deserialize_with = "deserialize_id_key"
+	)]
 	key: EccKeyPrivP256,
 	/// The `client_key_offest`/counter for hash cash.
 	counter: u64,
@@ -331,21 +339,28 @@ impl<'de> Visitor<'de> for IdKeyVisitor {
 		write!(f, "a P256 private ecc key")
 	}
 
-	fn visit_str<E: serde::de::Error>(self, s: &str)
-		-> std::result::Result<Self::Value, E> {
+	fn visit_str<E: serde::de::Error>(
+		self,
+		s: &str,
+	) -> std::result::Result<Self::Value, E>
+	{
 		EccKeyPrivP256::import_str(s).map_err(|_| {
 			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
 		})
 	}
 }
 
-fn serialize_id_key<S: Serializer>(key: &EccKeyPrivP256, s: S)
-	-> std::result::Result<S::Ok, S::Error> {
+fn serialize_id_key<S: Serializer>(
+	key: &EccKeyPrivP256,
+	s: S,
+) -> std::result::Result<S::Ok, S::Error>
+{
 	s.serialize_str(&base64::encode(&key.to_short()))
 }
 
-fn deserialize_id_key<'de, D: Deserializer<'de>>(d: D)
-	-> std::result::Result<EccKeyPrivP256, D::Error> {
+fn deserialize_id_key<'de, D: Deserializer<'de>>(
+	d: D,
+) -> std::result::Result<EccKeyPrivP256, D::Error> {
 	d.deserialize_str(IdKeyVisitor)
 }
 
@@ -361,13 +376,9 @@ impl Identity {
 	pub fn counter(&self) -> u64 { self.counter }
 
 	#[inline]
-	pub fn set_key(&mut self, key: EccKeyPrivP256) {
-		self.key = key
-	}
+	pub fn set_key(&mut self, key: EccKeyPrivP256) { self.key = key }
 	#[inline]
-	pub fn set_counter(&mut self, counter: u64) {
-		self.counter = counter;
-	}
+	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
 
 	/// Compute the current hash cash level.
 	#[inline]
@@ -380,7 +391,9 @@ impl Identity {
 	pub fn upgrade_level(&mut self, target: u8) -> Result<(), tsproto::Error> {
 		let omega = self.key.to_ts()?;
 		let mut offset = self.counter;
-		while offset < u64::MAX && algs::get_hash_cash_level(&omega, offset) < target {
+		while offset < u64::MAX
+			&& algs::get_hash_cash_level(&omega, offset) < target
+		{
 			offset += 1;
 		}
 		self.counter = offset;

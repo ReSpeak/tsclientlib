@@ -18,7 +18,8 @@ use crate::messages_to_book_parser::MessagesToBookDeclarations;
 use crate::properties::Properties;
 
 fn main() {
-	built::write_built_file().expect("Failed to acquire build-time information");
+	built::write_built_file()
+		.expect("Failed to acquire build-time information");
 
 	let out_dir = env::var("OUT_DIR").unwrap();
 

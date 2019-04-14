@@ -60,8 +60,7 @@ fn print_channels(
 }
 
 fn print_channel_tree(con: &data::Connection) {
-	let mut channels: Vec<_> =
-		con.server.channels.values().collect();
+	let mut channels: Vec<_> = con.server.channels.values().collect();
 	let mut clients: Vec<_> = con.server.clients.values().collect();
 	channels.sort_by_key(|ch| ch.order);
 	clients.sort_by_key(|c| c.talk_power);
@@ -91,13 +90,21 @@ fn main() -> Result<(), failure::Error> {
 		})
 		.map(|con| {
 			// Listen to events
-			con.add_on_event("listener".into(), Box::new(|con, ev| {
-				println!("Got events: {:?}", ev);
-				print_channel_tree(&*con);
-			}));
+			con.add_on_event(
+				"listener".into(),
+				Box::new(|con, ev| {
+					println!("Got events: {:?}", ev);
+					print_channel_tree(&*con);
+				}),
+			);
 
-			tokio::spawn(con.lock().to_mut().get_server().set_subscribed(true)
-				.map_err(|e| println!("Failed to subscribe ({:?})", e)));
+			tokio::spawn(
+				con.lock()
+					.to_mut()
+					.get_server()
+					.set_subscribed(true)
+					.map_err(|e| println!("Failed to subscribe ({:?})", e)),
+			);
 			con
 		})
 		.and_then(|con| {
@@ -115,9 +122,11 @@ fn main() -> Result<(), failure::Error> {
 				// Change name
 				let con_mut = con.to_mut();
 				let name = &con.server.clients[&con.own_client].name;
-				tokio::spawn(con_mut.set_name(&format!("{}1", name)).map_err(|e| {
-					println!("Failed to set client name: {:?}", e);
-				}));
+				tokio::spawn(con_mut.set_name(&format!("{}1", name)).map_err(
+					|e| {
+						println!("Failed to set client name: {:?}", e);
+					},
+				));
 				tokio::spawn(con_mut.set_input_muted(true).map_err(|e| {
 					println!("Failed to set muted: {:?}", e);
 				}));

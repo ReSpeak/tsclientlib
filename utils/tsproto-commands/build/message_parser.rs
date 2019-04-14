@@ -3,8 +3,8 @@ use std::default::Default;
 use itertools::Itertools;
 use t4rust_derive::Template;
 use tsproto_structs::indent;
-use tsproto_structs::messages::*;
 use tsproto_structs::messages;
+use tsproto_structs::messages::*;
 
 #[derive(Template)]
 #[TemplatePath = "build/MessageDeclarations.tt"]
@@ -25,8 +25,5 @@ impl MessageDeclarations<'static> {
 }
 
 impl Default for MessageDeclarations<'static> {
-	fn default() -> Self {
-		MessageDeclarations(&DATA)
-	}
-
+	fn default() -> Self { MessageDeclarations(&DATA) }
 }

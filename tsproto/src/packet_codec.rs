@@ -110,8 +110,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 			if let Some(sink) = &mut self.unknown_udp_packet_sink {
 				// Don't block if the queue is full
 				if sink.try_send((addr, packet)).is_err() {
-					warn!(self.logger, "Unknown connection handler overloaded \
-						– dropping udp packet");
+					warn!(
+						self.logger,
+						"Unknown connection handler overloaded – dropping udp \
+						 packet"
+					);
 				}
 			} else {
 				warn!(
@@ -192,8 +195,8 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 							&mut params.key_cache,
 						);
 						if dec_res.is_err()
-							&& p_type == PacketType::Ack
-							&& id == 1 && is_client
+							&& p_type == PacketType::Ack && id == 1
+							&& is_client
 						{
 							// Ignore error, this is the ack packet for the
 							// clientinit, we take the initserver as ack anyway.
@@ -557,18 +560,18 @@ impl PacketCodecSender {
 		// client (id 1) if the client uses the new protocol
 		// (the packet is a clientek).
 		let mut fake_encrypt = p_type == PacketType::Command
-			&& gen == 0
-			&& ((!self.is_client && p_id == 0)
-				|| (self.is_client && p_id == 1 && {
-					// Test if it is a clientek packet
-					let s = b"clientek";
-					packet.content().len() >= s.len()
-						&& packet.content()[..s.len()] == s[..]
-				}));
+			&& gen == 0 && ((!self.is_client && p_id == 0)
+			|| (self.is_client && p_id == 1 && {
+				// Test if it is a clientek packet
+				let s = b"clientek";
+				packet.content().len() >= s.len()
+					&& packet.content()[..s.len()] == s[..]
+			}));
 		// Also fake encrypt the first ack of the client, which is the response
 		// for the initivexpand2 packet.
-		fake_encrypt |= self.is_client && p_type == PacketType::Ack && gen == 0
-			&& p_id == 0;
+		fake_encrypt |= self.is_client
+			&& p_type == PacketType::Ack
+			&& gen == 0 && p_id == 0;
 
 		// Get values from parameters
 		let should_encrypt;
@@ -660,11 +663,7 @@ impl PacketCodecSender {
 
 				// Increment outgoing_p_ids
 				p_id = p_id.wrapping_add(1);
-				let new_gen = if p_id == 0 {
-					gen.wrapping_add(1)
-				} else {
-					gen
-				};
+				let new_gen = if p_id == 0 { gen.wrapping_add(1) } else { gen };
 				if p_type != PacketType::Init {
 					con.outgoing_p_ids[type_i] = (new_gen, p_id);
 				}

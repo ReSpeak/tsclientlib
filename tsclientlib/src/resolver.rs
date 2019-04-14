@@ -14,8 +14,8 @@ use slog::{debug, o, warn, Logger};
 use tokio::io;
 use tokio::net::TcpStream;
 use tokio::util::StreamExt;
-use trust_dns_resolver::{AsyncResolver, Name};
 use trust_dns_resolver::config::ResolverConfig;
+use trust_dns_resolver::{AsyncResolver, Name};
 use {reqwest, tokio, tokio_threadpool};
 
 use crate::{Error, Result};
@@ -151,7 +151,9 @@ pub fn resolve(
 				"error" => ?e);
 			// Fallback
 			let (resolver, background) = AsyncResolver::new(
-				ResolverConfig::cloudflare(), Default::default());
+				ResolverConfig::cloudflare(),
+				Default::default(),
+			);
 			tokio::spawn(background);
 			resolver
 		}
@@ -430,11 +432,8 @@ fn resolve_srv_raw(
 				}
 			}
 
-			let prios = lookup.iter()
-				.group_by(|e| e.priority());
-			let entries = prios
-				.into_iter()
-				.sorted_by_key(|(p, _)| *p);
+			let prios = lookup.iter().group_by(|e| e.priority());
+			let entries = prios.into_iter().sorted_by_key(|(p, _)| *p);
 
 			// Select by weight
 			let mut sorted_entries = Vec::new();
@@ -442,10 +441,16 @@ fn resolve_srv_raw(
 				let mut zero_entries = Vec::new();
 
 				// All non-zero entries
-				let mut entries = es.filter_map(|e| if e.weight() == 0 {
-					zero_entries.push(e);
-					None
-				} else { Some(e) }).collect::<Vec<_>>();
+				let mut entries = es
+					.filter_map(|e| {
+						if e.weight() == 0 {
+							zero_entries.push(e);
+							None
+						} else {
+							Some(e)
+						}
+					})
+					.collect::<Vec<_>>();
 
 				while !entries.is_empty() {
 					let weight: u32 =
@@ -469,7 +474,6 @@ fn resolve_srv_raw(
 						w -= weight;
 					}
 				}
-
 			}
 
 			let entries: Vec<_> = sorted_entries

@@ -14,8 +14,8 @@ use slog::{debug, Logger};
 use tsproto_commands::messages::s2c::{self, InMessage, InMessages};
 use tsproto_commands::*;
 
+use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
 use crate::{Error, MessageTarget, Result};
-use crate::events::{Event, PropertyValue, PropertyValueRef, PropertyId};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
@@ -27,13 +27,17 @@ macro_rules! max_clients {
 	($cmd:ident) => {{
 		if $cmd.is_max_clients_unlimited == Some(true) {
 			Some(MaxClients::Unlimited)
-		} else if $cmd.max_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
+		} else if $cmd
+			.max_clients
+			.map(|i| i >= 0 && i <= u16::MAX as i32)
+			.unwrap_or(false)
+			{
 			Some(MaxClients::Limited($cmd.max_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
-		}
-	}};
+			}
+		}};
 }
 
 impl Connection {
@@ -88,43 +92,65 @@ impl Connection {
 		}
 	}
 
-	pub(crate) fn handle_message(&mut self, msg: &InMessage, logger: &Logger)
-		-> Result<Vec<Event>> {
+	pub(crate) fn handle_message(
+		&mut self,
+		msg: &InMessage,
+		logger: &Logger,
+	) -> Result<Vec<Event>>
+	{
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
 		let (mut handled, mut events) = self.handle_message_generated(msg)?;
 		// Handle special messages
 		match msg.msg() {
-			InMessages::TextMessage(cmd) => for cmd in cmd.iter() {
-				let from = match cmd.target {
-					TextMessageTargetMode::Server => MessageTarget::Server,
-					TextMessageTargetMode::Channel => MessageTarget::Channel,
-					TextMessageTargetMode::Client => MessageTarget::Client(cmd.invoker_id),
-					TextMessageTargetMode::Unknown => return Err(format_err!(
-						"Unknown TextMessageTargetMode").into()),
-				};
-				events.push(Event::Message {
-					from,
-					invoker: Invoker {
-						name: cmd.invoker_name.into(),
-						id: cmd.invoker_id,
-						uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
-					},
-					message: cmd.message.to_string(),
-				});
-				handled = true;
+			InMessages::TextMessage(cmd) => {
+				for cmd in cmd.iter() {
+					let from = match cmd.target {
+						TextMessageTargetMode::Server => MessageTarget::Server,
+						TextMessageTargetMode::Channel => {
+							MessageTarget::Channel
+						}
+						TextMessageTargetMode::Client => {
+							MessageTarget::Client(cmd.invoker_id)
+						}
+						TextMessageTargetMode::Unknown => {
+							return Err(format_err!(
+								"Unknown TextMessageTargetMode"
+							)
+							.into())
+						}
+					};
+					events.push(Event::Message {
+						from,
+						invoker: Invoker {
+							name: cmd.invoker_name.into(),
+							id: cmd.invoker_id,
+							uid: cmd
+								.invoker_uid
+								.as_ref()
+								.map(|i| i.clone().into()),
+						},
+						message: cmd.message.to_string(),
+					});
+					handled = true;
+				}
 			}
-			InMessages::ClientPoke(cmd) => for cmd in cmd.iter() {
-				events.push(Event::Message {
-					from: MessageTarget::Poke(cmd.invoker_id),
-					invoker: Invoker {
-						name: cmd.invoker_name.into(),
-						id: cmd.invoker_id,
-						uid: cmd.invoker_uid.as_ref().map(|i| i.clone().into()),
-					},
-					message: cmd.message.to_string(),
-				});
-				handled = true;
+			InMessages::ClientPoke(cmd) => {
+				for cmd in cmd.iter() {
+					events.push(Event::Message {
+						from: MessageTarget::Poke(cmd.invoker_id),
+						invoker: Invoker {
+							name: cmd.invoker_name.into(),
+							id: cmd.invoker_id,
+							uid: cmd
+								.invoker_uid
+								.as_ref()
+								.map(|i| i.clone().into()),
+						},
+						message: cmd.message.to_string(),
+					});
+					handled = true;
+				}
 			}
 			_ => {}
 		}
@@ -133,7 +159,8 @@ impl Connection {
 			// If we know this client and the name change, adjust the name.
 			if let Ok(client) = self.get_mut_client(invoker.id) {
 				if client.name != invoker.name {
-					let old = mem::replace(&mut client.name, invoker.name.clone());
+					let old =
+						mem::replace(&mut client.name, invoker.name.clone());
 					events.push(Event::PropertyChanged {
 						id: PropertyId::ClientName(client.id),
 						old: PropertyValue::String(old),
@@ -154,8 +181,9 @@ impl Connection {
 	fn get_mut_server(&mut self) -> &mut Server { &mut self.server }
 
 	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
-		self.server.groups.get(&group)
-			.ok_or_else(|| format_err!("ServerGroup {} not found", group).into())
+		self.server.groups.get(&group).ok_or_else(|| {
+			format_err!("ServerGroup {} not found", group).into()
+		})
 	}
 	fn add_server_group(
 		&mut self,
@@ -167,12 +195,16 @@ impl Connection {
 	}
 
 	fn get_optional_server_data(&self) -> Result<&OptionalServerData> {
-		self.server.optional_data.as_ref()
+		self.server
+			.optional_data
+			.as_ref()
 			.ok_or_else(|| format_err!("Server has no optional data").into())
 	}
 
 	fn get_connection_server_data(&self) -> Result<&ConnectionServerData> {
-		self.server.connection_data.as_ref()
+		self.server
+			.connection_data
+			.as_ref()
 			.ok_or_else(|| format_err!("Server has no connection data").into())
 	}
 
@@ -197,10 +229,15 @@ impl Connection {
 		self.server.clients.remove(&client)
 	}
 
-	fn get_connection_client_data(&self, client: ClientId) -> Result<&ConnectionClientData> {
+	fn get_connection_client_data(
+		&self,
+		client: ClientId,
+	) -> Result<&ConnectionClientData>
+	{
 		if let Some(c) = self.server.clients.get(&client) {
-			c.connection_data.as_ref()
-				.ok_or_else(|| format_err!("Client {} has no connection data", client).into())
+			c.connection_data.as_ref().ok_or_else(|| {
+				format_err!("Client {} has no connection data", client).into()
+			})
 		} else {
 			Err(format_err!("Client {} not found", client).into())
 		}
@@ -218,10 +255,15 @@ impl Connection {
 		}
 	}
 
-	fn get_optional_client_data(&self, client: ClientId) -> Result<&OptionalClientData> {
+	fn get_optional_client_data(
+		&self,
+		client: ClientId,
+	) -> Result<&OptionalClientData>
+	{
 		if let Some(c) = self.server.clients.get(&client) {
-			c.optional_data.as_ref()
-				.ok_or_else(|| format_err!("Client {} has no optional data", client).into())
+			c.optional_data.as_ref().ok_or_else(|| {
+				format_err!("Client {} has no optional data", client).into()
+			})
 		} else {
 			Err(format_err!("Client {} not found", client).into())
 		}
@@ -251,16 +293,27 @@ impl Connection {
 		self.server.channels.remove(&channel)
 	}
 
-	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<&OptionalChannelData> {
+	fn get_optional_channel_data(
+		&self,
+		channel: ChannelId,
+	) -> Result<&OptionalChannelData>
+	{
 		if let Some(c) = self.server.channels.get(&channel) {
-			c.optional_data.as_ref()
-				.ok_or_else(|| format_err!("Channel {} has no optional data", channel).into())
+			c.optional_data.as_ref().ok_or_else(|| {
+				format_err!("Channel {} has no optional data", channel).into()
+			})
 		} else {
 			Err(format_err!("Channel {} not found", channel).into())
 		}
 	}
 
-	fn get_file(&self, _channel: ChannelId, _path: &str, _name: &str) -> Result<&File> {
+	fn get_file(
+		&self,
+		_channel: ChannelId,
+		_path: &str,
+		_name: &str,
+	) -> Result<&File>
+	{
 		unimplemented!("Files are not yet implemented")
 	}
 
@@ -285,7 +338,11 @@ impl Connection {
 			Some(MaxClients::Unlimited)
 		} else if cmd.inherits_max_family_clients == Some(true) {
 			Some(MaxClients::Inherited)
-		} else if cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
+		} else if cmd
+			.max_family_clients
+			.map(|i| i >= 0 && i <= u16::MAX as i32)
+			.unwrap_or(false)
+		{
 			Some(MaxClients::Limited(cmd.max_family_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
@@ -319,7 +376,9 @@ impl Connection {
 			if let Some(ch) = ch {
 				events.push(Event::PropertyChanged {
 					id: PropertyId::ChannelMaxClients(channel_id),
-					old: PropertyValue::OptionMaxClients(channel.max_clients.take()),
+					old: PropertyValue::OptionMaxClients(
+						channel.max_clients.take(),
+					),
 					invoker: invoker.clone(),
 				});
 				channel.max_clients = Some(ch);
@@ -328,8 +387,14 @@ impl Connection {
 				Some(MaxClients::Unlimited)
 			} else if cmd.inherits_max_family_clients == Some(true) {
 				Some(MaxClients::Inherited)
-			} else if cmd.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or(false) {
-				Some(MaxClients::Limited(cmd.max_family_clients.unwrap() as u16))
+			} else if cmd
+				.max_family_clients
+				.map(|i| i >= 0 && i <= u16::MAX as i32)
+				.unwrap_or(false)
+			{
+				Some(
+					MaxClients::Limited(cmd.max_family_clients.unwrap() as u16),
+				)
 			} else {
 				// Max clients is less than zero or too high so ignore it
 				None
@@ -337,7 +402,9 @@ impl Connection {
 			if let Some(ch_fam) = ch_fam {
 				events.push(Event::PropertyChanged {
 					id: PropertyId::ChannelMaxFamilyClients(channel_id),
-					old: PropertyValue::OptionMaxClients(channel.max_family_clients.take()),
+					old: PropertyValue::OptionMaxClients(
+						channel.max_family_clients.take(),
+					),
 					invoker,
 				});
 				channel.max_family_clients = Some(ch_fam);
@@ -479,7 +546,8 @@ impl Connection {
 		channel_id: ChannelId,
 		_: &s2c::ChannelSubscribedPart,
 		events: &mut Vec<Event>,
-	) {
+	)
+	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelSubscribed(channel_id),
@@ -495,7 +563,8 @@ impl Connection {
 		channel_id: ChannelId,
 		_: &s2c::ChannelUnsubscribedPart,
 		events: &mut Vec<Event>,
-	) {
+	)
+	{
 		if let Ok(channel) = self.get_mut_channel(channel_id) {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelSubscribed(channel_id),
@@ -506,28 +575,37 @@ impl Connection {
 
 			// Remove all known clients from this channel
 			let server = self.get_mut_server();
-			let remove_clients = server.clients.values().filter_map(|c|
-				if c.channel == channel_id {
-					Some(c.id)
-				} else {
-					None
-				}).collect::<Vec<_>>();
+			let remove_clients = server
+				.clients
+				.values()
+				.filter_map(|c| {
+					if c.channel == channel_id {
+						Some(c.id)
+					} else {
+						None
+					}
+				})
+				.collect::<Vec<_>>();
 			for id in remove_clients {
 				events.push(Event::PropertyRemoved {
 					id: PropertyId::Client(id),
-					old: PropertyValue::Client(server.clients.remove(&id).unwrap()),
+					old: PropertyValue::Client(
+						server.clients.remove(&id).unwrap(),
+					),
 					invoker: None,
 				});
 			}
 		}
 	}
 
-
 	// Book to messages
-	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (Option<bool>, Option<&'a str>) {
+	fn away_fun_b2m<'a>(
+		&self,
+		msg: Option<&'a str>,
+	) -> (Option<bool>, Option<&'a str>)
+	{
 		(Some(msg.is_some()), msg)
 	}
-
 }
 
 impl Client {
@@ -632,7 +710,11 @@ impl<'a> ChannelOptions<'a> {
 		self
 	}
 
-	pub fn max_family_clients(mut self, max_family_clients: MaxClients) -> Self {
+	pub fn max_family_clients(
+		mut self,
+		max_family_clients: MaxClients,
+	) -> Self
+	{
 		self.max_family_clients = Some(max_family_clients);
 		self
 	}
@@ -685,47 +767,102 @@ impl ServerMut<'_> {
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
 	#[must_use = "futures do nothing unless polled"]
-	pub fn add_channel(&self, options: ChannelOptions) -> impl Future<Item=(), Error=Error> {
-		let inherits_max_family_clients = options.max_family_clients.as_ref()
-			.and_then(|m| if let MaxClients::Inherited = m { Some(true) } else { None });
-		let is_max_family_clients_unlimited = options.max_family_clients.as_ref()
-			.and_then(|m| if let MaxClients::Unlimited = m { Some(true) } else { None });
-		let max_family_clients = options.max_family_clients.as_ref()
-			.and_then(|m| if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None });
-		let is_max_clients_unlimited = options.max_clients.as_ref()
-			.and_then(|m| if let MaxClients::Unlimited = m { Some(true) } else { None });
-		let max_clients = options.max_clients.as_ref()
-			.and_then(|m| if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None });
+	pub fn add_channel(
+		&self,
+		options: ChannelOptions,
+	) -> impl Future<Item = (), Error = Error>
+	{
+		let inherits_max_family_clients =
+			options.max_family_clients.as_ref().and_then(|m| {
+				if let MaxClients::Inherited = m {
+					Some(true)
+				} else {
+					None
+				}
+			});
+		let is_max_family_clients_unlimited =
+			options.max_family_clients.as_ref().and_then(|m| {
+				if let MaxClients::Unlimited = m {
+					Some(true)
+				} else {
+					None
+				}
+			});
+		let max_family_clients =
+			options.max_family_clients.as_ref().and_then(|m| {
+				if let MaxClients::Limited(n) = m {
+					Some(*n as i32)
+				} else {
+					None
+				}
+			});
+		let is_max_clients_unlimited =
+			options.max_clients.as_ref().and_then(|m| {
+				if let MaxClients::Unlimited = m {
+					Some(true)
+				} else {
+					None
+				}
+			});
+		let max_clients = options.max_clients.as_ref().and_then(|m| {
+			if let MaxClients::Limited(n) = m {
+				Some(*n as i32)
+			} else {
+				None
+			}
+		});
 
-		let is_permanent = options.channel_type.as_ref()
-			.and_then(|t| if *t == ChannelType::Permanent { Some(true) } else { None });
-		let is_semi_permanent = options.channel_type.as_ref()
-			.and_then(|t| if *t == ChannelType::SemiPermanent { Some(true) } else { None });
+		let is_permanent = options.channel_type.as_ref().and_then(|t| {
+			if *t == ChannelType::Permanent {
+				Some(true)
+			} else {
+				None
+			}
+		});
+		let is_semi_permanent = options.channel_type.as_ref().and_then(|t| {
+			if *t == ChannelType::SemiPermanent {
+				Some(true)
+			} else {
+				None
+			}
+		});
 
-		self.connection.send_packet(messages::c2s::OutChannelCreateMessage::new(
-			vec![messages::c2s::ChannelCreatePart {
-				name: options.name,
-				description: options.description,
-				parent_id: options.parent_id,
-				codec: options.codec,
-				codec_quality: options.codec_quality,
-				delete_delay: options.delete_delay,
-				has_password: if options.password.is_some() { Some(true) } else { None },
-				is_default: if options.is_default { Some(true) } else { None },
-				inherits_max_family_clients,
-				is_max_family_clients_unlimited,
-				is_max_clients_unlimited,
-				is_permanent,
-				is_semi_permanent,
-				max_family_clients,
-				max_clients,
-				is_unencrypted: options.is_unencrypted,
-				order: options.order,
-				password: options.password,
-				phonetic_name: options.phonetic_name,
-				topic: options.topic,
-				phantom: PhantomData,
-			}].into_iter()))
+		self.connection.send_packet(
+			messages::c2s::OutChannelCreateMessage::new(
+				vec![messages::c2s::ChannelCreatePart {
+					name: options.name,
+					description: options.description,
+					parent_id: options.parent_id,
+					codec: options.codec,
+					codec_quality: options.codec_quality,
+					delete_delay: options.delete_delay,
+					has_password: if options.password.is_some() {
+						Some(true)
+					} else {
+						None
+					},
+					is_default: if options.is_default {
+						Some(true)
+					} else {
+						None
+					},
+					inherits_max_family_clients,
+					is_max_family_clients_unlimited,
+					is_max_clients_unlimited,
+					is_permanent,
+					is_semi_permanent,
+					max_family_clients,
+					max_clients,
+					is_unencrypted: options.is_unencrypted,
+					order: options.order,
+					password: options.password,
+					phonetic_name: options.phonetic_name,
+					topic: options.topic,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
+			),
+		)
 	}
 
 	/// Send a text message in the server chat.
@@ -741,28 +878,48 @@ impl ServerMut<'_> {
 	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
 	/// ```
 	#[must_use = "futures do nothing unless polled"]
-	pub fn send_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
-		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
-			vec![messages::c2s::SendTextMessagePart {
-				target: TextMessageTargetMode::Server,
-				target_client_id: None,
-				message,
-				phantom: PhantomData,
-			}].into_iter()))
+	pub fn send_textmessage(
+		&self,
+		message: &str,
+	) -> impl Future<Item = (), Error = Error>
+	{
+		self.connection.send_packet(
+			messages::c2s::OutSendTextMessageMessage::new(
+				vec![messages::c2s::SendTextMessagePart {
+					target: TextMessageTargetMode::Server,
+					target_client_id: None,
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
+			),
+		)
 	}
 
 	/// Subscribe or unsubscribe from all channels.
-	pub fn set_subscribed(&self, subscribed: bool) -> impl Future<Item=(), Error=Error> {
+	pub fn set_subscribed(
+		&self,
+		subscribed: bool,
+	) -> impl Future<Item = (), Error = Error>
+	{
 		if subscribed {
-			self.connection.send_packet(messages::c2s::OutChannelSubscribeAllMessage::new(
-				vec![messages::c2s::ChannelSubscribeAllPart {
-					phantom: PhantomData,
-				}].into_iter()))
+			self.connection.send_packet(
+				messages::c2s::OutChannelSubscribeAllMessage::new(
+					vec![messages::c2s::ChannelSubscribeAllPart {
+						phantom: PhantomData,
+					}]
+					.into_iter(),
+				),
+			)
 		} else {
-			self.connection.send_packet(messages::c2s::OutChannelUnsubscribeAllMessage::new(
-				vec![messages::c2s::ChannelUnsubscribeAllPart {
-					phantom: PhantomData,
-				}].into_iter()))
+			self.connection.send_packet(
+				messages::c2s::OutChannelUnsubscribeAllMessage::new(
+					vec![messages::c2s::ChannelUnsubscribeAllPart {
+						phantom: PhantomData,
+					}]
+					.into_iter(),
+				),
+			)
 		}
 	}
 }
@@ -781,7 +938,12 @@ impl ConnectionMut<'_> {
 	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
 	#[must_use = "futures do nothing unless polled"]
-	pub fn send_message(&self, target: MessageTarget, message: &str) -> impl Future<Item=(), Error=Error> {
+	pub fn send_message(
+		&self,
+		target: MessageTarget,
+		message: &str,
+	) -> impl Future<Item = (), Error = Error>
+	{
 		match target {
 			MessageTarget::Server => self.connection.send_packet(
 				messages::c2s::OutSendTextMessageMessage::new(
@@ -790,7 +952,10 @@ impl ConnectionMut<'_> {
 						target_client_id: None,
 						message,
 						phantom: PhantomData,
-					}].into_iter())),
+					}]
+					.into_iter(),
+				),
+			),
 			MessageTarget::Channel => self.connection.send_packet(
 				messages::c2s::OutSendTextMessageMessage::new(
 					vec![messages::c2s::SendTextMessagePart {
@@ -798,7 +963,10 @@ impl ConnectionMut<'_> {
 						target_client_id: None,
 						message,
 						phantom: PhantomData,
-					}].into_iter())),
+					}]
+					.into_iter(),
+				),
+			),
 			MessageTarget::Client(id) => self.connection.send_packet(
 				messages::c2s::OutSendTextMessageMessage::new(
 					vec![messages::c2s::SendTextMessagePart {
@@ -806,14 +974,20 @@ impl ConnectionMut<'_> {
 						target_client_id: Some(id),
 						message,
 						phantom: PhantomData,
-					}].into_iter())),
+					}]
+					.into_iter(),
+				),
+			),
 			MessageTarget::Poke(id) => self.connection.send_packet(
 				messages::c2s::OutClientPokeRequestMessage::new(
 					vec![messages::c2s::ClientPokeRequestPart {
 						client_id: id,
 						message,
 						phantom: PhantomData,
-					}].into_iter())),
+					}]
+					.into_iter(),
+				),
+			),
 		}
 	}
 }
@@ -853,14 +1027,22 @@ impl ClientMut<'_> {
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
 	/// ```
 	#[must_use = "futures do nothing unless polled"]
-	pub fn send_textmessage(&self, message: &str) -> impl Future<Item=(), Error=Error> {
-		self.connection.send_packet(messages::c2s::OutSendTextMessageMessage::new(
-			vec![messages::c2s::SendTextMessagePart {
-				target: TextMessageTargetMode::Client,
-				target_client_id: Some(self.inner.id),
-				message,
-				phantom: PhantomData,
-			}].into_iter()))
+	pub fn send_textmessage(
+		&self,
+		message: &str,
+	) -> impl Future<Item = (), Error = Error>
+	{
+		self.connection.send_packet(
+			messages::c2s::OutSendTextMessageMessage::new(
+				vec![messages::c2s::SendTextMessagePart {
+					target: TextMessageTargetMode::Client,
+					target_client_id: Some(self.inner.id),
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
+			),
+		)
 	}
 
 	/// Poke this client with a message.
@@ -878,12 +1060,16 @@ impl ClientMut<'_> {
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
 	/// ```
 	#[must_use = "futures do nothing unless polled"]
-	pub fn poke(&self, message: &str) -> impl Future<Item=(), Error=Error> {
-		self.connection.send_packet(messages::c2s::OutClientPokeRequestMessage::new(
-			vec![messages::c2s::ClientPokeRequestPart {
-				client_id: self.inner.id,
-				message,
-				phantom: PhantomData,
-			}].into_iter()))
+	pub fn poke(&self, message: &str) -> impl Future<Item = (), Error = Error> {
+		self.connection.send_packet(
+			messages::c2s::OutClientPokeRequestMessage::new(
+				vec![messages::c2s::ClientPokeRequestPart {
+					client_id: self.inner.id,
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
+			),
+		)
 	}
 }

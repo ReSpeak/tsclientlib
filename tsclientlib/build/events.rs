@@ -3,10 +3,11 @@ use std::default::Default;
 use std::ops::Deref;
 
 use t4rust_derive::Template;
-use tsproto_structs::{convert_type, to_pascal_case};
 use tsproto_structs::book::*;
-use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations,
-	RuleKind};
+use tsproto_structs::messages_to_book::{
+	self, MessagesToBookDeclarations, RuleKind,
+};
+use tsproto_structs::{convert_type, to_pascal_case};
 
 #[derive(Template)]
 #[TemplatePath = "build/Events.tt"]
@@ -65,22 +66,34 @@ pub fn get_property_name(p: &Property) -> &str {
 
 /// Add only things which are in messages to book, which actually will be
 /// changed.
-pub fn get_event_properties<'a>(structs: &'a [Struct],
-	m2b: &'a MessagesToBookDeclarations<'a>, s: &'a Struct)
-	-> Vec<&'a Property> {
+pub fn get_event_properties<'a>(
+	structs: &'a [Struct],
+	m2b: &'a MessagesToBookDeclarations<'a>,
+	s: &'a Struct,
+) -> Vec<&'a Property>
+{
 	// All properties which are set at some point
-	let set_props = m2b.decls.iter().filter(|e| e.book_struct.name == s.name)
-		.flat_map(|e| e.rules.iter()).flat_map(|r| -> Box<Iterator<Item=_>> {
+	let set_props = m2b
+		.decls
+		.iter()
+		.filter(|e| e.book_struct.name == s.name)
+		.flat_map(|e| e.rules.iter())
+		.flat_map(|r| -> Box<Iterator<Item = _>> {
 			match r {
 				RuleKind::Map { to, .. } => Box::new(std::iter::once(to)),
 				RuleKind::Function { to, .. } => Box::new(to.iter()),
 			}
-		}).map(|p| &p.name).collect::<HashSet<_>>();
+		})
+		.map(|p| &p.name)
+		.collect::<HashSet<_>>();
 
-	s.properties.iter().filter(|p| {
-		if structs.iter().any(|s| s.name == p.type_s) {
-			return false;
-		}
-		set_props.contains(&p.name)
-	}).collect()
+	s.properties
+		.iter()
+		.filter(|p| {
+			if structs.iter().any(|s| s.name == p.type_s) {
+				return false;
+			}
+			set_props.contains(&p.name)
+		})
+		.collect()
 }

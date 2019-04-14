@@ -2,8 +2,8 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::u16;
 
-use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
+use aes::block_cipher_trait::generic_array::GenericArray;
 use bytes::Bytes;
 use failure::format_err;
 use futures::sync::mpsc;
@@ -209,7 +209,11 @@ impl Connection {
 		(
 			(!next_gen && p_id >= cur_next && p_id < limit)
 				|| (next_gen && (p_id >= cur_next || p_id < limit)),
-			if next_gen && p_id < limit { gen + 1 } else { gen },
+			if next_gen && p_id < limit {
+				gen + 1
+			} else {
+				gen
+			},
 			cur_next,
 			limit,
 		)

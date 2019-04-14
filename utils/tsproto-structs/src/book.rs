@@ -1,11 +1,13 @@
+use crate::*;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
-use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/declarations/BookDeclarations.toml"));
+pub const DATA_STR: &str = include_str!(concat!(
+	env!("CARGO_MANIFEST_DIR"),
+	"/declarations/BookDeclarations.toml"
+));
 
-lazy_static!{
+lazy_static! {
 	pub static ref DATA: BookDeclarations = toml::from_str(DATA_STR).unwrap();
 }
 
@@ -124,15 +126,17 @@ impl<'a> PropId<'a> {
 	pub fn get_attr_name(&self, struc: &Struct) -> String {
 		match *self {
 			PropId::Prop(p) => to_snake_case(&p.name),
-			PropId::Id(id) => if struc.name == id.struct_name {
-				to_snake_case(&id.prop)
-			} else {
-				format!(
-					"{}_{}",
-					to_snake_case(&id.struct_name),
+			PropId::Id(id) => {
+				if struc.name == id.struct_name {
 					to_snake_case(&id.prop)
-				)
-			},
+				} else {
+					format!(
+						"{}_{}",
+						to_snake_case(&id.struct_name),
+						to_snake_case(&id.prop)
+					)
+				}
+			}
 		}
 	}
 
@@ -152,13 +156,9 @@ impl<'a> PropId<'a> {
 }
 
 impl<'a> From<&'a Property> for PropId<'a> {
-	fn from(p: &'a Property) -> Self {
-		PropId::Prop(p)
-	}
+	fn from(p: &'a Property) -> Self { PropId::Prop(p) }
 }
 
 impl<'a> From<&'a Id> for PropId<'a> {
-	fn from(p: &'a Id) -> Self {
-		PropId::Id(p)
-	}
+	fn from(p: &'a Id) -> Self { PropId::Id(p) }
 }

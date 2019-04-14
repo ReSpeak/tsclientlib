@@ -103,23 +103,28 @@ pub fn wait_for_state<
 			false
 		}
 	}));
-	Box::new(recv.into_future()
-	.map_err(|e| {
-		format_err!("Failed to receive while waiting for state ({:?})", e)
-			.into()
-	})
-	.and_then(|(r, _)| match r {
-		Some(()) => Ok(()),
-		None => Err(format_err!("Connection is gone").into()),
-	}))
+	Box::new(
+		recv.into_future()
+			.map_err(|e| {
+				format_err!(
+					"Failed to receive while waiting for state ({:?})",
+					e
+				)
+				.into()
+			})
+			.and_then(|(r, _)| match r {
+				Some(()) => Ok(()),
+				None => Err(format_err!("Connection is gone").into()),
+			}),
+	)
 }
 
 pub fn wait_until_connected(
 	connection: &ClientConVal,
 ) -> impl Future<Item = (), Error = Error> {
-	wait_for_state(connection, |state|
+	wait_for_state(connection, |state| {
 		*state == ServerConnectionState::Connected
-	)
+	})
 }
 
 pub fn new<
@@ -663,7 +668,9 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										let (x, n, y) = match r {
 											Ok(r) => r,
 											Err(e) => {
-												return Box::new(future::err(e));
+												return Box::new(future::err(
+													e,
+												));
 											}
 										};
 										// Create the command string
@@ -908,7 +915,11 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// The nonce is base64 encoded.
 						let data = cmd.0["data"].split(',').collect::<Vec<_>>();
 						if data.len() != 2 {
-							return Err(format_err!("Cannot parse getversion: {}", cmd.0["data"]).into());
+							return Err(format_err!(
+								"Cannot parse getversion: {}",
+								cmd.0["data"]
+							)
+							.into());
 						}
 
 						let sender: u16 = data[0].parse()?;
@@ -917,8 +928,11 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							return Err(format_err!("Empty nonce").into());
 						}
 
-						let mut version = format!("{} {}", env!("CARGO_PKG_NAME"),
-							env!("CARGO_PKG_VERSION"));
+						let mut version = format!(
+							"{} {}",
+							env!("CARGO_PKG_NAME"),
+							env!("CARGO_PKG_VERSION")
+						);
 						if let Some(v) = &built_info::GIT_VERSION {
 							version.push('-');
 							version.push_str(v);
@@ -1001,7 +1015,6 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 	}
 }
 
-
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -1032,12 +1045,21 @@ mod tests {
 			S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
 			S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
 		{
-			tokio::spawn(s2c_init_stream.for_each(|_| Ok(()))
-				.map_err(|e| panic!("s2c_init_stream errored: {:?}", e)));
-			tokio::spawn(command_stream.for_each(|_| Ok(()))
-				.map_err(|e| panic!("command_stream errored: {:?}", e)));
-			tokio::spawn(audio_stream.for_each(|_| Ok(()))
-				.map_err(|e| panic!("audio_stream errored: {:?}", e)));
+			tokio::spawn(
+				s2c_init_stream
+					.for_each(|_| Ok(()))
+					.map_err(|e| panic!("s2c_init_stream errored: {:?}", e)),
+			);
+			tokio::spawn(
+				command_stream
+					.for_each(|_| Ok(()))
+					.map_err(|e| panic!("command_stream errored: {:?}", e)),
+			);
+			tokio::spawn(
+				audio_stream
+					.for_each(|_| Ok(()))
+					.map_err(|e| panic!("audio_stream errored: {:?}", e)),
+			);
 		}
 	}
 
@@ -1053,89 +1075,106 @@ mod tests {
 		pub fn new() -> (Runtime, Self) {
 			let mut runtime = Runtime::new().unwrap();
 
-			let (send_sink, send_stream) = mpsc::unbounded::<(Bytes, SocketAddr)>();
-			let (recv_sink, recv_stream) = mpsc::unbounded::<(BytesMut, SocketAddr)>();
+			let (send_sink, send_stream) =
+				mpsc::unbounded::<(Bytes, SocketAddr)>();
+			let (recv_sink, recv_stream) =
+				mpsc::unbounded::<(BytesMut, SocketAddr)>();
 
 			let logger = {
 				// TODO Write to stdout, somehow does not work
 				//let decorator = slog_term::PlainDecorator::new(std::io::stdout());
-				let decorator = slog_term::TermDecorator::new().stdout().build();
-				let drain = slog_term::FullFormat::new(decorator).build().fuse();
+				let decorator =
+					slog_term::TermDecorator::new().stdout().build();
+				let drain =
+					slog_term::FullFormat::new(decorator).build().fuse();
 				let drain = slog_async::Async::new(drain).build().fuse();
 
 				slog::Logger::root(drain, o!())
 			};
 
-			let res = runtime.block_on(future::lazy(|| -> Result<_> {
-				// Create client
-				let c = ClientData::new_with_socket(
-					"127.0.0.1:0".parse().unwrap(),
-					EccKeyPrivP256::create().unwrap(),
-					true,
-					None,
-					DefaultPacketHandler::new(TestPacketHandler),
-					SocketConnectionManager::new(),
-					send_sink,
-					recv_stream,
-					logger.clone(),
-				).expect("Failed to create client");
+			let res = runtime
+				.block_on(future::lazy(|| -> Result<_> {
+					// Create client
+					let c = ClientData::new_with_socket(
+						"127.0.0.1:0".parse().unwrap(),
+						EccKeyPrivP256::create().unwrap(),
+						true,
+						None,
+						DefaultPacketHandler::new(TestPacketHandler),
+						SocketConnectionManager::new(),
+						send_sink,
+						recv_stream,
+						logger.clone(),
+					)
+					.expect("Failed to create client");
 
-				let c2 = Arc::downgrade(&c);
-				{
-					let mut c = c.lock();
-					let c = &mut *c;
-					// Set the data reference
-					c.packet_handler.complete(c2.clone());
+					let c2 = Arc::downgrade(&c);
+					{
+						let mut c = c.lock();
+						let c = &mut *c;
+						// Set the data reference
+						c.packet_handler.complete(c2.clone());
 
-					//crate::log::add_udp_packet_logger(c);
-					// Change state on disconnect
-					c.add_out_packet_observer(
-						"tsproto::client".into(),
-						Box::new(ClientOutPacketObserver),
-					);
-				}
+						//crate::log::add_udp_packet_logger(c);
+						// Change state on disconnect
+						c.add_out_packet_observer(
+							"tsproto::client".into(),
+							Box::new(ClientOutPacketObserver),
+						);
+					}
 
-				// Create "server"
-				let s = ClientData::new_with_socket(
-					"127.0.0.1:0".parse().unwrap(),
-					EccKeyPrivP256::create().unwrap(),
-					false,
-					None,
-					DefaultPacketHandler::new(TestPacketHandler),
-					SocketConnectionManager::new(),
-					recv_sink.sink_map_err(|e| format_err!("Failed to send from server: {:?}", e))
-						.with(|(b, a): (Bytes, SocketAddr)| -> Result<_> { Ok((b.into(), a)) }),
-					send_stream.map(|(b, a)| (b.into(), a)),
-					logger.new(o!("server" => true)),
-				).expect("Failed to create \"server\" mock");
+					// Create "server"
+					let s = ClientData::new_with_socket(
+						"127.0.0.1:0".parse().unwrap(),
+						EccKeyPrivP256::create().unwrap(),
+						false,
+						None,
+						DefaultPacketHandler::new(TestPacketHandler),
+						SocketConnectionManager::new(),
+						recv_sink
+							.sink_map_err(|e| {
+								format_err!(
+									"Failed to send from server: {:?}",
+									e
+								)
+							})
+							.with(|(b, a): (Bytes, SocketAddr)| -> Result<_> {
+								Ok((b.into(), a))
+							}),
+						send_stream.map(|(b, a)| (b.into(), a)),
+						logger.new(o!("server" => true)),
+					)
+					.expect("Failed to create \"server\" mock");
 
-				let s2 = Arc::downgrade(&s);
-				{
-					let mut c = s.lock();
-					let c = &mut *c;
-					// Set the data reference
-					c.packet_handler.complete(s2.clone());
-					//crate::log::add_udp_packet_logger(c);
-				}
+					let s2 = Arc::downgrade(&s);
+					{
+						let mut c = s.lock();
+						let c = &mut *c;
+						// Set the data reference
+						c.packet_handler.complete(s2.clone());
+						//crate::log::add_udp_packet_logger(c);
+					}
 
+					let client_con = Self::set_connected(&c);
+					let server_con = Self::set_connected(&s);
+					let res = Self {
+						client: c,
+						server: s,
+						client_con,
+						server_con,
+					};
 
-				let client_con = Self::set_connected(&c);
-				let server_con = Self::set_connected(&s);
-				let res = Self {
-					client: c,
-					server: s,
-					client_con,
-					server_con,
-				};
-
-				Ok(res)
-			})).unwrap();
+					Ok(res)
+				}))
+				.unwrap();
 
 			(runtime, res)
 		}
 
 		/// Set the connection to connected.
-		fn set_connected(data: &Arc<Mutex<ClientData<TestPacketHandler>>>) -> ClientConVal {
+		fn set_connected(
+			data: &Arc<Mutex<ClientData<TestPacketHandler>>>,
+		) -> ClientConVal {
 			let mut client = data.lock();
 			let con_key = client.add_connection(
 				Arc::downgrade(&data),
@@ -1148,8 +1187,10 @@ mod tests {
 			let connection = client.get_connection(&con_key).unwrap();
 			let mut con = connection.mutex.lock();
 			con.1.resender.handle_event(ResenderEvent::Connected);
-			con.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
-			con.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
+			con.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 1);
+			con.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 1);
 			con.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
 			con.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
 
@@ -1166,8 +1207,14 @@ mod tests {
 		}
 
 		/// Encrypts the packet content and sends it to the connection.
-		pub fn send_packet(&self, packet: OutPacket) -> impl Future<Item=(), Error=Error> {
-			self.server_con.as_packet_sink().send(packet)
+		pub fn send_packet(
+			&self,
+			packet: OutPacket,
+		) -> impl Future<Item = (), Error = Error>
+		{
+			self.server_con
+				.as_packet_sink()
+				.send(packet)
 				.map_err(|e| panic!("Failed to send simulated packet: {:?}", e))
 				.map(|_| ())
 		}
@@ -1178,8 +1225,13 @@ mod tests {
 		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
 			let header = packet.header();
 			if header.packet_type() == PacketType::Init {
-				tokio::spawn(self.0.clone().send(()).map(|_| ())
-					.map_err(|e| panic!("Failed to send: {:?}", e)));
+				tokio::spawn(
+					self.0
+						.clone()
+						.send(())
+						.map(|_| ())
+						.map_err(|e| panic!("Failed to send: {:?}", e)),
+				);
 			}
 		}
 	}
@@ -1197,15 +1249,18 @@ mod tests {
 				Box::new(InitObserver(send)),
 			);
 
-			let r = connect(cw, &mut *con.client.lock(), "127.0.0.1:1".parse().unwrap());
-			r
-				.map(|_| panic!("Should not connect"))
-				.then(|_| {
-					// Drop client in the end
-					drop(con);
-					recv.into_future().map(|_| ())
-						.map_err(|_| panic!("Failed to receive init packet"))
-				})
+			let r = connect(
+				cw,
+				&mut *con.client.lock(),
+				"127.0.0.1:1".parse().unwrap(),
+			);
+			r.map(|_| panic!("Should not connect")).then(|_| {
+				// Drop client in the end
+				drop(con);
+				recv.into_future()
+					.map(|_| ())
+					.map_err(|_| panic!("Failed to receive init packet"))
+			})
 		}));
 		runtime.run().unwrap();
 	}
@@ -1214,9 +1269,16 @@ mod tests {
 	impl<T> InPacketObserver<T> for PongObserver {
 		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
 			let header = packet.header();
-			if header.packet_type() == PacketType::Pong && header.packet_id() == 1 {
-				tokio::spawn(self.0.clone().send(()).map(|_| ())
-					.map_err(|e| panic!("Failed to send: {:?}", e)));
+			if header.packet_type() == PacketType::Pong
+				&& header.packet_id() == 1
+			{
+				tokio::spawn(
+					self.0
+						.clone()
+						.send(())
+						.map(|_| ())
+						.map_err(|e| panic!("Failed to send: {:?}", e)),
+				);
 			}
 		}
 	}
@@ -1226,32 +1288,50 @@ mod tests {
 	fn test_pong() {
 		let (mut runtime, con) = TestConnection::new();
 
-		runtime.block_on(future::lazy(|| {
-			let packet = OutPacket::new_with_dir(Direction::S2C, Flags::UNENCRYPTED, PacketType::Ping);
-			tokio::spawn(con.send_packet(packet.clone())
-				.map_err(|e| panic!("Failed to send packet: {:?}", e)));
-			tokio::spawn(con.send_packet(packet)
-				.map_err(|e| panic!("Failed to send packet: {:?}", e)));
+		runtime
+			.block_on(future::lazy(|| {
+				let packet = OutPacket::new_with_dir(
+					Direction::S2C,
+					Flags::UNENCRYPTED,
+					PacketType::Ping,
+				);
+				tokio::spawn(
+					con.send_packet(packet.clone())
+						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
+				);
+				tokio::spawn(
+					con.send_packet(packet)
+						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
+				);
 
-			// Add observer
-			let (send, recv) = mpsc::unbounded();
-			con.server.lock().add_in_packet_observer(
-				"tsproto::test".into(),
-				Box::new(PongObserver(send)),
-			);
-			recv.into_future().map(|_| drop(con))
-				.timeout(Duration::from_secs(5))
-				.map_err(|_| panic!("Failed to receive pong"))
-		})).unwrap();
+				// Add observer
+				let (send, recv) = mpsc::unbounded();
+				con.server.lock().add_in_packet_observer(
+					"tsproto::test".into(),
+					Box::new(PongObserver(send)),
+				);
+				recv.into_future()
+					.map(|_| drop(con))
+					.timeout(Duration::from_secs(5))
+					.map_err(|_| panic!("Failed to receive pong"))
+			}))
+			.unwrap();
 	}
 
 	struct CounterObserver(mpsc::UnboundedSender<()>, Mutex<usize>);
 	impl<T> InPacketObserver<T> for CounterObserver {
 		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
 			let header = packet.header();
-			if header.packet_type() == PacketType::Command && *self.1.lock() == 0 {
-				tokio::spawn(self.0.clone().send(()).map(|_| ())
-					.map_err(|e| panic!("Failed to send: {:?}", e)));
+			if header.packet_type() == PacketType::Command
+				&& *self.1.lock() == 0
+			{
+				tokio::spawn(
+					self.0
+						.clone()
+						.send(())
+						.map(|_| ())
+						.map_err(|e| panic!("Failed to send: {:?}", e)),
+				);
 			} else {
 				*self.1.lock() -= 1;
 			}
@@ -1266,10 +1346,14 @@ mod tests {
 		for c in &[&con.client_con, &con.server_con] {
 			let c = c.upgrade().unwrap();
 			let mut c = c.mutex.lock();
-			c.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 65_000);
-			c.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 65_000);
-			c.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 65_000);
-			c.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 65_000);
+			c.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 65_000);
+			c.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 65_000);
+			c.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				(0, 65_000);
+			c.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				(0, 65_000);
 		}
 
 		runtime.spawn(future::lazy(move || {
@@ -1299,8 +1383,10 @@ mod tests {
 					vec![("msg", format!("message {}", i))].into_iter(),
 					std::iter::empty(),
 				);
-				msgs.push(con.send_packet(packet.clone())
-					.map_err(|e| panic!("Failed to send packet: {:?}", e)));
+				msgs.push(
+					con.send_packet(packet.clone())
+						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
+				);
 			}
 
 			tokio::spawn(stream::futures_ordered(msgs).for_each(|_| Ok(())));

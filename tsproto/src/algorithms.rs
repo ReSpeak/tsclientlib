@@ -1,8 +1,8 @@
 //! Handle packet splitting and cryptography
 use std::u64;
 
-use aes::block_cipher_trait::generic_array::GenericArray;
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
+use aes::block_cipher_trait::generic_array::GenericArray;
 use byteorder::{NetworkEndian, WriteBytesExt};
 use curve25519_dalek::edwards::EdwardsPoint;
 use num_bigint::BigUint;
@@ -142,7 +142,9 @@ fn create_key_nonce(
 			temp[0] = 0x30;
 		}
 		temp[1] = p_type.to_u8().unwrap();
-		(&mut temp[2..6]).write_u32::<NetworkEndian>(generation_id).unwrap();
+		(&mut temp[2..6])
+			.write_u32::<NetworkEndian>(generation_id)
+			.unwrap();
 		let len;
 		match iv {
 			SharedIv::ProtocolOrig(data) => {
@@ -177,13 +179,22 @@ pub fn encrypt_key_nonce(
 ) -> Result<()>
 {
 	let meta = packet.header().get_meta();
-	let mac = eax::Eax::<aes::Aes128>::encrypt(key, nonce, &meta, packet.content_mut());
+	let mac = eax::Eax::<aes::Aes128>::encrypt(
+		key,
+		nonce,
+		&meta,
+		packet.content_mut(),
+	);
 	packet.mac().copy_from_slice(&mac[..8]);
 	Ok(())
 }
 
 pub fn encrypt_fake(packet: &mut OutPacket) -> Result<()> {
-	encrypt_key_nonce(packet, &crate::FAKE_KEY.into(), &crate::FAKE_NONCE.into())
+	encrypt_key_nonce(
+		packet,
+		&crate::FAKE_KEY.into(),
+		&crate::FAKE_NONCE.into(),
+	)
 }
 
 pub fn encrypt(
@@ -227,7 +238,11 @@ pub fn decrypt_key_nonce(
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
-	decrypt_key_nonce(packet, &crate::FAKE_KEY.into(), &crate::FAKE_NONCE.into())
+	decrypt_key_nonce(
+		packet,
+		&crate::FAKE_KEY.into(),
+		&crate::FAKE_NONCE.into(),
+	)
 }
 
 pub fn decrypt(
@@ -246,10 +261,13 @@ pub fn decrypt(
 		iv,
 		cache,
 	);
-	decrypt_key_nonce(packet, &key, &nonce)
-		.map_err(|e| if let Error::WrongMac(t, _, i) = e {
+	decrypt_key_nonce(packet, &key, &nonce).map_err(|e| {
+		if let Error::WrongMac(t, _, i) = e {
 			Error::WrongMac(t, generation_id, i)
-		} else { e })
+		} else {
+			e
+		}
+	})
 }
 
 /// Compute shared iv and shared mac.

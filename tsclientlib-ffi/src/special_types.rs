@@ -41,19 +41,29 @@ unsafe impl Send for FfiTalkPowerRequest {}
 
 impl Default for FfiInvoker {
 	fn default() -> Self {
-		Self { name: ptr::null_mut(), uid: ptr::null_mut(), id: 0 }
+		Self {
+			name: ptr::null_mut(),
+			uid: ptr::null_mut(),
+			id: 0,
+		}
 	}
 }
 
 impl Default for FfiMaxClients {
 	fn default() -> Self {
-		Self { limit: 0, kind: FfiMaxClientsKind::Unlimited }
+		Self {
+			limit: 0,
+			kind: FfiMaxClientsKind::Unlimited,
+		}
 	}
 }
 
 impl Default for FfiTalkPowerRequest {
 	fn default() -> Self {
-		Self { time: 0, message: ptr::null_mut() }
+		Self {
+			time: 0,
+			message: ptr::null_mut(),
+		}
 	}
 }
 
@@ -62,7 +72,11 @@ impl ToFfi for Invoker {
 	fn ffi(&self) -> Self::FfiType {
 		FfiInvoker {
 			name: self.name.ffi(),
-			uid: self.uid.as_ref().map(|uid| uid.0.ffi()).unwrap_or(std::ptr::null_mut()),
+			uid: self
+				.uid
+				.as_ref()
+				.map(|uid| uid.0.ffi())
+				.unwrap_or(std::ptr::null_mut()),
 			id: self.id.0,
 		}
 	}
@@ -72,12 +86,16 @@ impl ToFfi for MaxClients {
 	type FfiType = FfiMaxClients;
 	fn ffi(&self) -> Self::FfiType {
 		FfiMaxClients {
-			limit: if let MaxClients::Limited(i) = self { *i } else { 0 },
+			limit: if let MaxClients::Limited(i) = self {
+				*i
+			} else {
+				0
+			},
 			kind: match self {
 				MaxClients::Unlimited => FfiMaxClientsKind::Unlimited,
 				MaxClients::Inherited => FfiMaxClientsKind::Inherited,
 				MaxClients::Limited(_) => FfiMaxClientsKind::Limited,
-			}
+			},
 		}
 	}
 }

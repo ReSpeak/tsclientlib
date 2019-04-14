@@ -2,11 +2,12 @@ use std::net::SocketAddr;
 
 use chrono::Duration;
 
-use crate::*;
-use crate::data::{ServerGroup, Server, OptionalChannelData, File, Channel,
-	OptionalClientData, ConnectionClientData, Client, OptionalServerData,
-	ConnectionServerData, ChatEntry, Connection,
+use crate::data::{
+	Channel, ChatEntry, Client, Connection, ConnectionClientData,
+	ConnectionServerData, File, OptionalChannelData, OptionalClientData,
+	OptionalServerData, Server, ServerGroup,
 };
+use crate::*;
 
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
 
@@ -64,11 +65,13 @@ pub enum Event {
 impl Event {
 	pub fn get_invoker(&self) -> Option<&Invoker> {
 		match self {
-			Event::PropertyAdded { invoker, .. } |
-			Event::PropertyChanged { invoker, .. } |
-			Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
+			Event::PropertyAdded { invoker, .. }
+			| Event::PropertyChanged { invoker, .. }
+			| Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
 			Event::Message { invoker, .. } => Some(invoker),
-			Event::__NonExhaustive => panic!("Non exhaustive event should not be created"),
+			Event::__NonExhaustive => {
+				panic!("Non exhaustive event should not be created")
+			}
 		}
 	}
 }

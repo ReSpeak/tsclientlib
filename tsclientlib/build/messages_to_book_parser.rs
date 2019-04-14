@@ -2,10 +2,10 @@ use std::default::Default;
 use std::ops::Deref;
 
 use t4rust_derive::Template;
-use tsproto_structs::*;
 use tsproto_structs::book::{PropId, Property};
 use tsproto_structs::messages::{Field, Message};
 use tsproto_structs::messages_to_book::*;
+use tsproto_structs::*;
 
 use crate::events::get_rust_type;
 
@@ -63,7 +63,10 @@ fn gen_return_match(to: &[&Property]) -> String {
 	} else {
 		format!(
 			"({})",
-			to.iter().map(|p| to_snake_case(&p.name)).collect::<Vec<_>>().join(", ")
+			to.iter()
+				.map(|p| to_snake_case(&p.name))
+				.collect::<Vec<_>>()
+				.join(", ")
 		)
 	}
 }
@@ -78,7 +81,11 @@ fn try_result(s: &str) -> &'static str {
 }
 
 fn get_property_name(e: &Event, p: &Property) -> String {
-	format!("{}{}", e.book_struct.name, crate::events::get_property_name(p))
+	format!(
+		"{}{}",
+		e.book_struct.name,
+		crate::events::get_property_name(p)
+	)
 }
 
 fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {

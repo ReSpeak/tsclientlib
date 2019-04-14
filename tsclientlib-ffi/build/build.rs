@@ -46,11 +46,19 @@ fn get_ffi_type(s: &str) -> String {
 		"Duration" => "u64",
 
 		// Enum
-		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
-		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
-		| "LicenseType" | "TextMessageTargetMode" => "u32",
+		"GroupType"
+		| "GroupNamingMode"
+		| "Codec"
+		| "ChannelType"
+		| "ClientType"
+		| "HostMessageMode"
+		| "CodecEncryptionMode"
+		| "HostBannerMode"
+		| "LicenseType"
+		| "TextMessageTargetMode" => "u32",
 		_ => s,
-	}.into()
+	}
+	.into()
 }
 
 /// Convert to ffi type
@@ -68,10 +76,16 @@ fn convert_val(type_s: &str) -> String {
 		"MaxClients" => "val.ffi()".into(),
 		"TalkPowerRequest" => "val.ffi()".into(),
 		// Enum
-		"GroupType" | "GroupNamingMode" | "Codec" | "ChannelType" | "ClientType"
-		| "HostMessageMode" | "CodecEncryptionMode" | "HostBannerMode"
-		| "LicenseType" | "TextMessageTargetMode" =>
-		"val.to_u32().unwrap()".into(),
+		"GroupType"
+		| "GroupNamingMode"
+		| "Codec"
+		| "ChannelType"
+		| "ClientType"
+		| "HostMessageMode"
+		| "CodecEncryptionMode"
+		| "HostBannerMode"
+		| "LicenseType"
+		| "TextMessageTargetMode" => "val.to_u32().unwrap()".into(),
 		_ => "*val".into(),
 	}
 }
@@ -85,7 +99,10 @@ fn convert_property(p: &Property) -> String {
 		} else {
 			"Default::default"
 		};
-		format!("val.as_ref().map(|val| {}).unwrap_or_else({})", res, default)
+		format!(
+			"val.as_ref().map(|val| {}).unwrap_or_else({})",
+			res, default
+		)
 	} else {
 		res
 	}

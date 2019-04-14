@@ -13,7 +13,7 @@ use tsproto::utils;
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-                                   AppSettings::VersionlessSubcommands]"))]
+	AppSettings::VersionlessSubcommands]"))]
 struct Args {
 	#[structopt(short = "d", long = "debug", help = "Print backtrace")]
 	debug: bool,

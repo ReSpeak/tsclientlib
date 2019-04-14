@@ -3,14 +3,16 @@ use std::str::FromStr;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
 
-use crate::*;
 use crate::book::{BookDeclarations, Property, Struct};
-use crate::messages::{MessageDeclarations, Field, Message};
+use crate::messages::{Field, Message, MessageDeclarations};
+use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/declarations/MessagesToBook.toml"));
+pub const DATA_STR: &str = include_str!(concat!(
+	env!("CARGO_MANIFEST_DIR"),
+	"/declarations/MessagesToBook.toml"
+));
 
-lazy_static!{
+lazy_static! {
 	pub static ref DATA: MessagesToBookDeclarations<'static> = {
 		let rules: TomlStruct = toml::from_str(DATA_STR).unwrap();
 		let book = &book::DATA;
@@ -47,7 +49,7 @@ lazy_static!{
 							assert!(p.is_valid());
 
 							let find_prop = |name,
-							                 book_struct: &'static Struct|
+											 book_struct: &'static Struct|
 							 -> &'static Property {
 								if let Some(prop) = book_struct
 									.properties

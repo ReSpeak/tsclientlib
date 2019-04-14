@@ -13,7 +13,7 @@
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 // Needed for futures on windows.
-#![recursion_limit="128"]
+#![recursion_limit = "128"]
 
 use std::collections::HashMap;
 use std::fmt;
@@ -28,13 +28,13 @@ use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
 use tsproto::algorithms as algs;
-use tsproto::{client, crypto, log};
 use tsproto::connectionmanager::ConnectionManager;
+use tsproto::connectionmanager::Resender;
 use tsproto::handler_data::{ConnectionListener, ConnectionValue};
 use tsproto::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
-use tsproto::connectionmanager::Resender;
+use tsproto::{client, crypto, log};
 #[cfg(feature = "audio")]
 use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
@@ -68,16 +68,17 @@ mod tests;
 pub use tsproto_commands::errors::Error as TsError;
 pub use tsproto_commands::versions::Version;
 pub use tsproto_commands::{
-	messages, ChannelId, ClientId, MaxClients, Reason, ServerGroupId, Uid,
-	TextMessageTargetMode, GroupType, IconHash, GroupNamingMode, Codec,
-	ChannelType, ClientDbId, ChannelGroupId, TalkPowerRequest, ClientType,
-	LicenseType, HostBannerMode, HostMessageMode, CodecEncryptionMode, UidRef,
-	Invoker, InvokerRef,
+	messages, ChannelGroupId, ChannelId, ChannelType, ClientDbId, ClientId,
+	ClientType, Codec, CodecEncryptionMode, GroupNamingMode, GroupType,
+	HostBannerMode, HostMessageMode, IconHash, Invoker, InvokerRef,
+	LicenseType, MaxClients, Reason, ServerGroupId, TalkPowerRequest,
+	TextMessageTargetMode, Uid, UidRef,
 };
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-pub type EventListener = Box<Fn(&ConnectionLock, &[events::Event]) + Send + Sync>;
+pub type EventListener =
+	Box<Fn(&ConnectionLock, &[events::Event]) + Send + Sync>;
 
 #[derive(Fail, Debug, From)]
 pub enum Error {
@@ -264,7 +265,8 @@ impl Connection {
 				move |addr| -> Box<Future<Item = _, Error = _> + Send> {
 					let (initserver_send, initserver_recv) = oneshot::channel();
 					let (connection_send, connection_recv) = oneshot::channel();
-					let ph: Option<PHBox> = options.handle_packets.as_ref().map(|h| (*h).clone());
+					let ph: Option<PHBox> =
+						options.handle_packets.as_ref().map(|h| (*h).clone());
 					let packet_handler = SimplePacketHandler::new(
 						logger.clone(),
 						ph,
@@ -276,26 +278,36 @@ impl Connection {
 					let return_code_handler =
 						packet_handler.return_codes.clone();
 					let client = match client::new(
-						options.local_address.unwrap_or_else(|| if addr.is_ipv4() {
-							"0.0.0.0:0".parse().unwrap()
-						} else {
-							"[::]:0".parse().unwrap()
+						options.local_address.unwrap_or_else(|| {
+							if addr.is_ipv4() {
+								"0.0.0.0:0".parse().unwrap()
+							} else {
+								"[::]:0".parse().unwrap()
+							}
 						}),
 						private_key.clone(),
 						packet_handler,
 						logger.clone(),
 					) {
 						Ok(client) => client,
-						Err(error) => return Box::new(future::err(error.into())),
+						Err(error) => {
+							return Box::new(future::err(error.into()))
+						}
 					};
 
 					{
 						let mut c = client.lock();
 						let c = &mut *c;
 						// Logging
-						if options.log_commands { log::add_command_logger(c); }
-						if options.log_packets { log::add_packet_logger(c); }
-						if options.log_udp_packets { log::add_udp_packet_logger(c); }
+						if options.log_commands {
+							log::add_command_logger(c);
+						}
+						if options.log_packets {
+							log::add_packet_logger(c);
+						}
+						if options.log_udp_packets {
+							log::add_udp_packet_logger(c);
+						}
 					}
 
 					if let Some(prepare_client) = &options.prepare_client {
@@ -312,16 +324,20 @@ impl Connection {
 						Arc::downgrade(&client),
 						&mut *client.lock(),
 						addr,
-					).from_err();
+					)
+					.from_err();
 
 					let initserver_poll = initserver_recv
 						.map_err(|e| {
 							format_err!(
 								"Error while waiting for initserver ({:?})",
 								e
-							).into()
-						}).and_then(move |cmd| {
-							let msg = InMessage::new(cmd).map_err(|(_, e)| e)?;
+							)
+							.into()
+						})
+						.and_then(move |cmd| {
+							let msg =
+								InMessage::new(cmd).map_err(|(_, e)| e)?;
 							if let InMessages::InitServer(_) = msg.msg() {
 								Ok(msg)
 							} else {
@@ -439,17 +455,20 @@ impl Connection {
 				}),
 					)
 				},
-			).then(move |r| -> Result<_> {
+			)
+			.then(move |r| -> Result<_> {
 				if let Err(e) = &r {
 					debug!(logger2, "Connecting failed, trying next address";
 					"error" => ?e);
 				}
 				Ok(r.ok())
-			}).filter_map(|r| r)
+			})
+			.filter_map(|r| r)
 			.into_future()
 			.map_err(|_| {
 				Error::from(format_err!("Failed to connect to server"))
-			}).and_then(|(r, _)| {
+			})
+			.and_then(|(r, _)| {
 				r.ok_or_else(|| {
 					format_err!("Failed to connect to server").into()
 				})
@@ -495,7 +514,7 @@ impl Connection {
 	pub fn send_packet(
 		&self,
 		mut packet: OutPacket,
-	) -> impl Future<Item=(), Error=Error> + Send + 'static
+	) -> impl Future<Item = (), Error = Error> + Send + 'static
 	{
 		// Store waiting in HashMap<usize (return code), oneshot::Sender>
 		// The packet handler then sends a result to the sender if the answer is
@@ -503,8 +522,12 @@ impl Connection {
 
 		let (code, recv) = self.inner.return_code_handler.get_return_code();
 		// Add return code
-		packet.data_mut().extend_from_slice(" return_code=".as_bytes());
-		packet.data_mut().extend_from_slice(code.to_string().as_bytes());
+		packet
+			.data_mut()
+			.extend_from_slice(" return_code=".as_bytes());
+		packet
+			.data_mut()
+			.extend_from_slice(code.to_string().as_bytes());
 
 		// Send a message and wait until we get an answer for the return code
 		self.get_packet_sink()
@@ -640,9 +663,11 @@ impl Connection {
 	/// # }
 	/// ```
 	pub fn add_on_disconnect(&self, f: Box<Fn() + Send>) {
-		self.inner.client_data.lock().connection_listeners.push(Box::new(
-			DisconnectListener(Some(f))
-		));
+		self.inner
+			.client_data
+			.lock()
+			.connection_listeners
+			.push(Box::new(DisconnectListener(Some(f))));
 	}
 
 	/// Set a function which will be called on events.
@@ -654,7 +679,12 @@ impl Connection {
 	/// again. It should be unique as any old event listener with this key will
 	/// be removed and returned. Internally all listeners are stored in a
 	/// `HashMap`.
-	pub fn add_on_event(&self, key: String, f: EventListener) -> Option<EventListener> {
+	pub fn add_on_event(
+		&self,
+		key: String,
+		f: EventListener,
+	) -> Option<EventListener>
+	{
 		self.inner.event_listeners.write().insert(key, f)
 	}
 
@@ -668,20 +698,29 @@ impl Connection {
 }
 
 #[cfg(feature = "audio")]
-pub struct ConnectionPacketSinkCreator { con: Connection }
+pub struct ConnectionPacketSinkCreator {
+	con: Connection,
+}
 #[cfg(feature = "audio")]
 impl ConnectionPacketSinkCreator {
 	pub fn new(con: Connection) -> Self { Self { con } }
 }
 
 #[cfg(feature = "audio")]
-impl tsproto_audio::audio_to_ts::PacketSinkCreator<Error> for ConnectionPacketSinkCreator {
-	type S = Box<Sink<SinkItem=OutPacket, SinkError=Error> + Send>;
+impl tsproto_audio::audio_to_ts::PacketSinkCreator<Error>
+	for ConnectionPacketSinkCreator
+{
+	type S = Box<Sink<SinkItem = OutPacket, SinkError = Error> + Send>;
 	fn get_sink(&self) -> Self::S { Box::new(self.con.get_packet_sink()) }
 }
 
 impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener {
-	fn on_connection_removed(&mut self, _: &CM::Key, _: &mut ConnectionValue<CM::AssociatedData>) -> bool {
+	fn on_connection_removed(
+		&mut self,
+		_: &CM::Key,
+		_: &mut ConnectionValue<CM::AssociatedData>,
+	) -> bool
+	{
 		self.0.take().unwrap()();
 		false
 	}
@@ -701,16 +740,20 @@ impl Drop for Connection {
 			} else {
 				return;
 			}
-			tokio::spawn(self.disconnect(None).map_err(
-				move |e| warn!(logger, "Failed to disconnect from destructor";
-					"error" => ?e),
-			));
+			tokio::spawn(self.disconnect(None).map_err(move |e| {
+				warn!(logger, "Failed to disconnect from destructor";
+					"error" => ?e)
+			}));
 		}
 	}
 }
 
 impl<'a> ConnectionLock<'a> {
-	fn new(connection: Connection, guard: RwLockReadGuard<'a, data::Connection>) -> Self {
+	fn new(
+		connection: Connection,
+		guard: RwLockReadGuard<'a, data::Connection>,
+	) -> Self
+	{
 		Self { connection, guard }
 	}
 
@@ -872,7 +915,8 @@ impl ConnectOptions {
 	/// An error is returned if the string cannot be decoded.
 	#[inline]
 	pub fn private_key_str(mut self, private_key: &str) -> Result<Self> {
-		self.private_key = Some(crypto::EccKeyPrivP256::import_str(private_key)?);
+		self.private_key =
+			Some(crypto::EccKeyPrivP256::import_str(private_key)?);
 		Ok(self)
 	}
 
@@ -948,8 +992,11 @@ impl ConnectOptions {
 	/// `false`
 	#[cfg(feature = "audio")]
 	#[inline]
-	pub fn audio_packet_handler(mut self,
-		audio_packet_handler: AudioPacketHandler) -> Self {
+	pub fn audio_packet_handler(
+		mut self,
+		audio_packet_handler: AudioPacketHandler,
+	) -> Self
+	{
 		self.audio_packet_handler = Some(audio_packet_handler);
 		self
 	}
@@ -1018,7 +1065,6 @@ impl fmt::Debug for ConnectOptions {
 			log_commands,
 			log_packets,
 			log_udp_packets,
-			#[cfg(feature = "audio")]
 			audio_packet_handler,
 			handle_packets: _,
 			prepare_client: _,

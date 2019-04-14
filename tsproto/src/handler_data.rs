@@ -197,8 +197,10 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 
 	pub fn as_udp_packet_sink(
 		&self,
-	) -> Box<Sink<SinkItem = (PacketType, u32, u16, Bytes), SinkError = Error> + Send>
-	{
+	) -> Box<
+		Sink<SinkItem = (PacketType, u32, u16, Bytes), SinkError = Error>
+			+ Send,
+	> {
 		if let Some(con_val) = self.upgrade() {
 			Box::new(ConnectionUdpPacketSink::new(&con_val))
 		} else {
@@ -368,8 +370,12 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		unknown_udp_packet_sink: Option<mpsc::Sender<(SocketAddr, InPacket)>>,
 		packet_handler: CM::PacketHandler,
 		connection_manager: CM,
-		sink: impl Sink<SinkItem=(Bytes, SocketAddr), SinkError=E1> + Send + 'static,
-		stream: impl Stream<Item=(BytesMut, SocketAddr), Error=E2> + Send + 'static,
+		sink: impl Sink<SinkItem = (Bytes, SocketAddr), SinkError = E1>
+			+ Send
+			+ 'static,
+		stream: impl Stream<Item = (BytesMut, SocketAddr), Error = E2>
+			+ Send
+			+ 'static,
 		logger: slog::Logger,
 	) -> Result<Arc<Mutex<Self>>>
 	{

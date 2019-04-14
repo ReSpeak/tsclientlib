@@ -136,13 +136,18 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 		};
 
 		#[cfg(feature = "audio")]
-		let audio_stream: Box<Stream<Item=_, Error=_> + Send> =
-			if let Some(audio_packet_handler) = self.audio_packet_handler.clone() {
+		let audio_stream: Box<Stream<Item = _, Error = _> + Send> =
+			if let Some(audio_packet_handler) =
+				self.audio_packet_handler.clone()
+			{
 				let logger = self.logger.clone();
-				Box::new(audio_stream.inspect(move |p| if let Err(e) =
-					audio_packet_handler.handle_audio_packet(p.data()) {
-					error!(logger, "Error when handling audio packet";
+				Box::new(audio_stream.inspect(move |p| {
+					if let Err(e) =
+						audio_packet_handler.handle_audio_packet(p.data())
+					{
+						error!(logger, "Error when handling audio packet";
 						"error" => ?e);
+					}
 				}))
 			} else {
 				Box::new(audio_stream)
@@ -202,8 +207,9 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 					if let InMessages::CommandError(cmd) = msg.msg() {
 						let cmd = cmd.iter().next().unwrap();
 						// 3.1
-						if let Some(code) = cmd.return_code.and_then(|c|
-							c.parse().ok()) {
+						if let Some(code) =
+							cmd.return_code.and_then(|c| c.parse().ok())
+						{
 							if let Some(return_sender) =
 								self.return_codes.return_codes.remove(&code)
 							{
@@ -219,11 +225,13 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 					// 3.2
 					// Apply
 					let events = match con.handle_message(&msg, &self.logger) {
-						Ok(e) => if e.len() > 0 {
-							Some(e)
-						} else {
-							None
-						},
+						Ok(e) => {
+							if e.len() > 0 {
+								Some(e)
+							} else {
+								None
+							}
+						}
 						Err(e) => {
 							warn!(self.logger, "Failed to handle message";
 								"command" => name,

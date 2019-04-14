@@ -1,9 +1,14 @@
-use tsproto::packets::{InCommand, Direction, PacketType};
+use tsproto::packets::{Direction, InCommand, PacketType};
 use tsproto_commands::messages::s2c::{InMessage, InMessages};
 
 fn parse_msg(msg: &str) -> InMessage {
-	let cmd = InCommand::new(msg.as_bytes().to_vec(), PacketType::Command,
-		false, Direction::S2C).unwrap();
+	let cmd = InCommand::new(
+		msg.as_bytes().to_vec(),
+		PacketType::Command,
+		false,
+		Direction::S2C,
+	)
+	.unwrap();
 
 	InMessage::new(cmd).unwrap()
 }
@@ -19,16 +24,10 @@ fn test_iconid(input: &str, expected: u32) {
 }
 
 #[test]
-fn normal_iconid() {
-	test_iconid("96136942", 96136942);
-}
+fn normal_iconid() { test_iconid("96136942", 96136942); }
 
 #[test]
-fn negative_iconid() {
-	test_iconid("-96136942", 4198830354);
-}
+fn negative_iconid() { test_iconid("-96136942", 4198830354); }
 
 #[test]
-fn big_iconid() {
-	test_iconid("18446744073225738240", 3811153920);
-}
+fn big_iconid() { test_iconid("18446744073225738240", 3811153920); }

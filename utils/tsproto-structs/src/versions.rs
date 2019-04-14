@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
-use lazy_static::lazy_static;
 use crate::*;
+use lazy_static::lazy_static;
 
-pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/declarations/Versions.csv"));
+pub const DATA_STR: &str = include_str!(concat!(
+	env!("CARGO_MANIFEST_DIR"),
+	"/declarations/Versions.csv"
+));
 
-lazy_static!{
+lazy_static! {
 	pub static ref DATA: Versions = {
 		let mut table = csv::Reader::from_reader(DATA_STR.as_bytes());
 		let mut vs = Versions(

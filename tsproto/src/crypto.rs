@@ -131,8 +131,7 @@ impl EccKeyPubP256 {
 
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
 		let pub_len = (self.0.len() - 1) / 2;
-		let pubkey_x =
-			BigInt::from_bytes_be(Sign::Plus, &self.0[1..=pub_len]);
+		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &self.0[1..=pub_len]);
 		let pubkey_y =
 			BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
 
@@ -162,20 +161,25 @@ impl EccKeyPubP256 {
 	}
 
 	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
-		ring::signature::verify(&ring::signature::ECDSA_P256_SHA256_ASN1,
+		ring::signature::verify(
+			&ring::signature::ECDSA_P256_SHA256_ASN1,
 			Input::from(&self.0),
 			Input::from(data),
-			Input::from(signature)).map_err(|_| Error::WrongSignature)
+			Input::from(signature),
+		)
+		.map_err(|_| Error::WrongSignature)
 	}
 }
 
 impl EccKeyPrivP256 {
 	/// Create a new key key pair.
 	pub fn create() -> Result<Self> {
-		Ok(EccKeyPrivP256(ring::signature::EcdsaKeyPair::generate_private_key(
-			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-			&ring::rand::SystemRandom::new(),
-		)?))
+		Ok(EccKeyPrivP256(
+			ring::signature::EcdsaKeyPair::generate_private_key(
+				&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+				&ring::rand::SystemRandom::new(),
+			)?,
+		))
 	}
 
 	/// Try to import the key from any of the known formats.
@@ -372,13 +376,14 @@ impl EccKeyPrivP256 {
 		ring::signature::EcdsaKeyPair::from_private_key(
 			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 			Input::from(&self.0),
-		).unwrap()
+		)
+		.unwrap()
 	}
 
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(self, other: EccKeyPubP256) -> Result<Vec<u8>> {
-		use ring::ec::suite_b::ecdh;
 		use ring::ec::keys::Seed;
+		use ring::ec::suite_b::ecdh;
 
 		let seed = Seed::from_p256_bytes(Input::from(&self.0))?;
 		let mut res = vec![0; 32];
@@ -398,10 +403,11 @@ impl EccKeyPrivP256 {
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
 		let key = self.to_ring();
 		// TODO Return ring signature
-		Ok(key.sign(&ring::rand::SystemRandom::new(),
-			Input::from(data))?.as_ref().to_vec())
+		Ok(key
+			.sign(&ring::rand::SystemRandom::new(), Input::from(data))?
+			.as_ref()
+			.to_vec())
 	}
-
 
 	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }
 }

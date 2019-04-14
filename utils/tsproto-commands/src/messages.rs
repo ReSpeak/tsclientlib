@@ -6,13 +6,16 @@ use chrono::{DateTime, Duration, Utc};
 use failure::Fail;
 use tsproto::packets::{Direction, PacketType};
 
-use crate::*;
 use crate::errors::Error;
+use crate::*;
 
 #[derive(Fail, Debug)]
 pub enum ParseError {
 	#[fail(display = "Parameter {} not found in {}", arg, name)]
-	ParameterNotFound { arg: &'static str, name: &'static str },
+	ParameterNotFound {
+		arg: &'static str,
+		name: &'static str,
+	},
 	#[fail(display = "Command {} is unknown", _0)]
 	UnknownCommand(String),
 	/// Gets thrown when parsing a specific command with the wrong input.
@@ -26,9 +29,7 @@ pub enum ParseError {
 	WrongDirection(Direction),
 	#[fail(
 		display = "Cannot parse \"{}\" as int for parameter {} ({})",
-		value,
-		arg,
-		error
+		value, arg, error
 	)]
 	ParseInt {
 		arg: &'static str,
@@ -38,9 +39,7 @@ pub enum ParseError {
 	},
 	#[fail(
 		display = "Cannot parse \"{}\" as float for parameter {} ({})",
-		value,
-		arg,
-		error
+		value, arg, error
 	)]
 	ParseFloat {
 		arg: &'static str,
@@ -50,15 +49,10 @@ pub enum ParseError {
 	},
 	#[fail(
 		display = "Cannot parse \"{}\" as bool for parameter {}",
-		value,
-		arg
+		value, arg
 	)]
 	ParseBool { arg: &'static str, value: String },
-	#[fail(
-		display = "Invalid value \"{}\" for parameter {}",
-		value,
-		arg
-	)]
+	#[fail(display = "Invalid value \"{}\" for parameter {}", value, arg)]
 	InvalidValue { arg: &'static str, value: String },
 }
 

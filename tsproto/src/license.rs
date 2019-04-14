@@ -259,7 +259,9 @@ impl License {
 				{
 					len
 				} else {
-					return Err(format_err!("Non-null-terminated string").into());
+					return Err(
+						format_err!("Non-null-terminated string").into()
+					);
 				};
 				let issuer = str::from_utf8(&data[46..46 + len])?.to_string();
 				(
@@ -284,7 +286,9 @@ impl License {
 				{
 					len
 				} else {
-					return Err(format_err!("Non-null-terminated string").into());
+					return Err(
+						format_err!("Non-null-terminated string").into()
+					);
 				};
 				if data.len() < 47 + len {
 					return Err(format_err!("License too short").into());

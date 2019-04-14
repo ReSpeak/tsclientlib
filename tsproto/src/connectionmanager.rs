@@ -59,7 +59,7 @@ pub enum ResenderEvent {
 /// [`Command`]: ../commands/struct.Command.html
 /// [`CommandLow`]: ../commands/struct.CommandLow.html
 pub trait Resender:
-	Sink<SinkItem=(PacketType, u32, u16, Bytes), SinkError=Error>
+	Sink<SinkItem = (PacketType, u32, u16, Bytes), SinkError = Error>
 {
 	/// Called for a received ack packet.
 	///

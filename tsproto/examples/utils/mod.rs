@@ -85,62 +85,83 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 ) -> impl Future<Item = client::ClientConVal, Error = Error>
 {
 	client::connect(Arc::downgrade(&client), &mut *client.lock(), server_addr)
-	.and_then(move |con| {
-		let private_key = EccKeyPrivP256::import_str(
+		.and_then(move |con| {
+			let private_key = EccKeyPrivP256::import_str(
 			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 			DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-		// Compute hash cash
-		let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-			"Compute public key hash cash level", logger.clone(),
-			slog::Level::Info);
-		time_reporter.start("Compute public key hash cash level");
-		let private_key_as_pub = private_key.to_pub();
-		let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
-		let omega = private_key_as_pub.to_ts().unwrap();
-		time_reporter.finish();
-		info!(logger, "Computed hash cash level";
+			// Compute hash cash
+			let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+				"Compute public key hash cash level",
+				logger.clone(),
+				slog::Level::Info,
+			);
+			time_reporter.start("Compute public key hash cash level");
+			let private_key_as_pub = private_key.to_pub();
+			let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
+			let omega = private_key_as_pub.to_ts().unwrap();
+			time_reporter.finish();
+			info!(logger, "Computed hash cash level";
 			"level" => algs::get_hash_cash_level(&omega, offset),
 			"offset" => offset);
 
-		// Create clientinit packet
-		let offset = offset.to_string();
-		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientinit",
-			vec![
-				("client_nickname", "Bot"),
-				("client_version", "3.1.8 [Build: 1516614607]"),
-				("client_platform", "Linux"),
-				("client_input_hardware", "1"),
-				("client_output_hardware", "1"),
-				("client_default_channel", ""),
-				("client_default_channel_password", ""),
-				("client_server_password", ""),
-				("client_meta_data", ""),
-				("client_version_sign", "LJ5q+KWT4KwBX7oR\\/9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw=="),
-				("client_nickname_phonetic", ""),
-				("client_key_offset", &offset),
-				("client_default_token", ""),
-				("client_badges", "Overwolf=0"),
-				("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
-			].into_iter(),
-			std::iter::empty(),
-		);
+			// Create clientinit packet
+			let offset = offset.to_string();
+			let packet = OutCommand::new::<
+				_,
+				_,
+				String,
+				String,
+				_,
+				_,
+				std::iter::Empty<_>,
+			>(
+				Direction::C2S,
+				PacketType::Command,
+				"clientinit",
+				vec![
+					("client_nickname", "Bot"),
+					("client_version", "3.1.8 [Build: 1516614607]"),
+					("client_platform", "Linux"),
+					("client_input_hardware", "1"),
+					("client_output_hardware", "1"),
+					("client_default_channel", ""),
+					("client_default_channel_password", ""),
+					("client_server_password", ""),
+					("client_meta_data", ""),
+					(
+						"client_version_sign",
+						"LJ5q+KWT4KwBX7oR\\/\
+						 9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==",
+					),
+					("client_nickname_phonetic", ""),
+					("client_key_offset", &offset),
+					("client_default_token", ""),
+					("client_badges", "Overwolf=0"),
+					(
+						"hwid",
+						"923f136fb1e22ae6ce95e60255529c00,\
+						 d13231b1bc33edfecfb9169cc7a63bcc",
+					),
+				]
+				.into_iter(),
+				std::iter::empty(),
+			);
 
-		let con2 = con.clone();
-		con.as_packet_sink().send(packet)
-			.and_then(move |_| client::wait_until_connected(&con))
-			.map(move |_| con2)
-	})
+			let con2 = con.clone();
+			con.as_packet_sink()
+				.send(packet)
+				.and_then(move |_| client::wait_until_connected(&con))
+				.map(move |_| con2)
+		})
 }
 
 pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
 	client: &client::ClientDataM<PH>,
 	con: client::ClientConVal,
-) -> Box<Future<Item=(), Error=Error> + Send> {
+) -> Box<Future<Item = (), Error = Error> + Send>
+{
 	let packet =
 		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
 			Direction::C2S,

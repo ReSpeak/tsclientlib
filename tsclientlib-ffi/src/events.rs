@@ -2,10 +2,10 @@
 use std::os::raw::{c_char, c_void};
 
 use num::ToPrimitive;
-use tsclientlib::events::{PropertyValueRef, PropertyId};
+use tsclientlib::events::{PropertyId, PropertyValueRef};
 
-use crate::{FfiMaxClients, FfiTalkPowerRequest, FfiInvoker};
 use crate::ffi_utils::ToFfi;
+use crate::{FfiInvoker, FfiMaxClients, FfiTalkPowerRequest};
 
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
 unsafe impl Send for FfiProperty {}
