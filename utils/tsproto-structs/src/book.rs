@@ -3,7 +3,7 @@ use serde_derive::Deserialize;
 use crate::*;
 
 pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/../declarations/BookDeclarations.toml"));
+	"/declarations/BookDeclarations.toml"));
 
 lazy_static!{
 	pub static ref DATA: BookDeclarations = toml::from_str(DATA_STR).unwrap();

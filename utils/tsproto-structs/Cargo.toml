@@ -3,6 +3,16 @@ name = "tsproto-structs"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>", "Splamy <splamyn@gmail.com>"]
 edition = "2018"
+include = [
+	"Cargo.toml",
+	"src/*.rs",
+	"declarations/BookDeclarations.toml",
+	"declarations/BookToMessages.toml",
+	"declarations/Errors.csv",
+	"declarations/Messages.toml",
+	"declarations/MessagesToBook.toml",
+	"declarations/Versions.csv",
+]
 
 [dependencies]
 base64 = "0.10"

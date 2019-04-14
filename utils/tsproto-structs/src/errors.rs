@@ -2,7 +2,7 @@ use lazy_static::lazy_static;
 use crate::*;
 
 pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/../declarations/Errors.csv"));
+	"/declarations/Errors.csv"));
 
 lazy_static!{
 	pub static ref DATA: Errors = Errors(csv::Reader::from_reader(

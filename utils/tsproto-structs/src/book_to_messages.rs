@@ -8,7 +8,7 @@ use crate::book::{BookDeclarations, Property, Struct};
 use crate::messages::{MessageDeclarations, Field, Message};
 
 pub const DATA_STR: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"),
-	"/../declarations/BookToMessages.toml"));
+	"/declarations/BookToMessages.toml"));
 
 lazy_static!{
 	pub static ref DATA: BookToMessagesDeclarations<'static> = {
