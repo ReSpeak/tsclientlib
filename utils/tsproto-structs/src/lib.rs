@@ -1,7 +1,7 @@
 //! `tsproto-structs` contains machine readable data for several TeamSpeak
 //! related topics.
 //!
-//! The underlying data file can be found in the [tsdeclarations](https://github.com/ReSpeak/tsdeclarations)
+//! The underlying data files can be found in the [tsdeclarations](https://github.com/ReSpeak/tsdeclarations)
 //! repository.
 //!
 //! The contained data may change with any version so the suggested way of

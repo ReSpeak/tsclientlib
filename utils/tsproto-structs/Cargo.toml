@@ -10,6 +10,7 @@ keywords = ["TeamSpeak3", "TS3"]
 edition = "2018"
 include = [
 	"Cargo.toml",
+	"README.md",
 	"src/*.rs",
 	"declarations/BookDeclarations.toml",
 	"declarations/BookToMessages.toml",

@@ -1,7 +1,13 @@
-#[macro_use]
-extern crate failure;
-#[macro_use]
-extern crate num_derive;
+//! `tsproto-commands` lets you deserialize structs from TeamSpeak commands and
+//! serialize commands from structs. The crate also contains enums for all
+//! errors used in the TeamSpeak protocol and a list of all known versions of
+//! the TeamSpeak client, including their signature.
+//!
+//! The underlying data files can be found in the [tsdeclarations](https://github.com/ReSpeak/tsdeclarations)
+//! repository.
+//!
+//! The contained data may change with any version so the suggested way of
+//! referring to this crate is using `tsproto-commands = "=0.1.0"`.
 
 pub mod errors;
 pub mod messages;
@@ -10,6 +16,7 @@ pub mod versions;
 use std::fmt;
 
 use chrono::{DateTime, Utc};
+use num_derive::{FromPrimitive, ToPrimitive};
 
 /// A `ClientId` identifies a client which is connected to a server.
 ///

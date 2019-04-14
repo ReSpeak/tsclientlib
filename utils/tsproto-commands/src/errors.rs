@@ -1,5 +1,7 @@
 use std::fmt;
 
+use num_derive::{FromPrimitive, ToPrimitive};
+
 include!(concat!(env!("OUT_DIR"), "/errors.rs"));
 
 impl fmt::Display for Error {
