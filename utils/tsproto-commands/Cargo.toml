@@ -12,7 +12,7 @@ edition = "2018"
 include = [
 	"Cargo.toml",
 	"README.md",
-	"src/*.rs",
+	"**/*.rs",
 ]
 
 [dependencies]

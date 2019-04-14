@@ -4,11 +4,17 @@ version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 description = "An implementation of the TeamSpeak3 protocol as a library for use in clients and bots."
 repository = "https://github.com/ReSpeak/tsclientlib"
+readme = "README.md"
 keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
 license = "MIT/Apache-2.0"
 edition = "2018"
 autobenches = false
+include = [
+	"Cargo.toml",
+	"README.md",
+	"**/*.rs",
+]
 
 [badges]
 travis-ci = { repository = "ReSpeak/tsclientlib" }
