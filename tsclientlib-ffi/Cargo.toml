@@ -9,7 +9,7 @@ edition = "2018"
 crate-type = ["cdylib", "staticlib"]
 
 [features]
-audio = ["tsclientlib/audio", "tsproto-audio"]
+#audio = ["tsclientlib/audio", "tsproto-audio"]
 
 [dependencies]
 chashmap = "2"
@@ -26,7 +26,7 @@ slog-term = "2"
 tokio = "0.1"
 tsclientlib = { path = "../tsclientlib" }
 tsproto = { path = "../tsproto" }
-tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
+#tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
 
 # Statically link openssl on platforms that use it except linux
 [target.'cfg(target_os = "android")'.dependencies]
