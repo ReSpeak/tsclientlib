@@ -1,5 +1,5 @@
 use std::ffi::{CStr, CString};
-use std::fmt;
+use std::{fmt, mem};
 use std::os::raw::c_char;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -108,9 +108,9 @@ pub struct ConnectionId(u32);
 #[repr(transparent)]
 pub struct FutureHandle(u32);
 
-#[repr(u32)]
+#[repr(u8)]
 #[derive(Clone, Copy, Debug)]
-pub enum EventType {
+pub enum FfiEventType {
 	ConnectionAdded,
 	ConnectionRemoved,
 	FutureFinished,
@@ -122,10 +122,10 @@ pub enum EventType {
 
 #[repr(C)]
 pub struct FfiEvent {
-	content: FfiEventUnion,
-	typ: EventType,
-	connection: ConnectionId,
+	typ: FfiEventType,
 	has_connection_id: bool,
+	connection: ConnectionId,
+	content: FfiEventUnion,
 }
 
 #[repr(C)]
@@ -158,7 +158,7 @@ pub struct EventMsg {
 unsafe impl Send for EventMsg {}
 
 #[derive(Clone, Copy, Debug)]
-#[repr(u32)]
+#[repr(u8)]
 pub enum MessageTarget {
 	Server,
 	Channel,
@@ -174,7 +174,7 @@ enum Event {
 	FutureFinished(FutureHandle, Result<()>),
 	Event(ConnectionId, LibEvent),
 	/// Used for property lib events, which have to be converted before sending.
-	FfiEvent(ConnectionId, EventType, FfiEventUnion),
+	FfiEvent(ConnectionId, FfiEventType, FfiEventUnion),
 }
 
 #[derive(Fail, Debug, From)]
@@ -202,20 +202,20 @@ impl From<failure::Error> for Error {
 }
 
 impl Event {
-	fn get_type(&self) -> EventType {
+	fn get_type(&self) -> FfiEventType {
 		match self {
-			Event::ConnectionAdded(_) => EventType::ConnectionAdded,
-			Event::ConnectionRemoved(_) => EventType::ConnectionRemoved,
-			Event::FutureFinished(_, _) => EventType::FutureFinished,
-			Event::Event(_, LibEvent::Message { .. }) => EventType::Message,
+			Event::ConnectionAdded(_) => FfiEventType::ConnectionAdded,
+			Event::ConnectionRemoved(_) => FfiEventType::ConnectionRemoved,
+			Event::FutureFinished(_, _) => FfiEventType::FutureFinished,
+			Event::Event(_, LibEvent::Message { .. }) => FfiEventType::Message,
 			Event::Event(_, LibEvent::PropertyAdded { .. }) => {
-				EventType::PropertyAdded
+				FfiEventType::PropertyAdded
 			}
 			Event::Event(_, LibEvent::PropertyChanged { .. }) => {
-				EventType::PropertyChanged
+				FfiEventType::PropertyChanged
 			}
 			Event::Event(_, LibEvent::PropertyRemoved { .. }) => {
-				EventType::PropertyRemoved
+				FfiEventType::PropertyRemoved
 			}
 			Event::Event(_, LibEvent::__NonExhaustive) => {
 				panic!("Non exhaustive should not be created")
@@ -311,7 +311,7 @@ impl LibEventExt for LibEvent {
 		let typ;
 		let event = match self {
 			LibEvent::PropertyAdded { id, invoker } => {
-				typ = EventType::PropertyAdded;
+				typ = FfiEventType::PropertyAdded;
 				let new_ref = con
 					.get_property(&id)
 					.expect("Failed to get value of property");
@@ -328,7 +328,7 @@ impl LibEventExt for LibEvent {
 				}
 			}
 			LibEvent::PropertyChanged { id, old, invoker } => {
-				typ = EventType::PropertyChanged;
+				typ = FfiEventType::PropertyChanged;
 				let new_ref = con
 					.get_property(&id)
 					.expect("Failed to get value of property");
@@ -348,7 +348,7 @@ impl LibEventExt for LibEvent {
 				}
 			}
 			LibEvent::PropertyRemoved { id, old, invoker } => {
-				typ = EventType::PropertyRemoved;
+				typ = FfiEventType::PropertyRemoved;
 				let old_ref = old.as_ref();
 				FfiEventUnion {
 					property: FfiProperty {
@@ -880,5 +880,31 @@ pub unsafe extern "C" fn tscl_free_char_ptrs(
 	let slice = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
 	for ptr in &*slice {
 		tscl_free_str(*ptr);
+	}
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn tscl_check_interface(name: *const c_char) -> usize {
+	let name = ffi_to_str(&name).unwrap();
+	match name {
+		"FfiEventType" => mem::size_of::<FfiEventType>(),
+		"FfiEvent" => mem::size_of::<FfiEvent>(),
+		"FfiEventUnion" => mem::size_of::<FfiEventUnion>(),
+		"FfiFutureResult" => mem::size_of::<FfiFutureResult>(),
+		"FfiEventMsg" => mem::size_of::<EventMsg>(),
+		"FfiMessageTarget" => mem::size_of::<MessageTarget>(),
+		"FfiInvoker" => mem::size_of::<FfiInvoker>(),
+		"MaxClients" => mem::size_of::<FfiMaxClients>(),
+		"MaxClientsKind" => mem::size_of::<FfiMaxClientsKind>(),
+		"FfiTalkPowerRequest" => mem::size_of::<FfiTalkPowerRequest>(),
+		"ConnectionId" => mem::size_of::<ConnectionId>(),
+		"FutureResult" => mem::size_of::<FutureHandle>(),
+		"FfiProperty" => mem::size_of::<FfiProperty>(),
+		"FfiPropertyChanged" => mem::size_of::<FfiPropertyChanged>(),
+		"FfiPropertyId" => mem::size_of::<FfiPropertyId>(),
+		"FfiPropertyValue" => mem::size_of::<FfiPropertyValue>(),
+		"U16U64" => mem::size_of::<U16U64>(),
+		"U64StrStr" => mem::size_of::<U64StrStr>(),
+		_ => std::usize::MAX,
 	}
 }
