@@ -877,5 +877,8 @@ pub unsafe extern "C" fn tscl_free_char_ptrs(
 )
 {
 	//println!("Free {:?} Len {}", ptr, len);
-	Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+	let slice = Box::from_raw(std::slice::from_raw_parts_mut(ptr, len));
+	for ptr in &*slice {
+		tscl_free_str(*ptr);
+	}
 }

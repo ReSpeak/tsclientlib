@@ -17,7 +17,7 @@ pub enum PropertyId {
 <# } #>
 
 <# for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let mut ids = get_ids(&self.structs, struc);
 		if let Some(m) = &p.modifier {
 			if !ids.is_empty() {
@@ -29,7 +29,7 @@ pub enum PropertyId {
 			} else if m == "array" {
 				// Take the element itself as port of the id.
 				// It has to be copied but most of the times it is an id itself.
-				ids.push_str(&p.type_s);
+				ids.push_str(&convert_type(&p.type_s, false));
 			} else {
 				panic!("Unknown modifier {}", m);
 			}
@@ -61,7 +61,7 @@ pub enum PropertyValue {
 <#
 let mut done = HashSet::new();
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let type_s = get_rust_type(p);
 		if !done.insert(type_s.clone()) {
 			continue;
@@ -89,7 +89,7 @@ pub enum PropertyValueRef<'a> {
 <#
 let mut done = HashSet::new();
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let type_s = get_rust_type(p);
 		if !done.insert(type_s.clone()) {
 			continue;
@@ -113,7 +113,7 @@ impl PropertyValue {
 <#
 let mut done = HashSet::new();
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let type_s = get_rust_type(p);
 		if !done.insert(type_s.clone()) {
 			continue;

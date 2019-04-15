@@ -16,7 +16,7 @@ impl Connection {
 <# } #>
 
 <# for struc in &self.0.structs {
-	for p in get_event_properties(&self.0.structs, self.1, struc) {
+	for p in get_properties(&self.0.structs, struc) {
 		let type_s = get_rust_type(p);
 		let type_s = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
 
@@ -33,12 +33,21 @@ impl Connection {
 			ids = format!("({})", ids);
 		}
 		#>
-			PropertyId::<#= struc.name #><#= get_property_name(p) #><#= ids #> => PropertyValueRef::<#= type_s #>(self.get_<#= to_snake_case(&struc.name) #><#= ids2 #><# if !ids.is_empty() { #>?<# } #>.<#= to_snake_case(&p.name) #><#
+			PropertyId::<#= struc.name #><#= get_property_name(p) #><#= ids
+				#> => PropertyValueRef::<#= type_s #>(self.get_<#=
+				to_snake_case(&struc.name) #><#= ids2 #><#
+				if (!ids.is_empty() && struc.name != "Server" )
+				|| struc.name.starts_with("Optional")
+				|| (struc.name.starts_with("Connection")
+					&& struc.name != "Connection") { #>?<# } #>.<#=
+				to_snake_case(&p.name) #><#
 				if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
 					#>.get(*m)
 				.ok_or_else(|| format_err!("<#= p.name #> {} not found", m))?<#
 				} else if p.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
-					#>.iter().cloned().find(|i| i == m)
+					#>.iter()<#
+					if p.type_s != "str" { #>.cloned().find(|i| i == m)<#
+					} else { #>.find(|i| *i == m)<# } #>
 				.ok_or_else(|| format_err!("<#= p.name #> {} not found", m))?<#
 				}
 

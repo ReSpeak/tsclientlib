@@ -7,9 +7,9 @@ pub enum FfiPropertyType {
 <# } #>
 
 <# for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) { #>
+	for p in get_properties(&self.structs, struc) { #>
 	<#= struc.name #><#= get_property_name(p) #>,
-<# }
+	<# }
 } #>
 }
 
@@ -54,23 +54,34 @@ for struc in &self.structs {
 	// Complex ids
 <#
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let ids = get_ids(&self.structs, struc, p);
+
 		if ids.len() == 1 {
 			let type_s = &ids[0];
-			if !done.insert(type_s.clone()) {
+			let name = if type_s == "*mut c_char" {
+				"str"
+			} else {
+				type_s
+			};
+			if !done.insert(name.to_string()) {
 				continue;
 			} #>
-	<#= to_pascal_case(type_s) #>: <#= type_s #>,
+	u_<#= to_snake_case(&name) #>: <#= type_s #>,
 		<# } else if ids.len() > 1 {
 			let mut name = String::new();
 			for i in &ids {
+				let i = if i == "*mut c_char" {
+					"str"
+				} else {
+					i
+				};
 				name.push_str(&to_pascal_case(i));
 			}
-			if !done.insert(name.clone()) {
+			if !done.insert(name.to_string()) {
 				continue;
 			}
-			needed_structs.push((name.clone(), ids));
+			needed_structs.push((name.to_string(), ids));
 			#>
 	u_<#= to_snake_case(&name) #>: <#= name #>,
 		<# }
@@ -95,7 +106,7 @@ pub union FfiPropertyValue {
 <#
 let mut done = HashSet::new();
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let type_s = get_ffi_type(&p.type_s);
 		if !done.insert(type_s.clone()) {
 			continue;
@@ -129,7 +140,7 @@ for struc in &self.structs { #>
 
 let mut done = HashSet::new();
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let rust_name = get_rust_type(p);
 		if !done.insert(rust_name.clone()) {
 			continue;
@@ -155,7 +166,7 @@ for struc in &self.structs {
 <#
 let mut done = HashSet::new();
 for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		if p.opt {
 			let rust_name = get_rust_type(p);
 			if !done.insert(rust_name.clone()) {
@@ -187,9 +198,13 @@ impl PropertyIdExt for PropertyId {
 	<# } else if struc.id.len() == 1 {
 		let p = struc.id[0].find_property(&self.structs);
 		let type_s = get_ffi_type(&p.type_s);
-		#>
+		let name = if type_s == "*mut c_char" {
+			"str".to_string()
+		} else {
+			to_snake_case(&type_s)
+		}; #>
 			PropertyId::<#= struc.name #>(val) => FfiPropertyId {
-				u_<#= to_snake_case(&type_s) #>: <#= convert_val(&p.type_s) #>,
+				u_<#= name #>: <#= convert_val(&p.type_s) #>,
 			},
 	<# } else {
 		let mut name = String::new();
@@ -222,18 +237,33 @@ impl PropertyIdExt for PropertyId {
 } #>
 
 <# for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let ids = get_ids(&self.structs, struc, p);
 		match ids.len() {
 			0 => { #>
 			PropertyId::<#= struc.name #><#= get_property_name(p) #> => FfiPropertyId { empty: () },
 			<# }
 			1 => {
-				let id_p = struc.id[0].find_property(&self.structs);
+				let id_p = if struc.id.is_empty() {
+					let m = p.modifier.as_ref().unwrap();
+					if m == "map" {
+						p.key.as_ref().unwrap()
+					} else if m == "array" {
+						&p.type_s
+					} else {
+						panic!("Unknown modifier {}", m)
+					}
+				} else {
+					&struc.id[0].find_property(&self.structs).type_s
+				};
 				let type_s = &ids[0];
-				#>
+				let name = if type_s == "*mut c_char" {
+					"str".to_string()
+				} else {
+					to_snake_case(&type_s)
+				}; #>
 			PropertyId::<#= struc.name #><#= get_property_name(p) #>(val) => FfiPropertyId {
-				u_<#= to_snake_case(&type_s) #>: <#= convert_val(&id_p.type_s) #>,
+				u_<#= name #>: <#= convert_val(id_p) #>,
 			},
 			<# }
 			n => {
@@ -299,7 +329,7 @@ impl PropertyIdExt for PropertyId {
 <# } #>
 
 <# for struc in &self.structs {
-	for p in get_event_properties(&self.structs, self.1, struc) {
+	for p in get_properties(&self.structs, struc) {
 		let mut n = struc.id.len();
 		if p.modifier.is_some() {
 			n += 1;
@@ -322,3 +352,6 @@ impl PropertyIdExt for PropertyId {
 		}
 	}
 }
+
+
+// Getter for FfiPropertyValues

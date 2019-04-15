@@ -6,7 +6,7 @@ use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
 use tsproto_structs::*;
 
-use crate::events::{get_event_properties, get_property_name, get_rust_type};
+use crate::events::{get_properties, get_property_name, get_rust_type};
 
 #[derive(Template)]
 #[TemplatePath = "build/Properties.tt"]
