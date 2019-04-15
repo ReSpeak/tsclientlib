@@ -903,8 +903,10 @@ pub unsafe extern "C" fn tscl_check_interface(name: *const c_char) -> usize {
 		"FfiPropertyChanged" => mem::size_of::<FfiPropertyChanged>(),
 		"FfiPropertyId" => mem::size_of::<FfiPropertyId>(),
 		"FfiPropertyValue" => mem::size_of::<FfiPropertyValue>(),
+		"FfiPropertyType" => mem::size_of::<FfiPropertyType>(),
 		"U16U64" => mem::size_of::<U16U64>(),
 		"U64StrStr" => mem::size_of::<U64StrStr>(),
+		"Boolean" => mem::size_of::<bool>(),
 		_ => std::usize::MAX,
 	}
 }
