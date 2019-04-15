@@ -26,7 +26,7 @@ impl Default for BookFfi<'static> {
 	}
 }
 
-fn get_id_args(structs: &[Struct], struc: &Struct) -> String {
+pub fn get_id_args(structs: &[Struct], struc: &Struct) -> String {
 	let mut res = String::new();
 	for id in &struc.id {
 		let p = id.find_property(structs);

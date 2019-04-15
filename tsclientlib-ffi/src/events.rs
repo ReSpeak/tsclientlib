@@ -2,6 +2,7 @@
 use std::os::raw::{c_char, c_void};
 
 use num::ToPrimitive;
+use tsclientlib::data::*;
 use tsclientlib::events::{PropertyId, PropertyValueRef};
 
 use crate::ffi_utils::ToFfi;

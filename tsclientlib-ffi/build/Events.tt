@@ -354,4 +354,67 @@ impl PropertyIdExt for PropertyId {
 }
 
 
-// Getter for FfiPropertyValues
+// Getter for structs in FfiPropertyValues
+<# for struc in &self.structs {
+	for prop in struc.properties.iter().filter(|p|
+		// Nested struct which is not a map
+		(!self.structs.iter().any(|s| s.name == p.type_s)
+			|| p.modifier.as_ref().map(|s| s == "map").unwrap_or(false))) {
+		let is_map = prop.modifier.as_ref().map(|s| s == "map").unwrap_or(false);
+		let is_array = prop.modifier.as_ref().map(|s| s == "array").unwrap_or(false);
+
+		let type_s;
+		#>
+#[no_mangle]
+pub extern "C" fn tscl_struct_get_<#= to_snake_case(&struc.name) #>_<#= to_snake_case(&prop.name)
+#>(struc: *mut c_void, <#
+		if is_array || is_map { #>len: *mut usize, <# } #>error: *mut *mut c_char) -> <#=
+		if is_map {
+			// Return keys for map
+			type_s = prop.key.as_ref().unwrap();
+			format!("*mut {}", get_ffi_type(type_s))
+		} else if is_array {
+			type_s = &prop.type_s;
+			format!("*mut {}", get_ffi_type(type_s))
+		} else {
+			type_s = &prop.type_s;
+			get_ffi_type(type_s)
+		}
+
+		#> {
+	unsafe { *error = std::ptr::null_mut(); }
+	let val = struc as *mut <#= struc.name #>;
+	let val = unsafe { &*val };
+	<# if prop.opt { #>
+	let val = if let Some(r) = val.<#= to_snake_case(&prop.name) #>.as_ref() {
+		r
+	} else {
+		// Throw an exception
+		unsafe { *error = "<#= prop.name #> does not exist".ffi(); }
+		<# if get_ffi_type(&prop.type_s) == "*mut c_char" || is_map || is_array { #>
+		return std::ptr::null_mut();
+		<# } else { #>
+		return Default::default();
+		<# } #>
+	};
+	<# } else { #>
+	let val = &val.<#= to_snake_case(&prop.name) #>;
+	<# } #>
+
+	<# if is_map || is_array { #>
+	let mut val = val.<#= if is_map { "keys" } else { "iter" }
+	#>().map(|val| <#= convert_val(type_s) #>).collect::<Vec<_>>().into_boxed_slice();
+	unsafe { *len = val.len(); }
+	let res = val.as_mut_ptr();
+	std::mem::forget(val);
+	res
+}
+
+	<#
+		continue;
+	} #>
+	<# #><#= convert_val(type_s) #>
+}
+
+<# }
+} #>
