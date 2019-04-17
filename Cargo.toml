@@ -4,8 +4,8 @@ members = [
 	"tsclientlib-ffi",
 	"tsproto",
 	"utils/analyzer",
-	"utils/gst-plugin-ts3",
-	"utils/tsproto-audio",
+	#"utils/gst-plugin-ts3",
+	#"utils/tsproto-audio",
 	"utils/tsproto-commands",
 	"utils/tsproto-structs",
 ]

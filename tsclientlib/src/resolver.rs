@@ -173,7 +173,7 @@ pub fn resolve(
 				.map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
 			name.set_fqdn(true);
 
-			Ok(resolve_srv(resolver.clone(), &prefix.append_name(&name)))
+			Ok(resolve_srv(resolver.clone(), prefix.append_name(&name)))
 		})))
 		.flatten();
 
@@ -204,7 +204,7 @@ pub fn resolve(
 			let name = name.trim_to(2);
 			// Pick the first srv record of the first server that answers
 			Box::new(
-				resolve_srv_raw(resolver.clone(), &prefix.append_name(&name))
+				resolve_srv_raw(resolver.clone(), prefix.append_name(&name))
 					.map(move |srvs| {
 						StreamCombiner::new(
 							srvs.into_iter()
@@ -405,7 +405,7 @@ pub fn resolve_tsdns(
 
 fn resolve_srv_raw(
 	resolver: AsyncResolver,
-	addr: &Name,
+	addr: Name,
 ) -> impl Future<
 	Item = Vec<impl Stream<Item = SocketAddr, Error = Error>>,
 	Error = Error,
@@ -491,7 +491,7 @@ fn resolve_srv_raw(
 
 fn resolve_srv(
 	resolver: AsyncResolver,
-	addr: &Name,
+	addr: Name,
 ) -> impl Stream<Item = SocketAddr, Error = Error>
 {
 	stream::futures_ordered(Some(

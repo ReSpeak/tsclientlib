@@ -40,7 +40,7 @@ slog-term = "2"
 tokio = "0.1"
 tokio-threadpool = "0.1"
 trust-dns-proto = "0.7"
-trust-dns-resolver = "0.10"
+trust-dns-resolver = "0.11"
 tsproto = { path = "../tsproto", version = "=0.1.0" }
 #tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
 tsproto-commands = { path = "../utils/tsproto-commands", version = "=0.1.0" }
