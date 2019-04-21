@@ -1,0 +1,208 @@
+<#@ template cleanws="true" #>
+<#
+fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> fmt::Result {
+	for (i, (n, c)) in s.fields.iter().enumerate() {
+		// Add a length field for arrays
+		let n = if n.is_empty() { i.to_string() } else { n.clone() };
+		if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
+	<#= prefix #><#= n.to_camel_case() #>Len,
+		<# } #>
+	<#= prefix #><#= n.to_camel_case() #>,
+	<# }
+	Ok(())
+}
+
+/// Expects the current enum in `this`, returns the value in `val`.
+fn get_enum_val(_fmt: &mut fmt::Formatter, name: &str, prefix: &str, s: &Struct, i: usize, s_name: &str, t: &RustType) -> fmt::Result {
+	let matching = if s_name.is_empty() {
+		let mut fields = vec!["_"; s.fields.len()];
+		fields[i] = "val";
+		format!("({})", fields.join(", "))
+	} else {
+		format!(" {{ {}: val, .. }}", s_name).into()
+	};
+	#>
+if let <#= name #>::<#= prefix #><#= matching #> = this {
+				val
+			} else {
+				unsafe {
+					(*result).content = "Enum is not variant <#= name #>::<#= prefix #>".ffi() as u64;
+					(*result).typ = FfiResultType::Error;
+				}
+				return;
+			};
+	<#
+	Ok(())
+}
+
+fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
+	if t.name.is_empty() && !t.is_container() { #>
+			<# #><#= t.val_as_u64() #>
+	<# } else {
+		let inner_t;
+		if let Some((key, inner)) = t.container_of() {
+			inner_t = inner;
+			// Convert key
+			#>
+			let key = {
+				let val = ids[1];
+				<# #><#= key.val_from_u64() #>
+			};
+			let val = if let Some(r) = val.get(key) {
+				r
+			} else {
+				unsafe {
+					(*result).content = format!("Cannot find {} in <#= t.name #>", key).ffi() as u64;
+					(*result).typ = FfiResultType::Error;
+				}
+				return;
+			};
+			let id = &id[2..];
+		<# } else if let TypeContent::Builtin(BuiltinType::Option(inner)) = &t.content {
+			inner_t = inner;
+			// Handle options
+			#>
+			let id = &id[1..];
+			let val = if let Some(r) = val {
+				r
+			} else {
+				unsafe {
+					(*result).content = "Option <#= t.name #> is None".ffi() as u64;
+					(*result).typ = FfiResultType::Error;
+				}
+				return;
+			};
+		<# } else {
+			inner_t = t;
+			// Struct
+			#>
+			let id = &id[1..];
+		<# }
+
+		if inner_t.name.is_empty() { #>
+			<# #><#= inner_t.val_as_u64() #>
+		<# } else { #>
+			if id.is_empty() {
+				<# #><#= inner_t.val_as_u64() #>
+			} else {
+				tscl_<#= inner_t.name.to_snake_case() #>_get(val as *const <#= inner_t.name #>,
+					id.len(), id.as_ptr(), result);
+				return;
+			}
+		<# }
+	}
+
+	Ok(())
+}
+
+#>
+#[derive(FromPrimitive, ToPrimitive)]
+#[repr(u64)]
+pub enum <#= self.name #>PropertyId {
+<# match &self.content {
+	TypeContent::Struct(c) => gen_struct_prop_ids(_fmt, "", c)?,
+	TypeContent::Enum(c) => { #>
+	Type,
+		<# for (n, s) in &c.possibilities {
+			gen_struct_prop_ids(_fmt, n, s)?;
+		}
+	}
+	_ => panic!("Unsupported type content"),
+} #>
+}
+<#
+if let TypeContent::Enum(e) = &self.content { #>
+
+#[derive(FromPrimitive, ToPrimitive)]
+#[repr(u64)]
+pub enum <#= self.name #>Type {
+	<# for (n, _) in &e.possibilities { #>
+	<#= n #>,
+	<# } #>
+}
+
+impl Into<<#= self.name #>Type> for &'_ <#= self.name #> {
+	fn into(self) -> <#= self.name #>Type {
+		match self {
+		<# for (n, s) in &e.possibilities {
+			let matching = if s.fields.is_empty() {
+				"".to_string()
+			} else if s.fields[0].0.is_empty() {
+				format!("({})", vec!["_"; s.fields.len()].join(", "))
+			} else {
+				" { .. }".into()
+			};
+			#>
+			<#= self.name #>::<#= n #><#= matching #> => <#= self.name #>Type::<#= n #>,
+		<# } #>
+		}
+	}
+}
+	<#
+}
+#>
+
+#[no_mangle]
+pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= self.name #>, id_len: usize,
+	id: *const u64, result: *mut FfiResult) {
+	let id = unsafe { std::slice::from_raw_parts(id, id_len) };
+	let prop_id = if let Some(i) = id.first() {
+		if let Some(r) = <#= self.name #>PropertyId::from_u64(*i) {
+			r
+		} else {
+			unsafe {
+				(*result).content = format!("Invalid <#= self.name #>PropertyId {}", i).ffi() as u64;
+				(*result).typ = FfiResultType::Error;
+			}
+			return;
+		}
+	} else {
+		unsafe {
+			(*result).content = format!("Invalid id length {} in <#= self.name.to_snake_case() #>_get", id.len()).ffi() as u64;
+			(*result).typ = FfiResultType::Error;
+		}
+		return;
+	};
+	let this = unsafe { &*this };
+	unsafe { (*result).typ = FfiResultType::Ok; }
+
+	let res = match prop_id {
+<# match &self.content {
+	TypeContent::Struct(s) => for (i, (n, c)) in s.fields.iter().enumerate() {
+		let n = if n.is_empty() { i.to_string() } else { n.clone() };
+		if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
+		<#= self.name #>PropertyId::<#= n.to_camel_case() #>Len =>
+			u64::from(this.<#= n.to_camel_case() #>.len()),
+		<# } #>
+		<#= self.name #>PropertyId::<#= n.to_camel_case() #> => {
+			let val = &this.<#= n.to_snake_case() #>;
+			<# process_val(_fmt, c)?; #>
+		}
+	<# }
+	TypeContent::Enum(e) => { #>
+		<#= self.name #>PropertyId::Type => {
+			let ty: <#= self.name #>Type = this.into();
+			ty.to_u64().unwrap()
+		}
+		<# for (i, (prefix, s)) in e.possibilities.iter().enumerate() {
+			for (i, (s_n, c)) in s.fields.iter().enumerate() {
+				let n = if s_n.is_empty() { i.to_string() } else { s_n.clone() };
+				if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
+		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #>Len => {
+			let val = if let <#= self.name #>::<#= prefix #>
+			u64::from(this.<#= n.to_camel_case() #>.len())
+		}
+				<# } #>
+		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #> => {
+			let val = <# get_enum_val(_fmt, &self.name, prefix, s, i, s_n, c)?; #>
+			<# process_val(_fmt, c)?; #>
+		}
+			<# }
+		}
+	}
+	_ => panic!("Unsupported type content"),
+} #>
+	};
+
+	unsafe { (*result).content = res; }
+}

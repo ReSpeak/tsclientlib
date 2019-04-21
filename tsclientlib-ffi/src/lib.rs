@@ -1,19 +1,21 @@
 use std::ffi::{CStr, CString};
 use std::{fmt, mem};
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chashmap::CHashMap;
 use crossbeam::channel;
 use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
+use ffigen_derive::FfiGen;
 use futures::future::Either;
 use futures::sync::oneshot;
 use futures::{future, Future};
 #[cfg(feature = "audio")]
 use futures::{Async, AsyncSink, Poll, Sink, StartSend};
 use lazy_static::lazy_static;
-use num::ToPrimitive;
+use num::{FromPrimitive, ToPrimitive};
+use num_derive::{FromPrimitive, ToPrimitive};
 use parking_lot::Mutex;
 #[cfg(feature = "audio")]
 use parking_lot::RwLock;
@@ -46,7 +48,7 @@ use special_types::*;
 /// wrap arount in between. We ignore this case because futures are likely
 /// short lived and a user does not spawn 4 billion futures while another
 /// future is still running.
-static NEXT_FUTURE_HANDLE: AtomicU32 = AtomicU32::new(0);
+static NEXT_FUTURE_HANDLE: AtomicU64 = AtomicU64::new(0);
 
 lazy_static! {
 	static ref LOGGER: Logger = {
@@ -100,13 +102,27 @@ include!(concat!(env!("OUT_DIR"), "/book_ffi.rs"));
 
 // **** FFI types ****
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct ConnectionId(u32);
+#[repr(C)]
+pub struct FfiResult {
+	/// Often used as `*const c_void`
+	pub content: u64,
+	pub typ: FfiResultType,
+}
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[repr(u8)]
+pub enum FfiResultType {
+	Ok,
+	None,
+	Error,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, ToPrimitive)]
 #[repr(transparent)]
-pub struct FutureHandle(u32);
+pub struct ConnectionId(u64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, ToPrimitive)]
+#[repr(transparent)]
+pub struct FutureHandle(u64);
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug)]
@@ -157,7 +173,7 @@ pub struct EventMsg {
 }
 unsafe impl Send for EventMsg {}
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, ToPrimitive)]
 #[repr(u8)]
 pub enum MessageTarget {
 	Server,
@@ -167,6 +183,44 @@ pub enum MessageTarget {
 }
 
 // **** Non FFI types ****
+
+// TODO Let ConnectionId and FutureHandle be u64, doesn't event need to be overflowing_add
+// for 5 GHz on 1000 cores it takes 1.2 years to iterate through them
+
+#[derive(FfiGen)]
+pub struct NewEvent {
+	con_id: Option<ConnectionId>,
+	content: EventContent,
+}
+
+#[derive(FfiGen)]
+pub enum EventContent {
+	ConnectionAdded,
+	ConnectionRemoved,
+	FutureFinished { handle: FutureHandle, error: Option<String> },
+	Message {
+		message: String,
+		invoker: NewFfiInvoker,
+		// TODO Rust type
+		target: MessageTarget,
+	},
+	PropertyAdded {
+		placeholder: u32,
+	},
+	PropertyRemoved {
+		placeholder: u32,
+	},
+	PropertyChanged {
+		placeholder: u32,
+	},
+}
+
+#[derive(FfiGen)]
+pub struct NewFfiInvoker {
+	name: String,
+	uid: Option<String>,
+	id: u16,
+}
 
 enum Event {
 	ConnectionAdded(ConnectionId),
@@ -198,6 +252,24 @@ impl From<failure::Error> for Error {
 	fn from(e: failure::Error) -> Self {
 		let r: std::result::Result<(), _> = Err(e);
 		Error::Other(r.compat().unwrap_err())
+	}
+}
+
+impl From<MessageTarget> for u64 {
+	fn from(t: MessageTarget) -> u64 {
+		t.to_u64().unwrap()
+	}
+}
+
+impl From<ConnectionId> for u64 {
+	fn from(t: ConnectionId) -> u64 {
+		t.to_u64().unwrap()
+	}
+}
+
+impl From<FutureHandle> for u64 {
+	fn from(t: FutureHandle) -> u64 {
+		t.to_u64().unwrap()
 	}
 }
 

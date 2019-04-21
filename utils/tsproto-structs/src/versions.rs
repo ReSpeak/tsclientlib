@@ -41,8 +41,6 @@ pub struct Version {
 	pub version: String,
 	pub platform: String,
 	pub hash: String,
-	// TODO Deprecated
-	channel: String,
 	#[serde(default)]
 	count: u32,
 }
