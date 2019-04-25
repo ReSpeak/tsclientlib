@@ -13,6 +13,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 chashmap = "2"
+color-backtrace = "0.1"
 crossbeam = "0.7"
 derive_more = "0.14"
 failure = "0.1"

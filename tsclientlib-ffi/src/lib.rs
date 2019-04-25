@@ -16,7 +16,6 @@ use futures::{Async, AsyncSink, Poll, Sink, StartSend};
 use lazy_static::lazy_static;
 use num::{FromPrimitive, ToPrimitive};
 use num_derive::{FromPrimitive, ToPrimitive};
-use parking_lot::Mutex;
 #[cfg(feature = "audio")]
 use parking_lot::RwLock;
 use slog::{error, o, Drain, Logger};
@@ -40,18 +39,32 @@ use events::*;
 use ffi_utils::*;
 use special_types::*;
 
+// ConnectionId and FutureHandle are an u64, therefore we can expect that they
+// will never overflow.
+// On a 5 GHz CPU with 1000 cores it would take 1.2 years to iterate through
+// all numbers of an u64 (under the assumption that one increment takes one
+// cycle).
+
 /// To obtain a unique id for a future, we just increment this counter.
 ///
 /// Use `FutureHandle::next_free` to obtain a handle.
 ///
+///
+/// Motivation when using an u32 instead of an u64:
 /// In theory, this could lead to two futures using the same counter if we
 /// wrap arount in between. We ignore this case because futures are likely
 /// short lived and a user does not spawn 4 billion futures while another
 /// future is still running.
 static NEXT_FUTURE_HANDLE: AtomicU64 = AtomicU64::new(0);
 
+/// Same as `NEXT_FUTURE_HANDLE`.
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
+
 lazy_static! {
 	static ref LOGGER: Logger = {
+		// Hook the logger to initialize the panic handler
+		color_backtrace::install();
+
 		let decorator = slog_term::TermDecorator::new().build();
 		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
 		let drain = slog_async::Async::new(drain).build().fuse();
@@ -64,8 +77,6 @@ lazy_static! {
 		.core_threads(2)
 		.build()
 		.unwrap();
-	static ref FIRST_FREE_CON_ID: Mutex<ConnectionId> =
-		Mutex::new(ConnectionId(0));
 	/// A list of all connections that were started but are not yet connected.
 	///
 	/// By sending a message to the channel, the connection can be canceled.
@@ -184,9 +195,6 @@ pub enum MessageTarget {
 
 // **** Non FFI types ****
 
-// TODO Let ConnectionId and FutureHandle be u64, doesn't event need to be overflowing_add
-// for 5 GHz on 1000 cores it takes 1.2 years to iterate through them
-
 #[derive(FfiGen)]
 pub struct NewEvent {
 	con_id: Option<ConnectionId>,
@@ -201,7 +209,6 @@ pub enum EventContent {
 	Message {
 		message: String,
 		invoker: NewFfiInvoker,
-		// TODO Rust type
 		target: MessageTarget,
 	},
 	PropertyAdded {
@@ -666,25 +673,9 @@ impl FutureHandle {
 }
 
 impl ConnectionId {
-	/// This function should be called on a locked `FIRST_FREE_CON_ID`.
-	fn next_free(next_free: &mut Self) -> Self {
-		let res = *next_free;
-		let mut next = res.0 + 1;
-		while CONNECTIONS.contains_key(&ConnectionId(next))
-			|| CONNECTING.contains_key(&ConnectionId(next))
-		{
-			next += 1;
-		}
-		*next_free = ConnectionId(next);
-		res
-	}
-
-	/// Should be called when a connection is removed
-	fn mark_free(&self) {
-		let mut next_free = FIRST_FREE_CON_ID.lock();
-		if *self < *next_free {
-			*next_free = *self;
-		}
+	fn next_free() -> Self {
+		let id = NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed);
+		Self(id)
 	}
 }
 
@@ -716,7 +707,6 @@ fn remove_connection(con_id: ConnectionId) {
 	}
 
 	if removed {
-		con_id.mark_free();
 		EVENTS.0.send(Event::ConnectionRemoved(con_id)).unwrap();
 	}
 }
@@ -738,13 +728,10 @@ fn connect(
 	let options = ConnectOptions::new(address).logger(LOGGER.clone());
 	let (send, recv) = oneshot::channel();
 
-	// Lock until we inserted the connection
-	let mut next_free = FIRST_FREE_CON_ID.lock();
-	let con_id = ConnectionId::next_free(&mut *next_free);
+	let con_id = ConnectionId::next_free();
 
 	// Insert into CONNECTING so it can be canceled
 	CONNECTING.insert(con_id, send);
-	drop(next_free);
 
 	// TODO Send the connection added event when the user can request the connection
 	// status.

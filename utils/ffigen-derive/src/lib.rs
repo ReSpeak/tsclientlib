@@ -17,7 +17,7 @@ pub fn gen_ffi(input: TokenStream) -> TokenStream {
 	//use std::io::Write;
 	//let mut file = std::fs::OpenOptions::new().append(true).open("/tmp/ffigen-output.rs").unwrap();
 	//write!(file, "{}", t).unwrap();
-	std::fs::write("/tmp/ffigen-output.rs", res.as_bytes()).unwrap();
+	//std::fs::write("/tmp/ffigen-output.rs", res.as_bytes()).unwrap();
     match proc_macro::TokenStream::from_str(&res) {
     	Ok(r) => r,
     	Err(e) => {
