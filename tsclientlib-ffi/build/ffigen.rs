@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::{env, fs};
 use std::path::Path;
 
-use ffigen::{RustType, Wrapper};
+use ffigen::{CSharpGen, RustType, Wrapper};
 use syn::*;
 
 type Result<T> = std::result::Result<T, failure::Error>;
@@ -78,7 +78,7 @@ pub fn gen_events() -> Result<()> {
 		&mut items,
 	)?;
 
-	// Generate code
+	// Generate Rust code
 	let wrappers = vec![("FutureHandle", "u64")];
 	let mut wrappers: HashMap<_, _> = wrappers.into_iter()
 		.map(|(a, b)| (a.into(), b.into()))
@@ -185,14 +185,23 @@ pub fn gen_events() -> Result<()> {
 		wrappers.insert(t.into(), typ);
 	}
 
-	// TODO u64 <-> ClientId, ServerGroupId, ClientId, ChannelGroupId, GroupType, other enums
-
 	let mut res = String::new();
 	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
 		res.push_str(&ty.to_string());
 	}
 	fs::write(&out_dir.join("ffigen.rs"), res.as_bytes())?;
 
+	// Generate C# code
+	let wrappers = vec![("FutureHandle", "u64")];
+	let mut wrappers: HashMap<_, _> = wrappers.into_iter()
+		.map(|(a, b)| (a.into(), b.into()))
+		.collect();
+
+	let mut res = String::new();
+	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
+		res.push_str(&CSharpGen(ty).to_string());
+	}
+	fs::write(&base_dir.join("ffigen.cs"), res.as_bytes())?;
 
 	Ok(())
 }
