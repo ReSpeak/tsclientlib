@@ -13,12 +13,15 @@ mod utils;
 use crate::utils::*;
 
 fn connect(b: &mut Bencher) {
-	tsproto::init().unwrap();
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
 	let logger = {
 		let drain = slog::Discard;
+		//use slog::Drain;
+		//let decorator = slog_term::TermDecorator::new().build();
+		//let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+		//let drain = slog_async::Async::new(drain).build().fuse();
 		slog::Logger::root(drain, o!())
 	};
 

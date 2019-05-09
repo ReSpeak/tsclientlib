@@ -7,6 +7,7 @@ use tsproto_structs::book::Property;
 
 mod book_ffi;
 mod events;
+mod ffigen;
 
 use crate::book_ffi::BookFfi;
 use crate::events::Events;
@@ -23,6 +24,8 @@ fn main() {
 	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("events.rs")).unwrap();
 	write!(&mut structs, "{}", Events::default()).unwrap();
+
+	ffigen::gen_events().unwrap();
 }
 
 fn get_ffi_type(s: &str) -> String {

@@ -1,14 +1,21 @@
 //! Events for property changes
 use std::os::raw::{c_char, c_void};
 
-use num::ToPrimitive;
+use num::{FromPrimitive, ToPrimitive};
+use num_derive::{FromPrimitive, ToPrimitive};
+use tsclientlib::{ChannelId, ClientId, Invoker, MaxClients, MessageTarget,
+	ServerGroupId, TalkPowerRequest};
+
 use tsclientlib::data::*;
-use tsclientlib::events::{PropertyId, PropertyValueRef};
+use tsclientlib::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
 
 use crate::ffi_utils::ToFfi;
-use crate::{FfiInvoker, FfiMaxClients, FfiTalkPowerRequest};
+use crate::{EventContent, FfiInvoker, FfiMaxClients, FfiTalkPowerRequest,
+	FfiResult, FfiResultType, NewEvent, NewFfiInvoker};
 
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
+include!(concat!(env!("OUT_DIR"), "/ffigen.rs"));
+
 unsafe impl Send for FfiProperty {}
 unsafe impl Send for FfiPropertyId {}
 unsafe impl Send for FfiPropertyValue {}

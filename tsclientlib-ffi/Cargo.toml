@@ -13,6 +13,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 chashmap = "2"
+chrono = "0.4"
 color-backtrace = "0.1"
 crossbeam = "0.7"
 derive_more = "0.14"
@@ -37,5 +38,9 @@ tsproto = { path = "../tsproto" }
 native-tls = { version = "0.2", features = ["vendored"] }
 
 [build-dependencies]
+failure = "0.1"
+ffigen = { path = "../utils/ffigen" }
+quote = "0.6"
+syn = { version = "0.15", features = ["full"] }
 t4rust-derive = "0.1"
 tsproto-structs = { path = "../utils/tsproto-structs" }

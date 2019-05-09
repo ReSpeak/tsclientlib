@@ -7,14 +7,13 @@ use chashmap::CHashMap;
 use crossbeam::channel;
 use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
-use ffigen_derive::FfiGen;
 use futures::future::Either;
 use futures::sync::oneshot;
 use futures::{future, Future};
 #[cfg(feature = "audio")]
 use futures::{Async, AsyncSink, Poll, Sink, StartSend};
 use lazy_static::lazy_static;
-use num::{FromPrimitive, ToPrimitive};
+use num::ToPrimitive;
 use num_derive::{FromPrimitive, ToPrimitive};
 #[cfg(feature = "audio")]
 use parking_lot::RwLock;
@@ -180,13 +179,13 @@ unsafe impl Send for FfiFutureResult {}
 pub struct EventMsg {
 	message: *mut c_char,
 	invoker: FfiInvoker,
-	target_type: MessageTarget,
+	target_type: FfiMessageTarget,
 }
 unsafe impl Send for EventMsg {}
 
-#[derive(Clone, Copy, Debug, ToPrimitive)]
+#[derive(Clone, Copy, Debug, FromPrimitive, ToPrimitive)]
 #[repr(u8)]
-pub enum MessageTarget {
+pub enum FfiMessageTarget {
 	Server,
 	Channel,
 	Client,
@@ -195,13 +194,11 @@ pub enum MessageTarget {
 
 // **** Non FFI types ****
 
-#[derive(FfiGen)]
 pub struct NewEvent {
 	con_id: Option<ConnectionId>,
 	content: EventContent,
 }
 
-#[derive(FfiGen)]
 pub enum EventContent {
 	ConnectionAdded,
 	ConnectionRemoved,
@@ -209,7 +206,7 @@ pub enum EventContent {
 	Message {
 		message: String,
 		invoker: NewFfiInvoker,
-		target: MessageTarget,
+		target: FfiMessageTarget,
 	},
 	PropertyAdded {
 		placeholder: u32,
@@ -222,7 +219,6 @@ pub enum EventContent {
 	},
 }
 
-#[derive(FfiGen)]
 pub struct NewFfiInvoker {
 	name: String,
 	uid: Option<String>,
@@ -259,12 +255,6 @@ impl From<failure::Error> for Error {
 	fn from(e: failure::Error) -> Self {
 		let r: std::result::Result<(), _> = Err(e);
 		Error::Other(r.compat().unwrap_err())
-	}
-}
-
-impl From<MessageTarget> for u64 {
-	fn from(t: MessageTarget) -> u64 {
-		t.to_u64().unwrap()
 	}
 }
 
@@ -454,15 +444,15 @@ impl fmt::Display for ConnectionId {
 	}
 }
 
-impl From<tsclientlib::MessageTarget> for MessageTarget {
+impl From<tsclientlib::MessageTarget> for FfiMessageTarget {
 	fn from(t: tsclientlib::MessageTarget) -> Self {
 		use tsclientlib::MessageTarget as MT;
 
 		match t {
-			MT::Server => MessageTarget::Server,
-			MT::Channel => MessageTarget::Channel,
-			MT::Client(_) => MessageTarget::Client,
-			MT::Poke(_) => MessageTarget::Poke,
+			MT::Server => FfiMessageTarget::Server,
+			MT::Channel => FfiMessageTarget::Channel,
+			MT::Client(_) => FfiMessageTarget::Client,
+			MT::Poke(_) => FfiMessageTarget::Poke,
 		}
 	}
 }
@@ -878,7 +868,7 @@ pub unsafe extern "C" fn tscl_next_event(ev: *mut FfiEvent) {
 #[no_mangle]
 pub unsafe extern "C" fn tscl_send_message(
 	con_id: ConnectionId,
-	target_type: MessageTarget,
+	target_type: FfiMessageTarget,
 	target: u16,
 	msg: *const c_char,
 ) -> FutureHandle
@@ -889,7 +879,7 @@ pub unsafe extern "C" fn tscl_send_message(
 
 fn send_message(
 	con_id: ConnectionId,
-	target_type: MessageTarget,
+	target_type: FfiMessageTarget,
 	target: u16,
 	msg: &str,
 ) -> BoxFuture<()>
@@ -898,10 +888,10 @@ fn send_message(
 
 	if let Some(con) = CONNECTIONS.get(&con_id) {
 		let target = match target_type {
-			MessageTarget::Server => MT::Server,
-			MessageTarget::Channel => MT::Channel,
-			MessageTarget::Client => MT::Client(ClientId(target)),
-			MessageTarget::Poke => MT::Poke(ClientId(target)),
+			FfiMessageTarget::Server => MT::Server,
+			FfiMessageTarget::Channel => MT::Channel,
+			FfiMessageTarget::Client => MT::Client(ClientId(target)),
+			FfiMessageTarget::Poke => MT::Poke(ClientId(target)),
 		};
 		Box::new(con.lock().to_mut().send_message(target, msg).from_err())
 	} else {
@@ -951,7 +941,7 @@ pub unsafe extern "C" fn tscl_check_interface(name: *const c_char) -> usize {
 		"FfiEventUnion" => mem::size_of::<FfiEventUnion>(),
 		"FfiFutureResult" => mem::size_of::<FfiFutureResult>(),
 		"FfiEventMsg" => mem::size_of::<EventMsg>(),
-		"FfiMessageTarget" => mem::size_of::<MessageTarget>(),
+		"FfiMessageTarget" => mem::size_of::<FfiMessageTarget>(),
 		"FfiInvoker" => mem::size_of::<FfiInvoker>(),
 		"MaxClients" => mem::size_of::<FfiMaxClients>(),
 		"MaxClientsKind" => mem::size_of::<FfiMaxClientsKind>(),

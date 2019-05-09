@@ -45,10 +45,14 @@ fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 			// Convert key
 			#>
 			let key = {
-				let val = ids[1];
+				let val = id[1];
 				<# #><#= key.val_from_u64() #>
 			};
+			<# if let TypeContent::Builtin(BuiltinType::Array(_)) = &t.content { #>
 			let val = if let Some(r) = val.get(key) {
+			<# } else { #>
+			let val = if let Some(r) = val.get(&key) {
+			<# } #>
 				r
 			} else {
 				unsafe {
@@ -57,12 +61,15 @@ fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 				}
 				return;
 			};
+			<# if !inner_t.name.is_empty() { #>
 			let id = &id[2..];
-		<# } else if let TypeContent::Builtin(BuiltinType::Option(inner)) = &t.content {
+		<# }
+		} else if let TypeContent::Builtin(BuiltinType::Option(inner)) = &t.content {
 			inner_t = inner;
 			// Handle options
-			#>
+			if !inner_t.name.is_empty() { #>
 			let id = &id[1..];
+			<# } #>
 			let val = if let Some(r) = val {
 				r
 			} else {
@@ -172,7 +179,7 @@ pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= sel
 		let n = if n.is_empty() { i.to_string() } else { n.clone() };
 		if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
 		<#= self.name #>PropertyId::<#= n.to_camel_case() #>Len =>
-			u64::from(this.<#= n.to_camel_case() #>.len()),
+			this.<#= n.to_snake_case() #>.len() as u64,
 		<# } #>
 		<#= self.name #>PropertyId::<#= n.to_camel_case() #> => {
 			let val = &this.<#= n.to_snake_case() #>;
@@ -190,7 +197,7 @@ pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= sel
 				if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
 		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #>Len => {
 			let val = if let <#= self.name #>::<#= prefix #>
-			u64::from(this.<#= n.to_camel_case() #>.len())
+			this.<#= n.to_snake_case() #>.len() as u64
 		}
 				<# } #>
 		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #> => {

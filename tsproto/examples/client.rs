@@ -55,8 +55,6 @@ struct Args {
 }
 
 fn main() {
-	tsproto::init().unwrap();
-
 	// Parse command line options
 	let args = Args::from_args();
 
