@@ -1,0 +1,168 @@
+<#@ template cleanws="true" #>
+<#
+fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> fmt::Result {
+	for (i, (n, c)) in s.fields.iter().enumerate() {
+		// Add a length field for arrays
+		let n = if n.is_empty() { i.to_string() } else { n.clone() };
+		if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
+	<#= prefix #><#= n.to_camel_case() #>Len,
+		<# } #>
+	<#= prefix #><#= n.to_camel_case() #>,
+	<# }
+	Ok(())
+}
+
+fn gen_struct_prop_getter(_fmt: &mut fmt::Formatter, name: &str, prefix: &str, s: &Struct) -> fmt::Result {
+	for (i, (n, c)) in s.fields.iter().enumerate() {
+		// Add a length field for arrays
+		let n = if n.is_empty() { i.to_string() } else { n.clone() };
+		let type_s;
+		let getter;
+		match &c.content {
+			TypeContent::Struct(_) | TypeContent::Enum(_) => {
+				type_s = c.name.clone();
+				getter = format!("new {} {{ basePtr = basePtr, \
+					baseFunction = baseFunction, id = id }}", c.name);
+			}
+			TypeContent::Builtin(BuiltinType::Nothing) => continue,
+			TypeContent::Builtin(BuiltinType::Array(inner)) => {
+				type_s = format!("List<{}>", inner.name);
+				getter = "throw new NotImplementedException()".into();
+			}
+			TypeContent::Builtin(BuiltinType::Primitive(primitive)) => {
+				type_s = primitive.get_name_csharp().into();
+				let nullable = "";
+				/*nullable = "
+if (result.typ == FfiResultType.None)
+	return null;";*/
+				getter = format!("\
+ulong[] id = new ulong[this.id.Count + 1];
+this.id.CopyTo(id, 0);
+id[this.id.Count] = (ulong) {}PropertyId.{}{};
+FfiResult result;
+baseFunction(basePtr, id.Length, &id, result);
+if (result.typ == FfiResultType.Error)
+	throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));{}
+ulong val = result.content;
+return {};", name, prefix, n.to_camel_case(), nullable, c.val_from_u64_csharp());
+			}
+			_ => {
+				// TODO
+				type_s = "".into();
+				getter = "throw new NotImplementedException()".into();
+			}
+		}
+
+		// TODO
+		if type_s.is_empty() {
+			continue;
+		}
+
+		if !getter.contains(';') { #>
+	public <#= type_s #> <#= prefix #><#= n.to_camel_case() #> => <#= getter #>;
+		<# } else { #>
+	public <#= type_s #> <#= prefix #><#= n.to_camel_case() #>
+	{
+		get
+		{
+<#= indent(&getter, 3) #>
+		}
+	}
+		<# }
+	}
+	Ok(())
+}
+
+#>
+internal enum <#= self.name #>PropertyId : ulong
+{
+<# match &self.content {
+	TypeContent::Struct(c) => gen_struct_prop_ids(_fmt, "", c)?,
+	TypeContent::Enum(c) => { #>
+	Type,
+		<# for (n, s) in &c.possibilities {
+			gen_struct_prop_ids(_fmt, n, s)?;
+		}
+	}
+	_ => panic!("Unsupported type content"),
+} #>
+}
+<# if let TypeContent::Enum(e) = &self.content { #>
+
+internal enum <#= self.name #>Type : ulong
+{
+	<# for (n, _) in &e.possibilities { #>
+	<#= n #>,
+	<# } #>
+}
+
+<# } #>
+
+internal static partial class NativeMethods
+{
+	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+	public static extern void tscl_<#= self.name.to_snake_case() #>_get(IntPtr self,
+		UIntPtr idLen, ulong* id, [Out] out FfiResult result);
+}
+
+<# // Indirect access
+// TODO public delegate void FfiFunction(IntPtr self, UIntPtr idLen, ulong* id, [Out] out FfiResult result);
+/*
+[StructLayout(LayoutKind.Explicit)]
+internal struct FloatConverter
+{
+	[FieldOffset(0)]
+	public ulong U64Value;
+	[FieldOffset(0)]
+	public float F32Value;
+	[FieldOffset(0)]
+	public double F64Value;
+}
+
+internal enum FfiResultType : byte
+{
+	Ok,
+	None,
+	Error,
+}
+
+internal struct FfiResult
+{
+	public ulong content;
+	public FfiResultType typ;
+}
+ */
+#>
+public class <#= self.name #>
+{
+	private IntPtr basePtr;
+	private FfiFunction baseFunction;
+	private List<ulong> id;
+
+<# match &self.content {
+	TypeContent::Struct(c) => gen_struct_prop_getter(_fmt, &self.name, "", c)?,
+	TypeContent::Enum(c) => { #>
+	public <#= self.name #>Type Type
+	{
+		get
+		{
+			ulong[] id = new ulong[this.id.Count + 1];
+			this.id.CopyTo(id, 0);
+			id[this.id.Count] = (ulong) <#= self.name #>PropertyId.Type;
+			FfiResult result;
+			baseFunction(basePtr, id.Length, &id, result);
+			if (result.typ == FfiResultType.Error)
+				throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));
+			return (<#= self.name #>Type) result.content;
+		}
+	}
+		<# for (n, s) in &c.possibilities {
+			gen_struct_prop_getter(_fmt, &self.name, n, s)?;
+		}
+	}
+	_ => panic!("Unsupported type content"),
+} #>
+}
+
+<# // Direct access
+#>

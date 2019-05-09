@@ -145,9 +145,7 @@ impl Into<<#= self.name #>Type> for &'_ <#= self.name #> {
 		}
 	}
 }
-	<#
-}
-#>
+<# } #>
 
 #[no_mangle]
 pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= self.name #>, id_len: usize,

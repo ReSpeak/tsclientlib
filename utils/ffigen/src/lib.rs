@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Deref;
 
 use heck::*;
 use lazy_static::lazy_static;
@@ -30,6 +31,10 @@ pub struct Wrapper {
 	/// If this is not set, `.into()` will be used.
 	pub from_u64: Option<String>,
 }
+#[derive(Template)]
+#[TemplatePath = "src/CSharp.tt"]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct CSharpGen(pub RustType);
 
 #[derive(Template)]
 #[TemplatePath = "src/Gen.tt"]
@@ -84,6 +89,11 @@ pub enum PrimitiveType {
 	/// `true` means signed, size is 8, 16, 32, 64, 128, None = isize/usize.
 	Int(bool, Option<u8>),
 	Float(u8),
+}
+
+impl Deref for CSharpGen {
+	type Target = RustType;
+	fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl From<PrimitiveType> for RustType {
@@ -231,6 +241,79 @@ impl RustType {
 		}
 	}
 
+	pub fn val_as_u64_csharp(&self) -> String {
+		if !self.name.is_empty() {
+			return "val".into();
+		}
+		if let Some(w) = &self.wrapper {
+			// TODO
+			if let Some(fun) = &w.to_u64 {
+				return fun.clone();
+			} else {
+				return format!("val.into()");
+			}
+		}
+
+		let t = if let TypeContent::Builtin(t) = &self.content {
+			t
+		} else {
+			panic!("Structs and enums always must have names")
+		};
+		match t {
+			BuiltinType::Nothing => "0".into(),
+			BuiltinType::Primitive(p) => match p {
+				PrimitiveType::Bool | PrimitiveType::Char | PrimitiveType::Int(_, _) =>
+					"(ulong) val".into(),
+				PrimitiveType::Float(s) =>
+					format!("new FloatConverter {{ F{}Value = val }}.U64Value", s),
+			}
+			// TODO This needs using (Utf8String)
+			BuiltinType::String | BuiltinType::Str => "val.ffi() as u64".into(),
+			BuiltinType::Option(c) => c.val_as_u64(),
+			// TODO Get map returns array of keys, get array all values
+			// TODO Support sets
+			BuiltinType::Array(_) | BuiltinType::Map(_, _) => {
+				panic!("Arrays and maps cannot be directly converted");
+			}
+			BuiltinType::Set(_) => unimplemented!(), // TODO
+		}
+	}
+
+	pub fn val_from_u64_csharp(&self) -> String {
+		if !self.name.is_empty() {
+			return "val".into();
+		}
+		if let Some(w) = &self.wrapper {
+			// TODO
+			if let Some(fun) = &w.from_u64 {
+				return fun.clone();
+			} else {
+				return format!("val.into()");
+			}
+		}
+
+		let t = if let TypeContent::Builtin(t) = &self.content {
+			t
+		} else {
+			panic!("Structs and enums always must have names")
+		};
+		match t {
+			BuiltinType::Nothing => "0".into(),
+			BuiltinType::Primitive(p) => match p {
+				PrimitiveType::Bool => "(bool) val".into(),
+				PrimitiveType::Char => "(char) val".into(),
+				PrimitiveType::Int(_, _) => format!("({}) val", p.get_name_csharp()),
+				PrimitiveType::Float(s) =>
+					format!("new FloatConverter {{ U64Value = val }}.F{}Value", s),
+			}
+			BuiltinType::String | BuiltinType::Str => "NativeMethods.StringFromNativeUtf8((IntPtr) val)".into(),
+			BuiltinType::Option(_) => unimplemented!(), // TODO
+			BuiltinType::Array(_) | BuiltinType::Map(_, _) | BuiltinType::Set(_) => {
+				panic!("Arrays and maps cannot be converted");
+			}
+		}
+	}
+
 	/// The wrapper map the name of wrapper-types to wrapped types.
 	///
 	/// E.g. `struct MyId(u64)` has an entry `wrappers["MyId"] = u64`.
@@ -300,6 +383,28 @@ impl RustType {
 	}
 }
 
+impl PrimitiveType {
+	fn get_name_csharp(&self) -> &'static str {
+		match self {
+			PrimitiveType::Bool => "bool",
+			PrimitiveType::Char => "char",
+			PrimitiveType::Int(false, Some(8)) => "byte",
+			PrimitiveType::Int(false, Some(16)) => "ushort",
+			PrimitiveType::Int(false, Some(32)) => "uint",
+			PrimitiveType::Int(false, Some(64)) => "ulong",
+			PrimitiveType::Int(true, Some(8)) => "sbyte",
+			PrimitiveType::Int(true, Some(16)) => "short",
+			PrimitiveType::Int(true, Some(32)) => "int",
+			PrimitiveType::Int(true, Some(64)) => "long",
+			PrimitiveType::Int(false, None) => "UIntPtr",
+			PrimitiveType::Int(true, None) => "IntPtr",
+			PrimitiveType::Float(32) => "float",
+			PrimitiveType::Float(64) => "double",
+			_ => panic!("Unknown primitive type"),
+		}
+	}
+}
+
 fn fields_to_struct(fields: &Fields, wrappers: &HashMap<String, RustType>) -> Struct {
 	let mut struc = Struct { fields: Vec::new() };
 	match fields {
@@ -353,6 +458,25 @@ pub fn convert_item(input: &Item, wrappers: &HashMap<String, RustType>) -> RustT
 		Item::Enum(e) => convert_enum(&e.ident, &e.variants, wrappers),
 		_ => panic!("Only structs or enums are supported"),
 	}
+}
+
+/// Indent a string by a given count using tabs.
+fn indent(s: &str, count: usize) -> String {
+	let line_count = s.lines().count();
+	let mut result = String::with_capacity(s.len() + line_count * count * 4);
+	for l in s.lines() {
+		if !l.is_empty() {
+			result.push_str(
+				std::iter::repeat("\t")
+					.take(count)
+					.collect::<String>()
+					.as_str(),
+			);
+		}
+		result.push_str(l);
+		result.push('\n');
+	}
+	result
 }
 
 #[cfg(test)]
