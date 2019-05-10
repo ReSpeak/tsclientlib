@@ -67,11 +67,15 @@ fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 		} else if let TypeContent::Builtin(BuiltinType::Option(inner)) = &t.content {
 			inner_t = inner;
 			// Handle options
-			if !inner_t.name.is_empty() { #>
+			#>
 			let id = &id[1..];
-			<# } #>
 			let val = if let Some(r) = val {
 				r
+			} else if id.is_empty() {
+				unsafe {
+					(*result).typ = FfiResultType::None;
+				}
+				return;
 			} else {
 				unsafe {
 					(*result).content = "Option <#= t.name #> is None".ffi() as u64;

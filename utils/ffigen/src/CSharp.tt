@@ -2,8 +2,8 @@
 <#
 fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> fmt::Result {
 	for (i, (n, c)) in s.fields.iter().enumerate() {
+		let n = if n.is_empty() && s.fields.len() > 1 { i.to_string() } else { n.clone() };
 		// Add a length field for arrays
-		let n = if n.is_empty() { i.to_string() } else { n.clone() };
 		if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
 	<#= prefix #><#= n.to_camel_case() #>Len,
 		<# } #>
@@ -15,41 +15,60 @@ fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> f
 fn gen_struct_prop_getter(_fmt: &mut fmt::Formatter, name: &str, prefix: &str, s: &Struct) -> fmt::Result {
 	for (i, (n, c)) in s.fields.iter().enumerate() {
 		// Add a length field for arrays
-		let n = if n.is_empty() { i.to_string() } else { n.clone() };
-		let type_s;
-		let getter;
+		let n = if n.is_empty() && s.fields.len() > 1 { i.to_string() } else { n.clone() };
+		let mut type_s;
+		let mut getter;
+		let mut nullable = false;
+		let mut is_primitive = false;
+		let mut converter = None;
+
+		let c = if let TypeContent::Builtin(BuiltinType::Option(inner)) = &c.content {
+			nullable = true;
+			&**inner
+		} else {
+			c
+		};
+
 		match &c.content {
 			TypeContent::Struct(_) | TypeContent::Enum(_) => {
 				type_s = c.name.clone();
-				getter = format!("new {} {{ basePtr = basePtr, \
-					baseFunction = baseFunction, id = id }}", c.name);
+				getter = format!("\
+List<ulong> id = new List<ulong>(this.id);
+id.Add((ulong) {}PropertyId.{}{});
+return new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = id }};",
+					name, prefix, n.to_camel_case(), c.name);
 			}
 			TypeContent::Builtin(BuiltinType::Nothing) => continue,
+			TypeContent::Builtin(BuiltinType::Primitive(primitive)) => {
+				if let Some(wrapper) = &c.wrapper {
+					type_s = wrapper.outer.clone();
+				} else {
+					type_s = primitive.get_name_csharp().into();
+				}
+				is_primitive = true;
+				converter = Some(c.val_from_u64_csharp());
+				getter = "".into();
+			}
+			TypeContent::Builtin(BuiltinType::Str)
+			| TypeContent::Builtin(BuiltinType::String) => {
+				if let Some(wrapper) = &c.wrapper {
+					type_s = wrapper.outer.clone();
+				} else {
+					type_s = "string".into();
+				}
+				converter = Some(c.val_from_u64_csharp());
+				getter = "".into();
+			}
 			TypeContent::Builtin(BuiltinType::Array(inner)) => {
 				type_s = format!("List<{}>", inner.name);
-				getter = "throw new NotImplementedException()".into();
-			}
-			TypeContent::Builtin(BuiltinType::Primitive(primitive)) => {
-				type_s = primitive.get_name_csharp().into();
-				let nullable = "";
-				/*nullable = "
-if (result.typ == FfiResultType.None)
-	return null;";*/
-				getter = format!("\
-ulong[] id = new ulong[this.id.Count + 1];
-this.id.CopyTo(id, 0);
-id[this.id.Count] = (ulong) {}PropertyId.{}{};
-FfiResult result;
-baseFunction(basePtr, id.Length, &id, result);
-if (result.typ == FfiResultType.Error)
-	throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));{}
-ulong val = result.content;
-return {};", name, prefix, n.to_camel_case(), nullable, c.val_from_u64_csharp());
+				// TODO Use fake list
+				type_s = "".into();
+				getter = "throw new NotImplementedException();".into();
 			}
 			_ => {
 				// TODO
 				type_s = "".into();
-				getter = "throw new NotImplementedException()".into();
+				getter = "throw new NotImplementedException();".into();
 			}
 		}
 
@@ -58,9 +77,33 @@ return {};", name, prefix, n.to_camel_case(), nullable, c.val_from_u64_csharp())
 			continue;
 		}
 
-		if !getter.contains(';') { #>
-	public <#= type_s #> <#= prefix #><#= n.to_camel_case() #> => <#= getter #>;
-		<# } else { #>
+		if nullable && is_primitive {
+			type_s = format!("{}?", type_s);
+		}
+
+		if let Some(c) = converter {
+			let nullable = if nullable {
+				"
+if (result.typ == FfiResultType.None)
+	return null;"
+			} else {
+				""
+			};
+
+			getter = format!("\
+ulong[] id = new ulong[this.id.Count + 1];
+this.id.CopyTo(id, 0);
+id[this.id.Count] = (ulong) {}PropertyId.{}{};
+FfiResult result;
+unsafe {{ fixed (ulong* ids = id)
+{{
+	baseFunction(basePtr, (UIntPtr) id.Length, ids, out result);
+}} }}
+if (result.typ == FfiResultType.Error)
+	throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));{}
+ulong val = result.content;
+return {};", name, prefix, n.to_camel_case(), nullable, c);
+		} #>
 	public <#= type_s #> <#= prefix #><#= n.to_camel_case() #>
 	{
 		get
@@ -68,8 +111,7 @@ return {};", name, prefix, n.to_camel_case(), nullable, c.val_from_u64_csharp())
 <#= indent(&getter, 3) #>
 		}
 	}
-		<# }
-	}
+	<# }
 	Ok(())
 }
 
@@ -89,7 +131,7 @@ internal enum <#= self.name #>PropertyId : ulong
 }
 <# if let TypeContent::Enum(e) = &self.content { #>
 
-internal enum <#= self.name #>Type : ulong
+public enum <#= self.name #>Type : ulong
 {
 	<# for (n, _) in &e.possibilities { #>
 	<#= n #>,
@@ -101,43 +143,15 @@ internal enum <#= self.name #>Type : ulong
 internal static partial class NativeMethods
 {
 	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-	public static extern void tscl_<#= self.name.to_snake_case() #>_get(IntPtr self,
+	public static extern unsafe void tscl_<#= self.name.to_snake_case() #>_get(IntPtr self,
 		UIntPtr idLen, ulong* id, [Out] out FfiResult result);
 }
 
-<# // Indirect access
-// TODO public delegate void FfiFunction(IntPtr self, UIntPtr idLen, ulong* id, [Out] out FfiResult result);
-/*
-[StructLayout(LayoutKind.Explicit)]
-internal struct FloatConverter
+public partial class <#= self.name #>
 {
-	[FieldOffset(0)]
-	public ulong U64Value;
-	[FieldOffset(0)]
-	public float F32Value;
-	[FieldOffset(0)]
-	public double F64Value;
-}
-
-internal enum FfiResultType : byte
-{
-	Ok,
-	None,
-	Error,
-}
-
-internal struct FfiResult
-{
-	public ulong content;
-	public FfiResultType typ;
-}
- */
-#>
-public class <#= self.name #>
-{
-	private IntPtr basePtr;
-	private FfiFunction baseFunction;
-	private List<ulong> id;
+	internal IntPtr basePtr;
+	internal NativeMethods.FfiFunction baseFunction;
+	internal List<ulong> id;
 
 <# match &self.content {
 	TypeContent::Struct(c) => gen_struct_prop_getter(_fmt, &self.name, "", c)?,
@@ -150,7 +164,10 @@ public class <#= self.name #>
 			this.id.CopyTo(id, 0);
 			id[this.id.Count] = (ulong) <#= self.name #>PropertyId.Type;
 			FfiResult result;
-			baseFunction(basePtr, id.Length, &id, result);
+			unsafe { fixed (ulong* ids = id)
+			{
+			baseFunction(basePtr, (UIntPtr) id.Length, ids, out result);
+			} }
 			if (result.typ == FfiResultType.Error)
 				throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));
 			return (<#= self.name #>Type) result.content;
@@ -163,6 +180,3 @@ public class <#= self.name #>
 	_ => panic!("Unsupported type content"),
 } #>
 }
-
-<# // Direct access
-#>

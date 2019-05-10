@@ -300,7 +300,7 @@ impl RustType {
 		match t {
 			BuiltinType::Nothing => "0".into(),
 			BuiltinType::Primitive(p) => match p {
-				PrimitiveType::Bool => "(bool) val".into(),
+				PrimitiveType::Bool => "val != 0".into(),
 				PrimitiveType::Char => "(char) val".into(),
 				PrimitiveType::Int(_, _) => format!("({}) val", p.get_name_csharp()),
 				PrimitiveType::Float(s) =>

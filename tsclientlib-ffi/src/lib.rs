@@ -1,6 +1,6 @@
 use std::ffi::{CStr, CString};
 use std::{fmt, mem};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use chashmap::CHashMap;
@@ -18,7 +18,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 #[cfg(feature = "audio")]
 use parking_lot::RwLock;
 use slog::{error, o, Drain, Logger};
-use tsclientlib::events::Event as LibEvent;
+use tsclientlib::events::Event;
 use tsclientlib::{
 	ChannelId, ClientId, ConnectOptions, Connection, ServerGroupId,
 };
@@ -86,7 +86,7 @@ lazy_static! {
 		CHashMap::new();
 
 	/// Transfer events to whoever is listening on the `next_event` method.
-	static ref EVENTS: (channel::Sender<Event>, channel::Receiver<Event>) =
+	static ref EVENTS: (channel::Sender<NewEvent>, channel::Receiver<NewEvent>) =
 		channel::unbounded();
 }
 
@@ -203,35 +203,13 @@ pub enum EventContent {
 	ConnectionAdded,
 	ConnectionRemoved,
 	FutureFinished { handle: FutureHandle, error: Option<String> },
-	Message {
-		message: String,
-		invoker: NewFfiInvoker,
-		target: FfiMessageTarget,
-	},
-	PropertyAdded {
-		placeholder: u32,
-	},
-	PropertyRemoved {
-		placeholder: u32,
-	},
-	PropertyChanged {
-		placeholder: u32,
-	},
+	LibEvent(Event),
 }
 
 pub struct NewFfiInvoker {
 	name: String,
 	uid: Option<String>,
 	id: u16,
-}
-
-enum Event {
-	ConnectionAdded(ConnectionId),
-	ConnectionRemoved(ConnectionId),
-	FutureFinished(FutureHandle, Result<()>),
-	Event(ConnectionId, LibEvent),
-	/// Used for property lib events, which have to be converted before sending.
-	FfiEvent(ConnectionId, FfiEventType, FfiEventUnion),
 }
 
 #[derive(Fail, Debug, From)]
@@ -267,174 +245,6 @@ impl From<ConnectionId> for u64 {
 impl From<FutureHandle> for u64 {
 	fn from(t: FutureHandle) -> u64 {
 		t.to_u64().unwrap()
-	}
-}
-
-impl Event {
-	fn get_type(&self) -> FfiEventType {
-		match self {
-			Event::ConnectionAdded(_) => FfiEventType::ConnectionAdded,
-			Event::ConnectionRemoved(_) => FfiEventType::ConnectionRemoved,
-			Event::FutureFinished(_, _) => FfiEventType::FutureFinished,
-			Event::Event(_, LibEvent::Message { .. }) => FfiEventType::Message,
-			Event::Event(_, LibEvent::PropertyAdded { .. }) => {
-				FfiEventType::PropertyAdded
-			}
-			Event::Event(_, LibEvent::PropertyChanged { .. }) => {
-				FfiEventType::PropertyChanged
-			}
-			Event::Event(_, LibEvent::PropertyRemoved { .. }) => {
-				FfiEventType::PropertyRemoved
-			}
-			Event::Event(_, LibEvent::__NonExhaustive) => {
-				panic!("Non exhaustive should not be created")
-			}
-			Event::FfiEvent(_, t, _) => *t,
-		}
-	}
-
-	fn get_id(&self) -> Option<ConnectionId> {
-		match self {
-			Event::ConnectionAdded(id) => Some(*id),
-			Event::ConnectionRemoved(id) => Some(*id),
-			Event::FutureFinished(_, _) => None,
-			Event::Event(id, _) => Some(*id),
-			Event::FfiEvent(id, _, _) => Some(*id),
-		}
-	}
-}
-
-impl Into<FfiEvent> for Event {
-	fn into(self) -> FfiEvent {
-		let typ = self.get_type();
-		let id = self.get_id();
-		FfiEvent {
-			content: match self {
-				Event::FutureFinished(handle, r) => FfiEventUnion {
-					future_result: FfiFutureResult {
-						error: r.ffi(),
-						handle,
-					},
-				},
-				Event::Event(
-					_,
-					LibEvent::Message {
-						from,
-						invoker,
-						message,
-					},
-				) => FfiEventUnion {
-					message: EventMsg {
-						target_type: from.into(),
-						invoker: invoker.ffi(),
-						message: message.ffi(),
-					},
-				},
-				Event::Event(
-					_,
-					LibEvent::PropertyRemoved { id, old, invoker },
-				) => {
-					let old_ref = old.as_ref();
-					FfiEventUnion {
-						property: FfiProperty {
-							value: old_ref.prop_ffi(),
-							invoker: invoker
-								.map(|i| i.ffi())
-								.unwrap_or_else(Default::default),
-							p_type: id.prop_type(),
-							id: id.prop_ffi(),
-							value_exists: !old_ref.is_none(),
-						},
-					}
-				}
-				Event::Event(_, _) => unimplemented!(
-					"Property events have to be converted before"
-				),
-				Event::FfiEvent(_, _, f) => f,
-				_ => FfiEventUnion { empty: () },
-			},
-			typ,
-			connection: id.unwrap_or(ConnectionId(0)),
-			has_connection_id: id.is_some(),
-		}
-	}
-}
-
-trait LibEventExt {
-	fn into_event(
-		self,
-		con_id: ConnectionId,
-		con: &tsclientlib::data::Connection,
-	) -> Event;
-}
-
-impl LibEventExt for LibEvent {
-	/// Used to convert into an `FfiEvent` where a connection is needed to fetch
-	/// further information.
-	fn into_event(
-		self,
-		con_id: ConnectionId,
-		con: &tsclientlib::data::Connection,
-	) -> Event
-	{
-		let typ;
-		let event = match self {
-			LibEvent::PropertyAdded { id, invoker } => {
-				typ = FfiEventType::PropertyAdded;
-				let new_ref = con
-					.get_property(&id)
-					.expect("Failed to get value of property");
-				FfiEventUnion {
-					property: FfiProperty {
-						value: new_ref.prop_ffi(),
-						invoker: invoker
-							.map(|i| i.ffi())
-							.unwrap_or_else(Default::default),
-						p_type: id.prop_type(),
-						id: id.prop_ffi(),
-						value_exists: !new_ref.is_none(),
-					},
-				}
-			}
-			LibEvent::PropertyChanged { id, old, invoker } => {
-				typ = FfiEventType::PropertyChanged;
-				let new_ref = con
-					.get_property(&id)
-					.expect("Failed to get value of property");
-				let old_ref = old.as_ref();
-				FfiEventUnion {
-					property_changed: FfiPropertyChanged {
-						old: old_ref.prop_ffi(),
-						new: new_ref.prop_ffi(),
-						invoker: invoker
-							.map(|i| i.ffi())
-							.unwrap_or_else(Default::default),
-						p_type: id.prop_type(),
-						id: id.prop_ffi(),
-						old_exists: !old_ref.is_none(),
-						new_exists: !new_ref.is_none(),
-					},
-				}
-			}
-			LibEvent::PropertyRemoved { id, old, invoker } => {
-				typ = FfiEventType::PropertyRemoved;
-				let old_ref = old.as_ref();
-				FfiEventUnion {
-					property: FfiProperty {
-						value: old_ref.prop_ffi(),
-						invoker: invoker
-							.map(|i| i.ffi())
-							.unwrap_or_else(Default::default),
-						p_type: id.prop_type(),
-						id: id.prop_ffi(),
-						value_exists: !old_ref.is_none(),
-					},
-				}
-			}
-			_ => panic!("Unsupported conversion"),
-		};
-
-		Event::FfiEvent(con_id, typ, event)
 	}
 }
 
@@ -697,7 +507,10 @@ fn remove_connection(con_id: ConnectionId) {
 	}
 
 	if removed {
-		EVENTS.0.send(Event::ConnectionRemoved(con_id)).unwrap();
+		EVENTS.0.send(NewEvent {
+				con_id: Some(con_id),
+				content: EventContent::ConnectionRemoved,
+			}).unwrap();
 	}
 }
 
@@ -752,16 +565,15 @@ fn connect(
 				remove_connection(con_id);
 			}));
 
-			con.add_on_event("tsclientlibffi".into(), Box::new(move |con, events| {
+			con.add_on_event("tsclientlibffi".into(), Box::new(move |_con, events| {
 				// TODO Send all at once? Remember the problem with getting
 				// ServerGroups one by one, so you never know when they are
 				// complete.
 				for e in events {
-					if let LibEvent::Message { .. } = e {
-						EVENTS.0.send(Event::Event(con_id, e.clone())).unwrap();
-					} else {
-						EVENTS.0.send(e.clone().into_event(con_id, &**con)).unwrap();
-					}
+					EVENTS.0.send(NewEvent {
+						con_id: Some(con_id),
+						content: EventContent::LibEvent(e.clone()),
+					}).unwrap();
 				}
 			}));
 
@@ -788,7 +600,10 @@ fn connect(
 			}
 
 			CONNECTIONS.insert(con_id, con);
-			EVENTS.0.send(Event::ConnectionAdded(con_id)).unwrap();
+			EVENTS.0.send(NewEvent {
+				con_id: Some(con_id),
+				content: EventContent::ConnectionAdded,
+			}).unwrap();
 		})
 		.map_err(move |e| {
 			error!(LOGGER, "Failed to connect"; "error" => %e);
@@ -830,6 +645,28 @@ fn disconnect(con_id: ConnectionId) -> BoxFuture<()> {
 }
 
 #[no_mangle]
+pub extern "C" fn tscl_connection_by_id(_: *const c_void, id_len: usize, id: *const u64, result: *mut FfiResult) {
+	let id = unsafe { std::slice::from_raw_parts(id, id_len) };
+	if id.is_empty() {
+		unsafe {
+			(*result).content = format!("No connection id given").ffi() as u64;
+			(*result).typ = FfiResultType::Error;
+		}
+		return;
+	}
+
+	if let Some(con) = CONNECTIONS.get(&ConnectionId(id[0])) {
+		let con = con.lock();
+		tscl_connection_get(&*con, id.len() - 1, (&id[1..]).as_ptr(), result);
+	} else {
+		unsafe {
+			(*result).content = format!("Connection {} not found", id[0]).ffi() as u64;
+			(*result).typ = FfiResultType::Error;
+		}
+	}
+}
+
+#[no_mangle]
 pub extern "C" fn tscl_is_talking() -> bool {
 	#[cfg(feature = "audio")]
 	{
@@ -857,9 +694,9 @@ pub extern "C" fn tscl_set_talking(_talking: bool) {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn tscl_next_event(ev: *mut FfiEvent) {
+pub unsafe extern "C" fn tscl_next_event() -> *mut NewEvent {
 	let event = EVENTS.1.recv().unwrap();
-	*ev = event.into();
+	Box::into_raw(Box::new(event))
 }
 
 /// Send a chat message.

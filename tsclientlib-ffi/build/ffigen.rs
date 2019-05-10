@@ -57,20 +57,14 @@ pub fn gen_events() -> Result<()> {
 		&mut items,
 	)?;
 
-	// TODO
 	extract_items(
-		&base_dir.join("..").join("target").join("debug")
-			.join("build").join("tsclientlib-b7db218433c96145").join("out")
-			.join("events.rs"),
+		&out_dir.join("..").join("..").join("events.rs"),
 		&["PropertyId", "PropertyValue"],
 		&mut items,
 	)?;
 
-	// TODO
 	extract_items(
-		&base_dir.join("..").join("target").join("debug")
-			.join("build").join("tsclientlib-b7db218433c96145").join("out")
-			.join("structs.rs"),
+		&out_dir.join("..").join("..").join("structs.rs"),
 		&["Channel", "ChatEntry", "Client",
 			"Connection", "ConnectionClientData", "ConnectionServerData", "File",
 			"OptionalChannelData", "OptionalClientData",
@@ -88,7 +82,7 @@ pub fn gen_events() -> Result<()> {
 	let mut typ: RustType = "u64".into();
 	typ.wrapper = Some(Wrapper {
 		outer: "DateTime<Utc>".into(),
-		to_u64: Some("val.timestamp() as u64".into()),
+		to_u64: Some("unsafe { std::mem::transmute::<i64, u64>(val.timestamp()) }".into()),
 		from_u64: Some("DateTime::from_utc(NaiveDateTime::from_timestamp(val, 0), Utc)".into()),
 	});
 	wrappers.insert("DateTime<Utc>".into(), typ);
@@ -197,10 +191,76 @@ pub fn gen_events() -> Result<()> {
 		.map(|(a, b)| (a.into(), b.into()))
 		.collect();
 
-	let mut res = String::new();
+	// TODO Other time resolution?
+	let mut typ: RustType = "u64".into();
+	typ.wrapper = Some(Wrapper {
+		outer: "DateTimeOffset".into(),
+		to_u64: Some("(ulong) val.ToUnixTimeSeconds()".into()),
+		from_u64: Some("DateTimeOffset.FromUnixTimeSeconds((long) val)".into()),
+	});
+	wrappers.insert("DateTime<Utc>".into(), typ);
+
+	// TODO Other time resolution?
+	let mut typ: RustType = "u64".into();
+	typ.wrapper = Some(Wrapper {
+		outer: "TimeSpan".into(),
+		to_u64: Some("(ulong) val.Seconds".into()),
+		from_u64: Some("new TimeSpan((long) val * 10000000)".into()),
+	});
+	wrappers.insert("Duration".into(), typ);
+
+	let mut typ: RustType = "String".into();
+	typ.wrapper = Some(Wrapper {
+		outer: "IPEndPoint".into(),
+		to_u64: Some("TODO val.ToString()".into()),
+		from_u64: Some("NativeMethods.ParseIPEndPoint(NativeMethods.StringFromNativeUtf8((IntPtr) val))".into()),
+	});
+	wrappers.insert("SocketAddr".into(), typ);
+
+	let mut typ: RustType = "String".into();
+	typ.wrapper = Some(Wrapper {
+		outer: "Uid".into(),
+		to_u64: Some("TODO".into()),
+		from_u64: Some("new Uid { Value = NativeMethods.StringFromNativeUtf8((IntPtr) val) }".into()),
+	});
+	wrappers.insert("Uid".into(), typ);
+
+	let mut typ: RustType = "u64".into();
+	typ.wrapper = Some(Wrapper {
+		outer: "ClientId".into(),
+		to_u64: Some("(ulong) val.Value".into()),
+		from_u64: Some("new ClientId { Value = (ushort) val }".into()),
+	});
+	wrappers.insert("ClientId".into(), typ);
+
+	for t in ["ChannelGroupId", "ChannelId", "ClientDbId", "ConnectionId",
+		"IconHash", "ServerGroupId"].iter().cloned() {
+		let mut typ: RustType = "u64".into();
+		typ.wrapper = Some(Wrapper {
+			outer: t.into(),
+			to_u64: Some("val.Value".into()),
+			from_u64: Some(format!("new {} {{ Value = val }}", t).into()),
+		});
+		wrappers.insert(t.into(), typ);
+	}
+
+	for t in ["ChannelType", "ClientType", "Codec", "CodecEncryptionMode",
+		"GroupNamingMode", "GroupType", "HostBannerMode", "HostMessageMode",
+		"LicenseType", "FfiMessageTarget", "TextMessageTargetMode"].iter().cloned() {
+		let mut typ: RustType = "u64".into();
+		typ.wrapper = Some(Wrapper {
+			outer: t.into(),
+			to_u64: Some("(ulong) val".into()),
+			from_u64: Some(format!("({}) val", t).into()),
+		});
+		wrappers.insert(t.into(), typ);
+	}
+
+	let mut res = fs::read_to_string(&base_dir.join("header.cs"))?;
 	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
 		res.push_str(&CSharpGen(ty).to_string());
 	}
+	res.push_str("}\n");
 	fs::write(&base_dir.join("ffigen.cs"), res.as_bytes())?;
 
 	Ok(())

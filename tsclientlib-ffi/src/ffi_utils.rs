@@ -3,7 +3,7 @@ use std::os::raw::c_char;
 
 use futures::Future;
 
-use crate::{Error, Event, FutureHandle, Result, EVENTS, RUNTIME};
+use crate::{Error, EventContent, NewEvent, FutureHandle, Result, EVENTS, RUNTIME};
 
 /// Allocates a `CString` which has to be freed by the receiver afterwards.
 ///
@@ -68,7 +68,13 @@ impl<F: Future<Item = (), Error = Error> + Send + 'static> ToFfiFutureExt
 			/*if let Err(e) = &r {
 				warn!(LOGGER, "Future exited with error"; "error" => ?e);
 			}*/
-			EVENTS.0.send(Event::FutureFinished(h, r)).unwrap();
+			EVENTS.0.send(NewEvent {
+				con_id: None,
+				content: EventContent::FutureFinished {
+					handle: h,
+					error: r.err().map(|e| e.to_string()),
+				},
+			}).unwrap();
 			Ok(())
 		}));
 		h
@@ -78,7 +84,13 @@ impl<F: Future<Item = (), Error = Error> + Send + 'static> ToFfiFutureExt
 impl ToFfiFutureExt for Error {
 	fn fut_ffi(self) -> FutureHandle {
 		let h = FutureHandle::next_free();
-		EVENTS.0.send(Event::FutureFinished(h, Err(self))).unwrap();
+		EVENTS.0.send(NewEvent {
+			con_id: None,
+			content: EventContent::FutureFinished {
+				handle: h,
+				error: Some(self.to_string()),
+			},
+		}).unwrap();
 		h
 	}
 }

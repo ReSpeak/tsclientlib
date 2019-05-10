@@ -27,6 +27,8 @@ fn main() {
 	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("structs.rs")).unwrap();
 	write!(&mut structs, "{}", BookDeclarations::default()).unwrap();
+	let mut structs = File::create(&path.join("..").join("..").join("structs.rs")).unwrap();
+	write!(&mut structs, "{}", BookDeclarations::default()).unwrap();
 
 	// Messages to book
 	let mut structs = File::create(&path.join("m2bdecls.rs")).unwrap();
@@ -42,6 +44,8 @@ fn main() {
 
 	// Events
 	let mut structs = File::create(&path.join("events.rs")).unwrap();
+	write!(&mut structs, "{}", EventDeclarations::default()).unwrap();
+	let mut structs = File::create(&path.join("..").join("..").join("events.rs")).unwrap();
 	write!(&mut structs, "{}", EventDeclarations::default()).unwrap();
 
 	// Properties
