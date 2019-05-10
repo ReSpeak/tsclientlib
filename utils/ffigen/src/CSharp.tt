@@ -4,7 +4,9 @@ fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> f
 	for (i, (n, c)) in s.fields.iter().enumerate() {
 		let n = if n.is_empty() && s.fields.len() > 1 { i.to_string() } else { n.clone() };
 		// Add a length field for arrays
-		if let TypeContent::Builtin(BuiltinType::Array(_)) = c.content { #>
+		if let TypeContent::Builtin(BuiltinType::Array(_))
+		| TypeContent::Builtin(BuiltinType::Map(_, _))
+		| TypeContent::Builtin(BuiltinType::Set(_)) = c.content { #>
 	<#= prefix #><#= n.to_camel_case() #>Len,
 		<# } #>
 	<#= prefix #><#= n.to_camel_case() #>,
@@ -64,6 +66,42 @@ return new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = id }};",
 				// TODO Use fake list
 				type_s = "".into();
 				getter = "throw new NotImplementedException();".into();
+			}
+			TypeContent::Builtin(BuiltinType::Map(key, inner)) => {
+				let key_name = if let Some(wrapper) = &key.wrapper {
+					wrapper.outer.clone()
+				} else {
+					key.name.clone()
+				};
+				let inner_name = inner.name.clone();
+
+				let convert_keys = format!("{{ unsafe {{
+		var lis = (ulong*) list;
+		var res = new List<{}>((int) length);
+		for (ulong i = 0; i < length; i++)
+		{{
+			var val = *(lis + i);
+			res.Add({});
+		}}
+		NativeMethods.tscl_free_u64s(lis, (UIntPtr) length);
+		return res;
+	}} }}", key_name, key.val_from_u64_csharp());
+
+				type_s = format!("FakeDictionary<{}, {}>", key_name, inner_name);
+				getter = format!("\
+List<ulong> id = new List<ulong>(this.id);
+id.Add((ulong) {}PropertyId.{}{});
+return new {}
+{{
+	basePtr = basePtr,
+	baseFunction = baseFunction,
+	id = id,
+	containsObjects = true,
+	convertKey = val => {},
+	convertKeyArray = (list, length) => {},
+	createValue = (basePtr, baseFunction, i) =>
+		new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = i }},
+}};", name, prefix, n.to_camel_case(), type_s, key.val_as_u64_csharp(), convert_keys, inner_name);
 			}
 			_ => {
 				// TODO
@@ -145,6 +183,8 @@ internal static partial class NativeMethods
 	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
 	public static extern unsafe void tscl_<#= self.name.to_snake_case() #>_get(IntPtr self,
 		UIntPtr idLen, ulong* id, [Out] out FfiResult result);
+	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+	public static extern unsafe void tscl_free_<#= self.name.to_snake_case() #>(IntPtr self);
 }
 
 public partial class <#= self.name #>

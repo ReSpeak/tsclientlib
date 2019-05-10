@@ -116,6 +116,8 @@ include!(concat!(env!("OUT_DIR"), "/book_ffi.rs"));
 pub struct FfiResult {
 	/// Often used as `*const c_void`
 	pub content: u64,
+	/// Only used when a list is returned
+	pub length: u64,
 	pub typ: FfiResultType,
 }
 
