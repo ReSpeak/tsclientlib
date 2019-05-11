@@ -5,6 +5,8 @@ use std::path::Path;
 use ffigen::{CSharpGen, RustType, Wrapper};
 use syn::*;
 
+use crate::cs_events::CsEventDeclarations;
+
 type Result<T> = std::result::Result<T, failure::Error>;
 
 fn extract_items(p: &Path, names: &[&str], items: &mut Vec<Item>) -> Result<()> {
@@ -25,54 +27,7 @@ fn extract_items(p: &Path, names: &[&str], items: &mut Vec<Item>) -> Result<()> 
 	Ok(())
 }
 
-pub fn gen_events() -> Result<()> {
-	let base_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-	let base_dir = Path::new(&base_dir);
-	let out_dir = env::var("OUT_DIR").unwrap();
-	let out_dir = Path::new(&out_dir);
-	// TODO Rerun if files changed
-
-	let mut items = Vec::new();
-	extract_items(
-		&base_dir.join("src").join("lib.rs"),
-		&["EventContent", "NewEvent", "NewFfiInvoker"],
-		&mut items,
-	)?;
-
-	extract_items(
-		&base_dir.join("..").join("tsclientlib").join("src").join("events.rs"),
-		&["Event"],
-		&mut items,
-	)?;
-
-	extract_items(
-		&base_dir.join("..").join("tsclientlib").join("src").join("lib.rs"),
-		&["MessageTarget"],
-		&mut items,
-	)?;
-
-	extract_items(
-		&base_dir.join("..").join("utils").join("tsproto-commands").join("src").join("lib.rs"),
-		&["Invoker", "MaxClients", "TalkPowerRequest"],
-		&mut items,
-	)?;
-
-	extract_items(
-		&out_dir.join("..").join("..").join("events.rs"),
-		&["PropertyId", "PropertyValue"],
-		&mut items,
-	)?;
-
-	extract_items(
-		&out_dir.join("..").join("..").join("structs.rs"),
-		&["Channel", "ChatEntry", "Client",
-			"Connection", "ConnectionClientData", "ConnectionServerData", "File",
-			"OptionalChannelData", "OptionalClientData",
-			"OptionalServerData", "Server", "ServerGroup"],
-		&mut items,
-	)?;
-
-	// Generate Rust code
+pub fn get_rust_wrappers() -> HashMap<String, RustType> {
 	let wrappers = vec![("FutureHandle", "u64")];
 	let mut wrappers: HashMap<_, _> = wrappers.into_iter()
 		.map(|(a, b)| (a.into(), b.into()))
@@ -179,13 +134,10 @@ pub fn gen_events() -> Result<()> {
 		wrappers.insert(t.into(), typ);
 	}
 
-	let mut res = String::new();
-	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
-		res.push_str(&ty.to_string());
-	}
-	fs::write(&out_dir.join("ffigen.rs"), res.as_bytes())?;
+	wrappers
+}
 
-	// Generate C# code
+pub fn get_csharp_wrappers() -> HashMap<String, RustType> {
 	let wrappers = vec![("FutureHandle", "u64")];
 	let mut wrappers: HashMap<_, _> = wrappers.into_iter()
 		.map(|(a, b)| (a.into(), b.into()))
@@ -256,11 +208,77 @@ pub fn gen_events() -> Result<()> {
 		wrappers.insert(t.into(), typ);
 	}
 
+	wrappers
+}
+
+pub fn gen_events() -> Result<()> {
+	let base_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+	let base_dir = Path::new(&base_dir);
+	let out_dir = env::var("OUT_DIR").unwrap();
+	let out_dir = Path::new(&out_dir);
+	// This is automatically rerun if files change because tsclientlib is a
+	// build dependency.
+
+	let mut items = Vec::new();
+	extract_items(
+		&base_dir.join("src").join("lib.rs"),
+		&["EventContent", "NewEvent", "NewFfiInvoker"],
+		&mut items,
+	)?;
+
+	extract_items(
+		&base_dir.join("..").join("tsclientlib").join("src").join("events.rs"),
+		&["Event"],
+		&mut items,
+	)?;
+
+	extract_items(
+		&base_dir.join("..").join("tsclientlib").join("src").join("lib.rs"),
+		&["MessageTarget"],
+		&mut items,
+	)?;
+
+	extract_items(
+		&base_dir.join("..").join("utils").join("tsproto-commands").join("src").join("lib.rs"),
+		&["Invoker", "MaxClients", "TalkPowerRequest"],
+		&mut items,
+	)?;
+
+	extract_items(
+		&out_dir.join("..").join("..").join("events.rs"),
+		&["PropertyId", "PropertyValue"],
+		&mut items,
+	)?;
+
+	extract_items(
+		&out_dir.join("..").join("..").join("structs.rs"),
+		&["Channel", "ChatEntry", "Client",
+			"Connection", "ConnectionClientData", "ConnectionServerData", "File",
+			"OptionalChannelData", "OptionalClientData",
+			"OptionalServerData", "Server", "ServerGroup"],
+		&mut items,
+	)?;
+
+	// Generate Rust code
+	let wrappers = get_rust_wrappers();
+
+	let mut res = String::new();
+	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
+		res.push_str(&ty.to_string());
+	}
+	fs::write(&out_dir.join("ffigen.rs"), res.as_bytes())?;
+
+	// Generate C# code
+	let wrappers = get_csharp_wrappers();
+
 	let mut res = fs::read_to_string(&base_dir.join("header.cs"))?;
 	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
 		res.push_str(&CSharpGen(ty).to_string());
 	}
-	res.push_str("}\n");
+	res.push_str("}\n\n");
+
+	res.push_str(&format!("{}", CsEventDeclarations::default()));
+
 	fs::write(&base_dir.join("ffigen.cs"), res.as_bytes())?;
 
 	Ok(())

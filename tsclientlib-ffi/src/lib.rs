@@ -201,6 +201,7 @@ pub struct NewEvent {
 	content: EventContent,
 }
 
+// TODO Store New value for PropertyChanged event
 pub enum EventContent {
 	ConnectionAdded,
 	ConnectionRemoved,
@@ -351,7 +352,6 @@ trait ConnectionExt {
 		&self,
 		id: u64,
 		path: *const c_char,
-		name: *const c_char,
 	) -> &tsclientlib::data::File;
 }
 
@@ -432,7 +432,6 @@ impl ConnectionExt for tsclientlib::data::Connection {
 		&self,
 		_id: u64,
 		_path: *const c_char,
-		_name: *const c_char,
 	) -> &tsclientlib::data::File
 	{
 		unimplemented!("TODO Files are not implemented")
@@ -649,6 +648,7 @@ fn disconnect(con_id: ConnectionId) -> BoxFuture<()> {
 #[no_mangle]
 pub extern "C" fn tscl_connection_by_id(_: *const c_void, id_len: usize, id: *const u64, result: *mut FfiResult) {
 	let id = unsafe { std::slice::from_raw_parts(id, id_len) };
+	println!("Get {:?}", id);
 	if id.is_empty() {
 		unsafe {
 			(*result).content = format!("No connection id given").ffi() as u64;
@@ -792,7 +792,8 @@ pub unsafe extern "C" fn tscl_check_interface(name: *const c_char) -> usize {
 		"FfiPropertyId" => mem::size_of::<FfiPropertyId>(),
 		"FfiPropertyValue" => mem::size_of::<FfiPropertyValue>(),
 		"U16U64" => mem::size_of::<U16U64>(),
-		"U64StrStr" => mem::size_of::<U64StrStr>(),
+		"U64Str" => mem::size_of::<U64Str>(),
+		"FfiResult" => mem::size_of::<FfiResult>(),
 		_ => std::usize::MAX,
 	}
 }

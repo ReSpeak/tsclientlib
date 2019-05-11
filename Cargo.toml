@@ -5,7 +5,6 @@ members = [
 	"tsproto",
 	"utils/analyzer",
 	"utils/ffigen",
-	"utils/ffigen-derive",
 	#"utils/gst-plugin-ts3",
 	#"utils/tsproto-audio",
 	"utils/tsproto-commands",

@@ -78,7 +78,7 @@ impl Connection {
 				platform: packet.server_platform.into(),
 				version: packet.server_version.into(),
 				created: packet.server_created,
-				ip: packet.server_ip.iter().map(|s| s.to_string()).collect(),
+				ips: packet.server_ip.iter().map(|s| s.to_string()).collect(),
 				ask_for_privilegekey: packet.ask_for_privilegekey,
 				// TODO Or get from license struct for newer servers
 				license: packet.license_type.unwrap_or(LicenseType::NoLicense),
@@ -311,7 +311,6 @@ impl Connection {
 		&self,
 		_channel: ChannelId,
 		_path: &str,
-		_name: &str,
 	) -> Result<&File>
 	{
 		unimplemented!("Files are not yet implemented")

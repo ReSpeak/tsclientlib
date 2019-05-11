@@ -6,6 +6,7 @@ use std::path::Path;
 use tsproto_structs::book::Property;
 
 mod book_ffi;
+mod cs_events;
 mod events;
 mod ffigen;
 

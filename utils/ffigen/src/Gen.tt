@@ -80,7 +80,7 @@ fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 				r
 			} else {
 				unsafe {
-					(*result).content = format!("Cannot find {} in <#= t.name #>", key).ffi() as u64;
+					(*result).content = format!("Cannot find {} in <#= inner.name #>s", key).ffi() as u64;
 					(*result).typ = FfiResultType::Error;
 				}
 				return;

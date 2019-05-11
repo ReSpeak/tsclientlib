@@ -34,10 +34,11 @@ fn gen_struct_prop_getter(_fmt: &mut fmt::Formatter, name: &str, prefix: &str, s
 		match &c.content {
 			TypeContent::Struct(_) | TypeContent::Enum(_) => {
 				type_s = c.name.clone();
+				// TODO Check if None
 				getter = format!("\
 List<ulong> id = new List<ulong>(this.id);
 id.Add((ulong) {}PropertyId.{}{});
-return new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = id }};",
+return new {}(basePtr, baseFunction, id);",
 					name, prefix, n.to_camel_case(), c.name);
 			}
 			TypeContent::Builtin(BuiltinType::Nothing) => continue,
@@ -75,6 +76,8 @@ return new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = id }};",
 				};
 				let inner_name = inner.name.clone();
 
+				// TODO Check if None
+				// TODO Free the items if necessary
 				let convert_keys = format!("{{ unsafe {{
 		var lis = (ulong*) list;
 		var res = new List<{}>((int) length);
@@ -91,16 +94,13 @@ return new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = id }};",
 				getter = format!("\
 List<ulong> id = new List<ulong>(this.id);
 id.Add((ulong) {}PropertyId.{}{});
-return new {}
+return new {}(basePtr, baseFunction, id)
 {{
-	basePtr = basePtr,
-	baseFunction = baseFunction,
-	id = id,
 	containsObjects = true,
 	convertKey = val => {},
 	convertKeyArray = (list, length) => {},
 	createValue = (basePtr, baseFunction, i) =>
-		new {} {{ basePtr = basePtr, baseFunction = baseFunction, id = i }},
+		new {}(basePtr, baseFunction, i),
 }};", name, prefix, n.to_camel_case(), type_s, key.val_as_u64_csharp(), convert_keys, inner_name);
 			}
 			_ => {
@@ -187,11 +187,14 @@ internal static partial class NativeMethods
 	public static extern unsafe void tscl_free_<#= self.name.to_snake_case() #>(IntPtr self);
 }
 
-public partial class <#= self.name #>
+public partial class <#= self.name #> : INotifyPropertyChanged
 {
 	internal IntPtr basePtr;
 	internal NativeMethods.FfiFunction baseFunction;
 	internal List<ulong> id;
+
+	public event PropertyChangedEventHandler PropertyChanged;
+	private Action<string> onChangeListener;
 
 <# match &self.content {
 	TypeContent::Struct(c) => gen_struct_prop_getter(_fmt, &self.name, "", c)?,
@@ -219,4 +222,34 @@ public partial class <#= self.name #>
 	}
 	_ => panic!("Unsupported type content"),
 } #>
+
+	internal <#= self.name #>(IntPtr basePtr, NativeMethods.FfiFunction baseFunction, List<ulong> id)
+	{
+		this.basePtr = basePtr;
+		this.baseFunction = baseFunction;
+		this.id = id;
+
+		bool shouldListen;
+		unsafe
+		{
+			shouldListen = basePtr == IntPtr.Zero && baseFunction == NativeMethods.tscl_connection_by_id;
+		}
+		if (shouldListen)
+		{
+			onChangeListener = name => NotifyPropertyChanged(name);
+			Core.AddOnChangeListener(this.id.ToArray(), onChangeListener);
+		}
+	}
+
+	~<#= self.name #>()
+	{
+		if (onChangeListener != null)
+			Core.RemoveOnChangeListener(this.id.ToArray(), onChangeListener);
+	}
+
+	internal void NotifyPropertyChanged([CallerMemberName] String propertyName = "")
+	{
+		if (PropertyChanged != null)
+			PropertyChanged(this, new PropertyChangedEventArgs(propertyName));
+	}
 }

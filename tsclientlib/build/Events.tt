@@ -24,7 +24,7 @@ pub enum PropertyId {
 				ids.push_str(", ");
 			}
 			if m == "map" {
-				// The key is port of the id
+				// The key is part of the id
 				ids.push_str(p.key.as_ref().unwrap());
 			} else if m == "array" {
 				// Take the element itself as port of the id.
