@@ -18,7 +18,7 @@ namespace Qint.Wrapper
 		let prop_name = get_property_name(p);
 		let mut ids = String::new(); #>
 			case PropertyIdType.<#= struc.name #><#= prop_name #>:
-				return "<#= struc.name #><#= prop_name #>";
+				return "<#= prop_name #>";
 <# }
 } #>
 			default:

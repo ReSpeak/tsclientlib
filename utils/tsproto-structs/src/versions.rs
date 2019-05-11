@@ -49,7 +49,7 @@ impl Version {
 	pub fn get_enum_name(&self) -> String {
 		let mut res = String::new();
 		res.push_str(&self.platform.replace(' ', "_"));
-		let ver = self.version.split(' ').next().unwrap();
+		let ver = self.version.split(' ').next().unwrap().replace('-', "_");
 		for num in ver.split('.') {
 			if num != "?" {
 				res.push('_');
