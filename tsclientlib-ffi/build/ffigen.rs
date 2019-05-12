@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::{env, fs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use ffigen::{CSharpGen, RustType, Wrapper};
+use ffigen::{CSharpGen, RustGen, RustType, Wrapper};
 use syn::*;
 
 use crate::cs_events::CsEventDeclarations;
@@ -216,6 +216,7 @@ pub fn gen_events() -> Result<()> {
 	let base_dir = Path::new(&base_dir);
 	let out_dir = env::var("OUT_DIR").unwrap();
 	let out_dir = Path::new(&out_dir);
+	let cs_out_dir = env::var("TSCL_GEN_CS_DIR").ok().map(PathBuf::from);
 	// This is automatically rerun if files change because tsclientlib is a
 	// build dependency.
 
@@ -264,7 +265,7 @@ pub fn gen_events() -> Result<()> {
 
 	let mut res = String::new();
 	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
-		res.push_str(&ty.to_string());
+		res.push_str(&RustGen(ty).to_string());
 	}
 	fs::write(&out_dir.join("ffigen.rs"), res.as_bytes())?;
 
@@ -275,11 +276,14 @@ pub fn gen_events() -> Result<()> {
 	for ty in items.iter().map(|i| ffigen::convert_item(i, &wrappers)) {
 		res.push_str(&CSharpGen(ty).to_string());
 	}
-	res.push_str("}\n\n");
+	res.push_str("}");
 
-	res.push_str(&format!("{}", CsEventDeclarations::default()));
+	if let Some(dir) = &cs_out_dir {
+		fs::write(&dir.join("ffigen.cs"), res.as_bytes())?;
 
-	fs::write(&base_dir.join("ffigen.cs"), res.as_bytes())?;
+		let res = format!("{}", CsEventDeclarations::default());
+		fs::write(&dir.join("ffigen-events.cs"), res.as_bytes())?;
+	}
 
 	Ok(())
 }

@@ -3,11 +3,13 @@
 fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> fmt::Result {
 	for (i, (n, c)) in s.fields.iter().enumerate() {
 		let n = if n.is_empty() && s.fields.len() > 1 { i.to_string() } else { n.clone() };
-		// Add a length field for arrays
+		// Add a length field for arrays and None-check for options
 		if let TypeContent::Builtin(BuiltinType::Array(_))
 		| TypeContent::Builtin(BuiltinType::Map(_, _))
 		| TypeContent::Builtin(BuiltinType::Set(_)) = c.content { #>
 	<#= prefix #><#= n.to_camel_case() #>Len,
+		<# } else if let TypeContent::Builtin(BuiltinType::Option(_)) = c.content { #>
+	<#= prefix #><#= n.to_camel_case() #>Some,
 		<# } #>
 	<#= prefix #><#= n.to_camel_case() #>,
 	<# }
@@ -34,22 +36,32 @@ fn gen_struct_prop_getter(_fmt: &mut fmt::Formatter, name: &str, prefix: &str, s
 		match &c.content {
 			TypeContent::Struct(_) | TypeContent::Enum(_) => {
 				type_s = c.name.clone();
-				// TODO Check if None
-				getter = format!("\
+				// Check if None
+				let nullable_code = if nullable {
+					format!("\
+FfiResult result = GetProperty((ulong){}PropertyId.{}{}Some);
+if (result.content == 0)
+	return null;
+", name, prefix, n.to_camel_case())
+				} else {
+					"".into()
+				};
+
+				getter = format!("{}\
 List<ulong> id = new List<ulong>(this.id);
-id.Add((ulong) {}PropertyId.{}{});
+id.Add((ulong){}PropertyId.{}{});
 return new {}(basePtr, baseFunction, id);",
-					name, prefix, n.to_camel_case(), c.name);
+					nullable_code, name, prefix, n.to_camel_case(), c.name);
 			}
 			TypeContent::Builtin(BuiltinType::Nothing) => continue,
 			TypeContent::Builtin(BuiltinType::Primitive(primitive)) => {
 				if let Some(wrapper) = &c.wrapper {
 					type_s = wrapper.outer.clone();
 				} else {
-					type_s = primitive.get_name_csharp().into();
+					type_s = primitive.get_name().into();
 				}
 				is_primitive = true;
-				converter = Some(c.val_from_u64_csharp());
+				converter = Some(c.val_from_u64());
 				getter = "".into();
 			}
 			TypeContent::Builtin(BuiltinType::Str)
@@ -59,60 +71,36 @@ return new {}(basePtr, baseFunction, id);",
 				} else {
 					type_s = "string".into();
 				}
-				converter = Some(c.val_from_u64_csharp());
+				converter = Some(c.val_from_u64());
 				getter = "".into();
 			}
-			TypeContent::Builtin(BuiltinType::Array(inner)) => {
-				type_s = format!("List<{}>", inner.name);
-				// TODO Use fake list
-				type_s = "".into();
-				getter = "throw new NotImplementedException();".into();
-			}
 			TypeContent::Builtin(BuiltinType::Map(key, inner)) => {
-				let key_name = if let Some(wrapper) = &key.wrapper {
-					wrapper.outer.clone()
+				// Check if None
+				let nullable_code = if nullable {
+					format!("\
+FfiResult result = GetProperty((ulong){}PropertyId.{}{}Some);
+if (result.content == 0)
+	return null;
+", name, prefix, n.to_camel_case())
 				} else {
-					key.name.clone()
+					"".into()
 				};
-				let inner_name = inner.name.clone();
 
-				// TODO Check if None
-				// TODO Free the items if necessary
-				let convert_keys = format!("{{ unsafe {{
-		var lis = (ulong*) list;
-		var res = new List<{}>((int) length);
-		for (ulong i = 0; i < length; i++)
-		{{
-			var val = *(lis + i);
-			res.Add({});
-		}}
-		NativeMethods.tscl_free_u64s(lis, (UIntPtr) length);
-		return res;
-	}} }}", key_name, key.val_from_u64_csharp());
+				let key_name = if let Some(wrapper) = &key.wrapper {
+					&wrapper.outer
+				} else {
+					&key.name
+				};
+				type_s = format!("FakeDictionary<{}, {}>", key_name, inner.name);
 
-				type_s = format!("FakeDictionary<{}, {}>", key_name, inner_name);
-				getter = format!("\
-List<ulong> id = new List<ulong>(this.id);
-id.Add((ulong) {}PropertyId.{}{});
-return new {}(basePtr, baseFunction, id)
-{{
-	containsObjects = true,
-	convertKey = val => {},
-	convertKeyArray = (list, length) => {},
-	createValue = (basePtr, baseFunction, i) =>
-		new {}(basePtr, baseFunction, i),
-}};", name, prefix, n.to_camel_case(), type_s, key.val_as_u64_csharp(), convert_keys, inner_name);
+				getter = format!("{}\
+ulong idVal = (ulong){}PropertyId.{}{};
+{}", nullable_code, name, prefix, n.to_camel_case(), c.val_from_u64());
 			}
 			_ => {
 				// TODO
-				type_s = "".into();
-				getter = "throw new NotImplementedException();".into();
+				continue;
 			}
-		}
-
-		// TODO
-		if type_s.is_empty() {
-			continue;
 		}
 
 		if nullable && is_primitive {
@@ -120,27 +108,18 @@ return new {}(basePtr, baseFunction, id)
 		}
 
 		if let Some(c) = converter {
-			let nullable = if nullable {
+			let nullable_code = if nullable {
 				"
-if (result.typ == FfiResultType.None)
-	return null;"
+	if (result.typ == FfiResultType.None)
+		return null;"
 			} else {
 				""
 			};
 
 			getter = format!("\
-ulong[] id = new ulong[this.id.Count + 1];
-this.id.CopyTo(id, 0);
-id[this.id.Count] = (ulong) {}PropertyId.{}{};
-FfiResult result;
-unsafe {{ fixed (ulong* ids = id)
-{{
-	baseFunction(basePtr, (UIntPtr) id.Length, ids, out result);
-}} }}
-if (result.typ == FfiResultType.Error)
-	throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));{}
+FfiResult result = GetProperty((ulong){}PropertyId.{}{});{}
 ulong val = result.content;
-return {};", name, prefix, n.to_camel_case(), nullable, c);
+return {};", name, prefix, n.to_camel_case(), nullable_code, c);
 		} #>
 	public <#= type_s #> <#= prefix #><#= n.to_camel_case() #>
 	{
@@ -187,15 +166,8 @@ internal static partial class NativeMethods
 	public static extern unsafe void tscl_free_<#= self.name.to_snake_case() #>(IntPtr self);
 }
 
-public partial class <#= self.name #> : INotifyPropertyChanged
+public partial class <#= self.name #> : FfiBase
 {
-	internal IntPtr basePtr;
-	internal NativeMethods.FfiFunction baseFunction;
-	internal List<ulong> id;
-
-	public event PropertyChangedEventHandler PropertyChanged;
-	private Action<string> onChangeListener;
-
 <# match &self.content {
 	TypeContent::Struct(c) => gen_struct_prop_getter(_fmt, &self.name, "", c)?,
 	TypeContent::Enum(c) => { #>
@@ -203,17 +175,8 @@ public partial class <#= self.name #> : INotifyPropertyChanged
 	{
 		get
 		{
-			ulong[] id = new ulong[this.id.Count + 1];
-			this.id.CopyTo(id, 0);
-			id[this.id.Count] = (ulong) <#= self.name #>PropertyId.Type;
-			FfiResult result;
-			unsafe { fixed (ulong* ids = id)
-			{
-			baseFunction(basePtr, (UIntPtr) id.Length, ids, out result);
-			} }
-			if (result.typ == FfiResultType.Error)
-				throw new Exception(NativeMethods.StringFromNativeUtf8((IntPtr) result.content));
-			return (<#= self.name #>Type) result.content;
+			FfiResult result = GetProperty((ulong)<#= self.name #>PropertyId.Type);
+			return (<#= self.name #>Type)result.content;
 		}
 	}
 		<# for (n, s) in &c.possibilities {
@@ -224,31 +187,7 @@ public partial class <#= self.name #> : INotifyPropertyChanged
 } #>
 
 	internal <#= self.name #>(IntPtr basePtr, NativeMethods.FfiFunction baseFunction, List<ulong> id)
+		: base(basePtr, baseFunction, id)
 	{
-		this.basePtr = basePtr;
-		this.baseFunction = baseFunction;
-		this.id = id;
-
-		bool shouldListen;
-		unsafe
-		{
-			shouldListen = basePtr == IntPtr.Zero && baseFunction == NativeMethods.tscl_connection_by_id;
-		}
-		if (shouldListen)
-		{
-			onChangeListener = name => NotifyPropertyChanged(name);
-			Core.AddOnChangeListener(this.id.ToArray(), onChangeListener);
-		}
-	}
-
-	~<#= self.name #>()
-	{
-		if (onChangeListener != null)
-			Core.RemoveOnChangeListener(this.id.ToArray(), onChangeListener);
-	}
-
-	internal void NotifyPropertyChanged([CallerMemberName] String propertyName = "")
-	{
-		PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 	}
 }

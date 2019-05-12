@@ -2,12 +2,14 @@
 <#
 fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> fmt::Result {
 	for (i, (n, c)) in s.fields.iter().enumerate() {
-		// Add a length field for arrays
 		let n = if n.is_empty() { i.to_string() } else { n.clone() };
+		// Add a length field for arrays and None-check for options
 		if let TypeContent::Builtin(BuiltinType::Array(_))
 		| TypeContent::Builtin(BuiltinType::Map(_, _))
 		| TypeContent::Builtin(BuiltinType::Set(_)) = c.content { #>
 	<#= prefix #><#= n.to_camel_case() #>Len,
+		<# } else if let TypeContent::Builtin(BuiltinType::Option(_)) = c.content { #>
+	<#= prefix #><#= n.to_camel_case() #>Some,
 		<# } #>
 	<#= prefix #><#= n.to_camel_case() #>,
 	<# }
@@ -39,26 +41,18 @@ if let <#= name #>::<#= prefix #><#= matching #> = this {
 
 fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 	if t.name.is_empty() && !t.is_container() { #>
-			<# #><#= t.val_as_u64() #>
+			<# #><#= t.val_to_u64() #>
 	<# } else {
 		let inner_t;
 		if let Some((key, inner)) = t.container_of() {
 			inner_t = inner;
 
-			let iter = if let TypeContent::Builtin(BuiltinType::Map(_, _)) = t.content {
-				"keys"
-			} else {
-				"iter"
-			};
-
-			if let TypeContent::Builtin(BuiltinType::Map(_, _))
+			if let TypeContent::Builtin(BuiltinType::Array(_))
+			| TypeContent::Builtin(BuiltinType::Map(_, _))
 			| TypeContent::Builtin(BuiltinType::Set(_)) = t.content { #>
 			if id.len() == 1 {
-				// Get all keys
-				let res = val.<#= iter #>().map(|val| <#= key.val_as_u64() #>)
-					.collect::<Vec<_>>();
-				let len = res.len();
-				let res = Box::into_raw(res.into_boxed_slice());
+				let len = val.len();
+				let res = <#= t.val_to_u64() #>;
 				unsafe {
 					(*result).content = res as *mut c_void as u64;
 					(*result).length = len as u64;
@@ -115,10 +109,10 @@ fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 		<# }
 
 		if inner_t.name.is_empty() { #>
-			<# #><#= inner_t.val_as_u64() #>
+			<# #><#= inner_t.val_to_u64() #>
 		<# } else { #>
 			if id.is_empty() {
-				<# #><#= inner_t.val_as_u64() #>
+				<# #><#= inner_t.val_to_u64() #>
 			} else {
 				tscl_<#= inner_t.name.to_snake_case() #>_get(val as *const <#= inner_t.name #>,
 					id.len(), id.as_ptr(), result);
@@ -208,6 +202,9 @@ pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= sel
 		| TypeContent::Builtin(BuiltinType::Set(_)) = c.content { #>
 		<#= self.name #>PropertyId::<#= n.to_camel_case() #>Len =>
 			this.<#= n.to_snake_case() #>.len() as u64,
+		<# } else if let TypeContent::Builtin(BuiltinType::Option(_)) = c.content { #>
+		<#= self.name #>PropertyId::<#= n.to_camel_case() #>Some =>
+			this.<#= n.to_snake_case() #>.is_some() as u64,
 		<# } #>
 		<#= self.name #>PropertyId::<#= n.to_camel_case() #> => {
 			let val = &this.<#= n.to_snake_case() #>;
@@ -226,8 +223,13 @@ pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= sel
 				| TypeContent::Builtin(BuiltinType::Map(_, _))
 				| TypeContent::Builtin(BuiltinType::Set(_)) = c.content { #>
 		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #>Len => {
-			let val = if let <#= self.name #>::<#= prefix #>
-			this.<#= n.to_snake_case() #>.len() as u64
+			let val = <# get_enum_val(_fmt, &self.name, prefix, s, i, s_n, c)?; #>
+			val.len() as u64
+		}
+				<# } else if let TypeContent::Builtin(BuiltinType::Option(_)) = c.content { #>
+		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #>Some => {
+			let val = <# get_enum_val(_fmt, &self.name, prefix, s, i, s_n, c)?; #>
+			val.is_some() as u64
 		}
 				<# } #>
 		<#= self.name #>PropertyId::<#= prefix #><#= n.to_camel_case() #> => {

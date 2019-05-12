@@ -1,14 +1,16 @@
 use std::collections::HashMap;
-use std::fmt;
-use std::ops::Deref;
 
-use heck::*;
 use lazy_static::lazy_static;
 use syn::*;
 use syn::punctuated::Punctuated;
 use syn::token::Comma;
 use quote::ToTokens;
-use t4rust_derive::Template;
+
+mod csharp;
+mod rust;
+
+pub use csharp::CSharpGen;
+pub use rust::RustGen;
 
 lazy_static! {
 	static ref ARRAY_KEY: RustType = RustType {
@@ -16,6 +18,16 @@ lazy_static! {
 		wrapper: None,
 		content: TypeContent::Builtin(BuiltinType::Primitive(PrimitiveType::Int(false, None))),
 	};
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct RustType {
+	/// This has no meaning for builtin types.
+	/// For wrapped types, this is empty (like for builtin types) but the
+	/// wrapper is set.
+	pub name: String,
+	pub wrapper: Option<Wrapper>,
+	pub content: TypeContent,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -30,22 +42,6 @@ pub struct Wrapper {
 	///
 	/// If this is not set, `.into()` will be used.
 	pub from_u64: Option<String>,
-}
-#[derive(Template)]
-#[TemplatePath = "src/CSharp.tt"]
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct CSharpGen(pub RustType);
-
-#[derive(Template)]
-#[TemplatePath = "src/Gen.tt"]
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct RustType {
-	/// This has no meaning for builtin types.
-	/// For wrapped types, this is empty (like for builtin types) but the
-	/// wrapper is set.
-	pub name: String,
-	pub wrapper: Option<Wrapper>,
-	pub content: TypeContent,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -89,11 +85,6 @@ pub enum PrimitiveType {
 	/// `true` means signed, size is 8, 16, 32, 64, 128, None = isize/usize.
 	Int(bool, Option<u8>),
 	Float(u8),
-}
-
-impl Deref for CSharpGen {
-	type Target = RustType;
-	fn deref(&self) -> &Self::Target { &self.0 }
 }
 
 impl From<PrimitiveType> for RustType {
@@ -150,167 +141,11 @@ impl RustType {
 		}
 	}
 
-	pub fn val_as_u64(&self) -> String {
-		if !self.name.is_empty() {
-			return format!("val as *const {} as u64", self.name);
-		}
-		if let Some(w) = &self.wrapper {
-			if let Some(fun) = &w.to_u64 {
-				return fun.clone();
-			} else {
-				return format!("val.into()");
-			}
-		}
-
-		let t = if let TypeContent::Builtin(t) = &self.content {
-			t
+	pub fn is_primitive(&self) -> bool {
+		if let TypeContent::Builtin(BuiltinType::Primitive(_)) = self.content {
+			true
 		} else {
-			panic!("Structs and enums always must have names")
-		};
-		match t {
-			BuiltinType::Nothing => "0".into(),
-			BuiltinType::Primitive(p) => match p {
-				PrimitiveType::Bool | PrimitiveType::Char =>
-					"*val as u64".into(),
-				PrimitiveType::Int(s, _) => if *s {
-					"unsafe { std::mem::transmute::<i64, u64>(i64::from(*val)) }".into()
-				} else {
-					"u64::from(*val)".into()
-				}
-				PrimitiveType::Float(64) =>
-					"unsafe { std::mem::transmute::<f64, u64>(val) }".into(),
-				PrimitiveType::Float(_) =>
-					"unsafe { std::mem::transmute::<f64, u64>(f64::from(*val)) }".into(),
-			}
-			BuiltinType::String | BuiltinType::Str => "val.ffi() as u64".into(),
-			BuiltinType::Option(c) => format!("val.as_ref().map(|val| {})
-				.unwrap_or_else(|| {{ unsafe {{ (*result).typ = FfiResultType::None; }} 0 }})",
-				c.val_as_u64()),
-			// TODO Get map returns array of keys, get array all values
-			// TODO Support sets
-			BuiltinType::Array(_) | BuiltinType::Map(_, _) => {
-				panic!("Arrays and maps cannot be directly converted");
-			}
-			BuiltinType::Set(_) => unimplemented!(), // TODO
-		}
-	}
-
-	pub fn val_from_u64(&self) -> String {
-		if !self.name.is_empty() {
-			return format!("unsafe {{ &*(val as *const {}) }}", self.name);
-		}
-		if let Some(w) = &self.wrapper {
-			if let Some(fun) = &w.from_u64 {
-				return fun.clone();
-			} else {
-				return format!("val.into()");
-			}
-		}
-
-		let t = if let TypeContent::Builtin(t) = &self.content {
-			t
-		} else {
-			panic!("Structs and enums always must have names")
-		};
-		match t {
-			BuiltinType::Nothing => "()".into(),
-			BuiltinType::Primitive(p) => match p {
-				PrimitiveType::Bool => "val as bool".into(),
-				PrimitiveType::Char => "val as char".into(),
-				PrimitiveType::Int(s, None) => format!("val as {}size",
-					if *s { "i" } else { "u" }),
-				PrimitiveType::Int(s, Some(si)) => format!("val as {}{}",
-					if *s { "i" } else { "u" }, si),
-				PrimitiveType::Float(64) => "unsafe { std::mem::transmute<u64, f64>(val) }".into(),
-				PrimitiveType::Float(i) => format!("unsafe {{ std::mem::transmute<u64, f64>(val) }} as f{}", i),
-			}
-			BuiltinType::String | BuiltinType::Str => r#"match ffi_to_str(val as *const c_char) {
-	Ok(r) => r,
-	Err(_) => {
-		unsafe {
-			(*result).content = "Failed to read string".ffi() as u64;
-			(*result).typ = FfiResultType::Error;
-		}
-		return;
-	}
-}"#.into(),
-			BuiltinType::Option(_) => unimplemented!(), // TODO
-			BuiltinType::Array(_) | BuiltinType::Map(_, _) | BuiltinType::Set(_) => {
-				panic!("Arrays and maps cannot be converted");
-			}
-		}
-	}
-
-	pub fn val_as_u64_csharp(&self) -> String {
-		if !self.name.is_empty() {
-			return "val".into();
-		}
-		if let Some(w) = &self.wrapper {
-			// TODO
-			if let Some(fun) = &w.to_u64 {
-				return fun.clone();
-			} else {
-				return format!("val.into()");
-			}
-		}
-
-		let t = if let TypeContent::Builtin(t) = &self.content {
-			t
-		} else {
-			panic!("Structs and enums always must have names")
-		};
-		match t {
-			BuiltinType::Nothing => "0".into(),
-			BuiltinType::Primitive(p) => match p {
-				PrimitiveType::Bool | PrimitiveType::Char | PrimitiveType::Int(_, _) =>
-					"(ulong) val".into(),
-				PrimitiveType::Float(s) =>
-					format!("new FloatConverter {{ F{}Value = val }}.U64Value", s),
-			}
-			// TODO This needs using (Utf8String)
-			BuiltinType::String | BuiltinType::Str => "val.ffi() as u64".into(),
-			BuiltinType::Option(c) => c.val_as_u64(),
-			// TODO Get map returns array of keys, get array all values
-			// TODO Support sets
-			BuiltinType::Array(_) | BuiltinType::Map(_, _) => {
-				panic!("Arrays and maps cannot be directly converted");
-			}
-			BuiltinType::Set(_) => unimplemented!(), // TODO
-		}
-	}
-
-	pub fn val_from_u64_csharp(&self) -> String {
-		if !self.name.is_empty() {
-			return "val".into();
-		}
-		if let Some(w) = &self.wrapper {
-			// TODO
-			if let Some(fun) = &w.from_u64 {
-				return fun.clone();
-			} else {
-				return format!("val.into()");
-			}
-		}
-
-		let t = if let TypeContent::Builtin(t) = &self.content {
-			t
-		} else {
-			panic!("Structs and enums always must have names")
-		};
-		match t {
-			BuiltinType::Nothing => "0".into(),
-			BuiltinType::Primitive(p) => match p {
-				PrimitiveType::Bool => "val != 0".into(),
-				PrimitiveType::Char => "(char) val".into(),
-				PrimitiveType::Int(_, _) => format!("({}) val", p.get_name_csharp()),
-				PrimitiveType::Float(s) =>
-					format!("new FloatConverter {{ U64Value = val }}.F{}Value", s),
-			}
-			BuiltinType::String | BuiltinType::Str => "NativeMethods.StringFromNativeUtf8((IntPtr) val)".into(),
-			BuiltinType::Option(_) => unimplemented!(), // TODO
-			BuiltinType::Array(_) | BuiltinType::Map(_, _) | BuiltinType::Set(_) => {
-				panic!("Arrays and maps cannot be converted");
-			}
+			false
 		}
 	}
 
@@ -379,28 +214,6 @@ impl RustType {
 			name,
 			wrapper: None,
 			content,
-		}
-	}
-}
-
-impl PrimitiveType {
-	fn get_name_csharp(&self) -> &'static str {
-		match self {
-			PrimitiveType::Bool => "bool",
-			PrimitiveType::Char => "char",
-			PrimitiveType::Int(false, Some(8)) => "byte",
-			PrimitiveType::Int(false, Some(16)) => "ushort",
-			PrimitiveType::Int(false, Some(32)) => "uint",
-			PrimitiveType::Int(false, Some(64)) => "ulong",
-			PrimitiveType::Int(true, Some(8)) => "sbyte",
-			PrimitiveType::Int(true, Some(16)) => "short",
-			PrimitiveType::Int(true, Some(32)) => "int",
-			PrimitiveType::Int(true, Some(64)) => "long",
-			PrimitiveType::Int(false, None) => "UIntPtr",
-			PrimitiveType::Int(true, None) => "IntPtr",
-			PrimitiveType::Float(32) => "float",
-			PrimitiveType::Float(64) => "double",
-			_ => panic!("Unknown primitive type"),
 		}
 	}
 }

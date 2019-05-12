@@ -1,4 +1,6 @@
 <#@ template cleanws="true" #>
+using System;
+
 namespace Qint.Wrapper
 {
 	internal static partial class NativeMethods
@@ -31,7 +33,6 @@ namespace Qint.Wrapper
 			switch (id.Type)
 			{
 <# for struc in &self.structs {
-	// TODO Type and Property enums are missing
 	let mut ids = String::new();
 	let path = &self.1.get(&struc.name).unwrap_or_else(||
 		panic!("Paths do not contain {}", struc.name));
