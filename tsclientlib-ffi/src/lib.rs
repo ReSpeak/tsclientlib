@@ -1,4 +1,4 @@
-use std::ffi::{CStr, CString};
+use std::ffi::CString;
 use std::{fmt, mem};
 use std::os::raw::{c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -6,22 +6,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chashmap::CHashMap;
 use crossbeam::channel;
 use derive_more::From;
-use failure::{format_err, Fail, ResultExt};
+use failure::{Fail, ResultExt};
 use futures::future::Either;
 use futures::sync::oneshot;
 use futures::{future, Future};
 #[cfg(feature = "audio")]
 use futures::{Async, AsyncSink, Poll, Sink, StartSend};
 use lazy_static::lazy_static;
-use num::ToPrimitive;
+use num::{FromPrimitive, ToPrimitive};
 use num_derive::{FromPrimitive, ToPrimitive};
 #[cfg(feature = "audio")]
 use parking_lot::RwLock;
 use slog::{error, o, Drain, Logger};
-use tsclientlib::events::Event;
 use tsclientlib::{
-	ChannelId, ClientId, ConnectOptions, Connection, ServerGroupId,
+	ChannelId, ClientId, Invoker, MaxClients, MessageTarget, ConnectOptions,
+	ServerGroupId, TalkPowerRequest,
 };
+use tsclientlib::Connection as LibConnection;
+use tsclientlib::data::*;
+use tsclientlib::events::{Event, PropertyId, PropertyValue};
 #[cfg(feature = "audio")]
 use tsproto::packets::OutPacket;
 #[cfg(feature = "audio")]
@@ -30,13 +33,9 @@ use tsproto_audio::{audio_to_ts, ts_to_audio};
 type Result<T> = std::result::Result<T, Error>;
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send + 'static>;
 
-pub mod events;
 mod ffi_utils;
-pub mod special_types;
 
-use events::*;
 use ffi_utils::*;
-use special_types::*;
 
 // ConnectionId and FutureHandle are an u64, therefore we can expect that they
 // will never overflow.
@@ -82,7 +81,7 @@ lazy_static! {
 	static ref CONNECTING: CHashMap<ConnectionId, oneshot::Sender<()>> =
 		CHashMap::new();
 	/// All currently open connections.
-	static ref CONNECTIONS: CHashMap<ConnectionId, Connection> =
+	static ref CONNECTIONS: CHashMap<ConnectionId, LibConnection> =
 		CHashMap::new();
 
 	/// Transfer events to whoever is listening on the `next_event` method.
@@ -108,7 +107,7 @@ lazy_static! {
 		Mutex::new(None);
 }
 
-include!(concat!(env!("OUT_DIR"), "/book_ffi.rs"));
+include!(concat!(env!("OUT_DIR"), "/ffigen.rs"));
 
 // **** FFI types ****
 
@@ -136,66 +135,6 @@ pub struct ConnectionId(u64);
 #[repr(transparent)]
 pub struct FutureHandle(u64);
 
-#[repr(u8)]
-#[derive(Clone, Copy, Debug)]
-pub enum FfiEventType {
-	ConnectionAdded,
-	ConnectionRemoved,
-	FutureFinished,
-	Message,
-	PropertyAdded,
-	PropertyChanged,
-	PropertyRemoved,
-}
-
-#[repr(C)]
-pub struct FfiEvent {
-	typ: FfiEventType,
-	has_connection_id: bool,
-	connection: ConnectionId,
-	content: FfiEventUnion,
-}
-
-#[repr(C)]
-pub union FfiEventUnion {
-	empty: (),
-	future_result: FfiFutureResult,
-	message: EventMsg,
-	/// Property added or removed
-	property: FfiProperty,
-	/// Old and new property
-	property_changed: FfiPropertyChanged,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug)]
-pub struct FfiFutureResult {
-	/// Is `null` if the future was successful.
-	error: *mut c_char,
-	handle: FutureHandle,
-}
-unsafe impl Send for FfiFutureResult {}
-
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct EventMsg {
-	message: *mut c_char,
-	invoker: FfiInvoker,
-	target_type: FfiMessageTarget,
-}
-unsafe impl Send for EventMsg {}
-
-#[derive(Clone, Copy, Debug, FromPrimitive, ToPrimitive)]
-#[repr(u8)]
-pub enum FfiMessageTarget {
-	Server,
-	Channel,
-	Client,
-	Poke,
-}
-
-// **** Non FFI types ****
-
 pub struct NewEvent {
 	con_id: Option<ConnectionId>,
 	content: EventContent,
@@ -208,6 +147,8 @@ pub enum EventContent {
 	FutureFinished { handle: FutureHandle, error: Option<String> },
 	LibEvent(Event),
 }
+
+// **** Non FFI types ****
 
 pub struct NewFfiInvoker {
 	name: String,
@@ -254,19 +195,6 @@ impl From<FutureHandle> for u64 {
 impl fmt::Display for ConnectionId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "{:?}", self)
-	}
-}
-
-impl From<tsclientlib::MessageTarget> for FfiMessageTarget {
-	fn from(t: tsclientlib::MessageTarget) -> Self {
-		use tsclientlib::MessageTarget as MT;
-
-		match t {
-			MT::Server => FfiMessageTarget::Server,
-			MT::Channel => FfiMessageTarget::Channel,
-			MT::Client(_) => FfiMessageTarget::Client,
-			MT::Poke(_) => FfiMessageTarget::Poke,
-		}
 	}
 }
 
@@ -317,7 +245,7 @@ impl audio_to_ts::PacketSinkCreator<tsclientlib::Error> for CurrentAudioSink {
 }
 
 trait ConnectionExt {
-	fn get_connection(&self) -> &tsclientlib::data::Connection;
+	fn get_connection(&self) -> &Connection;
 
 	fn get_server(&self) -> &tsclientlib::data::Server;
 	fn get_connection_server_data(
@@ -356,8 +284,8 @@ trait ConnectionExt {
 }
 
 // TODO Don't unwrap
-impl ConnectionExt for tsclientlib::data::Connection {
-	fn get_connection(&self) -> &tsclientlib::data::Connection { self }
+impl ConnectionExt for Connection {
+	fn get_connection(&self) -> &Connection { self }
 
 	fn get_server(&self) -> &tsclientlib::data::Server { &self.server }
 	fn get_connection_server_data(
@@ -560,7 +488,7 @@ fn connect(
 					"error" => ?e),
 			}
 		}
-		Connection::new(options).map(move |con| {
+		LibConnection::new(options).map(move |con| {
 			// Or automatically try to reconnect (in tsclientlib)
 			con.add_on_disconnect(Box::new(move || {
 				remove_connection(con_id);
@@ -701,7 +629,8 @@ pub unsafe extern "C" fn tscl_next_event() -> *mut NewEvent {
 	Box::into_raw(Box::new(event))
 }
 
-/// Send a chat message.
+// TODO Send a chat messages
+/*/// Send a chat message.
 ///
 /// For the targets `Server` and `Channel`, the `target` parameter is ignored.
 #[no_mangle]
@@ -736,7 +665,7 @@ fn send_message(
 	} else {
 		Box::new(future::err(Error::ConnectionNotFound))
 	}
-}
+}*/
 
 #[no_mangle]
 pub unsafe extern "C" fn tscl_free_str(ptr: *mut c_char) {
@@ -775,24 +704,6 @@ pub unsafe extern "C" fn tscl_free_char_ptrs(
 pub unsafe extern "C" fn tscl_check_interface(name: *const c_char) -> usize {
 	let name = ffi_to_str(&name).unwrap();
 	match name {
-		"FfiEventType" => mem::size_of::<FfiEventType>(),
-		"FfiEvent" => mem::size_of::<FfiEvent>(),
-		"FfiEventUnion" => mem::size_of::<FfiEventUnion>(),
-		"FfiFutureResult" => mem::size_of::<FfiFutureResult>(),
-		"FfiEventMsg" => mem::size_of::<EventMsg>(),
-		"FfiMessageTarget" => mem::size_of::<FfiMessageTarget>(),
-		"FfiInvoker" => mem::size_of::<FfiInvoker>(),
-		"MaxClients" => mem::size_of::<FfiMaxClients>(),
-		"MaxClientsKind" => mem::size_of::<FfiMaxClientsKind>(),
-		"FfiTalkPowerRequest" => mem::size_of::<FfiTalkPowerRequest>(),
-		"ConnectionId" => mem::size_of::<ConnectionId>(),
-		"FutureResult" => mem::size_of::<FutureHandle>(),
-		"FfiProperty" => mem::size_of::<FfiProperty>(),
-		"FfiPropertyChanged" => mem::size_of::<FfiPropertyChanged>(),
-		"FfiPropertyId" => mem::size_of::<FfiPropertyId>(),
-		"FfiPropertyValue" => mem::size_of::<FfiPropertyValue>(),
-		"U16U64" => mem::size_of::<U16U64>(),
-		"U64Str" => mem::size_of::<U64Str>(),
 		"FfiResult" => mem::size_of::<FfiResult>(),
 		_ => std::usize::MAX,
 	}
