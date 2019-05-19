@@ -1,0 +1,84 @@
+<#@ template cleanws="true" #>
+<#
+for e in &self.0.decls {
+	// Update
+	if e.op == RuleOp::Update { #>
+impl <#= e.book_struct.name #>Mut<'_> {
+<# for r in &e.rules { #>
+	pub fn set_<#= r.from_name().to_snake_case() #>(&self<#=
+		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> impl Future<Item = (), Error = Error> {
+		self.connection.send_packet(self.inner.set_<#= r.from_name().to_snake_case() #>(<#=
+			get_all_arguments_use(e, None) #><#= get_arguments_use(r) #>))
+	}
+<# } #>
+}
+<#
+// Remove
+} else if e.op == RuleOp::Remove {
+	if e.rules.is_empty() {
+		let args = get_all_arguments(e, None);
+		let name_add = if !args.is_empty() {
+			format!("_{}", &args[2..args.find(':').unwrap()])
+		} else {
+			"".into()
+		}; #>
+impl <#= e.book_struct.name #>Mut<'_> {
+	pub fn remove<#= name_add #>(&self<#= args #>) -> impl Future<Item = (), Error = Error> {
+		self.connection.send_packet(self.inner.remove<#= name_add #>(<#=
+			get_all_arguments_use(e, None) #>))
+	}
+}
+<# } else {
+	// Remove the property
+	for r in &e.rules {
+		let name = r.from_name();
+		let name = if name.ends_with('s') {
+			&name[..name.len() - 1]
+		} else { &name };
+		let name = format!("{}{}", e.book_struct.name, name);
+
+		let args = get_all_arguments(e, Some(r));
+		// TODO The ServerGroup.remove(client) should be
+		// ServerGroup.remove_client(client),
+		// ServerGroup.remove() should remove the ServerGroup.
+
+		// TODO Not yet working
+		if name == "ClientServerGroup" {
+			continue;
+		}
+
+		let name_add = if !args.is_empty() {
+			format!("_{}", &args[2..args.find(':').unwrap()])
+		} else {
+			"".into()
+		}; #>
+
+impl <#= name #>Mut<'_> {
+	pub fn remove<#= name_add #>(&self<#= args #>) -> impl Future<Item = (), Error = Error> {
+		self.connection.send_packet(self.inner.remove<#= name_add #>(<#=
+			get_all_arguments_use(e, Some(r)) #>))
+	}
+}
+	<# }
+	}
+} else if e.op == RuleOp::Add {
+	for r in &e.rules {
+		let name = r.from_name();
+		let name = if name.ends_with('s') {
+			&name[..name.len() - 1]
+		} else {
+			name
+		};
+		#>
+
+impl <#= e.book_struct.name #>Mut<'_> {
+	pub fn add_<#= name.to_snake_case() #>(&self
+		<#= get_all_arguments(e, Some(r)) #>) -> impl Future<Item = (), Error = Error> {
+		self.connection.send_packet(self.inner.add_<#= name.to_snake_case() #>(<#=
+			get_all_arguments_use(e, Some(r)) #>))
+	}
+}
+	<# }
+} #>
+
+<# } #>

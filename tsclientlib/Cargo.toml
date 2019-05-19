@@ -49,6 +49,7 @@ tsproto-packets = { path = "../utils/tsproto-packets" }
 
 [build-dependencies]
 built = "0.3"
+heck = "0.3"
 t4rust-derive = "0.1.3"
 tsproto-structs = { path = "../utils/tsproto-structs", version = "=0.1.0" }
 

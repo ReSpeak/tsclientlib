@@ -8,6 +8,7 @@ use ts_bookkeeping::data::*;
 
 use crate::{Error, MessageTarget};
 
+include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
 
 impl ServerMut<'_> {
