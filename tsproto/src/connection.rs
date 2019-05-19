@@ -1,6 +1,6 @@
 use std::fmt;
 use std::net::SocketAddr;
-use std::u16;
+use std::{u16, u64};
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
@@ -9,14 +9,17 @@ use failure::format_err;
 use futures::sync::mpsc;
 use futures::{self, AsyncSink, Sink};
 use num_traits::ToPrimitive;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::de::{Unexpected, Visitor};
 use slog;
 use tsproto_packets::HexSlice;
 use tsproto_packets::packets::*;
 
-use crate::crypto::EccKeyPubP256;
+use crate::algorithms as algs;
+use crate::crypto::{EccKeyPubP256, EccKeyPrivP256};
 use crate::handler_data::{ConnectionValue, ConnectionValueWeak};
 use crate::resend::DefaultResender;
-use crate::Error;
+use crate::{Error, Result};
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -62,6 +65,17 @@ impl fmt::Debug for SharedIv {
 			),
 		}
 	}
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Identity {
+	#[serde(
+		serialize_with = "serialize_id_key",
+		deserialize_with = "deserialize_id_key"
+	)]
+	key: EccKeyPrivP256,
+	/// The `client_key_offest`/counter for hash cash.
+	counter: u64,
 }
 
 /// Data that has to be stored for a connection when it is connected.
@@ -218,6 +232,76 @@ impl Connection {
 			cur_next,
 			limit,
 		)
+	}
+}
+
+struct IdKeyVisitor;
+impl<'de> Visitor<'de> for IdKeyVisitor {
+	type Value = EccKeyPrivP256;
+
+	fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "a P256 private ecc key")
+	}
+
+	fn visit_str<E: serde::de::Error>(
+		self,
+		s: &str,
+	) -> std::result::Result<Self::Value, E>
+	{
+		EccKeyPrivP256::import_str(s).map_err(|_| {
+			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
+		})
+	}
+}
+
+fn serialize_id_key<S: Serializer>(
+	key: &EccKeyPrivP256,
+	s: S,
+) -> std::result::Result<S::Ok, S::Error>
+{
+	s.serialize_str(&base64::encode(&key.to_short()))
+}
+
+fn deserialize_id_key<'de, D: Deserializer<'de>>(
+	d: D,
+) -> std::result::Result<EccKeyPrivP256, D::Error> {
+	d.deserialize_str(IdKeyVisitor)
+}
+
+impl Identity {
+	#[inline]
+	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
+		Self { key, counter }
+	}
+
+	#[inline]
+	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
+	#[inline]
+	pub fn counter(&self) -> u64 { self.counter }
+
+	#[inline]
+	pub fn set_key(&mut self, key: EccKeyPrivP256) { self.key = key }
+	#[inline]
+	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
+
+	/// Compute the current hash cash level.
+	#[inline]
+	pub fn level(&self) -> Result<u8> {
+		let omega = self.key.to_ts()?;
+		Ok(algs::get_hash_cash_level(&omega, self.counter))
+	}
+
+	/// Compute a better hash cash level.
+	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
+		let omega = self.key.to_ts()?;
+		let mut offset = self.counter;
+		while offset < u64::MAX
+			&& algs::get_hash_cash_level(&omega, offset) < target
+		{
+			offset += 1;
+		}
+		self.counter = offset;
+		Ok(())
 	}
 }
 

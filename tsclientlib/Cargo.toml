@@ -30,6 +30,7 @@ failure = "0.1"
 futures = "0.1"
 #gstreamer = { version = "0.11", optional = true }
 itertools = "0.8"
+num-traits = "0.2"
 parking_lot = "0.7"
 rand = "0.6"
 reqwest = "0.9"
@@ -41,9 +42,10 @@ tokio = "0.1"
 tokio-threadpool = "0.1"
 trust-dns-proto = "0.7"
 trust-dns-resolver = "0.11"
+ts-bookkeeping = { path = "../utils/ts-bookkeeping" }
 tsproto = { path = "../tsproto", version = "=0.1.0" }
 #tsproto-audio = { path = "../utils/tsproto-audio", optional = true }
-tsproto-commands = { path = "../utils/tsproto-commands", version = "=0.1.0" }
+tsproto-packets = { path = "../utils/tsproto-packets" }
 
 [build-dependencies]
 built = "0.3"

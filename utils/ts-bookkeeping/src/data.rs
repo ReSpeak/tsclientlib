@@ -994,6 +994,30 @@ impl Connection {
 			),
 		}
 	}
+
+	pub fn disconnect<O: Into<Option<crate::DisconnectOptions>>>(
+		&self,
+		options: O,
+	) -> OutPacket
+	{
+		let options = options.into().unwrap_or_default();
+
+		let mut args = Vec::new();
+		if let Some(reason) = options.reason {
+			args.push(("reasonid", (reason as u8).to_string()));
+		}
+		if let Some(msg) = options.message {
+			args.push(("reasonmsg", msg));
+		}
+
+		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"clientdisconnect",
+			args.into_iter(),
+			std::iter::empty(),
+		)
+	}
 }
 
 impl Client {

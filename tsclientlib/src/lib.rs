@@ -28,27 +28,17 @@ use tsproto::algorithms as algs;
 use tsproto::connectionmanager::ConnectionManager;
 use tsproto::connectionmanager::Resender;
 use tsproto::handler_data::{ConnectionListener, ConnectionValue};
-use tsproto::packets::{
+use tsproto_packets::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
 use tsproto::{client, crypto, log};
 #[cfg(feature = "audio")]
 use tsproto_audio::ts_to_audio::AudioPacketHandler;
-use tsproto_commands::messages::s2c::{InMessage, InMessages};
+use ts_bookkeeping::messages::s2c::{InMessage, InMessages};
 
 use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
 
-macro_rules! copy_attrs {
-	($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
-		$to {
-			$($attr: $from.$attr.into(),)*
-			$($extra: $ex,)*
-		}
-	};
-}
-
-pub mod data;
-pub mod events;
+mod facades;
 mod packet_handler;
 pub mod resolver;
 
@@ -62,15 +52,7 @@ mod built_info {
 mod tests;
 
 // Reexports
-pub use tsproto_commands::errors::Error as TsError;
-pub use tsproto_commands::versions::Version;
-pub use tsproto_commands::{
-	messages, ChannelGroupId, ChannelId, ChannelType, ClientDbId, ClientId,
-	ClientType, Codec, CodecEncryptionMode, GroupNamingMode, GroupType,
-	HostBannerMode, HostMessageMode, IconHash, Invoker, InvokerRef,
-	LicenseType, MaxClients, Reason, ServerGroupId, TalkPowerRequest,
-	TextMessageTargetMode, Uid, UidRef,
-};
+pub use ts_bookkeeping::*;
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
@@ -82,13 +64,15 @@ pub enum Error {
 	#[fail(display = "{}", _0)]
 	Base64(#[cause] base64::DecodeError),
 	#[fail(display = "{}", _0)]
+	Bookkeeping(#[cause] ts_bookkeeping::Error),
+	#[fail(display = "{}", _0)]
 	Canceled(#[cause] futures::Canceled),
 	#[fail(display = "{}", _0)]
 	DnsProto(#[cause] trust_dns_proto::error::ProtoError),
 	#[fail(display = "{}", _0)]
 	Io(#[cause] std::io::Error),
 	#[fail(display = "{}", _0)]
-	ParseMessage(#[cause] tsproto_commands::messages::ParseError),
+	ParseMessage(#[cause] ts_bookkeeping::messages::ParseError),
 	#[fail(display = "{}", _0)]
 	Resolve(#[cause] trust_dns_resolver::error::ResolveError),
 	#[fail(display = "{}", _0)]
@@ -597,24 +581,7 @@ impl Connection {
 		options: O,
 	) -> BoxFuture<()>
 	{
-		let options = options.into().unwrap_or_default();
-
-		let mut args = Vec::new();
-		if let Some(reason) = options.reason {
-			args.push(("reasonid", (reason as u8).to_string()));
-		}
-		if let Some(msg) = options.message {
-			args.push(("reasonmsg", msg));
-		}
-
-		let packet =
-			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-				Direction::C2S,
-				PacketType::Command,
-				"clientdisconnect",
-				args.into_iter(),
-				std::iter::empty(),
-			);
+		let packet = self.inner.connection.read().disconnect(options);
 
 		let addr = if let Some(con) = self.inner.client_connection.upgrade() {
 			con.mutex.lock().1.address
@@ -753,34 +720,20 @@ impl<'a> ConnectionLock<'a> {
 		Self { connection, guard }
 	}
 
-	pub fn to_mut(&'a self) -> data::ConnectionMut<'a> {
-		data::ConnectionMut {
+	pub fn to_mut(&'a self) -> facades::ConnectionMut<'a> {
+		facades::ConnectionMut {
 			connection: self.connection.clone(),
 			inner: &*self.guard,
 		}
 	}
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ServerAddress {
-	SocketAddr(SocketAddr),
-	Other(String),
+trait ServerAddressExt {
+	fn resolve(&self, logger: &Logger) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>;
 }
 
-impl From<SocketAddr> for ServerAddress {
-	fn from(addr: SocketAddr) -> Self { ServerAddress::SocketAddr(addr) }
-}
-
-impl From<String> for ServerAddress {
-	fn from(addr: String) -> Self { ServerAddress::Other(addr) }
-}
-
-impl<'a> From<&'a str> for ServerAddress {
-	fn from(addr: &'a str) -> Self { ServerAddress::Other(addr.to_string()) }
-}
-
-impl ServerAddress {
-	pub fn resolve(
+impl ServerAddressExt for ServerAddress {
+	fn resolve(
 		&self,
 		logger: &Logger,
 	) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>
@@ -790,24 +743,6 @@ impl ServerAddress {
 			ServerAddress::Other(s) => Box::new(resolver::resolve(logger, s)),
 		}
 	}
-}
-
-impl fmt::Display for ServerAddress {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-			ServerAddress::SocketAddr(a) => fmt::Display::fmt(a, f),
-			ServerAddress::Other(a) => fmt::Display::fmt(a, f),
-		}
-	}
-}
-
-/// All possible targets to send messages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MessageTarget {
-	Server,
-	Channel,
-	Client(ClientId),
-	Poke(ClientId),
 }
 
 /// The configuration to create a new connection.
@@ -1086,50 +1021,5 @@ impl fmt::Debug for ConnectOptions {
 		write!(f, ", audio_packet_handler: {:?}", audio_packet_handler)?;
 		write!(f, " }}")?;
 		Ok(())
-	}
-}
-
-pub struct DisconnectOptions {
-	reason: Option<Reason>,
-	message: Option<String>,
-}
-
-impl Default for DisconnectOptions {
-	#[inline]
-	fn default() -> Self {
-		Self {
-			reason: None,
-			message: None,
-		}
-	}
-}
-
-impl DisconnectOptions {
-	#[inline]
-	pub fn new() -> Self { Self::default() }
-
-	/// Set the reason for leaving.
-	///
-	/// # Default
-	///
-	/// None
-	#[inline]
-	pub fn reason(mut self, reason: Reason) -> Self {
-		self.reason = Some(reason);
-		self
-	}
-
-	/// Set the leave message.
-	///
-	/// You also have to set the reason, otherwise the message will not be
-	/// displayed.
-	///
-	/// # Default
-	///
-	/// None
-	#[inline]
-	pub fn message<S: Into<String>>(mut self, message: S) -> Self {
-		self.message = Some(message.into());
-		self
 	}
 }

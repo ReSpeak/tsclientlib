@@ -8,7 +8,6 @@ members = [
 	#"utils/gst-plugin-ts3",
 	#"utils/tsproto-audio",
 	"utils/ts-bookkeeping",
-	"utils/tsproto-commands",
 	"utils/tsproto-packets",
 	"utils/tsproto-structs",
 	"utils/tsproto-types",
