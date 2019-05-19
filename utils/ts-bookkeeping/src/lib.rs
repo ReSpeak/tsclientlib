@@ -2,7 +2,7 @@ use std::fmt;
 use std::net::SocketAddr;
 
 use derive_more::From;
-use failure::{format_err, Fail, ResultExt};
+use failure::{Fail, ResultExt};
 
 pub mod data;
 pub mod events;
@@ -29,6 +29,8 @@ pub enum Error {
 	Ts(#[cause] TsError),
 	#[fail(display = "{}", _0)]
 	Utf8(#[cause] std::str::Utf8Error),
+	#[fail(display = "{}", _0)]
+	ParseInt(#[cause] std::num::ParseIntError),
 	#[fail(display = "{}", _0)]
 	ParseError(#[cause] messages::ParseError),
 	#[fail(display = "{}", _0)]

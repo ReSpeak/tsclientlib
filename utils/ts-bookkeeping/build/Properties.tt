@@ -11,8 +11,7 @@ impl Connection {
 	if !ids.is_empty() {
 		ids = format!("({})", ids);
 	} #>
-			PropertyId::<#= struc.name #><#= ids #> => PropertyValueRef::<#= struc.name #>(self.get_<#= to_snake_case(&struc.name) #><#= ids2 #><#
-				if struc.name != "Server" && struc.name != "Connection" { #>?<# } #>),
+			PropertyId::<#= struc.name #><#= ids #> => PropertyValueRef::<#= struc.name #>(self.get_<#= to_snake_case(&struc.name) #><#= ids2 #>?),
 <# } #>
 
 <# for struc in &self.0.structs {
@@ -35,11 +34,7 @@ impl Connection {
 		#>
 			PropertyId::<#= struc.name #><#= get_property_name(p) #><#= ids
 				#> => PropertyValueRef::<#= type_s #>(self.get_<#=
-				to_snake_case(&struc.name) #><#= ids2 #><#
-				if (!ids.is_empty() && struc.name != "Server" )
-				|| struc.name.starts_with("Optional")
-				|| (struc.name.starts_with("Connection")
-					&& struc.name != "Connection") { #>?<# } #>.<#=
+				to_snake_case(&struc.name) #><#= ids2 #>?.<#=
 				to_snake_case(&p.name) #><#
 				if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
 					#>.get(*m)

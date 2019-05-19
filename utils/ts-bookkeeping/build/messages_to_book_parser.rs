@@ -3,7 +3,7 @@ use std::ops::Deref;
 
 use t4rust_derive::Template;
 use tsproto_structs::book::{PropId, Property};
-use tsproto_structs::messages::{Field, Message};
+use tsproto_structs::messages::Field;
 use tsproto_structs::messages_to_book::*;
 use tsproto_structs::*;
 
@@ -34,27 +34,12 @@ fn get_id_args(event: &Event) -> String {
 		if is_ref_type(&f.get_rust_type("", false)) {
 			res.push('&');
 		}
-		res.push_str("cmd.");
-		res.push_str(&f.get_rust_name());
+		res.push_str(&format!("{{
+			let val = cmd.get_arg(\"{}\")?;
+			{}
+		}}", f.ts, generate_deserializer(f)));
 	}
 	res
-}
-
-fn get_notification_field(from: &Field, msg: &Message) -> String {
-	let rust_type = from.get_rust_type("", false);
-	if rust_type == "String" {
-		if from.is_opt(msg) {
-			format!("{}.map(|s| s.into())", from.get_rust_name())
-		} else {
-			format!("{}.into()", from.get_rust_name())
-		}
-	} else if rust_type.starts_with("Vec<") {
-		format!("{}.clone()", from.get_rust_name())
-	} else if rust_type == "Uid" {
-		format!("{}.clone().into()", from.get_rust_name())
-	} else {
-		from.get_rust_name().clone()
-	}
 }
 
 fn gen_return_match(to: &[&Property]) -> String {
@@ -68,15 +53,6 @@ fn gen_return_match(to: &[&Property]) -> String {
 				.collect::<Vec<_>>()
 				.join(", ")
 		)
-	}
-}
-
-fn try_result(s: &str) -> &'static str {
-	match s {
-		"get_mut_client" | "get_mut_channel" | "add_connection_client_data" => {
-			"?"
-		}
-		_ => "",
 	}
 }
 
@@ -94,10 +70,11 @@ fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
 		if !ids.is_empty() {
 			ids.push_str(", ");
 		}
-		if m == "map" {
-			ids.push_str(&format!("cmd.{}", from.get_rust_name()));
-		} else if m == "array" {
-			ids.push_str(&format!("cmd.{}", from.get_rust_name()));
+		if m == "map" || m == "array" {
+			ids.push_str(&format!("{{
+				let val = cmd.get_arg(\"{}\")?;
+				{}
+			}}", from.ts, generate_deserializer(from)));
 		} else {
 			panic!("Unknown modifier {}", m);
 		}
@@ -113,4 +90,14 @@ fn get_property(p: &Property, name: &str) -> String {
 	let type_s = get_rust_type(p);
 	let type_s = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
 	format!("PropertyValue::{}({})", type_s, name)
+}
+
+fn generate_deserializer(field: &Field) -> String {
+	let rust_type = field.get_rust_type("", false);
+	let res = if rust_type.starts_with("Vec<") {
+		crate::message_parser::vector_value_deserializer(field)
+	} else {
+		crate::message_parser::single_value_deserializer(field, &rust_type)
+	};
+	res.replace("*val", "val")
 }
