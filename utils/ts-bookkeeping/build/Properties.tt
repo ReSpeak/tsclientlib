@@ -11,13 +11,13 @@ impl Connection {
 	if !ids.is_empty() {
 		ids = format!("({})", ids);
 	} #>
-			PropertyId::<#= struc.name #><#= ids #> => PropertyValueRef::<#= struc.name #>(self.get_<#= to_snake_case(&struc.name) #><#= ids2 #>?),
+			PropertyId::<#= struc.name #><#= ids #> => PropertyValueRef::<#= struc.name #>(self.get_<#= struc.name.to_snake_case() #><#= ids2 #>?),
 <# } #>
 
 <# for struc in &self.0.structs {
 	for p in get_properties(&self.0.structs, struc) {
 		let type_s = get_rust_type(p);
-		let type_s = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
+		let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
 
 		let mut ids = get_ids(struc);
 		if p.modifier.is_some() {
@@ -34,8 +34,8 @@ impl Connection {
 		#>
 			PropertyId::<#= struc.name #><#= get_property_name(p) #><#= ids
 				#> => PropertyValueRef::<#= type_s #>(self.get_<#=
-				to_snake_case(&struc.name) #><#= ids2 #>?.<#=
-				to_snake_case(&p.name) #><#
+				struc.name.to_snake_case() #><#= ids2 #>?.<#=
+				p.name.to_snake_case() #><#
 				if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
 					#>.get(*m)
 				.ok_or_else(|| format_err!("<#= p.name #> {} not found", m))?<#

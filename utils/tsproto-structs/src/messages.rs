@@ -1,6 +1,8 @@
-use crate::*;
+use heck::*;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
+
+use crate::*;
 
 pub const DATA_STR: &str = include_str!(concat!(
 	env!("CARGO_MANIFEST_DIR"),
@@ -98,7 +100,7 @@ pub struct Message {
 }
 
 impl Field {
-	pub fn get_rust_name(&self) -> String { to_snake_case(&self.pretty) }
+	pub fn get_rust_name(&self) -> String { self.pretty.to_snake_case() }
 
 	/// Takes the attribute to look if it is optional
 	pub fn get_rust_type(&self, a: &str, is_ref: bool) -> String {

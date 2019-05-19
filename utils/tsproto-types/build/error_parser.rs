@@ -1,9 +1,10 @@
 use std::ops::Deref;
 
+use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::errors::*;
 use tsproto_structs::EnumValue;
-use tsproto_structs::{doc_comment, indent, to_pascal_case};
+use tsproto_structs::{doc_comment, indent};
 
 #[derive(Template)]
 #[TemplatePath = "build/ErrorDeclarations.tt"]

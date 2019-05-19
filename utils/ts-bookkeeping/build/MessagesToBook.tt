@@ -6,7 +6,7 @@
 fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
 	let mut ids = get_id_args(event);
 	let type_s = get_rust_type(p);
-	let type_s = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
+	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
 #>
 					// Added
 					for i in <#= new #>.iter().filter(|n| !old.contains(n)) {
@@ -50,7 +50,7 @@ impl Connection {
 				<# } #>
 
 			<# if event.op == RuleOp::Remove {
-				let function_name = format!("remove_{}", to_snake_case(&event.book_struct.name));
+				let function_name = format!("remove_{}", event.book_struct.name.to_snake_case());
 				let ids = get_id_args(event);
 				let ids2 = if !ids.is_empty() {
 					format!("({})", ids)
@@ -73,10 +73,10 @@ impl Connection {
 				for rule in &event.rules {
 					if let RuleKind::Function { name, to } = rule {
 						rule_count -= 1; #>
-				self.<#= to_snake_case(name) #>(<#= get_id_args(event) #>, &cmd, &mut events)?;
+				self.<#= name.to_snake_case() #>(<#= get_id_args(event) #>, &cmd, &mut events)?;
 					<# }
 				}
-				let function_name = format!("get_mut_{}", to_snake_case(&event.book_struct.name));
+				let function_name = format!("get_mut_{}", event.book_struct.name.to_snake_case());
 
 				// Only print if necessary
 				if rule_count > 0 { #>
@@ -100,7 +100,7 @@ impl Connection {
 									<# }
 									// to/book is optional, but from/message not
 									if to.opt && !from_opt { #>
-				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, Some(val));
+				let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(val));
 				events.push(Event::PropertyChanged {
 					id: <#= get_property_id(event, to, from) #>,
 					old: <#= get_property(to, "old") #>,
@@ -109,12 +109,12 @@ impl Connection {
 									<# } else if from_opt { #>
 				if let Some(val) = val {
 									<# if to.opt { #>
-					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, Some(val));
+					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(val));
 									<# } else { #>
-					let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
+					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, val);
 									<# } #>
 				<# if from.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
-					diff(_fmt, &format!("r.{}", to_snake_case(&to.name)), event, to, from)?;
+					diff(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
 				} else { #>
 					events.push(Event::PropertyChanged {
 						id: <#= get_property_id(event, to, from) #>,
@@ -126,7 +126,7 @@ impl Connection {
 									<# } else {
 										// Nothing is optional
 										#>
-				let old = mem::replace(&mut r.<#= to_snake_case(&to.name) #>, val);
+				let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, val);
 				events.push(Event::PropertyChanged {
 					id: <#= get_property_id(event, to, from) #>,
 					old: <#= get_property(to, "old") #>,
@@ -139,7 +139,7 @@ impl Connection {
 				let val = cmd.get("<#= from.ts #>").ok_or_else(|| format_err!(
 						"<#= from.ts #> not found but is not optional in <#= enum_name #>"))?;
 				let val = { <#= generate_deserializer(from) #> };
-				r.<#= to_snake_case(&to.name) #>.push(val);
+				r.<#= to.name.to_snake_case() #>.push(val);
 				events.push(Event::PropertyAdded {
 					id: <#= get_property_id(event, to, from) #>,
 					invoker: invoker.clone(),
@@ -150,8 +150,8 @@ impl Connection {
 						"<#= from.ts #> not found but is not optional in <#= enum_name #>"))?;
 				let val = { <#= generate_deserializer(from) #> };
 				// Find index and remove
-				let i = r.<#= to_snake_case(&to.name) #>.iter().position(&val);
-				let old = r.<#= to_snake_case(&to.name) #>.remove(i);
+				let i = r.<#= to.name.to_snake_case() #>.iter().position(&val);
+				let old = r.<#= to.name.to_snake_case() #>.remove(i);
 				events.push(Event::PropertyRemoved {
 					id: <#= get_property_id(event, to, from) #>,
 					old: <#= get_property(to, "old") #>,
@@ -169,7 +169,7 @@ impl Connection {
 				// First, call all functions
 				for fun in event.rules.iter().filter(|r| r.is_function()) {
 					if let RuleKind::Function { name, to } = fun { #>
-				let <#= gen_return_match(to) #> = self.<#= to_snake_case(name) #>(&cmd)?;
+				let <#= gen_return_match(to) #> = self.<#= name.to_snake_case() #>(&cmd)?;
 					<# }
 				} #>
 				let r = <#= event.book_struct.name #> {
@@ -192,7 +192,7 @@ impl Connection {
 					} else {
 						&v
 					}) { #>
-					<#= to_snake_case(&p.name) #>,
+					<#= p.name.to_snake_case() #>,
 				<# }
 				for p in event.rules.iter() {
 					if let RuleKind::Map { from, to, op } = p {
@@ -201,7 +201,7 @@ impl Connection {
 						}
 						// to is optional, but from not
 						let from_opt = from.is_opt(&event.msg); #>
-					<#= to_snake_case(&to.name) #>: {
+					<#= to.name.to_snake_case() #>: {
 						let val = if let Some(val) = cmd.get("<#= from.ts #>") {
 							Some({ <#= generate_deserializer(from) #> })
 						} else {
@@ -220,7 +220,7 @@ impl Connection {
 						<# } #>
 					<# }
 				}
-				let function_name = format!("add_{}", to_snake_case(&event.book_struct.name));
+				let function_name = format!("add_{}", event.book_struct.name.to_snake_case());
 				let ids = get_id_args(event);
 				let ids2 = if !ids.is_empty() {
 					format!("({})", ids)

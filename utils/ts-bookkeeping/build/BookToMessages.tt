@@ -23,7 +23,7 @@ for e in &self.0.decls {
 	if e.op == RuleOp::Update { #>
 impl <#= e.book_struct.name #> {
 <# for r in &e.rules { #>
-	pub fn set_<#= to_snake_case(r.from_name()) #>(&self<#=
+	pub fn set_<#= r.from_name().to_snake_case() #>(&self<#=
 		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> OutPacket {
 		let mut args = Vec::<(&'static str, Cow<str>)>::new();
 	<# for r in &e.ids { #>
@@ -119,7 +119,7 @@ impl <#= name #> {
 		#>
 
 impl <#= e.book_struct.name #> {
-	pub fn add_<#= to_snake_case(name) #>(&self
+	pub fn add_<#= name.to_snake_case() #>(&self
 		<#= get_all_arguments(e, Some(r)) #>) -> OutPacket {
 		let mut args = Vec::<(&'static str, Cow<str>)>::new();
 	<# for r in &e.ids { #>

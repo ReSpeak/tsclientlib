@@ -37,7 +37,7 @@ fn to_ref_type(s: &str) -> String {
 fn arg_to_value(r: &RuleKind, prefix: &str) -> String {
 	match r {
 		RuleKind::Map { to, .. } | RuleKind::ArgumentMap { to, .. } => {
-			let fr = to_snake_case(r.from_name());
+			let fr = r.from_name().to_snake_case();
 			if let RuleKind::Map { .. } = r {
 				format!("args.push((\"{}\", {{ {} }}));", to.ts, generate_serializer(to, &format!("{}{}", prefix, fr)))
 			} else {
@@ -57,16 +57,16 @@ fn get_arguments(r: &RuleKind) -> String {
 	match r {
 		RuleKind::Map { .. } | RuleKind::Function { .. } => format!(
 			"{}: {}",
-			to_snake_case(r.from_name()),
+			r.from_name().to_snake_case(),
 			to_ref_type(&r.from().get_rust_type())
 		),
 		RuleKind::ArgumentMap { from, to } => format!(
 			"{}: {}",
-			to_snake_case(from),
+			from.to_snake_case(),
 			convert_type(&to.type_s, true)
 		),
 		RuleKind::ArgumentFunction { from, type_s, .. } => {
-			format!("{}: {}", to_snake_case(from), convert_type(type_s, true))
+			format!("{}: {}", from.to_snake_case(), convert_type(type_s, true))
 		}
 	}
 }

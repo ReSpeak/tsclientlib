@@ -24,6 +24,7 @@ include = [
 [dependencies]
 base64 = "0.10"
 csv = "1"
+heck = "0.3"
 lazy_static = "1"
 regex = "1"
 serde = "1"

@@ -67,7 +67,7 @@ for struc in &self.structs {
 			continue;
 		}
 		#>
-	<#= to_pascal_case(&type_s.replace('<', "_").replace('>', "")) #>(<#= type_s #>),
+	<#= type_s.replace('<', "_").replace('>', "").to_camel_case() #>(<#= type_s #>),
 <# }
 } #>
 	#[doc(hidden)]
@@ -95,7 +95,7 @@ for struc in &self.structs {
 			continue;
 		}
 		#>
-	<#= to_pascal_case(&type_s.replace('<', "_").replace('>', "")) #>(<#= get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>),
+	<#= type_s.replace('<', "_").replace('>', "").to_camel_case() #>(<#= get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>),
 <# }
 } #>
 	#[doc(hidden)]
@@ -118,7 +118,7 @@ for struc in &self.structs {
 		if !done.insert(type_s.clone()) {
 			continue;
 		}
-		let name = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
+		let name = type_s.replace('<', "_").replace('>', "").to_camel_case();
 		let ref_name = get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>");
 		let has_ref = ref_name.contains('&');
 		if p.opt && p.type_s == "str" { #>

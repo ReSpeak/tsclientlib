@@ -2,10 +2,11 @@ use std::collections::HashSet;
 use std::default::Default;
 use std::ops::Deref;
 
+use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
-use tsproto_structs::{convert_type, to_pascal_case};
+use tsproto_structs::convert_type;
 
 #[derive(Template)]
 #[TemplatePath = "build/Events.tt"]

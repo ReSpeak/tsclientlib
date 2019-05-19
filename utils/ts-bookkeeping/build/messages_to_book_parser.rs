@@ -1,6 +1,7 @@
 use std::default::Default;
 use std::ops::Deref;
 
+use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::book::{PropId, Property};
 use tsproto_structs::messages::Field;
@@ -44,12 +45,12 @@ fn get_id_args(event: &Event) -> String {
 
 fn gen_return_match(to: &[&Property]) -> String {
 	if to.len() == 1 {
-		to_snake_case(&to[0].name)
+		to[0].name.to_snake_case()
 	} else {
 		format!(
 			"({})",
 			to.iter()
-				.map(|p| to_snake_case(&p.name))
+				.map(|p| p.name.to_snake_case())
 				.collect::<Vec<_>>()
 				.join(", ")
 		)
@@ -88,7 +89,7 @@ fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
 
 fn get_property(p: &Property, name: &str) -> String {
 	let type_s = get_rust_type(p);
-	let type_s = to_pascal_case(&type_s.replace('<', "_").replace('>', ""));
+	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
 	format!("PropertyValue::{}({})", type_s, name)
 }
 

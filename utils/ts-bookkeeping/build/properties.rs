@@ -1,10 +1,10 @@
 //! Access properties of a connection with the propertie structs from events.
 use std::default::Default;
 
+use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
-use tsproto_structs::*;
 
 use crate::events::{get_properties, get_property_name, get_rust_type};
 
