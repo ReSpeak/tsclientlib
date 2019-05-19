@@ -4,8 +4,8 @@ use std::num::ParseIntError;
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
 use failure::Fail;
-use tsproto::packets::{Direction, PacketType};
-use tsproto::commands::CanonicalCommand;
+use tsproto_packets::packets::{Direction, PacketType};
+use tsproto_packets::commands::CanonicalCommand;
 use tsproto_types::errors::Error;
 
 use crate::*;

@@ -11,10 +11,9 @@ base64 = "0.10"
 chrono = "0.4"
 derive_more = "0.14"
 failure = "0.1"
-nom = "4"
 num-traits = "0.2"
 num-derive = "0.2"
-tsproto = { path = "../../tsproto" }
+tsproto-packets = { path = "../tsproto-packets" }
 tsproto-types = { path = "../tsproto-types" }
 
 [build-dependencies]

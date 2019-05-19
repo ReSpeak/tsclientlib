@@ -4,7 +4,7 @@ use std::marker::PhantomData;
 use std::mem;
 
 use num_traits::{FromPrimitive, ToPrimitive};
-use tsproto::packets::{Direction, Flags, InCommand, OutCommand, OutPacket,
+use tsproto_packets::packets::{Direction, Flags, InCommand, OutCommand, OutPacket,
 	PacketType};
 
 /*

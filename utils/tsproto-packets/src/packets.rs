@@ -12,8 +12,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 
 use crate::commands::{CommandData, CommandDataIterator};
-use crate::utils::HexSlice;
-use crate::{Error, Result};
+use crate::{Error, HexSlice, Result};
 
 #[derive(
 	Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive, Hash,
@@ -940,13 +939,16 @@ impl OutCommand {
 	/// # Examples
 	/// Write a command from existing `CommandData`.
 	/// ```
-	/// let command = crate::commands::parse_command("").unwrap();
-	/// tsproto::packets::OutCommand::new(command.name,
+	/// let command = tsproto_packets::commands::parse_command("").unwrap();
+	/// tsproto_packets::packets::OutCommand::new(
+	///     tsproto_packets::packets::Direction::S2C,
+	///     tsproto_packets::packets::PacketType::Command,
+	///     command.name,
 	///     command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
 	///     command.list_args.iter().map(|i| {
 	///         i.iter().map(|(k, v)| (*k, v.as_ref()))
 	///     }),
-	/// )
+	/// );
 	/// ```
 	pub fn new<K1, V1, K2, V2, I1, I2, I3>(
 		dir: Direction,

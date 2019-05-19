@@ -29,7 +29,7 @@ use crate::handler_data::{
 	PacketHandler,
 };
 use crate::license::Licenses;
-use crate::packets::*;
+use tsproto_packets::packets::*;
 use crate::{Error, Result};
 
 pub type CM<PH> =

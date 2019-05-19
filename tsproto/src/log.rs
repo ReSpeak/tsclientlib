@@ -2,15 +2,15 @@ use std::fmt::Debug;
 use std::net::SocketAddr;
 
 use slog::{debug, error, o, Logger};
+use tsproto_packets::packets::{
+	Direction, InCommand, InPacket, InUdpPacket, OutPacket, PacketType,
+};
 
 use crate::connection::Connection;
 use crate::connectionmanager::ConnectionManager;
 use crate::handler_data::{
 	Data, InCommandObserver, InPacketObserver, InUdpPacketObserver,
 	OutPacketObserver, OutUdpPacketObserver,
-};
-use crate::packets::{
-	Direction, InCommand, InPacket, InUdpPacket, OutPacket, PacketType,
 };
 
 fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {

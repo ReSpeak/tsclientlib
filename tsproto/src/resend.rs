@@ -17,10 +17,10 @@ use futures::{self, Async, Future, Sink};
 use parking_lot::Mutex;
 use slog::{info, warn, Logger};
 use tokio::timer::Delay;
+use tsproto_packets::packets::*;
 
 use crate::connectionmanager::{ConnectionManager, Resender, ResenderEvent};
 use crate::handler_data::{ConnectionValue, ConnectionValueWeak, Data};
-use crate::packets::*;
 use crate::{Error, LockedHashMap};
 
 /// Identify a packet with type, generation id and packet id.

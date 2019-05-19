@@ -9,6 +9,7 @@ use futures::{future, Future, IntoFuture, Sink};
 use num_traits::ToPrimitive;
 use slog::{error, o, warn, Logger};
 use tokio;
+use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
 use crate::connection::Connection;
@@ -16,7 +17,6 @@ use crate::connectionmanager::{ConnectionManager, Resender};
 use crate::handler_data::{
 	ConnectionValue, Data, InCommandObserver, InPacketObserver,
 };
-use crate::packets::*;
 use crate::{
 	Error, LockedHashMap, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN,
 };

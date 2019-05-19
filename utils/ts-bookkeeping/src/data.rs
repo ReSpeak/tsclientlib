@@ -8,8 +8,8 @@ use std::u16;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use failure::format_err;
 use num_traits::FromPrimitive;
-use tsproto::commands::{CanonicalCommand, CommandData};
-use tsproto::packets::{Direction, InCommand, OutCommand, OutPacket, PacketType};
+use tsproto_packets::commands::{CanonicalCommand, CommandData};
+use tsproto_packets::packets::{Direction, InCommand, OutCommand, OutPacket, PacketType};
 use tsproto_types::*;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};

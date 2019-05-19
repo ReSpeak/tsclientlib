@@ -10,10 +10,11 @@ use futures::sync::mpsc;
 use futures::{self, AsyncSink, Sink};
 use num_traits::ToPrimitive;
 use slog;
+use tsproto_packets::HexSlice;
+use tsproto_packets::packets::*;
 
 use crate::crypto::EccKeyPubP256;
 use crate::handler_data::{ConnectionValue, ConnectionValueWeak};
-use crate::packets::*;
 use crate::resend::DefaultResender;
 use crate::Error;
 
@@ -52,12 +53,12 @@ impl fmt::Debug for SharedIv {
 			SharedIv::ProtocolOrig(ref data) => write!(
 				f,
 				"SharedIv::ProtocolOrig({:?})",
-				crate::utils::HexSlice(data)
+				HexSlice(data)
 			),
 			SharedIv::Protocol31(ref data) => write!(
 				f,
 				"SharedIv::Protocol32({:?})",
-				crate::utils::HexSlice(data)
+				HexSlice(data)
 			),
 		}
 	}
