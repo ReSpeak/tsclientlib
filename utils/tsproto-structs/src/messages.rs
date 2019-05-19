@@ -32,6 +32,17 @@ impl MessageDeclarations {
 			.unwrap_or_else(|| panic!("Cannot find message {}", name))
 	}
 
+	pub fn get_message_group(&self, msg: &Message) -> &MessageGroup {
+		for g in &self.msg_group {
+			for m in &g.msg {
+				if m as *const Message == msg as *const Message {
+					return g;
+				}
+			}
+		}
+		panic!("Cannot find message group for message");
+	}
+
 	pub fn get_field(&self, mut map: &str) -> &Field {
 		if map.ends_with('?') {
 			map = &map[..map.len() - 1];

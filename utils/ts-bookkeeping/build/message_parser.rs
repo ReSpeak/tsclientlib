@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::default::Default;
 
 use itertools::Itertools;
@@ -15,11 +16,26 @@ impl MessageDeclarations<'static> {
 	pub fn s2c() -> messages::MessageDeclarations {
 		let mut res = DATA.clone();
 		res.msg_group.retain(|g| g.default.s2c);
+
+		// All messages that do not occur in M2B declarations
+		let not_needed: HashSet<&str> = tsproto_structs::messages_to_book::DATA
+			.decls.iter().map(|e| e.msg.name.as_str()).collect();
+		for g in &mut res.msg_group {
+			g.msg.retain(|msg| !not_needed.contains(msg.name.as_str()))
+		}
 		res
 	}
+
 	pub fn c2s() -> messages::MessageDeclarations {
 		let mut res = DATA.clone();
 		res.msg_group.retain(|g| g.default.c2s);
+
+		// All messages that do not occur in B2M declarations
+		let not_needed: HashSet<&str> = tsproto_structs::book_to_messages::DATA
+			.decls.iter().map(|e| e.msg.name.as_str()).collect();
+		for g in &mut res.msg_group {
+			g.msg.retain(|msg| !not_needed.contains(msg.name.as_str()))
+		}
 		res
 	}
 }

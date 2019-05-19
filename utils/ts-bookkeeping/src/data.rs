@@ -1,22 +1,21 @@
-#![allow(dead_code)] // TODO
-
 use std::collections::HashMap;
 use std::borrow::Cow;
+use std::marker::PhantomData;
 use std::mem;
 use std::net::SocketAddr;
 use std::u16;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use failure::format_err;
-use num_traits::{FromPrimitive, ToPrimitive};
+use num_traits::FromPrimitive;
 use tsproto::commands::{CanonicalCommand, CommandData};
-use tsproto::packets::{Direction, OutCommand, OutPacket, PacketType};
+use tsproto::packets::{Direction, InCommand, OutCommand, OutPacket, PacketType};
 use tsproto_types::*;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
 use crate::{MessageTarget, Result};
-use crate::messages::{CommandExt, ParseError};
-use crate::messages::s2c::{InMessage, InMessages};
+use crate::messages::{c2s, s2c, CommandExt, ParseError};
+use crate::messages::s2c::{InMessage, InMessages, InMessageTrait};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
@@ -40,13 +39,6 @@ macro_rules! max_clients {
 	}};
 }
 
-// TODO
-/*macro_rules! cmd_get {
-	($cmd:ident, $arg:expr) => {{
-		cmd.get($arg).ok_or_else(|| format_err!("Did not find {}", $arg))?.into()
-	}}
-}*/
-
 macro_rules! copy_attrs {
 	($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
 		$to {
@@ -57,7 +49,7 @@ macro_rules! copy_attrs {
 }
 
 impl Connection {
-	pub(crate) fn new(server_uid: Uid, msg: &InMessage) -> Self {
+	pub fn new(server_uid: Uid, msg: &InMessage) -> Self {
 		let packet = if let InMessages::InitServer(p) = msg.msg() {
 			p
 		} else {
@@ -65,46 +57,6 @@ impl Connection {
 		};
 		let packet = packet.iter().next().unwrap();
 		Self {
-			// TODO
-			/*own_client: cmd_get!(cmd, "aclid"),
-			server: Server {
-				welcome_message: cmd_get!(cmd, "virtualserver_welcomemessage"),
-				max_clients: cmd_get!(cmd, "virtualserver_maxclients"),
-				codec_encryption_mode: cmd_get!(cmd, "virtualserver_codec_encryption_mode"),
-				hostmessage: cmd_get!(cmd, "virtualserver_hostmessage"),
-				hostmessage_mode: cmd_get!(cmd, "virtualserver_hostmessage_mode"),
-				default_server_group: cmd_get!(cmd, "virtualserver_default_server_group"),
-				default_channel_group: cmd_get!(cmd, "virtualserver_default_channel_group"),
-				hostbanner_url: cmd_get!(cmd, "virtualserver_hostbanner_url"),
-				hostbanner_gfx_url: cmd_get!(cmd, "virtualserver_hostbanner_gfx_url"),
-				hostbanner_gfx_interval: cmd_get!(cmd, "virtualserver_maxclients"),
-				priority_speaker_dimm_modificator: cmd_get!(cmd, "virtualserver_maxclients"),
-				virtual_server_id: cmd_get!(cmd, "virtualserver_maxclients"),
-				hostbutton_tooltip: cmd_get!(cmd, "virtualserver_maxclients"),
-				hostbutton_url: cmd_get!(cmd, "virtualserver_maxclients"),
-				hostbutton_gfx_url: cmd_get!(cmd, "virtualserver_maxclients"),
-				phonetic_name: cmd_get!(cmd, "virtualserver_maxclients"),
-				hostbanner_mode: cmd_get!(cmd, "virtualserver_maxclients"),
-				protocol_version: cmd_get!(cmd, "virtualserver_maxclients"),
-				icon_id: cmd_get!(cmd, "virtualserver_maxclients"),
-				temp_channel_default_delete_delay: cmd_get!(cmd, "virtualserver_maxclients"),
-
-				uid: server_uid,
-				name: cmd_get!(cmd, "name"),
-				platform: cmd_get!(cmd, "virtualserver_platform"),
-				version: cmd_get!(cmd, "virtualserver_version"),
-				created: cmd_get!(cmd, "virtualserver_created"),
-				ips: cmd_get!(cmd, "virtualserver_ip").split(",").map(|s| s.to_string()).collect(),
-				ask_for_privilegekey: cmd_get!(cmd, "virtualserver_ask_for_privilegekey"),
-				// TODO Or get from license struct for newer servers
-				license: cmd.get("lt").map(|v| v.into()).unwrap_or(LicenseType::NoLicense),
-
-				optional_data: None,
-				connection_data: None,
-				clients: HashMap::new(),
-				channels: HashMap::new(),
-				groups: HashMap::new(),
-			},*/
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;
 				welcome_message,
@@ -150,68 +102,64 @@ impl Connection {
 
 	pub fn handle_command(
 		&mut self,
-		cmd: &CommandData,
+		cmd: &InCommand,
 	) -> Result<Vec<Event>>
 	{
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
-		let (mut handled, mut events) = self.handle_command_generated(cmd)?;
+		let (mut handled, mut events) = self.handle_command_generated(&cmd.data())?;
 		// Handle special messages
-		match cmd.name {
-			"notifytextmessage" | "clientpoke" => {
-				// TODO
-				/*match msg.msg() {
-					InMessages::TextMessage(cmd) => {
-						for cmd in cmd.iter() {
-							let from = match cmd.target {
-								TextMessageTargetMode::Server => MessageTarget::Server,
-								TextMessageTargetMode::Channel => {
-									MessageTarget::Channel
-								}
-								TextMessageTargetMode::Client => {
-									MessageTarget::Client(cmd.invoker_id)
-								}
-								TextMessageTargetMode::Unknown => {
-									return Err(format_err!(
-										"Unknown TextMessageTargetMode"
-									)
-									.into())
-								}
-							};
-							events.push(Event::Message {
-								from,
-								invoker: Invoker {
-									name: cmd.invoker_name.into(),
-									id: cmd.invoker_id,
-									uid: cmd
-										.invoker_uid
-										.as_ref()
-										.map(|i| i.clone().into()),
-								},
-								message: cmd.message.to_string(),
-							});
-							handled = true;
+		match cmd.name() {
+			"notifytextmessage" => {
+				let cmd = s2c::InTextMessage::new(cmd)?;
+				for cmd in cmd.iter() {
+					let from = match cmd.target {
+						TextMessageTargetMode::Server => MessageTarget::Server,
+						TextMessageTargetMode::Channel => {
+							MessageTarget::Channel
 						}
-					}
-					InMessages::ClientPoke(cmd) => {
-						for cmd in cmd.iter() {
-							events.push(Event::Message {
-								from: MessageTarget::Poke(cmd.invoker_id),
-								invoker: Invoker {
-									name: cmd.invoker_name.into(),
-									id: cmd.invoker_id,
-									uid: cmd
-										.invoker_uid
-										.as_ref()
-										.map(|i| i.clone().into()),
-								},
-								message: cmd.message.to_string(),
-							});
-							handled = true;
+						TextMessageTargetMode::Client => {
+							MessageTarget::Client(cmd.invoker_id)
 						}
-					}
-					_ => unreachable!(),
-				}*/
+						TextMessageTargetMode::Unknown => {
+							return Err(format_err!(
+								"Unknown TextMessageTargetMode"
+							)
+							.into())
+						}
+					};
+					events.push(Event::Message {
+						from,
+						invoker: Invoker {
+							name: cmd.invoker_name.into(),
+							id: cmd.invoker_id,
+							uid: cmd
+								.invoker_uid
+								.as_ref()
+								.map(|i| i.clone().into()),
+						},
+						message: cmd.message.to_string(),
+					});
+					handled = true;
+				}
+			}
+			"clientpoke" => {
+				let cmd = s2c::InClientPoke::new(cmd)?;
+				for cmd in cmd.iter() {
+					events.push(Event::Message {
+						from: MessageTarget::Poke(cmd.invoker_id),
+						invoker: Invoker {
+							name: cmd.invoker_name.into(),
+							id: cmd.invoker_id,
+							uid: cmd
+								.invoker_uid
+								.as_ref()
+								.map(|i| i.clone().into()),
+						},
+						message: cmd.message.to_string(),
+					});
+					handled = true;
+				}
 			}
 			_ => {}
 		}
@@ -234,6 +182,7 @@ impl Connection {
 		if !handled {
 			// TODO
 			//debug!(logger, "Unknown message"; "message" => msg.command().name());
+			eprintln!("Unknown message {}", cmd.name());
 		}
 
 		Ok(events)
@@ -678,10 +627,15 @@ impl Client {
 }
 
 // TODO?
-struct ClientServerGroup;
-/*impl ClientServerGroupMut<'_> {
-	fn get_id(&self) -> ServerGroupId { *self.inner }
-}*/
+pub struct ClientServerGroup {
+	database_id: ClientDbId,
+	inner: ServerGroupId,
+}
+impl ClientServerGroup {
+	fn get_id(&self, args: &mut Vec<(&'static str, Cow<str>)>) {
+		args.push(("sgid", self.inner.0.to_string().into()));
+	}
+}
 
 /// The `ChannelOptions` are used to set initial properties of a new channel.
 ///
@@ -809,8 +763,8 @@ impl<'a> ChannelOptions<'a> {
 	}
 }
 
-// TODO Return packets instead
-/*impl ServerMut<'_> {
+impl Server {
+	// TODO Update docs
 	/// Create a new channel.
 	///
 	/// # Arguments
@@ -831,11 +785,10 @@ impl<'a> ChannelOptions<'a> {
 	/// ```
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
-	#[must_use = "futures do nothing unless polled"]
 	pub fn add_channel(
 		&self,
 		options: ChannelOptions,
-	) -> impl Future<Item = (), Error = Error>
+	) -> OutPacket
 	{
 		let inherits_max_family_clients =
 			options.max_family_clients.as_ref().and_then(|m| {
@@ -892,44 +845,43 @@ impl<'a> ChannelOptions<'a> {
 			}
 		});
 
-		self.connection.send_packet(
-			messages::c2s::OutChannelCreateMessage::new(
-				vec![messages::c2s::ChannelCreatePart {
-					name: options.name,
-					description: options.description,
-					parent_id: options.parent_id,
-					codec: options.codec,
-					codec_quality: options.codec_quality,
-					delete_delay: options.delete_delay,
-					has_password: if options.password.is_some() {
-						Some(true)
-					} else {
-						None
-					},
-					is_default: if options.is_default {
-						Some(true)
-					} else {
-						None
-					},
-					inherits_max_family_clients,
-					is_max_family_clients_unlimited,
-					is_max_clients_unlimited,
-					is_permanent,
-					is_semi_permanent,
-					max_family_clients,
-					max_clients,
-					is_unencrypted: options.is_unencrypted,
-					order: options.order,
-					password: options.password,
-					phonetic_name: options.phonetic_name,
-					topic: options.topic,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
-			),
+		c2s::OutChannelCreateMessage::new(
+			vec![c2s::ChannelCreatePart {
+				name: options.name,
+				description: options.description,
+				parent_id: options.parent_id,
+				codec: options.codec,
+				codec_quality: options.codec_quality,
+				delete_delay: options.delete_delay,
+				has_password: if options.password.is_some() {
+					Some(true)
+				} else {
+					None
+				},
+				is_default: if options.is_default {
+					Some(true)
+				} else {
+					None
+				},
+				inherits_max_family_clients,
+				is_max_family_clients_unlimited,
+				is_max_clients_unlimited,
+				is_permanent,
+				is_semi_permanent,
+				max_family_clients,
+				max_clients,
+				is_unencrypted: options.is_unencrypted,
+				order: options.order,
+				password: options.password,
+				phonetic_name: options.phonetic_name,
+				topic: options.topic,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
 		)
 	}
 
+	// TODO Update docs
 	/// Send a text message in the server chat.
 	///
 	/// # Examples
@@ -942,54 +894,49 @@ impl<'a> ChannelOptions<'a> {
 	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
 	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
 	pub fn send_textmessage(
 		&self,
 		message: &str,
-	) -> impl Future<Item = (), Error = Error>
+	) -> OutPacket
 	{
-		self.connection.send_packet(
-			messages::c2s::OutSendTextMessageMessage::new(
-				vec![messages::c2s::SendTextMessagePart {
-					target: TextMessageTargetMode::Server,
-					target_client_id: None,
-					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
-			),
+		c2s::OutSendTextMessageMessage::new(
+			vec![c2s::SendTextMessagePart {
+				target: TextMessageTargetMode::Server,
+				target_client_id: None,
+				message,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
 		)
 	}
 
+	// TODO Update docs
 	/// Subscribe or unsubscribe from all channels.
 	pub fn set_subscribed(
 		&self,
 		subscribed: bool,
-	) -> impl Future<Item = (), Error = Error>
+	) -> OutPacket
 	{
 		if subscribed {
-			self.connection.send_packet(
-				messages::c2s::OutChannelSubscribeAllMessage::new(
-					vec![messages::c2s::ChannelSubscribeAllPart {
-						phantom: PhantomData,
-					}]
-					.into_iter(),
-				),
+			c2s::OutChannelSubscribeAllMessage::new(
+				vec![c2s::ChannelSubscribeAllPart {
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			)
 		} else {
-			self.connection.send_packet(
-				messages::c2s::OutChannelUnsubscribeAllMessage::new(
-					vec![messages::c2s::ChannelUnsubscribeAllPart {
-						phantom: PhantomData,
-					}]
-					.into_iter(),
-				),
+			c2s::OutChannelUnsubscribeAllMessage::new(
+				vec![c2s::ChannelUnsubscribeAllPart {
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			)
 		}
 	}
 }
 
-impl ConnectionMut<'_> {
+impl Connection {
+	// TODO Update docs
 	/// A generic method to send a text message or poke a client.
 	///
 	/// # Examples
@@ -1003,62 +950,53 @@ impl ConnectionMut<'_> {
 	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
 	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
 	pub fn send_message(
 		&self,
 		target: MessageTarget,
 		message: &str,
-	) -> impl Future<Item = (), Error = Error>
+	) -> OutPacket
 	{
 		match target {
-			MessageTarget::Server => self.connection.send_packet(
-				messages::c2s::OutSendTextMessageMessage::new(
-					vec![messages::c2s::SendTextMessagePart {
-						target: TextMessageTargetMode::Server,
-						target_client_id: None,
-						message,
-						phantom: PhantomData,
-					}]
-					.into_iter(),
-				),
+			MessageTarget::Server => c2s::OutSendTextMessageMessage::new(
+				vec![c2s::SendTextMessagePart {
+					target: TextMessageTargetMode::Server,
+					target_client_id: None,
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			),
-			MessageTarget::Channel => self.connection.send_packet(
-				messages::c2s::OutSendTextMessageMessage::new(
-					vec![messages::c2s::SendTextMessagePart {
-						target: TextMessageTargetMode::Channel,
-						target_client_id: None,
-						message,
-						phantom: PhantomData,
-					}]
-					.into_iter(),
-				),
+			MessageTarget::Channel => c2s::OutSendTextMessageMessage::new(
+				vec![c2s::SendTextMessagePart {
+					target: TextMessageTargetMode::Channel,
+					target_client_id: None,
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			),
-			MessageTarget::Client(id) => self.connection.send_packet(
-				messages::c2s::OutSendTextMessageMessage::new(
-					vec![messages::c2s::SendTextMessagePart {
-						target: TextMessageTargetMode::Client,
-						target_client_id: Some(id),
-						message,
-						phantom: PhantomData,
-					}]
-					.into_iter(),
-				),
+			MessageTarget::Client(id) => c2s::OutSendTextMessageMessage::new(
+				vec![c2s::SendTextMessagePart {
+					target: TextMessageTargetMode::Client,
+					target_client_id: Some(id),
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			),
-			MessageTarget::Poke(id) => self.connection.send_packet(
-				messages::c2s::OutClientPokeRequestMessage::new(
-					vec![messages::c2s::ClientPokeRequestPart {
-						client_id: id,
-						message,
-						phantom: PhantomData,
-					}]
-					.into_iter(),
-				),
+			MessageTarget::Poke(id) => c2s::OutClientPokeRequestMessage::new(
+				vec![c2s::ClientPokeRequestPart {
+					client_id: id,
+					message,
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			),
 		}
 	}
 }
 
-impl ClientMut<'_> {
+impl Client {
 	// TODO
 	/*/// Move this client to another channel.
 	/// This function takes a password so it is possible to join protected
@@ -1077,6 +1015,7 @@ impl ClientMut<'_> {
 	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
 	/// ```*/
 
+	// TODO Update docs
 	/// Send a text message to this client.
 	///
 	/// # Examples
@@ -1092,25 +1031,23 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.send_textmessage("Hi me!")
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
 	pub fn send_textmessage(
 		&self,
 		message: &str,
-	) -> impl Future<Item = (), Error = Error>
+	) -> OutPacket
 	{
-		self.connection.send_packet(
-			messages::c2s::OutSendTextMessageMessage::new(
-				vec![messages::c2s::SendTextMessagePart {
-					target: TextMessageTargetMode::Client,
-					target_client_id: Some(self.inner.id),
-					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
-			),
+		c2s::OutSendTextMessageMessage::new(
+			vec![c2s::SendTextMessagePart {
+				target: TextMessageTargetMode::Client,
+				target_client_id: Some(self.id),
+				message,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
 		)
 	}
 
+	// TODO Update docs
 	/// Poke this client with a message.
 	///
 	/// # Examples
@@ -1125,17 +1062,14 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.poke("Hihihi")
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
-	pub fn poke(&self, message: &str) -> impl Future<Item = (), Error = Error> {
-		self.connection.send_packet(
-			messages::c2s::OutClientPokeRequestMessage::new(
-				vec![messages::c2s::ClientPokeRequestPart {
-					client_id: self.inner.id,
-					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
-			),
+	pub fn poke(&self, message: &str) -> OutPacket {
+		c2s::OutClientPokeRequestMessage::new(
+			vec![c2s::ClientPokeRequestPart {
+				client_id: self.id,
+				message,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
 		)
 	}
-}*/
+}

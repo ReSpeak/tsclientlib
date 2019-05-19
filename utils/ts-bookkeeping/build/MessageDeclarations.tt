@@ -100,7 +100,6 @@ pub struct <#= msg.name #>Part<'a> {
 	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a, true).replace("&", "&'a ").replace("UidRef", "UidRef<'a>") #>,
 <# }
 	/// Use the lifetime and make this struct non-exhaustive.
-	// TODO But how do we create the parts then?
 #>
 	pub phantom: PhantomData<&'a ()>,
 }
