@@ -156,7 +156,7 @@ pub fn generate_serializer(field: &Field, name: &str) -> String {
 	}
 }
 
-fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String {
+pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String {
 	match rust_type {
 		 "i8" |  "u8" |
 		"i16" | "u16" |
@@ -165,7 +165,9 @@ fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String
 		"f32" | "f64" => format!("Cow::Owned({}.to_string())", name),
 		"bool" => format!("Cow::Borrowed(if {} {{ \"1\" }} else {{ \"0\" }})", name),
 		"&str" => format!("Cow::Borrowed({})", name),
+		"String" => format!("Cow::Borrowed(&{})", name),
 		"UidRef" => format!("Cow::Borrowed({}.0)", name),
+		"Uid" => format!("Cow::Borrowed({}.0)", name),
 		"ClientId" |
 		"ClientDbId" |
 		"ChannelId" |
@@ -201,7 +203,7 @@ fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String
 	}
 }
 
-fn vector_value_serializer(field: &Field, inner_type: &str, name: &str) -> String {
+pub fn vector_value_serializer(field: &Field, inner_type: &str, name: &str) -> String {
 	format!("{{ let mut s = String::new();
 				for val in {} {{
 					if !s.is_empty() {{ s += \",\" }}

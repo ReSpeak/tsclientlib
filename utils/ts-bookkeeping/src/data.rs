@@ -1,6 +1,7 @@
 #![allow(dead_code)] // TODO
 
 use std::collections::HashMap;
+use std::borrow::Cow;
 use std::mem;
 use std::net::SocketAddr;
 use std::u16;
@@ -9,6 +10,7 @@ use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use failure::format_err;
 use num_traits::{FromPrimitive, ToPrimitive};
 use tsproto::commands::{CanonicalCommand, CommandData};
+use tsproto::packets::{Direction, OutCommand, OutPacket, PacketType};
 use tsproto_types::*;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
@@ -16,7 +18,7 @@ use crate::{MessageTarget, Result};
 use crate::messages::{CommandExt, ParseError};
 use crate::messages::s2c::{InMessage, InMessages};
 
-//include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
+include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/properties.rs"));
@@ -385,7 +387,6 @@ impl Connection {
 	fn return_false<T>(&self, _: T) -> Result<bool> { Ok(false) }
 	fn return_none<T, O>(&self, _: T) -> Result<Option<O>> { Ok(None) }
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
-	fn return_some<T>(&self, t: T) -> Result<Option<T>> { Ok(Some(t)) }
 
 	fn max_clients_cc_fun(
 		&self,
@@ -641,21 +642,43 @@ impl Connection {
 	// Book to messages
 	fn away_fun_b2m<'a>(
 		&self,
+		args: &mut Vec<(&'static str, Cow<'a, str>)>,
 		msg: Option<&'a str>,
-	) -> Result<(Option<bool>, Option<&'a str>)>
-	{
-		Ok((Some(msg.is_some()), msg))
+	) {
+		args.push(("client_away", "1".into()));
+		if let Some(msg) = msg {
+			args.push(("client_away_message", msg.into()));
+		}
+	}
+
+	fn name_b2m<'a>(&self, args: &mut Vec<(&'static str, Cow<'a, str>)>, name: &'a str) {
+		args.push(("client_nickname", name.into()));
+	}
+
+	fn input_muted_b2m(&self, args: &mut Vec<(&'static str, Cow<str>)>, muted: bool) {
+		args.push(("client_input_muted", if muted { "1" } else { "0" }.into()));
+	}
+
+	fn output_muted_b2m(&self, args: &mut Vec<(&'static str, Cow<str>)>, muted: bool) {
+		args.push(("client_output_muted", if muted { "1" } else { "0" }.into()));
 	}
 }
 
 impl Client {
 	// Book to messages
-	fn get_empty_string(&self) -> &str { "" }
-	fn identity<T>(&self, t: T) -> T { t }
-	fn return_some<T>(&self, t: T) -> Option<T> { Some(t) }
+	fn get_empty_string(&self, _: &mut Vec<(&'static str, Cow<str>)>) {}
+
+	fn password_b2m<'a>(&self, args: &mut Vec<(&'static str, Cow<'a, str>)>, password: &'a str) {
+		args.push(("cpw", password.into()));
+	}
+
+	fn channel_id_b2m(&self, args: &mut Vec<(&'static str, Cow<str>)>, channel: ChannelId) {
+		args.push(("cid", channel.0.to_string().into()));
+	}
 }
 
 // TODO?
+struct ClientServerGroup;
 /*impl ClientServerGroupMut<'_> {
 	fn get_id(&self) -> ServerGroupId { *self.inner }
 }*/

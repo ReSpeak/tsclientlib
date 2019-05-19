@@ -68,35 +68,25 @@ fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> Strin
 for e in &self.0.decls {
 	// Update
 	if e.op == RuleOp::Update { #>
-impl<'a> <#= e.book_struct.name #>Mut<'a> {
+impl <#= e.book_struct.name #> {
 <# for r in &e.rules { #>
-	// TODO Return packet instead of future
-	/*#[must_use = "futures do nothing unless polled"]
 	pub fn set_<#= to_snake_case(r.from_name()) #>(&self<#=
-		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> impl Future<Item=(), Error=Error> + Send + 'static {
-	<# call_functions(_fmt, e.ids.iter().chain(std::iter::once(r)), "self.inner.")?; #>
-		self.connection.send_packet(messages::c2s::Out<#= e.msg.name #>Message::new(
-			vec![messages::c2s::<#= e.msg.name #>Part {<# // Ids
-		for r in &e.ids { #>
-				<#= struct_assign(r, &e.msg, "self.inner.") #><#
-		}
+		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> OutPacket {
+		let mut args = Vec::<(&'static str, Cow<str>)>::new();
+	<# for r in &e.ids { #>
+		<# #><#= arg_to_value(r, "self.") #>
+	<# } #>
+		<# #><#= arg_to_value(r, "") #>
 
-		// Dynamic data
-		#>
-				<#= struct_assign(r, &e.msg, "") #><#
-
-		// Already assigned fields
-		let tos = get_tos(e, Some(r));
-
-		// All other fields
-		for field in e.msg.attributes.iter().filter_map(|a| {
-			let f = self.0.messages.get_field(a);
-			if tos.contains(&f) { None } else { Some(f) }
-		}) { #>
-				<#= field.get_rust_name() #>: None,<# } #>
-				phantom: PhantomData,
-			}].into_iter()))
-	}*/
+		OutCommand::new(
+			Direction::C2S,
+			// TODO Handle CommandLow
+			PacketType::Command,
+			"<#= e.msg.notify.as_ref().unwrap() #>",
+			args.into_iter(),
+			Vec::<std::iter::Empty<(&'static str, String)>>::new().into_iter(),
+		)
+	}
 
 <# } #>
 }
@@ -110,7 +100,7 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 		} else {
 			"".into()
 		}; #>
-impl<'a> <#= e.book_struct.name #>Mut<'a> {
+impl <#= e.book_struct.name #> {
 	// TODO Return packet instead of future
 	/*#[must_use = "futures do nothing unless polled"]
 	pub fn remove<#= name_add #>(&self<#= args #>) -> impl Future<Item=(), Error=Error> + Send + 'static {
@@ -153,7 +143,7 @@ impl<'a> <#= e.book_struct.name #>Mut<'a> {
 			"".into()
 		}; #>
 
-impl<'a> <#= name #>Mut<'a> {
+impl <#= name #> {
 	// TODO Return packet instead of future
 	/*#[must_use = "futures do nothing unless polled"]
 	pub fn remove<#= name_add #>(&self<#= args #>) -> impl Future<Item=(), Error=Error> + Send + 'static {
@@ -192,7 +182,7 @@ impl<'a> <#= name #>Mut<'a> {
 		};
 		#>
 
-impl<'a> <#= e.book_struct.name #>Mut<'a> {
+impl <#= e.book_struct.name #> {
 	// TODO Return packet instead of future
 	/*#[must_use = "futures do nothing unless polled"]
 	pub fn add_<#= to_snake_case(name) #>(&self
