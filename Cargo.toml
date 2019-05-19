@@ -7,6 +7,7 @@ members = [
 	"utils/ffigen",
 	#"utils/gst-plugin-ts3",
 	#"utils/tsproto-audio",
+	"utils/ts-bookkeeping",
 	"utils/tsproto-commands",
 	"utils/tsproto-structs",
 ]

@@ -12,9 +12,4 @@ struct manages a single connection to a server.
 [Qint]: https://github.com/ReSpeak/Qint
 
 ## License
-Licensed under either of
-
- * [Apache License, Version 2.0](LICENSE-APACHE)
- * [MIT license](LICENSE-MIT)
-
-at your option.
+Licensed under the [Open Software License](../LICENSE).

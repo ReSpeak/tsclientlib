@@ -11,9 +11,4 @@ The contained data may change with any version so the suggested way of
 referring to this crate is using `tsproto-commands = "=0.1.0"`.
 
 ## License
-Licensed under either of
-
- * [Apache License, Version 2.0](LICENSE-APACHE)
- * [MIT license](LICENSE-MIT)
-
-at your option.
+Licensed under the [Open Software License](../../LICENSE).

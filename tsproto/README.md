@@ -13,9 +13,4 @@ For more info on this project, take a look at the
 [tsclientlib README](https://github.com/ReSpeak/tsclientlib).
 
 ## License
-Licensed under either of
-
- * [Apache License, Version 2.0](LICENSE-APACHE)
- * [MIT license](LICENSE-MIT)
-
-at your option.
+Licensed under the [Open Software License](../LICENSE).

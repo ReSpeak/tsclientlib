@@ -15,9 +15,4 @@ A change in the way data are stored and made accessible is considered an API
 breaking change and will increment the minor version number.
 
 ## License
-Licensed under either of
-
- * [Apache License, Version 2.0](LICENSE-APACHE)
- * [MIT license](LICENSE-MIT)
-
-at your option.
+Licensed under the [Open Software License](../../LICENSE).
