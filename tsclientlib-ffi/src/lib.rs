@@ -108,6 +108,7 @@ lazy_static! {
 }
 
 include!(concat!(env!("OUT_DIR"), "/ffigen.rs"));
+include!(concat!(env!("OUT_DIR"), "/ffigen2.rs"));
 
 // **** FFI types ****
 

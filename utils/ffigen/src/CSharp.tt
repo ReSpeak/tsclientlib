@@ -163,7 +163,7 @@ internal static partial class NativeMethods
 	public static extern unsafe void tscl_<#= self.name.to_snake_case() #>_get(IntPtr self,
 		UIntPtr idLen, ulong* id, [Out] out FfiResult result);
 	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
-	public static extern unsafe void tscl_free_<#= self.name.to_snake_case() #>(IntPtr self);
+	public static extern unsafe void tscl_<#= self.name.to_snake_case() #>_free(IntPtr self);
 }
 
 public partial class <#= self.name #> : FfiBase

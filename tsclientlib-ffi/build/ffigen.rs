@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::{env, fs};
 use std::path::{Path, PathBuf};
 
-use ffigen::{CSharpGen, RustGen, RustType, Wrapper};
+use ffigen::*;
 use syn::*;
 
 use crate::cs_events::CsEventDeclarations;
@@ -25,6 +25,14 @@ fn extract_items(p: &Path, names: &[&str], items: &mut Vec<Item>) -> Result<()> 
 	}
 
 	Ok(())
+}
+
+fn extract_items2(p: &Path, names: &[&str], wrappers: &HashMap<String, RustType>) -> Result<Vec<RustType>> {
+	let file = fs::read_to_string(p)?;
+	let syntax = syn::parse_file(&file)?;
+	let mut res = ffigen::convert_file(&syntax, wrappers);
+	res.retain(|t| names.contains(&t.name.as_str()));
+	Ok(res)
 }
 
 pub fn get_rust_wrappers() -> HashMap<String, RustType> {
@@ -284,6 +292,31 @@ pub fn gen_events() -> Result<()> {
 		let res = format!("{}", CsEventDeclarations::default());
 		fs::write(&dir.join("ffigen-events.cs"), res.as_bytes())?;
 	}
+
+	let wrappers = get_rust_wrappers();
+	let names = &["Channel", "ChatEntry", "Client",
+		"Connection", "ConnectionClientData", "ConnectionServerData", "File",
+		"OptionalChannelData", "OptionalClientData",
+		"OptionalServerData", "Server", "ServerGroup",
+		"ChannelMut", "ClientMut", "ServerMut", "ConnectionMut"];
+
+	let file = fs::read_to_string(&out_dir.join("..").join("..")
+		.join("tsclientlib-b7db218433c96145").join("out").join("facades.rs"))?;
+	let file2 = fs::read_to_string(&out_dir.join("..").join("..")
+		.join("tsclientlib-b7db218433c96145").join("out").join("b2mdecls.rs"))?;
+	let syntax = syn::parse_file(&format!("{}{}", file, file2))?;
+	let mut types = ffigen::convert_file(&syntax, &wrappers);
+	types.retain(|t| names.contains(&t.name.as_str()));
+
+	let mut res = String::new();
+	for mut ty in types {
+		if let TypeContent::Struct(s) = &mut ty.content {
+			s.fields.clear();
+		}
+		res.push_str(&RustGen(ty).to_string());
+	}
+	fs::write(&out_dir.join("ffigen2.rs"), res.as_bytes())?;
+
 
 	Ok(())
 }

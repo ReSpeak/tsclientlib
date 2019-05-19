@@ -125,7 +125,7 @@ fn process_val(_fmt: &mut fmt::Formatter, t: &RustType) -> fmt::Result {
 }
 
 #>
-#[derive(FromPrimitive, ToPrimitive)]
+#[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive)]
 #[repr(u64)]
 pub enum <#= self.name #>PropertyId {
 <# match &self.content {
@@ -138,11 +138,20 @@ pub enum <#= self.name #>PropertyId {
 	}
 	_ => panic!("Unsupported type content"),
 } #>
+<#
+let fields = self.get_all_fields().into_iter().map(|(p, n, _)| format!("{}{}", p, n)).collect::<Vec<_>>();
+
+for setter in &self.setters {
+	let name = setter.field.to_camel_case();
+	if !fields.contains(&name) { #>
+	<#= name #>,
+<# }
+} #>
 }
 <#
 if let TypeContent::Enum(e) = &self.content { #>
 
-#[derive(FromPrimitive, ToPrimitive)]
+#[derive(Clone, Copy, Debug, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive)]
 #[repr(u64)]
 pub enum <#= self.name #>Type {
 	<# for (n, _) in &e.possibilities { #>
@@ -169,6 +178,7 @@ impl Into<<#= self.name #>Type> for &'_ <#= self.name #> {
 }
 <# } #>
 
+<# if self.has_content() { #>
 #[no_mangle]
 pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= self.name #>, id_len: usize,
 	id: *const u64, result: *mut FfiResult) {
@@ -241,12 +251,81 @@ pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_get(this: *const <#= sel
 	}
 	_ => panic!("Unsupported type content"),
 } #>
+		_ => {
+			unsafe {
+				(*result).content = format!("Cannot get property {:?} of <#= self.name #>", prop_id).ffi() as u64;
+				(*result).typ = FfiResultType::Error;
+			}
+			return;
+		}
 	};
 
 	unsafe { (*result).content = res; }
 }
 
+<# } #>
+<# if !self.setters.is_empty() { #>
 #[no_mangle]
-pub unsafe extern "C" fn tscl_free_<#= self.name.to_snake_case() #>(ptr: *mut <#= self.name #>) {
+pub extern "C" fn tscl_<#= self.name.to_snake_case() #>_set(this: *const <#= self.name #>, id_len: usize,
+	id: *const u64, result: *mut FfiResult) {
+	let id = unsafe { std::slice::from_raw_parts(id, id_len) };
+	let prop_id = if let Some(i) = id.first() {
+		if let Some(r) = <#= self.name #>PropertyId::from_u64(*i) {
+			r
+		} else {
+			unsafe {
+				(*result).content = format!("Invalid <#= self.name #>PropertyId {}", i).ffi() as u64;
+				(*result).typ = FfiResultType::Error;
+			}
+			return;
+		}
+	} else {
+		unsafe {
+			(*result).content = format!("Invalid id length {} in <#= self.name.to_snake_case() #>_set", id.len()).ffi() as u64;
+			(*result).typ = FfiResultType::Error;
+		}
+		return;
+	};
+	let this = unsafe { &*this };
+	unsafe { (*result).typ = FfiResultType::Ok; }
+
+	let res = match prop_id {
+<# for setter in &self.setters { #>
+		<#= self.name #>PropertyId::<#= setter.field.to_camel_case() #> =><#
+		if let Some((set, ret)) = &setter.setter { #> if id.len() == 2 {
+			let val = id[1];
+			let val = this.<#= set #>(<#= setter.typ.val_from_u64() #>);
+			<# #><#= ret.val_to_u64() #>
+		} else<# } #> {
+			<# if setter.typ.name.is_empty() { #>
+			unsafe {
+				(*result).content = "Too long id in <#= self.name.to_snake_case() #>_set".ffi() as u64;
+				(*result).typ = FfiResultType::Error;
+			}
+			return;
+			<# } else { #>
+			let id = &id[1..];
+			let val = this.get_<#= setter.field.to_snake_case() #>();
+			tscl_<#= setter.typ.name.to_snake_case() #>_set(val as *const <#= setter.typ.name #>,
+				id.len(), id.as_ptr(), result);
+			return;
+			<# } #>
+		}
+<# } #>
+		_ => {
+			unsafe {
+				(*result).content = format!("Cannot set property {:?} of <#= self.name #>", prop_id).ffi() as u64;
+				(*result).typ = FfiResultType::Error;
+			}
+			return;
+		}
+	};
+
+	unsafe { (*result).content = res; }
+}
+
+<# } #>
+#[no_mangle]
+pub unsafe extern "C" fn tscl_<#= self.name.to_snake_case() #>_free(ptr: *mut <#= self.name #>) {
 	Box::from_raw(ptr);
 }

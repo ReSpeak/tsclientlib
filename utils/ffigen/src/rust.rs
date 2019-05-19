@@ -58,25 +58,19 @@ impl RustTypeRustExt for RustType {
 			BuiltinType::Option(c) => format!("val.as_ref().map(|val| {})
 				.unwrap_or_else(|| {{ unsafe {{ (*result).typ = FfiResultType::None; }} 0 }})",
 				c.val_to_u64()),
-			BuiltinType::Array(inner) => {
-				// Get all items
-				format!("
-			Box::into_raw(val.iter().map(|val| {})
-				.collect::<Vec<_>>().into_boxed_slice())",
-					inner.val_to_u64())
-			}
-			BuiltinType::Map(key, _) | BuiltinType::Set(key) => {
+			BuiltinType::Array(inner)
+			| BuiltinType::Map(inner, _)
+			| BuiltinType::Set(inner) => {
 				let iter = if let BuiltinType::Map(_, _) = t {
 					"keys"
 				} else {
 					"iter"
 				};
 
-				// Get all keys
-				format!("
-			Box::into_raw(val.{}().map(|val| {})
-				.collect::<Vec<_>>().into_boxed_slice())",
-					iter, key.val_to_u64())
+				// Get all items
+				format!("Box::into_raw(val.{}().map(|val| {})
+					.collect::<Vec<_>>().into_boxed_slice())",
+					iter, inner.val_to_u64())
 			}
 		}
 	}
@@ -101,7 +95,7 @@ impl RustTypeRustExt for RustType {
 		match t {
 			BuiltinType::Nothing => "()".into(),
 			BuiltinType::Primitive(p) => match p {
-				PrimitiveType::Bool => "val as bool".into(),
+				PrimitiveType::Bool => "val != 0".into(),
 				PrimitiveType::Char => "val as char".into(),
 				PrimitiveType::Int(s, None) => format!("val as {}size",
 					if *s { "i" } else { "u" }),
@@ -110,7 +104,7 @@ impl RustTypeRustExt for RustType {
 				PrimitiveType::Float(64) => "unsafe { std::mem::transmute<u64, f64>(val) }".into(),
 				PrimitiveType::Float(i) => format!("unsafe {{ std::mem::transmute<u64, f64>(val) }} as f{}", i),
 			}
-			BuiltinType::String | BuiltinType::Str => r#"match ffi_to_str(val as *const c_char) {
+			BuiltinType::String | BuiltinType::Str => r#"match ffi_to_str_unsafe(val as *const c_char) {
 	Ok(r) => r,
 	Err(_) => {
 		unsafe {
@@ -120,8 +114,15 @@ impl RustTypeRustExt for RustType {
 		return;
 	}
 }"#.into(),
-			BuiltinType::Option(_)
-			| BuiltinType::Array(_)
+			BuiltinType::Option(inner) => {
+				match &inner.content {
+					TypeContent::Builtin(BuiltinType::String)
+					| TypeContent::Builtin(BuiltinType::Str) =>
+						format!("if val == 0 {{ None }} else {{ Some({}) }}", inner.val_from_u64()),
+					_ => panic!("Unsupported option content"),
+				}
+			}
+			BuiltinType::Array(_)
 			| BuiltinType::Map(_, _)
 			| BuiltinType::Set(_) => {
 				panic!("Arrays and maps cannot be converted");

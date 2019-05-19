@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use heck::*;
 use lazy_static::lazy_static;
 use syn::*;
 use syn::punctuated::Punctuated;
@@ -17,6 +18,8 @@ lazy_static! {
 		name: String::new(),
 		wrapper: None,
 		content: TypeContent::Builtin(BuiltinType::Primitive(PrimitiveType::Int(false, None))),
+		setters: Default::default(),
+		methods: Default::default(),
 	};
 }
 
@@ -28,6 +31,8 @@ pub struct RustType {
 	pub name: String,
 	pub wrapper: Option<Wrapper>,
 	pub content: TypeContent,
+	pub setters: Vec<Setter>,
+	pub methods: Vec<Method>,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -42,6 +47,37 @@ pub struct Wrapper {
 	///
 	/// If this is not set, `.into()` will be used.
 	pub from_u64: Option<String>,
+}
+
+/// A setter always calls a method.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Setter {
+	/// Type of the field which gets set.
+	typ: RustType,
+	/// Name of the field which gets set.
+	field: String,
+	/// If this contains the name of a method, this property can be directly set,
+	/// else this property is a struct and its fields can be set.
+	///
+	/// The first part is the name of the setter, the second part is the return
+	/// type.
+	setter: Option<(String, RustType)>,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Argument {
+	/// Type of the argument
+	typ: RustType,
+	/// Name of the argument
+	field: String,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Method {
+	args: Vec<Argument>,
+	ret_type: RustType,
+	/// Name of the method
+	name: String,
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -99,6 +135,8 @@ impl From<BuiltinType> for RustType {
 			name: String::new(),
 			wrapper: None,
 			content: TypeContent::Builtin(t),
+			setters: Default::default(),
+			methods: Default::default(),
 		}
 	}
 }
@@ -146,6 +184,32 @@ impl RustType {
 			true
 		} else {
 			false
+		}
+	}
+
+	pub fn has_content(&self) -> bool {
+		match &self.content {
+			TypeContent::Struct(s) => !s.fields.is_empty(),
+			TypeContent::Enum(s) => !s.possibilities.is_empty(),
+			_ => false,
+		}
+	}
+
+	/// For every field in the struct or enum returns
+	/// `(prefix, name, type)`.
+	///
+	/// The prefix is empty for structs or the enum possibility name for enums.
+	pub fn get_all_fields(&self) -> Vec<(&str, &str, &RustType)> {
+		match &self.content {
+			TypeContent::Struct(s) => {
+				s.fields.iter().map(|(n, t)| ("", n.as_str(), t)).collect()
+			}
+			TypeContent::Enum(s) => {
+				s.possibilities.iter().map(|(p, s)| {
+					s.fields.iter().map(move |(n, t)| (p.as_str(), n.as_str(), t))
+				}).flatten().collect()
+			}
+			_ => Vec::new(),
 		}
 	}
 
@@ -214,6 +278,8 @@ impl RustType {
 			name,
 			wrapper: None,
 			content,
+			setters: Default::default(),
+			methods: Default::default(),
 		}
 	}
 }
@@ -241,6 +307,8 @@ pub fn convert_struct(name: &Ident, fields: &Fields, wrappers: &HashMap<String, 
 		name: name.to_string(),
 		wrapper: None,
 		content: TypeContent::Struct(fields_to_struct(fields, wrappers)),
+		setters: Default::default(),
+		methods: Default::default(),
 	}
 }
 
@@ -254,14 +322,8 @@ pub fn convert_enum(name: &Ident, variants: &Punctuated<Variant, Comma>, wrapper
 		name: name.to_string(),
 		wrapper: None,
 		content: TypeContent::Enum(en),
-	}
-}
-
-pub fn convert_derive(input: &DeriveInput, wrappers: &HashMap<String, RustType>) -> RustType {
-	match &input.data {
-		Data::Struct(s) => convert_struct(&input.ident, &s.fields, wrappers),
-		Data::Enum(e) => convert_enum(&input.ident, &e.variants, wrappers),
-		_ => panic!("Only structs or enums are supported"),
+		setters: Default::default(),
+		methods: Default::default(),
 	}
 }
 
@@ -271,6 +333,194 @@ pub fn convert_item(input: &Item, wrappers: &HashMap<String, RustType>) -> RustT
 		Item::Enum(e) => convert_enum(&e.ident, &e.variants, wrappers),
 		_ => panic!("Only structs or enums are supported"),
 	}
+}
+
+fn type_to_str(ty: &Type) -> Option<String> {
+	if let Type::Path(p) = ty {
+		let segment = p.path.segments.last().unwrap();
+		let segment = segment.value();
+		let mut ident = segment.ident.to_string();
+		if let PathArguments::AngleBracketed(a) = &segment.arguments {
+			ident.push('<');
+			for a in a.args.iter() {
+				// Ignore lifetime arguments
+				if let GenericArgument::Type(t) = a {
+					if let Some(r) = type_to_str(t) {
+						ident.push_str(&r);
+					} else {
+						return None;
+					}
+				}
+			}
+			if ident.ends_with('<') {
+				ident.pop();
+			} else {
+				ident.push('>');
+			}
+		}
+		Some(ident)
+	} else if let Type::Reference(TypeReference { elem, .. }) = ty {
+		type_to_str(elem)
+	} else {
+		None
+	}
+}
+
+fn find_type<'a>(types: &'a [RustType], ty: &Type) -> Option<(usize, &'a RustType)> {
+	let t = if let Some(r) = type_to_str(ty) {
+		r
+	} else {
+		return None;
+	};
+	for (i, typ) in types.iter().enumerate() {
+		if typ.name == t {
+			return Some((i, typ));
+		}
+	}
+	None
+}
+
+/// If a method is called `set_<name>` and takes `self` and one argument,
+/// it is added as a setter.
+/// It is also added for `<name>`, also taking `self` and another argument, if
+/// `<name>` is a field.
+pub fn add_indirect_set_method(types: &[RustType], wrappers: &HashMap<String, RustType>, typ: &RustType, meth: &MethodSig) -> Option<Setter> {
+	let meth_name = meth.ident.to_string();
+	if meth_name.starts_with("get_") {
+		// Add indirect setters for nested structs
+		let name = meth_name[4..].to_camel_case();
+		match &meth.decl.output {
+			ReturnType::Default => return None,
+			ReturnType::Type(_, t) => if let Some(r) = type_to_str(t) {
+				let r = if r.starts_with("Option<") {
+					&r[7..r.len() - 1]
+				} else {
+					&r
+				};
+
+				if let Some(t) = types.iter().find(|t| t.name == r && !t.setters.is_empty()) {
+					return Some(Setter {
+						typ: t.clone(),
+						field: name,
+						setter: None,
+					});
+				}
+			}
+		}
+	}
+	None
+}
+
+/// If a method is called `set_<name>` and takes `self` and one argument,
+/// it is added as a setter.
+/// It is also added for `<name>`, also taking `self` and another argument, if
+/// `<name>` is a field.
+pub fn add_method(types: &[RustType], wrappers: &HashMap<String, RustType>, typ: &RustType, meth: &MethodSig) -> Option<Setter> {
+	let meth_name = meth.ident.to_string();
+	let name = if meth_name.starts_with("set_") {
+		&meth_name[4..]
+	} else if typ.get_all_fields().iter().any(|(p, n, _)| format!("{}{}", p, n.to_camel_case()) == meth_name) {
+		&meth_name
+	} else {
+		return None;
+	};
+
+	let mut args = meth.decl.inputs.iter();
+	if let Some(FnArg::SelfRef(_)) = args.next() {
+	} else {
+		return None;
+	}
+	let arg_type = match args.next() {
+		Some(FnArg::Ignored(t)) => t,
+		Some(FnArg::Captured(ArgCaptured { ty, .. })) => ty,
+		_ => return None,
+	};
+
+	let arg_type = if let Some(r) = find_type(types, arg_type)
+		.map(|(_, t)| Some(t.clone()))
+		.unwrap_or_else(|| type_to_str(arg_type).map(|r| RustType::from_with_wrappers(r, wrappers))) {
+		r
+	} else {
+		println!("Failed for {}", meth_name);
+		return None;
+	};
+
+	// Only 2 arguments allowed
+	if args.next().is_some() {
+		return None;
+	}
+
+	let ret_type = match &meth.decl.output {
+		ReturnType::Default => "()".into(),
+		ReturnType::Type(_, t) =>
+			find_type(types, t)
+				.map(|(_, t)| Some(t.clone()))
+				.unwrap_or_else(|| type_to_str(t).map(|r| RustType::from_with_wrappers(r, wrappers)))
+				// Ignore return type if we cannot parse it
+				.unwrap_or_else(|| "()".into()),
+	};
+
+	let setter = Setter {
+		typ: arg_type,
+		field: name.into(),
+		setter: Some((meth_name, ret_type)),
+	};
+	Some(setter)
+}
+
+pub fn convert_file(input: &File, wrappers: &HashMap<String, RustType>) -> Vec<RustType> {
+	let mut res = Vec::new();
+
+	// Types
+	for item in &input.items {
+		match item {
+			Item::Struct(_) => res.push(convert_item(item, wrappers)),
+			Item::Enum(_) => res.push(convert_item(item, wrappers)),
+			_ => {}
+		}
+	}
+
+	// Setters and functions
+	let mut changed = true;
+	let mut iteration = 0;
+	while changed {
+		changed = false;
+		for item in &input.items {
+			match item {
+				Item::Impl(ItemImpl { items, self_ty, .. }) => {
+					let (i, typ) = if let Some(r) = find_type(&res, &**self_ty) {
+						r
+					} else {
+						continue;
+					};
+					let mut setters = Vec::new();
+					for item in items {
+						if let ImplItem::Method(meth) = item {
+							if let Some(s) = add_method(&res, wrappers, typ, &meth.sig) {
+								setters.push(s);
+							}
+							if iteration >= 1 {
+								if let Some(s) = add_indirect_set_method(&res, wrappers, typ, &meth.sig) {
+									setters.push(s);
+								}
+							}
+						}
+					}
+
+					for s in setters {
+						if !res[i].setters.iter().any(|s2| s2.field == s.field) {
+							res[i].setters.push(s);
+							changed = true;
+						}
+					}
+				}
+				_ => {}
+			}
+		}
+		iteration += 1;
+	}
+
+	res
 }
 
 /// Indent a string by a given count using tabs.
@@ -295,35 +545,6 @@ fn indent(s: &str, count: usize) -> String {
 #[cfg(test)]
 mod tests {
 	use super::*;
-
-	#[test]
-	fn simple_struct_id() {
-		let t = RustType {
-			name: "MyStruct".into(),
-			content: TypeContent::Struct(Struct {
-				fields: vec![
-					("field_number_1".into(), PrimitiveType::Int(false, Some(32)).into()),
-					("array".into(), BuiltinType::Array(Box::new(BuiltinType::String.into())).into()),
-				],
-			}),
-		};
-		let res = format!("{}", t);
-		let split_pos = res.find("\n\n").unwrap();
-		let res = &res[..split_pos];
-		let res2 = "
-#[derive(FromPrimitive, ToPrimitive)]
-#[repr(u32)]
-pub enum MyStructPropertyId {
-	FieldNumber1,
-	ArrayLen,
-	Array,
-}";
-		if res != res2 {
-			println!("Expected result:{}", res2);
-			println!("Actual result:{}", res);
-		}
-		assert_eq!(res, res2);
-	}
 
 	#[test]
 	fn convert_u8() {

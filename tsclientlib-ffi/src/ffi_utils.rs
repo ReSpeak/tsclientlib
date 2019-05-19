@@ -27,6 +27,15 @@ pub(crate) fn ffi_to_str(ptr: &*const c_char) -> Result<&str> {
 	s
 }
 
+#[inline]
+pub(crate) fn ffi_to_str_unsafe(ptr: *const c_char) -> Result<&'static str> {
+	let s = unsafe { CStr::from_ptr(ptr) }
+		.to_str()
+		.map_err(Error::from);
+	//println!("Read {:?} Len {:?}", ptr, s.as_ref().map(|s| s.len()));
+	s
+}
+
 pub trait ToFfi {
 	type FfiType;
 	fn ffi(&self) -> Self::FfiType;
