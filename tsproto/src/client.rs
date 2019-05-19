@@ -3,7 +3,7 @@ use std::sync::{Arc, Weak};
 
 use chrono::Utc;
 use failure::format_err;
-use futures::sync::mpsc;
+use futures::sync::{mpsc, oneshot};
 use futures::{future, Future, Sink, Stream};
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
@@ -16,7 +16,6 @@ use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
 use slog::{debug, error, info, Logger};
-use {base64, tokio, tokio_threadpool};
 
 use crate::algorithms as algs;
 use crate::built_info;
@@ -596,83 +595,64 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							// Spawn this as another future
 							let logger2 = logger.clone();
 							let fut = future::lazy(move || {
-								let logger2 = logger.clone();
-								future::poll_fn(move || {
-									let logger = logger2.clone();
-									tokio_threadpool::blocking(|| {
-										let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-											"Solve RSA puzzle", logger.clone(),
-											::slog::Level::Info);
-										time_reporter.start("");
+								let (send, recv) = oneshot::channel();
+								std::thread::spawn(move || {
+									let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
+										"Solve RSA puzzle", logger.clone(),
+										::slog::Level::Info);
+									time_reporter.start("");
 
-										// Use gmp for faster computations if it is
-										// available.
-										#[cfg(feature = "rug")]
-										let y = {
-											let mut e = Integer::new();
-											let n = Integer::from_digits(
-												&n[..],
-												Order::Msf,
-											);
-											let x = Integer::from_digits(
-												&x[..],
-												Order::Msf,
-											);
-											e.set_bit(level, true);
-											let y = match x.pow_mod(&e, &n) {
-												Ok(r) => r,
-												Err(_) => {
-													return Err(format_err!(
-														"Failed to solve RSA \
-														 challenge"
-													)
-													.into());
-												}
-											};
-											let mut yi = [0; 64];
-											y.write_digits(&mut yi, Order::Msf);
-											yi
-										};
-
-										#[cfg(not(feature = "rug"))]
-										let y = {
-											let xi = BigUint::from_bytes_be(&x);
-											let ni = BigUint::from_bytes_be(&n);
-											let mut e = BigUint::one();
-											e <<= level as usize;
-											let yi = xi.modpow(&e, &ni);
-											info!(logger, "Solve RSA puzzle";
-											  	  "level" => level, "x" => %xi, "n" => %ni,
-											  	  "y" => %yi);
-											algs::biguint_to_array(&yi)
-										};
-
-										time_reporter.finish();
-										info!(logger, "Solve RSA puzzle";
-											  "level" => level);
-										Ok((x, n, y))
-									})
-								})
-								.map_err(|e| {
-									format_err!(
-										"Failed to start blocking operation \
-										 ({:?})",
-										e
-									)
-									.into()
-								})
-								.and_then(
-									move |r| -> Box<
-										Future<Item = _, Error = _> + Send,
-									> {
-										let (x, n, y) = match r {
+									// Use gmp for faster computations if it is
+									// available.
+									#[cfg(feature = "rug")]
+									let y = {
+										let mut e = Integer::new();
+										let n = Integer::from_digits(
+											&n[..],
+											Order::Msf,
+										);
+										let x = Integer::from_digits(
+											&x[..],
+											Order::Msf,
+										);
+										e.set_bit(level, true);
+										let y = match x.pow_mod(&e, &n) {
 											Ok(r) => r,
-											Err(e) => {
-												return Box::new(future::err(
-													e,
-												));
+											Err(_) => {
+												return Err(format_err!(
+													"Failed to solve RSA \
+													 challenge"
+												)
+												.into());
 											}
 										};
+										let mut yi = [0; 64];
+										y.write_digits(&mut yi, Order::Msf);
+										yi
+									};
+
+									#[cfg(not(feature = "rug"))]
+									let y = {
+										let xi = BigUint::from_bytes_be(&x);
+										let ni = BigUint::from_bytes_be(&n);
+										let mut e = BigUint::one();
+										e <<= level as usize;
+										let yi = xi.modpow(&e, &ni);
+										info!(logger, "Solve RSA puzzle";
+											  "level" => level, "x" => %xi, "n" => %ni,
+											  "y" => %yi);
+										algs::biguint_to_array(&yi)
+									};
+
+									time_reporter.finish();
+									info!(logger, "Solve RSA puzzle";
+										  "level" => level);
+									let _ = send.send((x, n, y));
+								});
+
+								recv.from_err().and_then(move |(x, n, y)| -> Box<
+										Future<Item = _, Error = _> + Send,
+									> {
 										// Create the command string
 										// omega is an ASN.1-DER encoded public key from
 										// the ECDH parameters.

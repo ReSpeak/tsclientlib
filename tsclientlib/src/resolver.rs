@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use failure::format_err;
 use futures::{future, stream, Async, Future, Poll, Stream};
+use futures::sync::oneshot;
 use itertools::Itertools;
 use rand::{thread_rng, Rng};
 use slog::{debug, o, warn, Logger};
@@ -16,7 +17,6 @@ use tokio::net::TcpStream;
 use tokio::util::StreamExt;
 use trust_dns_resolver::config::ResolverConfig;
 use trust_dns_resolver::{AsyncResolver, Name};
-use {reqwest, tokio, tokio_threadpool};
 
 use crate::{Error, Result};
 
@@ -329,30 +329,27 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 pub fn resolve_nickname(
 	nickname: String,
 ) -> impl Stream<Item = SocketAddr, Error = Error> {
+	let url = reqwest::Url::parse_with_params(
+		NICKNAME_LOOKUP_ADDRESS,
+		Some(("name", &nickname)),
+	)
+	.expect("Cannot parse nickname lookup address");
+	let addrs = reqwest::r#async::Client::new()
+		.get(url)
+		.send()
+		.and_then(|r| r.error_for_status())
+		.and_then(|r| r.into_body().concat2())
+		.from_err::<Error>()
+		.and_then(|body| {
+			Ok(str::from_utf8(body.as_ref())?
+				.split(&['\r', '\n'][..])
+				.filter(|s| !s.is_empty())
+				.map(|s| s.to_string())
+				.collect::<Vec<_>>())
+		});
+
 	stream::futures_ordered(Some(
-		future::poll_fn(move || {
-			tokio_threadpool::blocking(|| {
-				let url = reqwest::Url::parse_with_params(
-					NICKNAME_LOOKUP_ADDRESS,
-					Some(("name", &nickname)),
-				)
-				.map_err(|e| {
-					format_err!(
-						"Cannot parse nickname lookup address ({:?})",
-						e
-					)
-				})?;
-				let res = reqwest::get(url)?
-					.text()?
-					.split(&['\r', '\n'][..])
-					.filter(|s| !s.is_empty())
-					.map(|s| s.to_string())
-					.collect::<Vec<_>>();
-				Ok(res)
-			})
-		})
-		.from_err()
-		.and_then(|r: Result<_>| r)
+		addrs
 		.map(|addrs| {
 			stream::futures_ordered(addrs.iter().map(
 				|addr| -> Result<Box<Stream<Item = _, Error = _> + Send>> {
@@ -505,17 +502,18 @@ fn resolve_hostname(
 	port: u16,
 ) -> impl Stream<Item = SocketAddr, Error = Error>
 {
-	stream::futures_ordered(Some(
-		future::poll_fn(move || {
-			tokio_threadpool::blocking(|| {
-				(name.as_str(), port).to_socket_addrs().map_err(Error::from)
-			})
-		})
-		.from_err::<Error>()
-		.flatten(),
-	))
-	.map(|addrs| stream::futures_ordered(addrs.map(Ok)))
-	.flatten()
+	let (send, recv) = oneshot::channel();
+	std::thread::spawn(move || {
+		// Ignore error if the future was canceled
+		let _ = send.send((name.as_str(), port).to_socket_addrs()
+			.map(|i| i.collect::<Vec<_>>()));
+	});
+
+	stream::futures_ordered(Some(recv))
+		.from_err()
+		.and_then(|r| r.map_err(Error::from))
+		.map(|addrs| stream::futures_ordered(addrs.into_iter().map(Ok)))
+		.flatten()
 }
 
 #[cfg(test)]

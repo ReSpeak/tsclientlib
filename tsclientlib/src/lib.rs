@@ -7,9 +7,6 @@
 //! The base class of this library is the [`Connection`]. One instance of this
 //! struct manages a single connection to a server.
 //!
-//! The futures from this library **must** be run in a tokio threadpool, so they
-//! can use `tokio_threadpool::blocking`.
-//!
 //! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 // Needed for futures on windows.
@@ -96,8 +93,6 @@ pub enum Error {
 	Resolve(#[cause] trust_dns_resolver::error::ResolveError),
 	#[fail(display = "{}", _0)]
 	Reqwest(#[cause] reqwest::Error),
-	#[fail(display = "{}", _0)]
-	ThreadpoolBlocking(#[cause] tokio_threadpool::BlockingError),
 	#[fail(display = "{}", _0)]
 	Ts(#[cause] TsError),
 	#[fail(display = "{}", _0)]
@@ -341,9 +336,9 @@ impl Connection {
 							if let InMessages::InitServer(_) = msg.msg() {
 								Ok(msg)
 							} else {
-								Err(Error::ConnectionFailed(String::from(
-									"Got no initserver",
-								)))
+								Err(Error::ConnectionFailed(
+									format!("Got no initserver but {:?}", msg)
+								))
 							}
 						});
 
@@ -369,19 +364,20 @@ impl Connection {
 						let c = client.lock();
 						c.private_key.to_pub()
 					};
-					Box::new(future::poll_fn(move || {
-						tokio_threadpool::blocking(|| {
-							let res = (
-								con.clone(),
-								algs::hash_cash(&pub_k, 8).unwrap(),
-								pub_k.to_ts().unwrap(),
-								logger.clone(),
-							);
-							res
-						})
-					}).map(|r| { time_reporter.finish(); r })
-					.map_err(|e| format_err!("Failed to start \
-						blocking operation ({:?})", e).into()))
+
+					let (send, recv) = oneshot::channel();
+					std::thread::spawn(move || {
+						let _ = send.send((
+							con.clone(),
+							algs::hash_cash(&pub_k, 8).unwrap(),
+							pub_k.to_ts().unwrap(),
+							logger.clone(),
+						));
+					});
+
+					Box::new(recv.map(|r| { time_reporter.finish(); r })
+						.map_err(|e| format_err!("Failed to compute \
+							identity level ({:?})", e).into()))
 				})
 				.and_then(move |(con, offset, omega, logger)| {
 					info!(logger, "Computed hash cash level";
