@@ -10,4 +10,5 @@ members = [
 	"utils/ts-bookkeeping",
 	"utils/tsproto-commands",
 	"utils/tsproto-structs",
+	"utils/tsproto-types",
 ]
