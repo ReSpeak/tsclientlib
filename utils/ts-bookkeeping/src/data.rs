@@ -764,27 +764,6 @@ impl<'a> ChannelOptions<'a> {
 }
 
 impl Server {
-	// TODO Update docs
-	/// Create a new channel.
-	///
-	/// # Arguments
-	/// All initial properties of the channel can be set through the
-	/// [`ChannelOptions`] argument.
-	///
-	/// # Examples
-	/// ```rust,no_run
-	/// use tsclientlib::data::ChannelOptions;
-	/// # use futures::Future;
-	/// # let connection: tsclientlib::Connection = panic!();
-	///
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Send a message
-	/// tokio::spawn(con_mut.get_server().add_channel(ChannelOptions::new("My new channel"))
-	///	    .map_err(|e| println!("Failed to create channel ({:?})", e)));
-	/// ```
-	///
-	/// [`ChannelOptions`]: struct.ChannelOptions.html
 	pub fn add_channel(
 		&self,
 		options: ChannelOptions,
@@ -881,19 +860,6 @@ impl Server {
 		)
 	}
 
-	// TODO Update docs
-	/// Send a text message in the server chat.
-	///
-	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
-	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Send a message
-	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
-	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
-	/// ```
 	pub fn send_textmessage(
 		&self,
 		message: &str,
@@ -910,7 +876,6 @@ impl Server {
 		)
 	}
 
-	// TODO Update docs
 	/// Subscribe or unsubscribe from all channels.
 	pub fn set_subscribed(
 		&self,
@@ -936,20 +901,6 @@ impl Server {
 }
 
 impl Connection {
-	// TODO Update docs
-	/// A generic method to send a text message or poke a client.
-	///
-	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
-	/// # use tsclientlib::MessageTarget;
-	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Send a message
-	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
-	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
-	/// ```
 	pub fn send_message(
 		&self,
 		target: MessageTarget,
@@ -1039,22 +990,6 @@ impl Client {
 	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
 	/// ```*/
 
-	// TODO Update docs
-	/// Send a text message to this client.
-	///
-	/// # Examples
-	/// Greet a user:
-	/// ```rust,no_run
-	/// # use futures::Future;
-	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Get our own client in mutable form
-	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
-	/// // Send a message
-	/// tokio::spawn(client.send_textmessage("Hi me!")
-	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
-	/// ```
 	pub fn send_textmessage(
 		&self,
 		message: &str,
@@ -1071,21 +1006,6 @@ impl Client {
 		)
 	}
 
-	// TODO Update docs
-	/// Poke this client with a message.
-	///
-	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
-	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Get our own client in mutable form
-	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
-	/// // Send a message
-	/// tokio::spawn(client.poke("Hihihi")
-	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
-	/// ```
 	pub fn poke(&self, message: &str) -> OutPacket {
 		c2s::OutClientPokeRequestMessage::new(
 			vec![c2s::ClientPokeRequestPart {

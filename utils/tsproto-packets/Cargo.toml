@@ -17,4 +17,5 @@ nom = "4"
 num-derive = "0.2"
 num-traits = "0.2"
 rental = "0.5"
+serde = { version = "1", features = ["derive"] }
 stable_deref_trait = "1"

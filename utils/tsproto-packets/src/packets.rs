@@ -10,12 +10,13 @@ use bytes::Bytes;
 use failure::format_err;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
+use serde::{Deserialize, Serialize};
 
 use crate::commands::{CommandData, CommandDataIterator};
 use crate::{Error, HexSlice, Result};
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive, Hash,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive, Serialize
 )]
 #[repr(u8)]
 pub enum PacketType {
@@ -30,7 +31,7 @@ pub enum PacketType {
 	Init,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Deserialize, Debug, Eq, PartialEq, Hash, Serialize)]
 pub enum Direction {
 	/// Going from the server to the client.
 	S2C,
@@ -169,7 +170,7 @@ pub struct InCommand {
 	dir: Direction,
 }
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Hash, Serialize)]
 pub struct OutPacket {
 	dir: Direction,
 	data: Vec<u8>,
