@@ -487,6 +487,14 @@ impl Connection {
 	///
 	/// You can use it if you need access to lower level functions, but this
 	/// interface may change on any version changes.
+	pub fn get_tsproto_connection(&self) -> client::ClientConVal {
+		self.inner.client_connection.clone()
+	}
+
+	/// **This is part of the unstable interface.**
+	///
+	/// You can use it if you need access to lower level functions, but this
+	/// interface may change on any version changes.
 	///
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
