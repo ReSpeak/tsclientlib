@@ -811,7 +811,7 @@ impl ConnectOptions {
 			local_address: None,
 			private_key: None,
 			name: String::from("TeamSpeakUser"),
-			version: Version::Linux_3_2_1,
+			version: Version::Linux_3_3_0__3,
 			logger: None,
 			log_commands: false,
 			log_packets: false,
