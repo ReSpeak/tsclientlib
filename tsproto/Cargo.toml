@@ -7,7 +7,7 @@ repository = "https://github.com/ReSpeak/tsclientlib"
 readme = "README.md"
 keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
-license = "MIT/Apache-2.0"
+license = "OSL-3.0"
 edition = "2018"
 autobenches = false
 build = "build/build.rs"
@@ -33,13 +33,11 @@ derive_more = "0.14"
 eax = "0.1"
 failure = "0.1"
 futures = "0.1"
-nom = "4"
 num-bigint = "0.2"
 num-derive = "0.2"
 num-traits = "0.2"
 parking_lot = "0.7"
 rand = "0.6"
-rental = "0.5"
 flakebi-ring = "0.14.6"
 rug = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
@@ -50,6 +48,7 @@ slog-term = "2"
 stable_deref_trait = "1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
+tsproto-packets = { path = "../utils/tsproto-packets" }
 untrusted = "0.6"
 quicklz = "0.2"
 

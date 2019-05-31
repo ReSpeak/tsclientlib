@@ -12,7 +12,7 @@ use ring::digest;
 
 use crate::connection::{CachedKey, SharedIv};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use crate::packets::*;
+use tsproto_packets::packets::*;
 use crate::{Error, Result};
 
 pub fn must_encrypt(t: PacketType) -> bool {
@@ -50,9 +50,9 @@ pub fn compress_and_split(
 {
 	// Everything except whisper packets has to be less than 500 bytes
 	let header_size = if is_client {
-		crate::C2S_HEADER_LEN
+		tsproto_packets::C2S_HEADER_LEN
 	} else {
-		crate::S2C_HEADER_LEN
+		tsproto_packets::S2C_HEADER_LEN
 	};
 	let data = packet.content();
 	// The maximum packet size (including header) is 500 bytes.

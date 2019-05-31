@@ -3,7 +3,7 @@ name = "tsproto-structs"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>", "Splamy <splamyn@gmail.com>"]
 description = "Resource files for several TeamSpeak related data."
-license = "MIT/Apache-2.0"
+license = "OSL-3.0"
 repository = "https://github.com/ReSpeak/tsclientlib"
 readme = "README.md"
 keywords = ["TeamSpeak3", "TS3"]
@@ -24,6 +24,7 @@ include = [
 [dependencies]
 base64 = "0.10"
 csv = "1"
+heck = "0.3"
 lazy_static = "1"
 regex = "1"
 serde = "1"

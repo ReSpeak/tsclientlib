@@ -1,0 +1,12 @@
+[package]
+name = "ffigen"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+edition = "2018"
+
+[dependencies]
+heck = "0.3"
+lazy_static = "1"
+quote = "0.6"
+syn = { version = "0.15", features = ["full"] }
+t4rust-derive = "0.1"

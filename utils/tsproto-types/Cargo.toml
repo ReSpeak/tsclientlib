@@ -1,0 +1,21 @@
+[package]
+name = "tsproto-types"
+version = "0.1.0"
+authors = ["Flakebi <flakebi@t-online.de>"]
+description = "Basic types for TeamSpeak"
+license = "OSL-3.0"
+repository = "https://github.com/ReSpeak/tsclientlib"
+keywords = ["TeamSpeak3", "TS3"]
+build = "build/build.rs"
+edition = "2018"
+
+[dependencies]
+chrono = "0.4"
+num-traits = "0.2"
+num-derive = "0.2"
+
+[build-dependencies]
+heck = "0.3"
+itertools = "0.8"
+t4rust-derive = "0.1.3"
+tsproto-structs = { path = "../tsproto-structs", version = "=0.1.0" }

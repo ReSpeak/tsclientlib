@@ -1,6 +1,8 @@
-use crate::*;
+use heck::*;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
+
+use crate::*;
 
 pub const DATA_STR: &str = include_str!(concat!(
 	env!("CARGO_MANIFEST_DIR"),
@@ -30,6 +32,17 @@ impl MessageDeclarations {
 	pub fn get_message(&self, name: &str) -> &Message {
 		self.get_message_opt(name)
 			.unwrap_or_else(|| panic!("Cannot find message {}", name))
+	}
+
+	pub fn get_message_group(&self, msg: &Message) -> &MessageGroup {
+		for g in &self.msg_group {
+			for m in &g.msg {
+				if m as *const Message == msg as *const Message {
+					return g;
+				}
+			}
+		}
+		panic!("Cannot find message group for message");
 	}
 
 	pub fn get_field(&self, mut map: &str) -> &Field {
@@ -87,7 +100,7 @@ pub struct Message {
 }
 
 impl Field {
-	pub fn get_rust_name(&self) -> String { to_snake_case(&self.pretty) }
+	pub fn get_rust_name(&self) -> String { self.pretty.to_snake_case() }
 
 	/// Takes the attribute to look if it is optional
 	pub fn get_rust_type(&self, a: &str, is_ref: bool) -> String {

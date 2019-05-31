@@ -1,0 +1,139 @@
+<#@ template cleanws="true" #>
+/// A `PropertyId` identifies a single attribute in the data structure of a
+/// connection.
+///
+/// This is used in [`EventListener`]s to reference e.g. a newly created
+/// channel.
+///
+/// [`EventListener`]: ../type.EventListener.html
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum PropertyId {
+<# for struc in &self.structs {
+	let mut ids = get_ids(&self.structs, struc);
+	if !ids.is_empty() {
+		ids = format!("({})", ids);
+	} #>
+	<#= struc.name #><#= ids #>,
+<# } #>
+
+<# for struc in &self.structs {
+	for p in get_properties(&self.structs, struc) {
+		let mut ids = get_ids(&self.structs, struc);
+		if let Some(m) = &p.modifier {
+			if !ids.is_empty() {
+				ids.push_str(", ");
+			}
+			if m == "map" {
+				// The key is part of the id
+				ids.push_str(p.key.as_ref().unwrap());
+			} else if m == "array" {
+				// Take the element itself as port of the id.
+				// It has to be copied but most of the times it is an id itself.
+				ids.push_str(&convert_type(&p.type_s, false));
+			} else {
+				panic!("Unknown modifier {}", m);
+			}
+		}
+
+		if !ids.is_empty() {
+			ids = format!("({})", ids);
+		}
+		#>
+	<#= struc.name #><#= get_property_name(p) #><#= ids #>,
+<# }
+} #>
+	#[doc(hidden)]
+	__NonExhaustive,
+}
+
+/// A `PropertyValue` contains the value of an attribute in the data structures.
+///
+/// This is used in [`EventListener`]s to get e.g. the attributes of a deleted
+/// channel.
+///
+/// [`EventListener`]: ../type.EventListener.html
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropertyValue {
+<# for struc in &self.structs { #>
+	<#= struc.name #>(<#= struc.name #>),
+<# } #>
+
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_properties(&self.structs, struc) {
+		let type_s = get_rust_type(p);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		#>
+	<#= type_s.replace('<', "_").replace('>', "").to_camel_case() #>(<#= type_s #>),
+<# }
+} #>
+	#[doc(hidden)]
+	__NonExhaustive,
+}
+
+/// A `PropertyValueRef` contains a reference to the value of an attribute in
+/// the data structures.
+///
+/// See [`PropertyValue`] for the owned variant.
+///
+/// [`PropertyValue`]: enum.PropertyValue.html
+#[derive(Clone, Debug, PartialEq)]
+pub enum PropertyValueRef<'a> {
+<# for struc in &self.structs { #>
+	<#= struc.name #>(&'a <#= struc.name #>),
+<# } #>
+
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_properties(&self.structs, struc) {
+		let type_s = get_rust_type(p);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		#>
+	<#= type_s.replace('<', "_").replace('>', "").to_camel_case() #>(<#= get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>),
+<# }
+} #>
+	#[doc(hidden)]
+	__NonExhaustive,
+}
+
+impl PropertyValue {
+	pub fn as_ref(&self) -> PropertyValueRef {
+		match self {
+			PropertyValue::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
+<# for struc in &self.structs { #>
+			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(s),
+<# } #>
+
+<#
+let mut done = HashSet::new();
+for struc in &self.structs {
+	for p in get_properties(&self.structs, struc) {
+		let type_s = get_rust_type(p);
+		if !done.insert(type_s.clone()) {
+			continue;
+		}
+		let name = type_s.replace('<', "_").replace('>', "").to_camel_case();
+		let ref_name = get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>");
+		let has_ref = ref_name.contains('&');
+		if p.opt && p.type_s == "str" { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref().map(String::as_ref)),
+		<# } else if p.type_s == "Uid" { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
+		<# } else if p.opt && has_ref { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
+		<# } else if has_ref { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s),
+		<# } else { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(*s),
+		<# }
+	}
+} #>
+		}
+	}
+}

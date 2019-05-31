@@ -2,14 +2,16 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use chashmap::CHashMap;
+use failure::format_err;
 use futures::sync::oneshot;
 use futures::{task, try_ready, Async, Future, Poll, Stream};
+use num_traits::FromPrimitive;
 use slog::{error, warn, Logger};
 use tsproto::handler_data::ConnectionValue;
-use tsproto::packets::*;
 #[cfg(feature = "audio")]
 use tsproto_audio::ts_to_audio::AudioPacketHandler;
-use tsproto_commands::messages::s2c::{InMessage, InMessages};
+use tsproto_packets::packets::*;
+use ts_bookkeeping::messages::CommandExt;
 
 use crate::{Connection, PHBox, TsError};
 
@@ -194,63 +196,53 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 			// 3.
 			let mut con = connection.inner.connection.write();
 			let name = cmd.name().to_string();
-			let msg = InMessage::new(cmd);
-			let cmd;
-			match msg {
-				Err((c, e)) => {
-					warn!(self.logger, "Failed to parse message";
+			if cmd.name() == "error" {
+				let cmd = cmd.iter().next().unwrap();
+				// 3.1
+				if let Some(code) =
+					cmd.get("return_code").and_then(|c| c.parse().ok())
+				{
+					if let Some(return_sender) =
+						self.return_codes.return_codes.remove(&code)
+					{
+						// Ignore if sending fails
+						let id = cmd.get_arg("id")
+							.map_err(|e| format_err!("error has no id ({:?})", e))?;
+						let error = TsError::from_u32(id.parse()?)
+							.ok_or_else(|| format_err!("Not a valid ts error {}", id))?;
+						let _ = return_sender.send(error).is_err();
+					}
+				}
+				// Packet contains only handled return codes
+				task::current().notify();
+				return Ok(Async::NotReady);
+			}
+
+			// 3.2
+			// Apply
+			let events = match con.handle_command(&cmd) {
+				Ok(e) => {
+					if e.len() > 0 {
+						Some(e)
+					} else {
+						None
+					}
+				}
+				Err(e) => {
+					warn!(self.logger, "Failed to handle message";
 						"command" => name,
 						"error" => ?e);
-					cmd = c;
+					None
 				}
-				Ok(msg) => {
-					if let InMessages::CommandError(cmd) = msg.msg() {
-						let cmd = cmd.iter().next().unwrap();
-						// 3.1
-						if let Some(code) =
-							cmd.return_code.and_then(|c| c.parse().ok())
-						{
-							if let Some(return_sender) =
-								self.return_codes.return_codes.remove(&code)
-							{
-								// Ignore if sending fails
-								let _ = return_sender.send(cmd.id).is_err();
-							}
-						}
-						// Packet contains only handled return codes
-						task::current().notify();
-						return Ok(Async::NotReady);
-					}
+			};
 
-					// 3.2
-					// Apply
-					let events = match con.handle_message(&msg, &self.logger) {
-						Ok(e) => {
-							if e.len() > 0 {
-								Some(e)
-							} else {
-								None
-							}
-						}
-						Err(e) => {
-							warn!(self.logger, "Failed to handle message";
-								"command" => name,
-								"error" => ?e);
-							None
-						}
-					};
-
-					// Call event handler
-					drop(con);
-					if let Some(events) = events {
-						let con = connection.lock();
-						let listeners = connection.inner.event_listeners.read();
-						for l in listeners.values() {
-							l(&con, &events);
-						}
-					}
-
-					cmd = msg.into_command();
+			// Call event handler
+			drop(con);
+			if let Some(events) = events {
+				let con = connection.lock();
+				let listeners = connection.inner.event_listeners.read();
+				for l in listeners.values() {
+					l(&con, &events);
 				}
 			}
 

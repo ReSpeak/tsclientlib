@@ -1,6 +1,8 @@
-use crate::*;
+use heck::*;
 use lazy_static::lazy_static;
 use serde_derive::Deserialize;
+
+use crate::*;
 
 pub const DATA_STR: &str = include_str!(concat!(
 	env!("CARGO_MANIFEST_DIR"),
@@ -125,15 +127,15 @@ pub enum PropId<'a> {
 impl<'a> PropId<'a> {
 	pub fn get_attr_name(&self, struc: &Struct) -> String {
 		match *self {
-			PropId::Prop(p) => to_snake_case(&p.name),
+			PropId::Prop(p) => p.name.to_snake_case(),
 			PropId::Id(id) => {
 				if struc.name == id.struct_name {
-					to_snake_case(&id.prop)
+					id.prop.to_snake_case()
 				} else {
 					format!(
 						"{}_{}",
-						to_snake_case(&id.struct_name),
-						to_snake_case(&id.prop)
+						id.struct_name.to_snake_case(),
+						id.prop.to_snake_case(),
 					)
 				}
 			}

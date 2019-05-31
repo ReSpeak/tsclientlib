@@ -11,15 +11,12 @@
 //! For more info on this project, take a look at the
 //! [tsclientlib README](https://github.com/ReSpeak/tsclientlib).
 
-#[macro_use]
-extern crate rental;
-
 use derive_more::From;
 use failure::{Fail, ResultExt};
+use tsproto_packets::packets;
 
 pub mod algorithms;
 pub mod client;
-pub mod commands;
 pub mod connection;
 pub mod connectionmanager;
 pub mod crypto;
@@ -27,7 +24,6 @@ pub mod handler_data;
 pub mod license;
 pub mod log;
 pub mod packet_codec;
-pub mod packets;
 pub mod resend;
 pub mod utils;
 
@@ -62,8 +58,6 @@ const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
 	e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
 	62a4a017bb394833aa0983e6e";
 const UDP_SINK_CAPACITY: usize = 20;
-const S2C_HEADER_LEN: usize = 11;
-const C2S_HEADER_LEN: usize = 13;
 
 #[derive(Fail, Debug, From)]
 pub enum Error {
@@ -90,6 +84,8 @@ pub enum Error {
 	#[fail(display = "{}", _0)]
 	Timer(#[cause] tokio::timer::Error),
 	#[fail(display = "{}", _0)]
+	TsprotoPackets(#[cause] tsproto_packets::Error),
+	#[fail(display = "{}", _0)]
 	Utf8(#[cause] std::str::Utf8Error),
 
 	#[fail(
@@ -102,8 +98,6 @@ pub enum Error {
 		limit: u16,
 		p_type: packets::PacketType,
 	},
-	#[fail(display = "{}", _0)]
-	ParsePacket(String),
 	#[fail(display = "Got unallowed unencrypted packet")]
 	UnallowedUnencryptedPacket,
 	#[fail(display = "Got unexpected init packet")]
@@ -111,12 +105,8 @@ pub enum Error {
 	/// Store packet type, generation id and packet id.
 	#[fail(display = "{:?} Packet {}:{} has a wrong mac", _0, _1, _2)]
 	WrongMac(packets::PacketType, u32, u16),
-	#[fail(display = "Got a packet with unknown type ({})", _0)]
-	UnknownPacketType(u8),
 	#[fail(display = "Maximum length exceeded for {}", _0)]
 	MaxLengthExceeded(String),
-	#[fail(display = "Cannot parse command ({})", _0)]
-	ParseCommand(String),
 	#[fail(display = "Wrong signature")]
 	WrongSignature,
 	#[fail(display = "{}", _0)]

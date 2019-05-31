@@ -1,30 +1,6 @@
-use std::fmt;
 use std::net::IpAddr;
 
 use crate::Result;
-
-pub struct HexSlice<'a, T: fmt::LowerHex + 'a>(pub &'a [T]);
-
-impl<'a> fmt::Debug for HexSlice<'a, u8> {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "[")?;
-		if let Some((l, m)) = self.0.split_last() {
-			for b in m {
-				if *b == 0 {
-					write!(f, "0, ")?;
-				} else {
-					write!(f, "{:#02x}, ", b)?;
-				}
-			}
-			if *l == 0 {
-				write!(f, "0")?;
-			} else {
-				write!(f, "{:#02x}", l)?;
-			}
-		}
-		write!(f, "]")
-	}
-}
 
 /// Try to approximate the not stabilized ip.is_global().
 pub fn is_global_ip(ip: &IpAddr) -> bool {

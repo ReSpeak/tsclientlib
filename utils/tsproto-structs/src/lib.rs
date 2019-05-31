@@ -32,37 +32,6 @@ pub struct EnumValue {
 
 fn get_false() -> bool { false }
 
-pub fn to_pascal_case(text: &str) -> String {
-	let mut s = String::with_capacity(text.len());
-	let mut uppercase = true;
-	for c in text.chars() {
-		if c == '_' {
-			uppercase = true;
-		} else if uppercase {
-			s.push(c.to_uppercase().next().unwrap());
-			uppercase = false;
-		} else {
-			s.push(c);
-		}
-	}
-	s
-}
-
-pub fn to_snake_case(text: &str) -> String {
-	let mut s = String::with_capacity(text.len());
-	for c in text.chars() {
-		if c.is_uppercase() {
-			if !s.is_empty() {
-				s.push('_');
-			}
-			s.push_str(&c.to_lowercase().to_string());
-		} else {
-			s.push(c);
-		}
-	}
-	s
-}
-
 pub fn is_ref_type(s: &str) -> bool {
 	if s.starts_with("Option<") {
 		is_ref_type(&s[7..s.len() - 1])

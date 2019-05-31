@@ -3,6 +3,7 @@ name = "tsproto-audio"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 edition = "2018"
+license = "OSL-3.0"
 
 [dependencies]
 byteorder = "1"

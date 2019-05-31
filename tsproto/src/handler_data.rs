@@ -18,7 +18,7 @@ use crate::connection::*;
 use crate::connectionmanager::ConnectionManager;
 use crate::crypto::EccKeyPrivP256;
 use crate::packet_codec::{PacketCodecReceiver, PacketCodecSender};
-use crate::packets::*;
+use tsproto_packets::packets::*;
 use crate::resend::DefaultResender;
 use crate::{Error, LockedHashMap, Result};
 

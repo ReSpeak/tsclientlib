@@ -1,0 +1,193 @@
+<#@ template cleanws="true" #>
+<#
+fn gen_struct_prop_ids(_fmt: &mut fmt::Formatter, prefix: &str, s: &Struct) -> fmt::Result {
+	for (i, (n, c)) in s.fields.iter().enumerate() {
+		let n = if n.is_empty() && s.fields.len() > 1 { i.to_string() } else { n.clone() };
+		// Add a length field for arrays and None-check for options
+		if let TypeContent::Builtin(BuiltinType::Array(_))
+		| TypeContent::Builtin(BuiltinType::Map(_, _))
+		| TypeContent::Builtin(BuiltinType::Set(_)) = c.content { #>
+	<#= prefix #><#= n.to_camel_case() #>Len,
+		<# } else if let TypeContent::Builtin(BuiltinType::Option(_)) = c.content { #>
+	<#= prefix #><#= n.to_camel_case() #>Some,
+		<# } #>
+	<#= prefix #><#= n.to_camel_case() #>,
+	<# }
+	Ok(())
+}
+
+fn gen_struct_prop_getter(_fmt: &mut fmt::Formatter, name: &str, prefix: &str, s: &Struct) -> fmt::Result {
+	for (i, (n, c)) in s.fields.iter().enumerate() {
+		// Add a length field for arrays
+		let n = if n.is_empty() && s.fields.len() > 1 { i.to_string() } else { n.clone() };
+		let mut type_s;
+		let mut getter;
+		let mut nullable = false;
+		let mut is_primitive = false;
+		let mut converter = None;
+
+		let c = if let TypeContent::Builtin(BuiltinType::Option(inner)) = &c.content {
+			nullable = true;
+			&**inner
+		} else {
+			c
+		};
+
+		match &c.content {
+			TypeContent::Struct(_) | TypeContent::Enum(_) => {
+				type_s = c.name.clone();
+				// Check if None
+				let nullable_code = if nullable {
+					format!("\
+FfiResult result = GetProperty((ulong){}PropertyId.{}{}Some);
+if (result.content == 0)
+	return null;
+", name, prefix, n.to_camel_case())
+				} else {
+					"".into()
+				};
+
+				getter = format!("{}\
+List<ulong> id = new List<ulong>(this.id);
+id.Add((ulong){}PropertyId.{}{});
+return new {}(basePtr, baseFunction, id);",
+					nullable_code, name, prefix, n.to_camel_case(), c.name);
+			}
+			TypeContent::Builtin(BuiltinType::Nothing) => continue,
+			TypeContent::Builtin(BuiltinType::Primitive(primitive)) => {
+				if let Some(wrapper) = &c.wrapper {
+					type_s = wrapper.outer.clone();
+				} else {
+					type_s = primitive.get_name().into();
+				}
+				is_primitive = true;
+				converter = Some(c.val_from_u64());
+				getter = "".into();
+			}
+			TypeContent::Builtin(BuiltinType::Str)
+			| TypeContent::Builtin(BuiltinType::String) => {
+				if let Some(wrapper) = &c.wrapper {
+					type_s = wrapper.outer.clone();
+				} else {
+					type_s = "string".into();
+				}
+				converter = Some(c.val_from_u64());
+				getter = "".into();
+			}
+			TypeContent::Builtin(BuiltinType::Map(key, inner)) => {
+				// Check if None
+				let nullable_code = if nullable {
+					format!("\
+FfiResult result = GetProperty((ulong){}PropertyId.{}{}Some);
+if (result.content == 0)
+	return null;
+", name, prefix, n.to_camel_case())
+				} else {
+					"".into()
+				};
+
+				let key_name = if let Some(wrapper) = &key.wrapper {
+					&wrapper.outer
+				} else {
+					&key.name
+				};
+				type_s = format!("FakeDictionary<{}, {}>", key_name, inner.name);
+
+				getter = format!("{}\
+ulong idVal = (ulong){}PropertyId.{}{};
+{}", nullable_code, name, prefix, n.to_camel_case(), c.val_from_u64());
+			}
+			_ => {
+				// TODO
+				continue;
+			}
+		}
+
+		if nullable && is_primitive {
+			type_s = format!("{}?", type_s);
+		}
+
+		if let Some(c) = converter {
+			let nullable_code = if nullable {
+				"
+	if (result.typ == FfiResultType.None)
+		return null;"
+			} else {
+				""
+			};
+
+			getter = format!("\
+FfiResult result = GetProperty((ulong){}PropertyId.{}{});{}
+ulong val = result.content;
+return {};", name, prefix, n.to_camel_case(), nullable_code, c);
+		} #>
+	public <#= type_s #> <#= prefix #><#= n.to_camel_case() #>
+	{
+		get
+		{
+<#= indent(&getter, 3) #>
+		}
+	}
+	<# }
+	Ok(())
+}
+
+#>
+internal enum <#= self.name #>PropertyId : ulong
+{
+<# match &self.content {
+	TypeContent::Struct(c) => gen_struct_prop_ids(_fmt, "", c)?,
+	TypeContent::Enum(c) => { #>
+	Type,
+		<# for (n, s) in &c.possibilities {
+			gen_struct_prop_ids(_fmt, n, s)?;
+		}
+	}
+	_ => panic!("Unsupported type content"),
+} #>
+}
+<# if let TypeContent::Enum(e) = &self.content { #>
+
+public enum <#= self.name #>Type : ulong
+{
+	<# for (n, _) in &e.possibilities { #>
+	<#= n #>,
+	<# } #>
+}
+
+<# } #>
+
+internal static partial class NativeMethods
+{
+	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+	public static extern unsafe void tscl_<#= self.name.to_snake_case() #>_get(IntPtr self,
+		UIntPtr idLen, ulong* id, [Out] out FfiResult result);
+	[DllImport(libPath, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true)]
+	public static extern unsafe void tscl_<#= self.name.to_snake_case() #>_free(IntPtr self);
+}
+
+public partial class <#= self.name #> : FfiBase
+{
+<# match &self.content {
+	TypeContent::Struct(c) => gen_struct_prop_getter(_fmt, &self.name, "", c)?,
+	TypeContent::Enum(c) => { #>
+	public <#= self.name #>Type Type
+	{
+		get
+		{
+			FfiResult result = GetProperty((ulong)<#= self.name #>PropertyId.Type);
+			return (<#= self.name #>Type)result.content;
+		}
+	}
+		<# for (n, s) in &c.possibilities {
+			gen_struct_prop_getter(_fmt, &self.name, n, s)?;
+		}
+	}
+	_ => panic!("Unsupported type content"),
+} #>
+
+	internal <#= self.name #>(IntPtr basePtr, NativeMethods.FfiFunction baseFunction, List<ulong> id)
+		: base(basePtr, baseFunction, id)
+	{
+	}
+}

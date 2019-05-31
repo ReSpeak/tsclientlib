@@ -1,0 +1,142 @@
+<#@ template cleanws="true" #>
+<#
+fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> String {
+	let mut args = String::new();
+	for r in e.ids.iter().chain(r.iter().cloned()) {
+		match r {
+			RuleKind::ArgumentMap { .. } |
+			RuleKind::ArgumentFunction { .. } => {
+				let arg = get_arguments(r);
+				if !arg.is_empty() {
+					args.push_str(", ");
+					args.push_str(&arg);
+				}
+			}
+			_ => {}
+		}
+	}
+	args
+}
+
+for e in &self.0.decls {
+	// Update
+	if e.op == RuleOp::Update { #>
+impl <#= e.book_struct.name #> {
+<# for r in &e.rules { #>
+	pub fn set_<#= r.from_name().to_snake_case() #>(&self<#=
+		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> OutPacket {
+		let mut args = Vec::<(&'static str, Cow<str>)>::new();
+	<# for r in &e.ids { #>
+		<# #><#= arg_to_value(r, "self.") #>
+	<# } #>
+		<# #><#= arg_to_value(r, "") #>
+
+		OutCommand::new(
+			Direction::C2S,
+			PacketType::Command<# if self.messages.get_message_group(&e.msg).default.low { #>Low<# } #>,
+			"<#= e.msg.notify.as_ref().unwrap() #>",
+			args.into_iter(),
+			Vec::<std::iter::Empty<(&'static str, String)>>::new().into_iter(),
+		)
+	}
+
+<# } #>
+}
+<#
+// Remove
+} else if e.op == RuleOp::Remove {
+	if e.rules.is_empty() {
+		let args = get_all_arguments(e, None);
+		let name_add = if !args.is_empty() {
+			format!("_{}", &args[2..args.find(':').unwrap()])
+		} else {
+			"".into()
+		}; #>
+impl <#= e.book_struct.name #> {
+	pub fn remove<#= name_add #>(&self<#= args #>) -> OutPacket {
+		#[allow(unused_mut)]
+		let mut args = Vec::<(&'static str, Cow<str>)>::new();
+	<# for r in &e.ids { #>
+		<# #><#= arg_to_value(r, "self.") #>
+	<# } #>
+
+		OutCommand::new(
+			Direction::C2S,
+			PacketType::Command<# if self.messages.get_message_group(&e.msg).default.low { #>Low<# } #>,
+			"<#= e.msg.notify.as_ref().unwrap() #>",
+			args.into_iter(),
+			Vec::<std::iter::Empty<(&'static str, String)>>::new().into_iter(),
+		)
+	}
+}
+<# } else {
+	// Remove the property
+	for r in &e.rules {
+		let name = r.from_name();
+		let name = if name.ends_with('s') {
+			&name[..name.len() - 1]
+		} else { &name };
+		let name = format!("{}{}", e.book_struct.name, name);
+
+		let args = get_all_arguments(e, Some(r));
+		// TODO The ServerGroup.remove(client) should be
+		// ServerGroup.remove_client(client),
+		// ServerGroup.remove() should remove the ServerGroup.
+
+		let name_add = if !args.is_empty() {
+			format!("_{}", &args[2..args.find(':').unwrap()])
+		} else {
+			"".into()
+		}; #>
+
+impl <#= name #> {
+	pub fn remove<#= name_add #>(&self<#= args #>) -> OutPacket {
+		let mut args = Vec::<(&'static str, Cow<str>)>::new();
+	<# for r in &e.ids { #>
+		<# #><#= arg_to_value(r, "self.") #>
+	<# } #>
+		<# #><#= arg_to_value(r, "") #>
+
+		OutCommand::new(
+			Direction::C2S,
+			PacketType::Command<# if self.messages.get_message_group(&e.msg).default.low { #>Low<# } #>,
+			"<#= e.msg.notify.as_ref().unwrap() #>",
+			args.into_iter(),
+			Vec::<std::iter::Empty<(&'static str, String)>>::new().into_iter(),
+		)
+	}
+}
+	<# }
+	}
+} else if e.op == RuleOp::Add {
+	for r in &e.rules {
+		let name = r.from_name();
+		let name = if name.ends_with('s') {
+			&name[..name.len() - 1]
+		} else {
+			name
+		};
+		#>
+
+impl <#= e.book_struct.name #> {
+	pub fn add_<#= name.to_snake_case() #>(&self
+		<#= get_all_arguments(e, Some(r)) #>) -> OutPacket {
+		let mut args = Vec::<(&'static str, Cow<str>)>::new();
+	<# for r in &e.ids { #>
+		<# #><#= arg_to_value(r, "self.") #>
+	<# } #>
+		<# #><#= arg_to_value(r, "") #>
+
+		OutCommand::new(
+			Direction::C2S,
+			PacketType::Command<# if self.messages.get_message_group(&e.msg).default.low { #>Low<# } #>,
+			"<#= e.msg.notify.as_ref().unwrap() #>",
+			args.into_iter(),
+			Vec::<std::iter::Empty<(&'static str, String)>>::new().into_iter(),
+		)
+	}
+}
+	<# }
+} #>
+
+<# } #>
