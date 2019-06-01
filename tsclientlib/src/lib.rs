@@ -373,26 +373,32 @@ impl Connection {
 					let version_platform = options.version.get_platform();
 					let version_sign = base64::encode(options.version.get_signature());
 					let offset = offset.to_string();
+
+					let mut args = vec![
+						("client_nickname", options.name.as_str()),
+						("client_version", &version_string),
+						("client_platform", &version_platform),
+						("client_input_hardware", "1"),
+						("client_output_hardware", "1"),
+						("client_default_channel_password", ""),
+						("client_server_password", ""),
+						("client_meta_data", ""),
+						("client_version_sign", &version_sign),
+						("client_nickname_phonetic", ""),
+						("client_key_offset", &offset),
+						("client_default_token", ""),
+						("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
+					];
+
+					if let Some(channel) = &options.channel {
+						args.push(("client_default_channel", channel));
+					}
+
 					let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
 						Direction::C2S,
 						PacketType::Command,
 						"clientinit",
-						vec![
-							("client_nickname", options.name.as_str()),
-							("client_version", &version_string),
-							("client_platform", &version_platform),
-							("client_input_hardware", "1"),
-							("client_output_hardware", "1"),
-							("client_default_channel", ""),
-							("client_default_channel_password", ""),
-							("client_server_password", ""),
-							("client_meta_data", ""),
-							("client_version_sign", &version_sign),
-							("client_nickname_phonetic", ""),
-							("client_key_offset", &offset),
-							("client_default_token", ""),
-							("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
-						].into_iter(),
+						args.into_iter(),
 						std::iter::empty(),
 					);
 
@@ -780,6 +786,7 @@ pub struct ConnectOptions {
 	private_key: Option<crypto::EccKeyPrivP256>,
 	name: String,
 	version: Version,
+	channel: Option<String>,
 	logger: Option<Logger>,
 	log_commands: bool,
 	log_packets: bool,
@@ -812,6 +819,7 @@ impl ConnectOptions {
 			private_key: None,
 			name: String::from("TeamSpeakUser"),
 			version: Version::Linux_3_3_0__3,
+			channel: None,
 			logger: None,
 			log_commands: false,
 			log_packets: false,
@@ -890,6 +898,38 @@ impl ConnectOptions {
 	#[inline]
 	pub fn version(mut self, version: Version) -> Self {
 		self.version = version;
+		self
+	}
+
+	/// Connect to a specific channel.
+	///
+	/// # Example
+	/// ```
+	/// let opts = ConnectOptions::new("localhost").channel("Default Channel".to_string());
+	/// ```
+	///
+	/// Connecting to a channel further down in the hierarchy.
+	/// ```
+	/// let opts = ConnectOptions::new("localhost")
+	///		.channel("Default Channel/Nested".to_string());
+	/// ```
+	#[inline]
+	pub fn channel(mut self, channel: String) -> Self {
+		self.channel = Some(channel);
+		self
+	}
+
+	/// Connect to a specific channel.
+	///
+	/// Setting the channel id is equal to connecting to the channel `/<id>`.
+	///
+	/// # Example
+	/// ```
+	/// let opts = ConnectOptions::new("localhost").channel_id(ChannelId(2));
+	/// ```
+	#[inline]
+	pub fn channel_id(mut self, channel: ChannelId) -> Self {
+		self.channel = Some(format!("/{}", channel.0));
 		self
 	}
 
@@ -1000,6 +1040,7 @@ impl fmt::Debug for ConnectOptions {
 			private_key,
 			name,
 			version,
+			channel,
 			logger,
 			log_commands,
 			log_packets,
@@ -1013,13 +1054,15 @@ impl fmt::Debug for ConnectOptions {
 		write!(
 			f,
 			"ConnectOptions {{ address: {:?}, local_address: {:?}, \
-			 private_key: {:?}, name: {}, version: {}, logger: {:?}, \
-			 log_commands: {}, log_packets: {}, log_udp_packets: {},",
+			 private_key: {:?}, name: {}, version: {}, channel: {:?}, \
+			 logger: {:?}, log_commands: {}, log_packets: {}, \
+			 log_udp_packets: {},",
 			address,
 			local_address,
 			private_key,
 			name,
 			version,
+			channel,
 			logger,
 			log_commands,
 			log_packets,

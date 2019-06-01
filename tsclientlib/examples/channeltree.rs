@@ -136,7 +136,7 @@ fn main() -> Result<(), failure::Error> {
 		})
 		.and_then(|con| {
 			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(30))
+			Delay::new(Instant::now() + Duration::from_secs(3))
 				.map(move |_| con)
 				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
 		})
