@@ -76,6 +76,9 @@ pub struct Identity {
 	key: EccKeyPrivP256,
 	/// The `client_key_offest`/counter for hash cash.
 	counter: u64,
+	/// The maximum counter that was tried, this is greater equal to `counter`
+	/// but may yield a lower level.
+	max_counter: u64,
 }
 
 /// Data that has to be stored for a connection when it is connected.
@@ -270,37 +273,70 @@ fn deserialize_id_key<'de, D: Deserializer<'de>>(
 
 impl Identity {
 	#[inline]
+	pub fn create() -> Result<Self> {
+		let mut res = Self::new(EccKeyPrivP256::create()?, 0);
+		res.upgrade_level(8)?;
+		Ok(res)
+	}
+
+	#[inline]
 	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
-		Self { key, counter }
+		Self::new_with_max_counter(key, counter, counter)
+	}
+
+	#[inline]
+	pub fn new_with_max_counter(key: EccKeyPrivP256, counter: u64, max_counter: u64) -> Self {
+		Self { key, counter, max_counter }
+	}
+
+	#[inline]
+	pub fn new_from_str(key: &str) -> Result<Self> {
+		let mut res = Self::new(EccKeyPrivP256::import_str(key)?, 0);
+		res.upgrade_level(8)?;
+		Ok(res)
+	}
+
+	#[inline]
+	pub fn new_from_bytes(key: &[u8]) -> Result<Self> {
+		let mut res = Self::new(EccKeyPrivP256::import(key)?, 0);
+		res.upgrade_level(8)?;
+		Ok(res)
 	}
 
 	#[inline]
 	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
 	#[inline]
 	pub fn counter(&self) -> u64 { self.counter }
+	#[inline]
+	pub fn max_counter(&self) -> u64 { self.max_counter }
 
 	#[inline]
 	pub fn set_key(&mut self, key: EccKeyPrivP256) { self.key = key }
 	#[inline]
 	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
+	#[inline]
+	pub fn set_max_counter(&mut self, max_counter: u64) {
+		self.max_counter = max_counter;
+	}
 
 	/// Compute the current hash cash level.
 	#[inline]
 	pub fn level(&self) -> Result<u8> {
-		let omega = self.key.to_ts()?;
+		let omega = self.key.to_pub().to_ts()?;
 		Ok(algs::get_hash_cash_level(&omega, self.counter))
 	}
 
 	/// Compute a better hash cash level.
 	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
-		let omega = self.key.to_ts()?;
-		let mut offset = self.counter;
+		let omega = self.key.to_pub().to_ts()?;
+		let mut offset = self.max_counter;
 		while offset < u64::MAX
 			&& algs::get_hash_cash_level(&omega, offset) < target
 		{
 			offset += 1;
 		}
 		self.counter = offset;
+		self.max_counter = offset;
 		Ok(())
 	}
 }

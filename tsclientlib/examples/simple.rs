@@ -6,7 +6,7 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 
-use tsclientlib::{ConnectOptions, Connection};
+use tsclientlib::{ConnectOptions, Connection, Identity};
 
 #[derive(StructOpt, Debug)]
 #[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
@@ -44,10 +44,11 @@ fn main() -> Result<(), failure::Error> {
 				.log_udp_packets(args.verbose >= 3);
 
 			// Optionally set the key of this client, otherwise a new key is generated.
-			let con_config = con_config.private_key_str(
+			let id = Identity::new_from_str(
 				"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 				k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
 				C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+			let con_config = con_config.identity(id);
 
 			// Connect
 			Connection::new(con_config)

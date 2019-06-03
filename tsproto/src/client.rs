@@ -255,6 +255,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 	{
 		let con_val2 = con_val.downgrade();
 		let data = self.data.as_ref().unwrap().clone();
+		// TODO Unify handling inits and commands
 		let s2c_init_stream = s2c_init_stream
 			.and_then(move |p| -> Result<Option<InS2CInit>> {
 				// Get private key

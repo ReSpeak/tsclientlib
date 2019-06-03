@@ -241,8 +241,9 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 			if let Some(events) = events {
 				let con = connection.lock();
 				let listeners = connection.inner.event_listeners.read();
+				let ev = crate::Event::ConEvents(&con, &events);
 				for l in listeners.values() {
-					l(&con, &events);
+					l(&ev);
 				}
 			}
 

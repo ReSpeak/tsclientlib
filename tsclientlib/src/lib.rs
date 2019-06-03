@@ -22,16 +22,15 @@ use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
 use futures::sync::oneshot;
 use futures::{future, stream, Future, Sink, Stream};
-use parking_lot::{RwLock, RwLockReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
-use tsproto::algorithms as algs;
 use tsproto::connectionmanager::ConnectionManager;
 use tsproto::connectionmanager::Resender;
 use tsproto::handler_data::{ConnectionListener, ConnectionValue};
 use tsproto_packets::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
-use tsproto::{client, crypto, log};
+use tsproto::{client, log};
 #[cfg(feature = "audio")]
 use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use ts_bookkeeping::messages::s2c::{InMessage, InMessages};
@@ -53,11 +52,12 @@ mod tests;
 
 // Reexports
 pub use ts_bookkeeping::*;
+pub use tsproto::connection::Identity;
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
 pub type EventListener =
-	Box<Fn(&ConnectionLock, &[events::Event]) + Send + Sync>;
+	Box<Fn(&Event) + Send + Sync>;
 
 #[derive(Fail, Debug, From)]
 pub enum Error {
@@ -114,6 +114,19 @@ pub trait PacketHandler {
 	);
 	/// Clone into a box.
 	fn clone(&self) -> PHBox;
+}
+
+#[derive(Clone)]
+pub enum Event<'a> {
+	ConEvents(&'a ConnectionLock<'a>, &'a [events::Event]),
+	// Events that occur before the connection is created
+	/// The identity and the needed level.
+	IdentityLevelIncreasing(&'a Identity, u8),
+	/// The identity and the reached level.
+	///
+	/// This event may occur without an `IdentityLevelIncreasing` event before
+	/// if a new identity is created because no identity was supplied.
+	IdentityLevelIncreased(&'a Identity),
 }
 
 pub struct ConnectionLock<'a> {
@@ -227,221 +240,28 @@ impl Connection {
 		// Try all addresses
 		let addr: Box<Stream<Item = _, Error = _> + Send> =
 			options.address.resolve(&logger);
-		let private_key =
-			match options.private_key.take().map(Ok).unwrap_or_else(|| {
+		options.identity =
+			match options.identity.take().map(Ok).unwrap_or_else(|| {
 				// Create new ECDH key
-				crypto::EccKeyPrivP256::create()
+				let id = Identity::create();
+				if let Ok(id) = &id {
+					// Send event
+					let e = Event::IdentityLevelIncreased(id);
+					for (_, l) in &options.event_listeners {
+						l(&e);
+					}
+				}
+				id
 			}) {
-				Ok(key) => key,
+				Ok(id) => Some(id),
 				Err(e) => return Box::new(future::err(e.into())),
 			};
 
 		// Make options clonable
-		let options = Arc::new(options);
+		let options = Arc::new(Mutex::new(options));
 		let logger2 = logger.clone();
 		Box::new(
-			addr.and_then(
-				move |addr| -> Box<Future<Item = _, Error = _> + Send> {
-					let (initserver_send, initserver_recv) = oneshot::channel();
-					let (connection_send, connection_recv) = oneshot::channel();
-					let ph: Option<PHBox> =
-						options.handle_packets.as_ref().map(|h| (*h).clone());
-					let packet_handler = SimplePacketHandler::new(
-						logger.clone(),
-						ph,
-						initserver_send,
-						connection_recv,
-						#[cfg(feature = "audio")]
-						options.audio_packet_handler.clone(),
-					);
-					let return_code_handler =
-						packet_handler.return_codes.clone();
-					let client = match client::new(
-						options.local_address.unwrap_or_else(|| {
-							if addr.is_ipv4() {
-								"0.0.0.0:0".parse().unwrap()
-							} else {
-								"[::]:0".parse().unwrap()
-							}
-						}),
-						private_key.clone(),
-						packet_handler,
-						logger.clone(),
-					) {
-						Ok(client) => client,
-						Err(error) => {
-							return Box::new(future::err(error.into()))
-						}
-					};
-
-					{
-						let mut c = client.lock();
-						let c = &mut *c;
-						// Logging
-						if options.log_commands {
-							log::add_command_logger(c);
-						}
-						if options.log_packets {
-							log::add_packet_logger(c);
-						}
-						if options.log_udp_packets {
-							log::add_udp_packet_logger(c);
-						}
-					}
-
-					if let Some(prepare_client) = &options.prepare_client {
-						prepare_client(&client);
-					}
-
-					let client = client.clone();
-					let client2 = client.clone();
-					let options = options.clone();
-
-					// Create a connection
-					debug!(logger, "Connecting"; "address" => %addr);
-					let connect_fut = client::connect(
-						Arc::downgrade(&client),
-						&mut *client.lock(),
-						addr,
-					)
-					.from_err();
-
-					let initserver_poll = initserver_recv
-						.map_err(|e| {
-							format_err!(
-								"Error while waiting for initserver ({:?})",
-								e
-							)
-							.into()
-						})
-						.and_then(move |cmd| {
-							let msg =
-								InMessage::new(cmd).map_err(|(_, e)| e)?;
-							if let InMessages::InitServer(_) = msg.msg() {
-								Ok(msg)
-							} else {
-								Err(Error::ConnectionFailed(
-									format!("Got no initserver but {:?}", msg)
-								))
-							}
-						});
-
-					Box::new(
-						connect_fut
-				.and_then(move |con| -> Box<Future<Item=_, Error=_> + Send> {
-					let logger = {
-						let mutex = match con.upgrade().ok_or_else(||
-							format_err!("Connection does not exist anymore")) {
-							Ok(r) => r.mutex,
-							Err(e) => return Box::new(future::err(e.into())),
-						};
-						let con = mutex.lock();
-						con.1.logger.clone()
-					};
-					// TODO Add possibility to specify offset and level in ConnectOptions
-					// Compute hash cash
-					let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-						"Compute public key hash cash level", logger.clone(),
-						slog::Level::Info);
-					time_reporter.start("Compute public key hash cash level");
-					let pub_k = {
-						let c = client.lock();
-						c.private_key.to_pub()
-					};
-
-					let (send, recv) = oneshot::channel();
-					std::thread::spawn(move || {
-						let _ = send.send((
-							con.clone(),
-							algs::hash_cash(&pub_k, 8).unwrap(),
-							pub_k.to_ts().unwrap(),
-							logger.clone(),
-						));
-					});
-
-					Box::new(recv.map(|r| { time_reporter.finish(); r })
-						.map_err(|e| format_err!("Failed to compute \
-							identity level ({:?})", e).into()))
-				})
-				.and_then(move |(con, offset, omega, logger)| {
-					info!(logger, "Computed hash cash level";
-						"level" => algs::get_hash_cash_level(&omega, offset),
-						"offset" => offset);
-
-					// Create clientinit packet
-					let version_string = options.version.get_version_string();
-					let version_platform = options.version.get_platform();
-					let version_sign = base64::encode(options.version.get_signature());
-					let offset = offset.to_string();
-
-					let mut args = vec![
-						("client_nickname", options.name.as_str()),
-						("client_version", &version_string),
-						("client_platform", &version_platform),
-						("client_input_hardware", "1"),
-						("client_output_hardware", "1"),
-						("client_default_channel_password", ""),
-						("client_server_password", ""),
-						("client_meta_data", ""),
-						("client_version_sign", &version_sign),
-						("client_nickname_phonetic", ""),
-						("client_key_offset", &offset),
-						("client_default_token", ""),
-						("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
-					];
-
-					if let Some(channel) = &options.channel {
-						args.push(("client_default_channel", channel));
-					}
-
-					let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-						Direction::C2S,
-						PacketType::Command,
-						"clientinit",
-						args.into_iter(),
-						std::iter::empty(),
-					);
-
-					let sink = con.as_packet_sink();
-					sink.send(packet).map(move |_| con)
-				})
-				.from_err()
-				// Wait until we sent the clientinit packet and afterwards received
-				// the initserver packet.
-				.and_then(move |con| initserver_poll.map(|r| (con, r)))
-				.and_then(move |(con, initserver)| {
-					// Get uid of server
-					let uid = {
-						let mutex = con.upgrade().ok_or_else(||
-							format_err!("Connection does not exist anymore"))?
-							.mutex;
-						let con = mutex.lock();
-						con.1.params.as_ref().ok_or_else(||
-							format_err!("Connection params do not exist"))?
-							.public_key.get_uid()?
-					};
-
-					// Create connection
-					let data = data::Connection::new(Uid(uid), &initserver);
-					let con = InnerConnection {
-						connection: Arc::new(RwLock::new(data)),
-						client_data: client2,
-						client_connection: con,
-						return_code_handler,
-						event_listeners: Arc::new(RwLock::new(HashMap::new())),
-					};
-
-					// Send connection to packet handler
-					let con = Connection { inner: con };
-					connection_send.send(con.clone()).map_err(|_|
-						format_err!("Failed to send connection to packet \
-							handler"))?;
-
-					Ok(con)
-				}),
-					)
-				},
-			)
+			addr.and_then(move |addr| Self::connect_to(logger.clone(), options.clone(), addr))
 			.then(move |r| -> Result<_> {
 				if let Err(e) = &r {
 					debug!(logger2, "Connecting failed, trying next address";
@@ -460,6 +280,264 @@ impl Connection {
 				})
 			}),
 		)
+	}
+
+	fn connect_to(logger: Logger, options: Arc<Mutex<ConnectOptions>>, addr: SocketAddr) -> BoxFuture<Connection> {
+		let (initserver_send, initserver_recv) = oneshot::channel();
+		let (connection_send, connection_recv) = oneshot::channel();
+		let opts = options.lock();
+		let ph: Option<PHBox> =
+			opts.handle_packets.as_ref().map(|h| (*h).clone());
+		let packet_handler = SimplePacketHandler::new(
+			logger.clone(),
+			ph,
+			initserver_send,
+			connection_recv,
+			#[cfg(feature = "audio")]
+			opts.audio_packet_handler.clone(),
+		);
+		let counter = opts.identity.as_ref().unwrap().counter().to_string();
+		let return_code_handler =
+			packet_handler.return_codes.clone();
+		let client = match client::new(
+			opts.local_address.unwrap_or_else(|| {
+				if addr.is_ipv4() {
+					"0.0.0.0:0".parse().unwrap()
+				} else {
+					"[::]:0".parse().unwrap()
+				}
+			}),
+			opts.identity.as_ref().unwrap().key().clone(),
+			packet_handler,
+			logger.clone(),
+		) {
+			Ok(client) => client,
+			Err(error) => {
+				return Box::new(future::err(error.into()))
+			}
+		};
+
+		{
+			let mut c = client.lock();
+			let c = &mut *c;
+			// Logging
+			if opts.log_commands {
+				log::add_command_logger(c);
+			}
+			if opts.log_packets {
+				log::add_packet_logger(c);
+			}
+			if opts.log_udp_packets {
+				log::add_udp_packet_logger(c);
+			}
+		}
+
+		if let Some(prepare_client) = &opts.prepare_client {
+			prepare_client(&client);
+		}
+		drop(opts);
+
+		let client2 = client.clone();
+
+		// Create a connection
+		debug!(logger, "Connecting"; "address" => %addr);
+		let connect_fut = client::connect(
+			Arc::downgrade(&client),
+			&mut *client.lock(),
+			addr,
+		)
+		.from_err();
+
+		let options2 = options.clone();
+		let options3 = options.clone();
+		Box::new(
+			connect_fut.and_then(move |con| {
+				// Create clientinit packet
+				let opts = options.lock();
+				let version_string = opts.version.get_version_string();
+				let version_platform = opts.version.get_platform();
+				let version_sign = base64::encode(opts.version.get_signature());
+
+				let mut args = vec![
+					("client_nickname", opts.name.as_str()),
+					("client_version", &version_string),
+					("client_platform", &version_platform),
+					("client_input_hardware", "1"),
+					("client_output_hardware", "1"),
+					("client_default_channel_password", ""),
+					("client_server_password", ""),
+					("client_meta_data", ""),
+					("client_version_sign", &version_sign),
+					("client_nickname_phonetic", ""),
+					("client_key_offset", &counter),
+					("client_default_token", ""),
+					("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
+				];
+
+				if let Some(channel) = &opts.channel {
+					args.push(("client_default_channel", channel));
+				}
+
+				let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+					Direction::C2S,
+					PacketType::Command,
+					"clientinit",
+					args.into_iter(),
+					std::iter::empty(),
+				);
+
+				let sink = con.as_packet_sink();
+				sink.send(packet).map(move |_| con)
+			})
+			.from_err()
+			// Wait until we sent the clientinit packet and afterwards received
+			// the initserver packet.
+				.and_then(move |con| {
+					initserver_recv.map(|r| (con, r))
+						.map_err(|e| {
+							format_err!(
+								"Error while waiting for initserver ({:?})",
+								e
+							)
+								.into()
+						})
+				})
+			.and_then(move |(con, cmd)| {
+				Self::handle_initserver(options3, con, cmd)
+					.and_then(move |r| -> BoxFuture<Self> {
+						if let Some((con, initserver)) = r {
+							// Get uid of server
+							let uid = {
+								let con = if let Some(r) = con.upgrade() {
+									r
+								} else {
+									return Box::new(future::err(
+										format_err!("Connection does not exist anymore").into()));
+								};
+								let mutex = con.mutex;
+								let con = mutex.lock();
+								let params = if let Some(r) = &con.1.params {
+									r
+								} else {
+									return Box::new(future::err(
+										format_err!("Connection params do not exist").into()));
+								};
+
+								match params.public_key.get_uid() {
+									Ok(r) => r,
+									Err(e) => return Box::new(future::err(e.into())),
+								}
+							};
+
+							// Create connection
+							let data = data::Connection::new(Uid(uid), &initserver);
+							let con = InnerConnection {
+								connection: Arc::new(RwLock::new(data)),
+								client_data: client2,
+								client_connection: con,
+								return_code_handler,
+								event_listeners: Arc::new(RwLock::new(HashMap::new())),
+							};
+
+							// Send connection to packet handler
+							let con = Connection { inner: con };
+							let mut opts = options2.lock();
+							for (k, l) in opts.event_listeners.drain(..) {
+								con.add_event_listener(k, l);
+							}
+							if let Err(_) = connection_send.send(con.clone()) {
+								return Box::new(future::err(
+									format_err!("Failed to send connection to \
+									packet handler").into()));
+							}
+
+							Box::new(future::ok(con))
+						} else {
+							// Try connecting again
+							Self::connect_to(logger, options2, addr)
+						}
+					})
+			})
+		)
+	}
+
+	/// If this returns `None`, the level was increased and we should try
+	/// connecting again.
+	fn handle_initserver(
+		options: Arc<Mutex<ConnectOptions>>,
+		con: client::ClientConVal,
+		cmd: InCommand,
+	) -> BoxFuture<Option<(client::ClientConVal, InMessage)>>
+	{
+		let msg = match InMessage::new(cmd).map_err(|(_, e)| e) {
+			Ok(r) => r,
+			Err(e) => {
+				return Box::new(future::err(e.into()));
+			}
+		};
+		if let InMessages::InitServer(_) = msg.msg() {
+			Box::new(future::ok(Some((con, msg))))
+		} else if let InMessages::CommandError(e) = msg.msg() {
+			let e = e.iter().next().unwrap();
+			if e.id == ts_bookkeeping::TsError::ClientCouldNotValidateIdentity {
+				if let Some(needed) = e.extra_message.and_then(|m| m.parse::<u8>().ok()) {
+					if needed > 20 {
+						return Box::new(future::err(Error::ConnectionFailed(
+							format!("The server needs an \
+								identity of level {}, please \
+								increase your identity level", needed)
+						)));
+					}
+
+					{
+						let opts = options.lock();
+						match opts.identity.as_ref().unwrap().level() {
+							Ok(level) => {
+								if level >= needed {
+									return Box::new(future::err(Error::ConnectionFailed(
+										format!("The server requested an \
+											identity of level {}, but we already \
+											have level {}", needed, level)
+									)));
+								}
+							}
+							Err(e) => return Box::new(future::err(e.into())),
+						}
+
+						let e = Event::IdentityLevelIncreasing(opts.identity.as_ref().unwrap(), needed);
+						for (_, l) in &opts.event_listeners {
+							l(&e);
+						}
+					}
+
+					// Increase identity level
+					let options2 = options.clone();
+					let (send, recv) = oneshot::channel();
+					// TODO Performance log
+					std::thread::spawn(move || {
+						let mut opts = options.lock();
+						let _ = send.send(opts.identity.as_mut().unwrap()
+							.upgrade_level(needed).map_err(|e| e.into()));
+					});
+					return Box::new(recv.from_err().and_then(|r| r).map(move |()| {
+						let opts = options2.lock();
+						let e = Event::IdentityLevelIncreased(&opts.identity.as_ref().unwrap());
+						for (_, l) in &opts.event_listeners {
+							l(&e);
+						}
+						// Try to connect again
+						None
+					}));
+				}
+			}
+			Box::new(future::err(Error::ConnectionFailed(
+				format!("Got no initserver but {:?}", msg)
+			)))
+		} else {
+			Box::new(future::err(Error::ConnectionFailed(
+				format!("Got no initserver but {:?}", msg)
+			)))
+		}
 	}
 
 	/// **This is part of the unstable interface.**
@@ -656,7 +734,7 @@ impl Connection {
 	/// again. It should be unique as any old event listener with this key will
 	/// be removed and returned. Internally all listeners are stored in a
 	/// `HashMap`.
-	pub fn add_on_event(
+	pub fn add_event_listener(
 		&self,
 		key: String,
 		f: EventListener,
@@ -669,7 +747,7 @@ impl Connection {
 	///
 	/// The removed event listener is returned if the key was found in the
 	/// listeners.
-	pub fn remove_on_event(&self, key: &str) -> Option<EventListener> {
+	pub fn remove_event_listener(&self, key: &str) -> Option<EventListener> {
 		self.inner.event_listeners.write().remove(key)
 	}
 }
@@ -783,7 +861,7 @@ impl ServerAddressExt for ServerAddress {
 pub struct ConnectOptions {
 	address: ServerAddress,
 	local_address: Option<SocketAddr>,
-	private_key: Option<crypto::EccKeyPrivP256>,
+	identity: Option<Identity>,
 	name: String,
 	version: Version,
 	channel: Option<String>,
@@ -793,6 +871,7 @@ pub struct ConnectOptions {
 	log_udp_packets: bool,
 	#[cfg(feature = "audio")]
 	audio_packet_handler: Option<AudioPacketHandler>,
+	event_listeners: Vec<(String, EventListener)>,
 	handle_packets: Option<PHBox>,
 	prepare_client: Option<
 		Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>,
@@ -816,7 +895,7 @@ impl ConnectOptions {
 		Self {
 			address: address.into(),
 			local_address: None,
-			private_key: None,
+			identity: None,
 			name: String::from("TeamSpeakUser"),
 			version: Version::Linux_3_3_0__3,
 			channel: None,
@@ -826,6 +905,7 @@ impl ConnectOptions {
 			log_udp_packets: false,
 			#[cfg(feature = "audio")]
 			audio_packet_handler: None,
+			event_listeners: Vec::new(),
 			handle_packets: None,
 			prepare_client: None,
 		}
@@ -842,43 +922,14 @@ impl ConnectOptions {
 		self
 	}
 
-	/// Set the private key of the user.
+	/// Set the identity of the user.
 	///
 	/// # Default
 	/// A new identity is generated when connecting.
 	#[inline]
-	pub fn private_key(mut self, private_key: crypto::EccKeyPrivP256) -> Self {
-		self.private_key = Some(private_key);
+	pub fn identity(mut self, identity: Identity) -> Self {
+		self.identity = Some(identity);
 		self
-	}
-
-	/// Takes the private key as a string. The exact format is determined
-	/// automatically.
-	///
-	/// # Default
-	/// A new identity is generated when connecting.
-	///
-	/// # Error
-	/// An error is returned if the string cannot be decoded.
-	#[inline]
-	pub fn private_key_str(mut self, private_key: &str) -> Result<Self> {
-		self.private_key =
-			Some(crypto::EccKeyPrivP256::import_str(private_key)?);
-		Ok(self)
-	}
-
-	/// Takes the private key as a byte slice. The exact format is determined
-	/// automatically.
-	///
-	/// # Default
-	/// A new identity is generated when connecting.
-	///
-	/// # Error
-	/// An error is returned if the byte slice cannot be decoded.
-	#[inline]
-	pub fn private_key_bytes(mut self, private_key: &[u8]) -> Result<Self> {
-		self.private_key = Some(crypto::EccKeyPrivP256::import(private_key)?);
-		Ok(self)
 	}
 
 	/// The name of the user.
@@ -990,6 +1041,21 @@ impl ConnectOptions {
 		self
 	}
 
+	/// Set a function which will be called on events.
+	///
+	/// An event is generated e.g. when a property of a client or channel
+	/// changes.
+	///
+	/// The `key` can be freely chosen, it is needed to remove the the listener
+	/// again. It should be unique as any old event listener with this key will
+	/// be removed and returned. Internally all listeners are stored in a
+	/// `HashMap`.
+	#[inline]
+	pub fn add_event_listener(mut self, key: String, event_listener: EventListener) -> Self {
+		self.event_listeners.push((key, event_listener));
+		self
+	}
+
 	/// Handle incomming command and audio packets in a custom way,
 	/// additionally to the default handling.
 	///
@@ -1037,7 +1103,7 @@ impl fmt::Debug for ConnectOptions {
 		let ConnectOptions {
 			address,
 			local_address,
-			private_key,
+			identity,
 			name,
 			version,
 			channel,
@@ -1045,21 +1111,22 @@ impl fmt::Debug for ConnectOptions {
 			log_commands,
 			log_packets,
 			log_udp_packets,
-			// TODO This cannot be parsed by syn
+			// TODO Report: This cannot be parsed by syn
 			//#[cfg(feature = "audio")]
 			//audio_packet_handler,
+			event_listeners: _,
 			handle_packets: _,
 			prepare_client: _,
 		} = self;
 		write!(
 			f,
 			"ConnectOptions {{ address: {:?}, local_address: {:?}, \
-			 private_key: {:?}, name: {}, version: {}, channel: {:?}, \
+			 identity: {:?}, name: {}, version: {}, channel: {:?}, \
 			 logger: {:?}, log_commands: {}, log_packets: {}, \
 			 log_udp_packets: {},",
 			address,
 			local_address,
-			private_key,
+			identity,
 			name,
 			version,
 			channel,

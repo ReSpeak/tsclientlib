@@ -152,12 +152,19 @@ impl EccKeyPubP256 {
 	/// this order. Each of the coordinates takes half of the size.
 	pub fn to_short(&self) -> &[u8] { &self.0 }
 
+	/// Compute the uid of this key without encoding it in base64.
+	///
+	/// returns sha1(ts encoded key)
+	pub fn get_uid_no_base64(&self) -> Result<Vec<u8>> {
+		let hash = digest::digest(&digest::SHA1, self.to_ts()?.as_bytes());
+		Ok(hash.as_ref().to_vec())
+	}
+
 	/// Compute the uid of this key.
 	///
 	/// Uid = base64(sha1(ts encoded key))
 	pub fn get_uid(&self) -> Result<String> {
-		let hash = digest::digest(&digest::SHA1, self.to_ts()?.as_bytes());
-		Ok(base64::encode(&hash))
+		Ok(base64::encode(&self.get_uid_no_base64()?))
 	}
 
 	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
