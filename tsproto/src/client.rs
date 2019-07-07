@@ -48,7 +48,7 @@ pub struct ServerConnectionData {
 	/// Return `false` to remain in the list of listeners.
 	/// If `true` is returned, this listener will be removed.
 	pub state_change_listener:
-		Vec<Box<FnMut(&ServerConnectionState) -> bool + Send>>,
+		Vec<Box<dyn FnMut(&ServerConnectionState) -> bool + Send>>,
 	pub state: ServerConnectionState,
 }
 
@@ -79,7 +79,7 @@ pub fn wait_for_state<
 >(
 	connection: &ClientConVal,
 	f: F,
-) -> Box<Future<Item = (), Error = Error> + Send>
+) -> Box<dyn Future<Item = (), Error = Error> + Send>
 {
 	let (send, recv) = mpsc::channel(0);
 	let con = match connection.mutex.upgrade() {
@@ -652,7 +652,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 								});
 
 								recv.from_err().and_then(move |(x, n, y)| -> Box<
-										Future<Item = _, Error = _> + Send,
+										dyn Future<Item = _, Error = _> + Send,
 									> {
 										// Create the command string
 										// omega is an ASN.1-DER encoded public key from

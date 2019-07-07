@@ -29,9 +29,9 @@ pub struct PacketCodecReceiver<CM: ConnectionManager + 'static> {
 	is_client: bool,
 	logger: Logger,
 	in_packet_observer:
-		LockedHashMap<String, Box<InPacketObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<dyn InPacketObserver<CM::AssociatedData>>>,
 	in_command_observer:
-		LockedHashMap<String, Box<InCommandObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<dyn InCommandObserver<CM::AssociatedData>>>,
 
 	/// The sink for `UdpPacket`s with no known connection.
 	///
@@ -134,11 +134,11 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 		logger: &Logger,
 		in_packet_observer: LockedHashMap<
 			String,
-			Box<InPacketObserver<CM::AssociatedData>>,
+			Box<dyn InPacketObserver<CM::AssociatedData>>,
 		>,
 		in_command_observer: LockedHashMap<
 			String,
-			Box<InCommandObserver<CM::AssociatedData>>,
+			Box<dyn InCommandObserver<CM::AssociatedData>>,
 		>,
 		is_client: bool,
 		connection: &ConnectionValue<CM::AssociatedData>,

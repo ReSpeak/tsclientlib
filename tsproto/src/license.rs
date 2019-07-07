@@ -159,7 +159,7 @@ impl Licenses {
 		Ok(res)
 	}
 
-	pub fn write(&self, w: &mut Write) -> Result<()> {
+	pub fn write(&self, w: &mut dyn Write) -> Result<()> {
 		// Version
 		w.write_u8(1)?;
 
@@ -340,7 +340,7 @@ impl License {
 		))
 	}
 
-	pub fn write(&self, w: &mut Write) -> Result<()> {
+	pub fn write(&self, w: &mut dyn Write) -> Result<()> {
 		w.write_u8(0)?;
 		// Public key
 		w.write_all(self.key.get_pub_bytes().as_ref())?;

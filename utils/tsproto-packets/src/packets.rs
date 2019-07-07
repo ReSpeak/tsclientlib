@@ -1031,7 +1031,7 @@ impl OutCommand {
 		}
 	}
 
-	fn write_escaped(w: &mut Write, s: &str) -> Result<()> {
+	fn write_escaped(w: &mut dyn Write, s: &str) -> Result<()> {
 		for c in s.chars() {
 			match c {
 				'\u{b}' => write!(w, "\\v"),

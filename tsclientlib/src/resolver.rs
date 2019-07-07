@@ -95,7 +95,7 @@ impl<S: Stream> Stream for StreamCombiner<S> {
 pub fn resolve(
 	logger: &Logger,
 	address: &str,
-) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>
+) -> Box<dyn Stream<Item = SocketAddr, Error = Error> + Send>
 {
 	let logger = logger.new(o!("module" => "resolver"));
 	debug!(logger, "Starting resolve"; "address" => address);
@@ -103,7 +103,7 @@ pub fn resolve(
 	let port;
 	match parse_ip(address) {
 		Ok(ParseIpResult::Addr(res)) => {
-			let res: Box<Stream<Item = _, Error = _> + Send> =
+			let res: Box<dyn Stream<Item = _, Error = _> + Send> =
 				Box::new(stream::once(Ok(res)));
 			return res;
 		}
@@ -120,7 +120,7 @@ pub fn resolve(
 	let p = port.clone();
 	let address = addr.clone();
 	let logger2 = logger.clone();
-	let nickname_res = (move || -> Box<Stream<Item = _, Error = _> + Send> {
+	let nickname_res = (move || -> Box<dyn Stream<Item = _, Error = _> + Send> {
 		let addr = address;
 		if !addr.contains('.') && addr != "localhost" {
 			let addr2 = addr.clone();
@@ -179,7 +179,7 @@ pub fn resolve(
 
 	let address = addr.clone();
 	let tsdns_srv_res = stream::futures_ordered(Some(future::lazy(
-		move || -> Box<Future<Item = _, Error = Error> + Send> {
+		move || -> Box<dyn Future<Item = _, Error = Error> + Send> {
 			let addr = address;
 			// Try to get the address of a tsdns server by an SRV record
 			let prefix = match Name::from_str(DNS_PREFIX_TCP) {
@@ -352,7 +352,7 @@ pub fn resolve_nickname(
 		addrs
 		.map(|addrs| {
 			stream::futures_ordered(addrs.iter().map(
-				|addr| -> Result<Box<Stream<Item = _, Error = _> + Send>> {
+				|addr| -> Result<Box<dyn Stream<Item = _, Error = _> + Send>> {
 					match parse_ip(addr) {
 						Err(e) => Ok(Box::new(stream::once(Err(e)))),
 						Ok(ParseIpResult::Addr(a)) => {

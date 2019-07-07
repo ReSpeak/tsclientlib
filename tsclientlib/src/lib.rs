@@ -54,10 +54,10 @@ mod tests;
 pub use ts_bookkeeping::*;
 pub use tsproto::connection::Identity;
 
-type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send>;
+type BoxFuture<T> = Box<dyn Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
 pub type EventListener =
-	Box<Fn(&Event) + Send + Sync>;
+	Box<dyn Fn(&Event) + Send + Sync>;
 
 #[derive(Fail, Debug, From)]
 pub enum Error {
@@ -101,15 +101,15 @@ impl From<failure::Error> for Error {
 	}
 }
 
-pub type PHBox = Box<PacketHandler + Send + Sync>;
+pub type PHBox = Box<dyn PacketHandler + Send + Sync>;
 pub trait PacketHandler {
 	fn new_connection(
 		&mut self,
 		command_stream: Box<
-			Stream<Item = InCommand, Error = tsproto::Error> + Send,
+			dyn Stream<Item = InCommand, Error = tsproto::Error> + Send,
 		>,
 		audio_stream: Box<
-			Stream<Item = InAudio, Error = tsproto::Error> + Send,
+			dyn Stream<Item = InAudio, Error = tsproto::Error> + Send,
 		>,
 	);
 	/// Clone into a box.
@@ -154,7 +154,7 @@ pub struct Connection {
 	inner: InnerConnection,
 }
 
-struct DisconnectListener(Option<Box<Fn() + Send>>);
+struct DisconnectListener(Option<Box<dyn Fn() + Send>>);
 
 /// The main type of this crate, which represents a connection to a server.
 ///
@@ -238,7 +238,7 @@ impl Connection {
 		let logger = logger.new(o!("addr" => options.address.to_string()));
 
 		// Try all addresses
-		let addr: Box<Stream<Item = _, Error = _> + Send> =
+		let addr: Box<dyn Stream<Item = _, Error = _> + Send> =
 			options.address.resolve(&logger);
 		options.identity =
 			match options.identity.take().map(Ok).unwrap_or_else(|| {
@@ -442,13 +442,14 @@ impl Connection {
 							// Send connection to packet handler
 							let con = Connection { inner: con };
 							let mut opts = options2.lock();
-							for (k, l) in opts.event_listeners.drain(..) {
-								con.add_event_listener(k, l);
-							}
 							if let Err(_) = connection_send.send(con.clone()) {
 								return Box::new(future::err(
 									format_err!("Failed to send connection to \
 									packet handler").into()));
+							}
+
+							for (k, l) in opts.event_listeners.drain(..) {
+								con.add_event_listener(k, l);
 							}
 
 							Box::new(future::ok(con))
@@ -717,7 +718,7 @@ impl Connection {
 	/// );
 	/// # }
 	/// ```
-	pub fn add_on_disconnect(&self, f: Box<Fn() + Send>) {
+	pub fn add_on_disconnect(&self, f: Box<dyn Fn() + Send>) {
 		self.inner
 			.client_data
 			.lock()
@@ -821,14 +822,14 @@ impl<'a> ConnectionLock<'a> {
 }
 
 trait ServerAddressExt {
-	fn resolve(&self, logger: &Logger) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>;
+	fn resolve(&self, logger: &Logger) -> Box<dyn Stream<Item = SocketAddr, Error = Error> + Send>;
 }
 
 impl ServerAddressExt for ServerAddress {
 	fn resolve(
 		&self,
 		logger: &Logger,
-	) -> Box<Stream<Item = SocketAddr, Error = Error> + Send>
+	) -> Box<dyn Stream<Item = SocketAddr, Error = Error> + Send>
 	{
 		match self {
 			ServerAddress::SocketAddr(a) => Box::new(stream::once(Ok(*a))),
@@ -874,7 +875,7 @@ pub struct ConnectOptions {
 	event_listeners: Vec<(String, EventListener)>,
 	handle_packets: Option<PHBox>,
 	prepare_client: Option<
-		Box<Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>,
+		Box<dyn Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync>,
 	>,
 }
 
@@ -1088,7 +1089,7 @@ impl ConnectOptions {
 	pub fn prepare_client(
 		mut self,
 		prepare_client: Box<
-			Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync,
+			dyn Fn(&client::ClientDataM<SimplePacketHandler>) + Send + Sync,
 		>,
 	) -> Self
 	{

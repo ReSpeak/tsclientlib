@@ -114,14 +114,14 @@ pub trait InCommandObserver<T>: Send + Sync {
 pub struct ConnectionValue<T: 'static> {
 	pub mutex: Arc<Mutex<(T, Connection)>>,
 	pub(crate) out_packet_observer:
-		LockedHashMap<String, Box<OutPacketObserver<T>>>,
+		LockedHashMap<String, Box<dyn OutPacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValue<T> {
 	pub(crate) fn new(
 		data: T,
 		con: Connection,
-		out_packet_observer: LockedHashMap<String, Box<OutPacketObserver<T>>>,
+		out_packet_observer: LockedHashMap<String, Box<dyn OutPacketObserver<T>>>,
 	) -> Self
 	{
 		Self {
@@ -133,7 +133,7 @@ impl<T: Send + 'static> ConnectionValue<T> {
 	fn encode_packet(
 		&self,
 		mut packet: OutPacket,
-	) -> Box<Stream<Item = (PacketType, u32, u16, Bytes), Error = Error> + Send>
+	) -> Box<dyn Stream<Item = (PacketType, u32, u16, Bytes), Error = Error> + Send>
 	{
 		let mut con = self.mutex.lock();
 		let con = &mut *con;
@@ -184,7 +184,7 @@ impl<T: 'static> Clone for ConnectionValue<T> {
 pub struct ConnectionValueWeak<T: Send + 'static> {
 	pub mutex: Weak<Mutex<(T, Connection)>>,
 	pub(crate) out_packet_observer:
-		LockedHashMap<String, Box<OutPacketObserver<T>>>,
+		LockedHashMap<String, Box<dyn OutPacketObserver<T>>>,
 }
 
 impl<T: Send + 'static> ConnectionValueWeak<T> {
@@ -198,7 +198,7 @@ impl<T: Send + 'static> ConnectionValueWeak<T> {
 	pub fn as_udp_packet_sink(
 		&self,
 	) -> Box<
-		Sink<SinkItem = (PacketType, u32, u16, Bytes), SinkError = Error>
+		dyn Sink<SinkItem = (PacketType, u32, u16, Bytes), SinkError = Error>
 			+ Send,
 	> {
 		if let Some(con_val) = self.upgrade() {
@@ -270,21 +270,21 @@ pub struct Data<CM: ConnectionManager + 'static> {
 
 	/// Observe incoming `UdpPacket`s.
 	pub(crate) in_udp_packet_observer:
-		LockedHashMap<String, Box<InUdpPacketObserver>>,
+		LockedHashMap<String, Box<dyn InUdpPacketObserver>>,
 	/// Observe outgoing `UdpPacket`s.
 	pub(crate) out_udp_packet_observer:
-		LockedHashMap<String, Box<OutUdpPacketObserver>>,
+		LockedHashMap<String, Box<dyn OutUdpPacketObserver>>,
 
 	/// Observe incoming `Packet`s.
 	pub(crate) in_packet_observer:
-		LockedHashMap<String, Box<InPacketObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<dyn InPacketObserver<CM::AssociatedData>>>,
 	/// Observe outgoing `Packet`s.
 	pub(crate) out_packet_observer:
-		LockedHashMap<String, Box<OutPacketObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<dyn OutPacketObserver<CM::AssociatedData>>>,
 
 	/// Observe incoming `Commands`s.
 	pub(crate) in_command_observer:
-		LockedHashMap<String, Box<InCommandObserver<CM::AssociatedData>>>,
+		LockedHashMap<String, Box<dyn InCommandObserver<CM::AssociatedData>>>,
 	/// Observe outgoing `Commands`s.
 
 	/// A list of all connected clients or servers
@@ -298,7 +298,7 @@ pub struct Data<CM: ConnectionManager + 'static> {
 	/// [`remove_connection`]: #method.remove_connection
 	pub connection_manager: CM,
 	/// Listen for new or removed connections.
-	pub connection_listeners: Vec<Box<ConnectionListener<CM>>>,
+	pub connection_listeners: Vec<Box<dyn ConnectionListener<CM>>>,
 }
 
 impl<CM: ConnectionManager + 'static> Drop for Data<CM> {
@@ -440,7 +440,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 						"error" => ?e)
 				})
 				.for_each(
-					move |(p, a)| -> Box<Future<Item = _, Error = _> + Send> {
+					move |(p, a)| -> Box<dyn Future<Item = _, Error = _> + Send> {
 						match InPacket::try_new(
 							p.freeze(),
 							if is_client {
@@ -585,7 +585,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn wait_for_disconnect(
 		&mut self,
 		key: CM::Key,
-	) -> Box<Future<Item = (), Error = Error> + Send>
+	) -> Box<dyn Future<Item = (), Error = Error> + Send>
 	{
 		if self.connections.read().contains_key(&key) {
 			let (send, recv) = oneshot::channel();
@@ -600,7 +600,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn add_in_udp_packet_observer(
 		&mut self,
 		key: String,
-		o: Box<InUdpPacketObserver>,
+		o: Box<dyn InUdpPacketObserver>,
 	)
 	{
 		self.in_udp_packet_observer.write().insert(key, o);
@@ -608,7 +608,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn add_out_udp_packet_observer(
 		&mut self,
 		key: String,
-		o: Box<OutUdpPacketObserver>,
+		o: Box<dyn OutUdpPacketObserver>,
 	)
 	{
 		self.out_udp_packet_observer.write().insert(key, o);
@@ -623,7 +623,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn add_in_packet_observer(
 		&mut self,
 		key: String,
-		o: Box<InPacketObserver<CM::AssociatedData>>,
+		o: Box<dyn InPacketObserver<CM::AssociatedData>>,
 	)
 	{
 		self.in_packet_observer.write().insert(key, o);
@@ -631,7 +631,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn add_out_packet_observer(
 		&mut self,
 		key: String,
-		o: Box<OutPacketObserver<CM::AssociatedData>>,
+		o: Box<dyn OutPacketObserver<CM::AssociatedData>>,
 	)
 	{
 		self.out_packet_observer.write().insert(key, o);
@@ -646,7 +646,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 	pub fn add_in_command_observer(
 		&mut self,
 		key: String,
-		o: Box<InCommandObserver<CM::AssociatedData>>,
+		o: Box<dyn InCommandObserver<CM::AssociatedData>>,
 	)
 	{
 		self.in_command_observer.write().insert(key, o);
