@@ -341,7 +341,7 @@ pub fn get_hash_cash_level(omega: &str, offset: u64) -> u8 {
 		if d == 0 {
 			res += 8;
 		} else {
-			res += d.leading_zeros() as u8;
+			res += d.trailing_zeros() as u8;
 			break;
 		}
 	}

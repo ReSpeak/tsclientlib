@@ -448,8 +448,17 @@ impl Connection {
 									packet handler").into()));
 							}
 
-							for (k, l) in opts.event_listeners.drain(..) {
-								con.add_event_listener(k, l);
+							let events = vec![events::Event::PropertyAdded {
+								id: events::PropertyId::Server,
+								invoker: None,
+							}];
+							{
+								let con_lock = con.lock();
+								let ev = Event::ConEvents(&con_lock, &events);
+								for (k, l) in opts.event_listeners.drain(..) {
+									l(&ev);
+									con.add_event_listener(k, l);
+								}
 							}
 
 							Box::new(future::ok(con))
@@ -574,6 +583,28 @@ impl Connection {
 	/// interface may change on any version changes.
 	pub fn get_tsproto_connection(&self) -> client::ClientConVal {
 		self.inner.client_connection.clone()
+	}
+
+	/// **This is part of the unstable interface.**
+	///
+	/// You can use it if you need access to lower level functions, but this
+	/// interface may change on any version changes.
+	///
+	/// Returns the public key of the server.
+	pub fn get_server_key(&self) -> Result<tsproto::crypto::EccKeyPubP256> {
+		let con = if let Some(con) = self.inner.client_connection.upgrade() {
+			con
+		} else {
+			return Err(format_err!("Connection is gone").into());
+		};
+		let con = con.mutex.lock();
+
+		if let Some(params) = &con.1.params {
+			Ok(params.public_key.clone())
+		} else {
+			Err(format_err!("Connection should be connected but has no params")
+				.into())
+		}
 	}
 
 	/// **This is part of the unstable interface.**
@@ -813,11 +844,23 @@ impl<'a> ConnectionLock<'a> {
 		Self { connection, guard }
 	}
 
+	/// Get a connection where you can change properties.
+	///
+	/// Changing properties will send a packet to the server, it will not
+	/// immediately change the value.
 	pub fn to_mut(&'a self) -> facades::ConnectionMut<'a> {
 		facades::ConnectionMut {
 			connection: self.connection.clone(),
 			inner: &*self.guard,
 		}
+	}
+
+	/// This returns a clone of the locked connection.
+	///
+	/// To access the connection data, use the dereferenced object of this
+	/// `ConnectionLock`.
+	pub fn get_locked(&self) -> Connection {
+		self.connection.clone()
 	}
 }
 

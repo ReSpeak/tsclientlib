@@ -50,6 +50,7 @@ macro_rules! copy_attrs {
 
 impl Connection {
 	pub fn new(server_uid: Uid, msg: &InMessage) -> Self {
+		// TODO Use server public key instead of uid
 		let packet = if let InMessages::InitServer(p) = msg.msg() {
 			p
 		} else {
