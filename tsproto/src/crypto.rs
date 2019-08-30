@@ -156,7 +156,7 @@ impl EccKeyPubP256 {
 	///
 	/// returns sha1(ts encoded key)
 	pub fn get_uid_no_base64(&self) -> Result<Vec<u8>> {
-		let hash = digest::digest(&digest::SHA1, self.to_ts()?.as_bytes());
+		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, self.to_ts()?.as_bytes());
 		Ok(hash.as_ref().to_vec())
 	}
 
@@ -168,13 +168,9 @@ impl EccKeyPubP256 {
 	}
 
 	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
-		ring::signature::verify(
-			&ring::signature::ECDSA_P256_SHA256_ASN1,
-			Input::from(&self.0),
-			Input::from(data),
-			Input::from(signature),
-		)
-		.map_err(|_| Error::WrongSignature)
+		let key = ring::signature::UnparsedPublicKey::new(
+			&ring::signature::ECDSA_P256_SHA256_ASN1, &self.0);
+		key.verify(data, signature).map_err(|_| Error::WrongSignature)
 	}
 }
 
@@ -185,7 +181,7 @@ impl EccKeyPrivP256 {
 			ring::signature::EcdsaKeyPair::generate_private_key(
 				&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 				&ring::rand::SystemRandom::new(),
-			)?,
+			).map_err(|_| format_err!("Failed to generate private key"))?,
 		))
 	}
 
@@ -230,7 +226,7 @@ impl EccKeyPrivP256 {
 		let _ = ring::signature::EcdsaKeyPair::from_private_key(
 			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 			Input::from(&data),
-		)?;
+		).map_err(|_| format_err!("Failed to parse private key"))?;
 		Ok(Self(data))
 	}
 
@@ -267,7 +263,7 @@ impl EccKeyPrivP256 {
 			.iter()
 			.position(|b| *b == b'\0')
 			.unwrap_or(data.len() - 20);
-		let hash = digest::digest(&digest::SHA1, &data[20..20 + pos]);
+		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
 		let hash = hash.as_ref();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
@@ -347,7 +343,7 @@ impl EccKeyPrivP256 {
 			.iter()
 			.position(|b| *b == b'\0')
 			.unwrap_or(data.len() - 20);
-		let hash = digest::digest(&digest::SHA1, &data[20..20 + pos]);
+		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
 		let hash = hash.as_ref();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
@@ -392,26 +388,20 @@ impl EccKeyPrivP256 {
 		use ring::ec::keys::Seed;
 		use ring::ec::suite_b::ecdh;
 
-		let seed = Seed::from_p256_bytes(Input::from(&self.0))?;
+		let seed = Seed::from_p256_bytes(Input::from(&self.0))
+			.map_err(|_| format_err!("Failed to parse public key"))?;
 		let mut res = vec![0; 32];
-		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))?;
+		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))
+			.map_err(|_| format_err!("Failed to complete key exchange"))?;
 		Ok(res)
-
-		/*let privkey = PKey::from_ec_key(self.0)?;
-		let pubkey = PKey::from_ec_key(other.0)?;
-		let mut deriver = Deriver::new(&privkey)?;
-
-		deriver.set_peer(&pubkey)?;
-
-		let secret = deriver.derive_to_vec()?;
-		Ok(secret)*/
 	}
 
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
 		let key = self.to_ring();
-		// TODO Return ring signature
+		// TODO Return ring signature for one less copy
 		Ok(key
-			.sign(&ring::rand::SystemRandom::new(), Input::from(data))?
+			.sign(&ring::rand::SystemRandom::new(), data)
+			.map_err(|_| format_err!("Failed to create signature"))?
 			.as_ref()
 			.to_vec())
 	}

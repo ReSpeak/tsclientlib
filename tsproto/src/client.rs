@@ -325,7 +325,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										if (&mut state.state_change_listener[i])(
 											&state.state,
 										) {
-											state
+											let _ = state
 												.state_change_listener
 												.remove(i);
 										} else {
@@ -348,7 +348,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							if (&mut state.state_change_listener[i])(
 								&state.state,
 							) {
-								state.state_change_listener.remove(i);
+								let _ = state.state_change_listener.remove(i);
 							} else {
 								i += 1;
 							}
@@ -448,7 +448,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 										if (&mut state.state_change_listener[i])(
 											&state.state,
 										) {
-											state
+											let _ = state
 												.state_change_listener
 												.remove(i);
 										} else {
@@ -471,7 +471,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 							if (&mut state.state_change_listener[i])(
 								&state.state,
 							) {
-								state.state_change_listener.remove(i);
+								let _ = state.state_change_listener.remove(i);
 							} else {
 								i += 1;
 							}

@@ -38,7 +38,7 @@ num-derive = "0.2"
 num-traits = "0.2"
 parking_lot = "0.7"
 rand = "0.6"
-flakebi-ring = "0.14.6"
+flakebi-ring = "0.16.9"
 rug = { version = "1", optional = true }
 serde = { version = "1", features = ["derive"] }
 simple_asn1 = "0.4"
@@ -49,7 +49,7 @@ stable_deref_trait = "1"
 tokio = "0.1"
 tokio-threadpool = "0.1"
 tsproto-packets = { path = "../utils/tsproto-packets" }
-untrusted = "0.6"
+untrusted = "0.7"
 quicklz = "0.2"
 
 [dependencies.slog]

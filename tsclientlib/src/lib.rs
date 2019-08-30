@@ -941,7 +941,7 @@ impl ConnectOptions {
 			local_address: None,
 			identity: None,
 			name: String::from("TeamSpeakUser"),
-			version: Version::Linux_3_3_0__3,
+			version: Version::Windows_3_X_X__1,
 			channel: None,
 			logger: None,
 			log_commands: false,

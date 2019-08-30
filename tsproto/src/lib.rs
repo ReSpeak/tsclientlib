@@ -78,10 +78,6 @@ pub enum Error {
 	#[fail(display = "{}", _0)]
 	Rand(#[cause] rand::Error),
 	#[fail(display = "{}", _0)]
-	Ring(#[cause] ring::error::Unspecified),
-	#[fail(display = "{}", _0)]
-	RingKeyRejected(#[cause] ring::error::KeyRejected),
-	#[fail(display = "{}", _0)]
 	Timer(#[cause] tokio::timer::Error),
 	#[fail(display = "{}", _0)]
 	TsprotoPackets(#[cause] tsproto_packets::Error),
