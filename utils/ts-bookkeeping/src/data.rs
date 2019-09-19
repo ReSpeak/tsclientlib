@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::mem;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::u16;
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
@@ -87,17 +87,17 @@ impl Connection {
 				platform: packet.server_platform.into(),
 				version: packet.server_version.into(),
 				created: packet.server_created,
-				ips: packet.server_ip.iter().map(|s| s.to_string()).collect(),
+				ips: packet.server_ip.iter().cloned().collect(),
 				ask_for_privilegekey: packet.ask_for_privilegekey,
 				// TODO Or get from license struct for newer servers
 				license: packet.license_type.unwrap_or(LicenseType::NoLicense),
 
 				optional_data: None,
 				connection_data: None,
-				clients: HashMap::new(),
-				channels: HashMap::new(),
-				groups: HashMap::new(),
 			),
+			clients: HashMap::new(),
+			channels: HashMap::new(),
+			groups: HashMap::new(),
 		}
 	}
 
@@ -193,7 +193,7 @@ impl Connection {
 	fn get_mut_server(&mut self) -> Result<&mut Server> { Ok(&mut self.server) }
 
 	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
-		self.server.groups.get(&group).ok_or_else(|| {
+		self.groups.get(&group).ok_or_else(|| {
 			format_err!("ServerGroup {} not found", group).into()
 		})
 	}
@@ -203,7 +203,7 @@ impl Connection {
 		r: ServerGroup,
 	) -> Result<Option<ServerGroup>>
 	{
-		Ok(self.server.groups.insert(group, r))
+		Ok(self.groups.insert(group, r))
 	}
 
 	fn get_optional_server_data(&self) -> Result<&OptionalServerData> {
@@ -223,22 +223,20 @@ impl Connection {
 	fn get_connection(&self) -> Result<&Connection> { Ok(&self) }
 
 	fn get_client(&self, client: ClientId) -> Result<&Client> {
-		self.server
-			.clients
+		self.clients
 			.get(&client)
 			.ok_or_else(|| format_err!("Client {} not found", client).into())
 	}
 	fn get_mut_client(&mut self, client: ClientId) -> Result<&mut Client> {
-		self.server
-			.clients
+		self.clients
 			.get_mut(&client)
 			.ok_or_else(|| format_err!("Client {} not found", client).into())
 	}
 	fn add_client(&mut self, client: ClientId, r: Client) -> Result<Option<Client>> {
-		Ok(self.server.clients.insert(client, r))
+		Ok(self.clients.insert(client, r))
 	}
 	fn remove_client(&mut self, client: ClientId) -> Result<Option<Client>> {
-		Ok(self.server.clients.remove(&client))
+		Ok(self.clients.remove(&client))
 	}
 
 	fn get_connection_client_data(
@@ -246,7 +244,7 @@ impl Connection {
 		client: ClientId,
 	) -> Result<&ConnectionClientData>
 	{
-		if let Some(c) = self.server.clients.get(&client) {
+		if let Some(c) = self.clients.get(&client) {
 			c.connection_data.as_ref().ok_or_else(|| {
 				format_err!("Client {} has no connection data", client).into()
 			})
@@ -260,7 +258,7 @@ impl Connection {
 		r: ConnectionClientData,
 	) -> Result<Option<ConnectionClientData>>
 	{
-		if let Some(client) = self.server.clients.get_mut(&client) {
+		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
 			Err(format_err!("Client {} not found", client).into())
@@ -272,7 +270,7 @@ impl Connection {
 		client: ClientId,
 	) -> Result<&OptionalClientData>
 	{
-		if let Some(c) = self.server.clients.get(&client) {
+		if let Some(c) = self.clients.get(&client) {
 			c.optional_data.as_ref().ok_or_else(|| {
 				format_err!("Client {} has no optional data", client).into()
 			})
@@ -282,14 +280,12 @@ impl Connection {
 	}
 
 	fn get_channel(&self, channel: ChannelId) -> Result<&Channel> {
-		self.server
-			.channels
+		self.channels
 			.get(&channel)
 			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
 	}
 	fn get_mut_channel(&mut self, channel: ChannelId) -> Result<&mut Channel> {
-		self.server
-			.channels
+		self.channels
 			.get_mut(&channel)
 			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
 	}
@@ -299,10 +295,15 @@ impl Connection {
 		r: Channel,
 	) -> Result<Option<Channel>>
 	{
-		Ok(self.server.channels.insert(channel, r))
+		self.channel_order_insert(r.id, r.order, r.parent);
+		Ok(self.channels.insert(channel, r))
 	}
 	fn remove_channel(&mut self, channel: ChannelId) -> Result<Option<Channel>> {
-		Ok(self.server.channels.remove(&channel))
+		let old = self.channels.remove(&channel);
+		if let Some(ch) = &old {
+			self.channel_order_remove(ch.id, ch.order);
+		}
+		Ok(old)
 	}
 
 	fn get_optional_channel_data(
@@ -310,7 +311,7 @@ impl Connection {
 		channel: ChannelId,
 	) -> Result<&OptionalChannelData>
 	{
-		if let Some(c) = self.server.channels.get(&channel) {
+		if let Some(c) = self.channels.get(&channel) {
 			c.optional_data.as_ref().ok_or_else(|| {
 				format_err!("Channel {} has no optional data", channel).into()
 			})
@@ -490,7 +491,7 @@ impl Connection {
 		self.channel_type_cc_fun(cmd)
 	}
 
-	fn away_fun(&self, cmd: &CanonicalCommand) -> Result<Option<String>> {
+	fn away_cev_fun(&self, cmd: &CanonicalCommand) -> Result<Option<String>> {
 		if cmd.get("client_away") == Some("1") {
 			Ok(Some(cmd.get_arg("client_away_message")?.to_string()))
 		} else {
@@ -498,7 +499,26 @@ impl Connection {
 		}
 	}
 
-	fn talk_power_fun(
+	fn away_cu_fun(&mut self, client_id: ClientId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
+		if let Ok(client) = self.get_mut_client(client_id) {
+			let invoker = cmd.get_invoker()?;
+
+			let away = if cmd.get("client_away") == Some("1") {
+				Some(cmd.get_arg("client_away_message")?.to_string())
+			} else {
+				None
+			};
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ClientAwayMessage(client_id),
+				old: PropertyValue::OptionString(client.away_message.take()),
+				invoker,
+			});
+			client.away_message = away;
+		}
+		Ok(())
+	}
+
+	fn talk_power_cev_fun(
 		&self,
 		cmd: &CanonicalCommand,
 	) -> Result<Option<TalkPowerRequest>>
@@ -515,6 +535,32 @@ impl Connection {
 		} else {
 			Ok(None)
 		}
+	}
+
+	fn talk_power_cu_fun(&mut self, client_id: ClientId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
+		if let Ok(client) = self.get_mut_client(client_id) {
+			let invoker = cmd.get_invoker()?;
+
+			let timestamp: i64 = cmd.get_arg("client_talk_request")?.parse()?;
+			let talk_request = if timestamp > 0 {
+				Some(TalkPowerRequest {
+					time: DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(timestamp, 0).ok_or(ParseError::InvalidValue {
+						arg: "client_talk_request",
+						value: timestamp.to_string(),
+					})?, Utc),
+					message: cmd.get_arg("client_talk_request_msg")?.into(),
+				})
+			} else {
+				None
+			};
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ClientTalkPowerRequest(client_id),
+				old: PropertyValue::OptionTalkPowerRequest(client.talk_power_request.take()),
+				invoker,
+			});
+			client.talk_power_request = talk_request;
+		}
+		Ok(())
 	}
 
 	fn address_fun(
@@ -564,9 +610,7 @@ impl Connection {
 			channel.subscribed = false;
 
 			// Remove all known clients from this channel
-			let server = self.get_mut_server()?;
-			let remove_clients = server
-				.clients
+			let remove_clients = self.clients
 				.values()
 				.filter_map(|c| {
 					if c.channel == channel_id {
@@ -580,13 +624,69 @@ impl Connection {
 				events.push(Event::PropertyRemoved {
 					id: PropertyId::Client(id),
 					old: PropertyValue::Client(
-						server.clients.remove(&id).unwrap(),
+						self.clients.remove(&id).unwrap(),
 					),
 					invoker: None,
 				});
 			}
 		}
 		Ok(())
+	}
+
+	fn channel_order_remove(&mut self, channel_id: ChannelId, channel_order: ChannelId) {
+		// [ C:7 | O:_ ]
+		// [ C:5 | O:7 ] ─>X
+		// [ C:_ | O:5 ]     (Upd: O -> 7)
+		self.channels.values_mut().any(|c| if c.order == channel_id {
+			c.order = channel_order;
+			true
+		} else {
+			false
+		});
+	}
+
+	fn channel_order_insert(&mut self, channel_id: ChannelId, channel_order: ChannelId, channel_parent: ChannelId) {
+		// [ C:7 | O:_ ]
+		// [            <── (New: C:5 | O:7)
+		// [ C:_ | O:7 ]    (Upd: O -> 5)
+		//
+		// Also work for the first channel, the order will be 0.
+		self.channels.values_mut().any(|c| if c.order == channel_order && c.parent == channel_parent {
+			c.order = channel_id;
+			true
+		} else {
+			false
+		});
+	}
+
+	fn channel_order_cc_fun(&mut self, cmd: &CanonicalCommand) -> Result<ChannelId> {
+		Ok(ChannelId(cmd.get_arg("channel_order")?.parse()?))
+	}
+
+	fn channel_order_ce_fun(&mut self, channel_id: ChannelId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
+		if let Ok(order) = cmd.get_arg("channel_order") {
+			let order = ChannelId(order.parse()?);
+			let old_order;
+			let parent;
+			{
+				let channel = self.get_mut_channel(channel_id)?;
+				old_order = channel.order;
+				parent = channel.parent;
+				channel.order = order;
+			}
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelOrder(channel_id),
+				old: PropertyValue::ChannelId(old_order),
+				invoker: None,
+			});
+			self.channel_order_remove(channel_id, old_order);
+			self.channel_order_insert(channel_id, order, parent);
+		}
+		Ok(())
+	}
+
+	fn channel_order_cm_fun(&mut self, channel_id: ChannelId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
+		self.channel_order_ce_fun(channel_id, cmd, events)
 	}
 
 	// Book to messages
@@ -658,7 +758,7 @@ pub struct ChannelOptions<'a> {
 	max_family_clients: Option<MaxClients>,
 	channel_type: Option<ChannelType>,
 	is_unencrypted: Option<bool>,
-	order: Option<i32>,
+	order: Option<ChannelId>,
 	phonetic_name: Option<&'a str>,
 	topic: Option<&'a str>,
 }
@@ -748,7 +848,8 @@ impl<'a> ChannelOptions<'a> {
 		self
 	}
 
-	pub fn order(mut self, order: i32) -> Self {
+	/// The previous order
+	pub fn order(mut self, order: ChannelId) -> Self {
 		self.order = Some(order);
 		self
 	}

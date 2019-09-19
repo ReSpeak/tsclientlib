@@ -61,9 +61,9 @@ fn print_channels(
 }
 
 fn print_channel_tree(con: &data::Connection) {
-	let mut channels: Vec<_> = con.server.channels.values().collect();
-	let mut clients: Vec<_> = con.server.clients.values().collect();
-	channels.sort_by_key(|ch| ch.order);
+	let mut channels: Vec<_> = con.channels.values().collect();
+	let mut clients: Vec<_> = con.clients.values().collect();
+	channels.sort_by_key(|ch| ch.order.0);
 	clients.sort_by_key(|c| c.talk_power);
 	println!("{}", con.server.name);
 	print_channels(&clients, &channels, ChannelId(0), 0);
@@ -135,7 +135,7 @@ fn main() -> Result<(), failure::Error> {
 
 				// Change name
 				let con_mut = con.to_mut();
-				let name = &con.server.clients[&con.own_client].name;
+				let name = &con.clients[&con.own_client].name;
 				tokio::spawn(con_mut.set_name(&format!("{}1", name)).map_err(
 					|e| {
 						println!("Failed to set client name: {:?}", e);

@@ -6,7 +6,7 @@ use crate::*;
 
 pub const DATA_STR: &str = include_str!(concat!(
 	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/BookDeclarations.toml"
+	"/declarations/Book.toml"
 ));
 
 lazy_static! {

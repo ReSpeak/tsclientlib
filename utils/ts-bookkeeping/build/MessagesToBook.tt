@@ -150,13 +150,14 @@ impl Connection {
 						"<#= from.ts #> not found but is not optional in <#= enum_name #>"))?;
 				let val = { <#= generate_deserializer(from) #> };
 				// Find index and remove
-				let i = r.<#= to.name.to_snake_case() #>.iter().position(&val);
-				let old = r.<#= to.name.to_snake_case() #>.remove(i);
-				events.push(Event::PropertyRemoved {
-					id: <#= get_property_id(event, to, from) #>,
-					old: <#= get_property(to, "old") #>,
-					invoker: invoker.clone(),
-				});
+				if let Some(i) = r.<#= to.name.to_snake_case() #>.iter().position(|i| *i == val) {
+					let old = r.<#= to.name.to_snake_case() #>.remove(i);
+					events.push(Event::PropertyRemoved {
+						id: <#= get_property_id(event, to, from) #>,
+						old: <#= get_property(to, "old") #>,
+						invoker: invoker.clone(),
+					});
+				}
 								<# }
 							}
 						}

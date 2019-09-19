@@ -1,3 +1,4 @@
+use std::net::{AddrParseError, IpAddr};
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
 
@@ -44,6 +45,16 @@ pub enum ParseError {
 		value: String,
 		#[cause]
 		error: ParseIntError,
+	},
+	#[fail(
+		display = "Cannot parse \"{}\" as SocketAddr for parameter {} ({})",
+		value, arg, error
+	)]
+	ParseAddr {
+		arg: &'static str,
+		value: String,
+		#[cause]
+		error: AddrParseError,
 	},
 	#[fail(
 		display = "Cannot parse \"{}\" as float for parameter {} ({})",

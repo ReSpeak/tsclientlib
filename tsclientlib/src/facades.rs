@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::net::IpAddr;
 use std::ops::Deref;
 
 use futures::Future;

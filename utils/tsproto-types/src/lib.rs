@@ -1,11 +1,12 @@
-pub mod errors;
-pub mod versions;
-
 use std::fmt;
 use std::u64;
 
+use bitflags::bitflags;
 use chrono::{DateTime, Utc};
 use num_derive::{FromPrimitive, ToPrimitive};
+
+pub mod errors;
+pub mod versions;
 
 /// A `ClientId` identifies a client which is connected to a server.
 ///
@@ -72,6 +73,62 @@ pub enum PermissionType {
 	ChannelGroup,
 	/// Channel-client specific permission. (id1: ChannelId, id2: ClientDbId)
 	ChannelClient,
+}
+
+bitflags! {
+	/// Hints if the client has the permission to make specific actions.
+	pub struct ChannelPermissionHint: u16 {
+		/// b_channel_join_*
+		const JOIN = 1 << 0;
+		/// i_channel_modify_power
+		const MODIFY = 1 << 1;
+		/// b_channel_delete_flag_force
+		const FORCE_DELETE = 1 << 2;
+		/// b_channel_delete_*
+		const DELETE = 1 << 3;
+		/// i_channel_subscribe_power
+		const SUBSCRIBE = 1 << 4;
+		/// i_channel_description_view_power
+		const VIEW_DESCRIPTION = 1 << 5;
+		/// i_ft_file_upload_power
+		const FILE_UPLOAD = 1 << 6;
+		/// i_ft_needed_file_download_power
+		const FILE_DOWNLOAD = 1 << 7;
+		/// i_ft_file_delete_power
+		const FILE_DELETE = 1 << 8;
+		/// i_ft_file_rename_power
+		const FILE_RENAME = 1 << 9;
+		/// i_ft_file_browse_power
+		const FILE_BROWSE = 1 << 10;
+		/// i_ft_directory_create_power
+		const FILE_DIRECTORY_CREATE = 1 << 11;
+		/// i_channel_permission_modify_power
+		const MODIFY_PERMISSIONS = 1 << 12;
+	}
+}
+
+bitflags! {
+	/// Hints if the client has the permission to make specific actions.
+	pub struct ClientPermissionHint: u16 {
+		/// i_client_kick_from_server_power
+		const KICK_SERVER = 1 << 0;
+		/// i_client_kick_from_channel_power
+		const KICK_CHANNEL = 1 << 1;
+		/// i_client_ban_power
+		const BAN = 1 << 2;
+		/// i_client_move_power
+		const MOVE_CLIENT = 1 << 3;
+		/// i_client_private_textmessage_power
+		const PRIVATE_MESSAGE = 1 << 4;
+		/// i_client_poke_power
+		const POKE = 1 << 5;
+		/// i_client_whisper_power
+		const WHISPER = 1 << 6;
+		/// i_client_complain_power
+		const COMPLAIN = 1 << 7;
+		/// i_client_permission_modify_power
+		const MODIFY_PERMISSIONS = 1 << 8;
+	}
 }
 
 #[derive(

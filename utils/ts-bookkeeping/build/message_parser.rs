@@ -94,6 +94,12 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				value: val.to_string(),
 				error: e,
 			}})?)", rust_type, field.pretty),
+		"IpAddr" |
+		"SocketAddr" => format!("val.parse().map_err(|e| ParseError::ParseAddr {{
+				arg: \"{}\",
+				value: val.to_string(),
+				error: e,
+			}})?", field.pretty),
 		"TextMessageTargetMode" |
 		"HostMessageMode" |
 		"HostBannerMode" |
@@ -110,6 +116,15 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 		"TokenType" |
 		"PluginTargetMode" |
 		"Error" => format!("{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
+				arg: \"{}\",
+				value: val.to_string(),
+				error: e,
+			}})?).ok_or(ParseError::InvalidValue {{
+				arg: \"{1}\",
+				value: val.to_string(),
+				}})?", rust_type, field.pretty),
+		"ChannelPermissionHint" |
+		"ClientPermissionHint" => format!("{}::from_bits(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
@@ -158,7 +173,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 pub fn vector_value_deserializer(field: &Field) -> String {
 	let rust_type = field.get_rust_type("", true);
 	let inner_type = &rust_type[4..rust_type.len()-1];
-	String::from(format!("val.split(',').map(|val| Ok({})).collect::<Result<Vec<{}>>>()?",
+	String::from(format!("val.split(',').map(|val| {{ let val = val.trim(); Ok({}) }}).collect::<Result<Vec<{}>>>()?",
 		single_value_deserializer(field, inner_type), inner_type))
 }
 
@@ -215,6 +230,8 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> St
 				panic!("Unknown original time type {} found.", field.type_s);
 			},
 		"DateTime<Utc>" => format!("Cow::Owned({}.timestamp().to_string())", name),
+		"IpAddr" |
+		"SocketAddr" => format!("Cow::Owned({}.to_string())", name),
 		_ => panic!("Unknown type '{}'", rust_type),
 	}
 }
