@@ -368,44 +368,43 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			let invoker = cmd.get_invoker()?;
+		let channel = self.get_mut_channel(channel_id)?;
+		let invoker = cmd.get_invoker()?;
 
-			let ch = max_clients!(cmd);
-			if let Some(ch) = ch {
-				events.push(Event::PropertyChanged {
-					id: PropertyId::ChannelMaxClients(channel_id),
-					old: PropertyValue::OptionMaxClients(
-						channel.max_clients.take(),
-					),
-					invoker: invoker.clone(),
-				});
-				channel.max_clients = Some(ch);
-			}
-			let ch_fam = if cmd.get("channel_flag_maxfamilyclients_unlimited") == Some("1") {
-				Some(MaxClients::Unlimited)
-			} else if cmd.get("channel_flag_maxfamilyclients_inherited") == Some("1") {
-				Some(MaxClients::Inherited)
-			} else if cmd.get("channel_maxfamilyclients")
-				.and_then(|s| s.parse().ok())
-				.map(|i: i32| i >= 0 && i <= u16::MAX as i32)
-				.unwrap_or(false)
-			{
-				Some(MaxClients::Limited(cmd.get("channel_maxfamilyclients").unwrap().parse().unwrap()))
-			} else {
-				// Max clients is less than zero or too high so ignore it
-				None
-			};
-			if let Some(ch_fam) = ch_fam {
-				events.push(Event::PropertyChanged {
-					id: PropertyId::ChannelMaxFamilyClients(channel_id),
-					old: PropertyValue::OptionMaxClients(
-						channel.max_family_clients.take(),
-					),
-					invoker,
-				});
-				channel.max_family_clients = Some(ch_fam);
-			}
+		let ch = max_clients!(cmd);
+		if let Some(ch) = ch {
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelMaxClients(channel_id),
+				old: PropertyValue::OptionMaxClients(
+					channel.max_clients.take(),
+				),
+				invoker: invoker.clone(),
+			});
+			channel.max_clients = Some(ch);
+		}
+		let ch_fam = if cmd.get("channel_flag_maxfamilyclients_unlimited") == Some("1") {
+			Some(MaxClients::Unlimited)
+		} else if cmd.get("channel_flag_maxfamilyclients_inherited") == Some("1") {
+			Some(MaxClients::Inherited)
+		} else if cmd.get("channel_maxfamilyclients")
+			.and_then(|s| s.parse().ok())
+			.map(|i: i32| i >= 0 && i <= u16::MAX as i32)
+			.unwrap_or(false)
+		{
+			Some(MaxClients::Limited(cmd.get("channel_maxfamilyclients").unwrap().parse().unwrap()))
+		} else {
+			// Max clients is less than zero or too high so ignore it
+			None
+		};
+		if let Some(ch_fam) = ch_fam {
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelMaxFamilyClients(channel_id),
+				old: PropertyValue::OptionMaxClients(
+					channel.max_family_clients.take(),
+				),
+				invoker,
+			});
+			channel.max_family_clients = Some(ch_fam);
 		}
 		Ok(())
 	}
@@ -416,8 +415,7 @@ impl Connection {
 	{
 		let max_clients: i32 = cmd.get_arg("channel_maxclients")?
 			.parse()?;
-		let ch = if cmd.get_arg("channel_flag_maxclients_unlimited")?
-			== "1" {
+		let ch = if cmd.get_arg("channel_flag_maxclients_unlimited")?  == "1" {
 			Some(MaxClients::Unlimited)
 		} else if max_clients >= 0 && max_clients <= u16::MAX as i32 {
 			Some(MaxClients::Limited(max_clients as u16))
@@ -463,27 +461,26 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			let invoker = cmd.get_invoker()?;
+		let channel = self.get_mut_channel(channel_id)?;
+		let invoker = cmd.get_invoker()?;
 
-			let typ = if let Some(perm) = cmd.get("channel_flag_permanent") {
-				if perm == "1" {
-					ChannelType::Permanent
-				} else {
-					ChannelType::Temporary
-				}
-			} else if cmd.get("channel_flag_semi_permanent") == Some("1") {
-				ChannelType::SemiPermanent
+		let typ = if let Some(perm) = cmd.get("channel_flag_permanent") {
+			if perm == "1" {
+				ChannelType::Permanent
 			} else {
-				return Ok(());
-			};
-			events.push(Event::PropertyChanged {
-				id: PropertyId::ChannelChannelType(channel_id),
-				old: PropertyValue::ChannelType(channel.channel_type),
-				invoker,
-			});
-			channel.channel_type = typ;
-		}
+				ChannelType::Temporary
+			}
+		} else if cmd.get("channel_flag_semi_permanent") == Some("1") {
+			ChannelType::SemiPermanent
+		} else {
+			return Ok(());
+		};
+		events.push(Event::PropertyChanged {
+			id: PropertyId::ChannelChannelType(channel_id),
+			old: PropertyValue::ChannelType(channel.channel_type),
+			invoker,
+		});
+		channel.channel_type = typ;
 		Ok(())
 	}
 
@@ -492,7 +489,7 @@ impl Connection {
 	}
 
 	fn away_cev_fun(&self, cmd: &CanonicalCommand) -> Result<Option<String>> {
-		if cmd.get("client_away") == Some("1") {
+		if cmd.get_arg("client_away")? == "1" {
 			Ok(Some(cmd.get_arg("client_away_message")?.to_string()))
 		} else {
 			Ok(None)
@@ -500,10 +497,11 @@ impl Connection {
 	}
 
 	fn away_cu_fun(&mut self, client_id: ClientId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
-		if let Ok(client) = self.get_mut_client(client_id) {
+		if let Ok(away) = cmd.get_arg("client_away") {
+			let client = self.get_mut_client(client_id)?;
 			let invoker = cmd.get_invoker()?;
 
-			let away = if cmd.get("client_away") == Some("1") {
+			let away = if away == "1" {
 				Some(cmd.get_arg("client_away_message")?.to_string())
 			} else {
 				None
@@ -538,10 +536,11 @@ impl Connection {
 	}
 
 	fn talk_power_cu_fun(&mut self, client_id: ClientId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
-		if let Ok(client) = self.get_mut_client(client_id) {
+		if let Ok(talk_request) = cmd.get_arg("client_talk_request") {
+			let timestamp: i64 = talk_request.parse()?;
+			let client = self.get_mut_client(client_id)?;
 			let invoker = cmd.get_invoker()?;
 
-			let timestamp: i64 = cmd.get_arg("client_talk_request")?.parse()?;
 			let talk_request = if timestamp > 0 {
 				Some(TalkPowerRequest {
 					time: DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(timestamp, 0).ok_or(ParseError::InvalidValue {
@@ -583,14 +582,13 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			events.push(Event::PropertyChanged {
-				id: PropertyId::ChannelSubscribed(channel_id),
-				old: PropertyValue::Bool(channel.subscribed),
-				invoker: None,
-			});
-			channel.subscribed = true;
-		}
+		let channel = self.get_mut_channel(channel_id)?;
+		events.push(Event::PropertyChanged {
+			id: PropertyId::ChannelSubscribed(channel_id),
+			old: PropertyValue::Bool(channel.subscribed),
+			invoker: None,
+		});
+		channel.subscribed = true;
 		Ok(())
 	}
 
@@ -601,34 +599,33 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		if let Ok(channel) = self.get_mut_channel(channel_id) {
-			events.push(Event::PropertyChanged {
-				id: PropertyId::ChannelSubscribed(channel_id),
-				old: PropertyValue::Bool(channel.subscribed),
+		let channel = self.get_mut_channel(channel_id)?;
+		events.push(Event::PropertyChanged {
+			id: PropertyId::ChannelSubscribed(channel_id),
+			old: PropertyValue::Bool(channel.subscribed),
+			invoker: None,
+		});
+		channel.subscribed = false;
+
+		// Remove all known clients from this channel
+		let remove_clients = self.clients
+			.values()
+			.filter_map(|c| {
+				if c.channel == channel_id {
+					Some(c.id)
+				} else {
+					None
+				}
+			})
+			.collect::<Vec<_>>();
+		for id in remove_clients {
+			events.push(Event::PropertyRemoved {
+				id: PropertyId::Client(id),
+				old: PropertyValue::Client(
+					self.clients.remove(&id).unwrap(),
+				),
 				invoker: None,
 			});
-			channel.subscribed = false;
-
-			// Remove all known clients from this channel
-			let remove_clients = self.clients
-				.values()
-				.filter_map(|c| {
-					if c.channel == channel_id {
-						Some(c.id)
-					} else {
-						None
-					}
-				})
-				.collect::<Vec<_>>();
-			for id in remove_clients {
-				events.push(Event::PropertyRemoved {
-					id: PropertyId::Client(id),
-					old: PropertyValue::Client(
-						self.clients.remove(&id).unwrap(),
-					),
-					invoker: None,
-				});
-			}
 		}
 		Ok(())
 	}
