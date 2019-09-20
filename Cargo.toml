@@ -1,12 +1,8 @@
 [workspace]
 members = [
 	"tsclientlib",
-	"tsclientlib-ffi",
 	"tsproto",
 	"utils/analyzer",
-	"utils/ffigen",
-	#"utils/gst-plugin-ts3",
-	#"utils/tsproto-audio",
 	"utils/ts-bookkeeping",
 	"utils/tsproto-packets",
 	"utils/tsproto-structs",
