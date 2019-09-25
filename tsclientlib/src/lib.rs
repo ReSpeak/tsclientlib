@@ -31,8 +31,6 @@ use tsproto_packets::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
 use tsproto::{client, log};
-#[cfg(feature = "audio")]
-use tsproto_audio::ts_to_audio::AudioPacketHandler;
 use ts_bookkeeping::messages::s2c::{InMessage, InMessages};
 
 use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
@@ -210,9 +208,6 @@ impl Connection {
 	/// [`ConnectOptions`]: struct.ConnectOptions.html
 	#[must_use = "futures do nothing unless polled"]
 	pub fn new(mut options: ConnectOptions) -> BoxFuture<Connection> {
-		#[cfg(feature = "audio")]
-		tsproto_audio::init();
-
 		let logger = options.logger.take().unwrap_or_else(|| {
 			let decorator = slog_term::TermDecorator::new().build();
 			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
@@ -293,8 +288,6 @@ impl Connection {
 			ph,
 			initserver_send,
 			connection_recv,
-			#[cfg(feature = "audio")]
-			opts.audio_packet_handler.clone(),
 		);
 		let counter = opts.identity.as_ref().unwrap().counter().to_string();
 		let return_code_handler =
@@ -784,23 +777,6 @@ impl Connection {
 	}
 }
 
-#[cfg(feature = "audio")]
-pub struct ConnectionPacketSinkCreator {
-	con: Connection,
-}
-#[cfg(feature = "audio")]
-impl ConnectionPacketSinkCreator {
-	pub fn new(con: Connection) -> Self { Self { con } }
-}
-
-#[cfg(feature = "audio")]
-impl tsproto_audio::audio_to_ts::PacketSinkCreator<Error>
-	for ConnectionPacketSinkCreator
-{
-	type S = Box<Sink<SinkItem = OutPacket, SinkError = Error> + Send>;
-	fn get_sink(&self) -> Self::S { Box::new(self.con.get_packet_sink()) }
-}
-
 impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener {
 	fn on_connection_removed(
 		&mut self,
@@ -913,8 +889,6 @@ pub struct ConnectOptions {
 	log_commands: bool,
 	log_packets: bool,
 	log_udp_packets: bool,
-	#[cfg(feature = "audio")]
-	audio_packet_handler: Option<AudioPacketHandler>,
 	event_listeners: Vec<(String, EventListener)>,
 	handle_packets: Option<PHBox>,
 	prepare_client: Option<
@@ -947,8 +921,6 @@ impl ConnectOptions {
 			log_commands: false,
 			log_packets: false,
 			log_udp_packets: false,
-			#[cfg(feature = "audio")]
-			audio_packet_handler: None,
 			event_listeners: Vec::new(),
 			handle_packets: None,
 			prepare_client: None,
@@ -1060,21 +1032,6 @@ impl ConnectOptions {
 		self
 	}
 
-	/// If the client should.
-	///
-	/// # Default
-	/// `false`
-	#[cfg(feature = "audio")]
-	#[inline]
-	pub fn audio_packet_handler(
-		mut self,
-		audio_packet_handler: AudioPacketHandler,
-	) -> Self
-	{
-		self.audio_packet_handler = Some(audio_packet_handler);
-		self
-	}
-
 	/// Set a custom logger for the connection.
 	///
 	/// # Default
@@ -1155,9 +1112,6 @@ impl fmt::Debug for ConnectOptions {
 			log_commands,
 			log_packets,
 			log_udp_packets,
-			// TODO Report: This cannot be parsed by syn
-			//#[cfg(feature = "audio")]
-			//audio_packet_handler,
 			event_listeners: _,
 			handle_packets: _,
 			prepare_client: _,
@@ -1179,8 +1133,6 @@ impl fmt::Debug for ConnectOptions {
 			log_packets,
 			log_udp_packets,
 		)?;
-		#[cfg(feature = "audio")]
-		write!(f, ", audio_packet_handler: {:?}", audio_packet_handler)?;
 		write!(f, " }}")?;
 		Ok(())
 	}
