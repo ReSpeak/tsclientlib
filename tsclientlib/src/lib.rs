@@ -14,16 +14,18 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::sync::Arc;
 
 use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
-use futures::sync::oneshot;
+use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
+use tokio::net::TcpStream;
 use tsproto::connectionmanager::ConnectionManager;
 use tsproto::connectionmanager::Resender;
 use tsproto::handler_data::{ConnectionListener, ConnectionValue};
@@ -31,11 +33,15 @@ use tsproto_packets::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
 use tsproto::{client, log};
+use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::{InMessage, InMessages};
 
 use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
+use crate::filetransfer::{FileTransferIdHandle, FileTransferHandler,
+	FileTransferStatus};
 
 mod facades;
+mod filetransfer;
 mod packet_handler;
 pub mod resolver;
 
@@ -144,6 +150,7 @@ struct InnerConnection {
 	client_data: client::ClientDataM<SimplePacketHandler>,
 	client_connection: client::ClientConVal,
 	return_code_handler: Arc<ReturnCodeHandler>,
+	file_transfer_handler: Arc<FileTransferHandler>,
 	event_listeners: Arc<RwLock<HashMap<String, EventListener>>>,
 }
 
@@ -290,8 +297,8 @@ impl Connection {
 			connection_recv,
 		);
 		let counter = opts.identity.as_ref().unwrap().counter().to_string();
-		let return_code_handler =
-			packet_handler.return_codes.clone();
+		let return_code_handler = packet_handler.return_codes.clone();
+		let file_transfer_handler = packet_handler.ft_ids.clone();
 		let client = match client::new(
 			opts.local_address.unwrap_or_else(|| {
 				if addr.is_ipv4() {
@@ -429,6 +436,7 @@ impl Connection {
 								client_data: client2,
 								client_connection: con,
 								return_code_handler,
+								file_transfer_handler,
 								event_listeners: Arc::new(RwLock::new(HashMap::new())),
 							};
 
@@ -774,6 +782,101 @@ impl Connection {
 	/// listeners.
 	pub fn remove_event_listener(&self, key: &str) -> Option<EventListener> {
 		self.inner.event_listeners.write().remove(key)
+	}
+
+	/// Return the size of the file and a tcp stream of the requested file.
+	pub fn download_file(&self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, seek_position: Option<u64>) -> BoxFuture<(u64, TcpStream)> {
+		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(self.inner.file_transfer_handler.clone());
+
+		let packet = c2s::OutFtInitDownloadMessage::new(
+			vec![c2s::FtInitDownloadPart {
+				client_file_transfer_id: code_handle.id,
+				name: path,
+				channel_id,
+				channel_password: channel_password.unwrap_or(""),
+				seek_position: seek_position.unwrap_or_default(),
+				protocol: 1,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
+		);
+
+		self.get_file_stream(packet, code_handle, recv)
+	}
+
+	/// Return the size of the part which is already uploaded (when resume is
+	/// specified) and a tcp stream where the requested file should be uploaded.
+	pub fn upload_file(&self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, size: u64, overwrite: bool, resume: bool
+	) -> BoxFuture<(u64, TcpStream)> {
+		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(self.inner.file_transfer_handler.clone());
+
+		let packet = c2s::OutFtInitUploadMessage::new(
+			vec![c2s::FtInitUploadPart {
+				client_file_transfer_id: code_handle.id,
+				name: path,
+				channel_id,
+				channel_password: channel_password.unwrap_or(""),
+				overwrite,
+				resume,
+				size,
+				protocol: 1,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
+		);
+
+		self.get_file_stream(packet, code_handle, recv)
+	}
+
+	fn get_file_stream(&self, packet: OutPacket, code_handle: FileTransferIdHandle,
+		recv: mpsc::UnboundedReceiver<FileTransferStatus>
+	) -> BoxFuture<(u64, TcpStream)> {
+		let default_ip;
+		if let Some(con) = self.inner.client_connection.upgrade() {
+			default_ip = con.mutex.lock().1.address.ip();
+		} else {
+			return Box::new(future::err(format_err!("Connection is gone").into()));
+		}
+
+		// Send a message and wait until we get an answer for the return code
+		Box::new(self.get_packet_sink()
+			.send(packet)
+			.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
+			.and_then(move |(status, _recv)| {
+				match status {
+					Some(FileTransferStatus::Start {
+						key,
+						port,
+						size,
+						ip,
+					}) => {
+						let ip = ip.unwrap_or(default_ip);
+						Ok((key, size, SocketAddr::new(ip, port)))
+					}
+					Some(FileTransferStatus::Status { status }) => {
+						Err(status.into())
+					}
+					None => Err(format_err!("Connection canceled").into()),
+				}
+			})
+			.and_then(|(key, size, addr)| TcpStream::connect(&addr)
+				.and_then(move |s| {
+					tokio::io::write_all(s, key)
+				})
+				.and_then(move |(s, _)| {
+					tokio::io::flush(s)
+				})
+				.from_err()
+				.map(move |s| {
+					// TODO Select with recv
+					// Drop file transfer code
+					drop(code_handle);
+					(size, s)
+				})
+			)
+		)
 	}
 }
 

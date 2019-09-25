@@ -5,13 +5,14 @@ use chashmap::CHashMap;
 use failure::format_err;
 use futures::sync::oneshot;
 use futures::{task, try_ready, Async, Future, Poll, Stream};
-use num_traits::FromPrimitive;
 use slog::{error, warn, Logger};
 use tsproto::handler_data::ConnectionValue;
 use tsproto_packets::packets::*;
-use ts_bookkeeping::messages::CommandExt;
+use ts_bookkeeping::messages::s2c::{InCommandError, InMessageTrait};
+use tsproto_packets::packets::InCommand;
 
 use crate::{Connection, PHBox, TsError};
+use crate::filetransfer::FileTransferHandler;
 
 pub(crate) struct ReturnCodeHandler {
 	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,
@@ -29,6 +30,7 @@ pub struct SimplePacketHandler {
 	initserver_sender: Option<oneshot::Sender<InCommand>>,
 	connection_recv: Option<oneshot::Receiver<Connection>>,
 	pub(crate) return_codes: Arc<ReturnCodeHandler>,
+	pub(crate) ft_ids: Arc<FileTransferHandler>,
 }
 
 struct SimplePacketStreamHandler<
@@ -40,6 +42,7 @@ struct SimplePacketStreamHandler<
 	connection_recv: Option<oneshot::Receiver<Connection>>,
 	connection: Option<Connection>,
 	return_codes: Arc<ReturnCodeHandler>,
+	ft_ids: Arc<FileTransferHandler>,
 }
 
 impl SimplePacketHandler {
@@ -59,6 +62,7 @@ impl SimplePacketHandler {
 				return_codes: CHashMap::new(),
 				cur_return_code: AtomicUsize::new(0),
 			}),
+			ft_ids: Arc::new(FileTransferHandler::new()),
 		}
 	}
 }
@@ -108,6 +112,7 @@ impl<T: 'static> tsproto::handler_data::PacketHandler<T>
 			connection_recv: self.connection_recv.take(),
 			connection: None,
 			return_codes: self.return_codes.clone(),
+			ft_ids: self.ft_ids.clone(),
 		};
 
 		if let Some(h) = &mut self.handle_packets {
@@ -134,6 +139,7 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 	/// 1. Get first packet and send with `initserver_sender`
 	/// 2. Get connection by polling `connection_recv`
 	/// 3.1 If it is an error response: Send return code if possible
+	///     Handle file transfer commands
 	/// 3.2 Else apply message to connection
 	///	4. Output packet
 	fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
@@ -148,26 +154,42 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 			// 3.
 			let mut con = connection.inner.connection.write();
 			let name = cmd.name().to_string();
+			// 3.1
 			if cmd.name() == "error" {
-				let cmd = cmd.iter().next().unwrap();
-				// 3.1
-				if let Some(code) =
-					cmd.get("return_code").and_then(|c| c.parse().ok())
-				{
+				let msg = InCommandError::new(&cmd)
+					.map_err(|e| format_err!("Cannot parse error ({:?})", e))?;
+				let msg = msg.iter().next().unwrap();
+
+				if let Some(code) = msg.return_code {
 					if let Some(return_sender) =
-						self.return_codes.return_codes.remove(&code)
+						self.return_codes.return_codes.remove(&code.parse()?)
 					{
 						// Ignore if sending fails
-						let id = cmd.get_arg("id")
-							.map_err(|e| format_err!("error has no id ({:?})", e))?;
-						let error = TsError::from_u32(id.parse()?)
-							.ok_or_else(|| format_err!("Not a valid ts error {}", id))?;
-						let _ = return_sender.send(error).is_err();
+						let _ = return_sender.send(msg.id).is_err();
+
+						// Packet contains only handled return codes
+						task::current().notify();
+						return Ok(Async::NotReady);
 					}
 				}
-				// Packet contains only handled return codes
-				task::current().notify();
-				return Ok(Async::NotReady);
+			} else if cmd.name() == "notifystartdownload" {
+				if self.ft_ids.handle_start_download(&cmd)? {
+					// Packet contains only handled data
+					task::current().notify();
+					return Ok(Async::NotReady);
+				}
+			} else if cmd.name() == "notifystartupload" {
+				if self.ft_ids.handle_start_upload(&cmd)? {
+					// Packet contains only handled data
+					task::current().notify();
+					return Ok(Async::NotReady);
+				}
+			} else if cmd.name() == "notifystatusfiletransfer" {
+				if self.ft_ids.handle_status(&cmd)? {
+					// Packet contains only handled data
+					task::current().notify();
+					return Ok(Async::NotReady);
+				}
 			}
 
 			// 3.2
