@@ -634,7 +634,7 @@ impl Connection {
 		// [ C:7 | O:_ ]
 		// [ C:5 | O:7 ] ─>X
 		// [ C:_ | O:5 ]     (Upd: O -> 7)
-		self.channels.values_mut().any(|c| if c.order == channel_id {
+		self.channels.values_mut().any(|c| if c.order == channel_id && c.id != channel_id {
 			c.order = channel_order;
 			true
 		} else {
@@ -648,7 +648,7 @@ impl Connection {
 		// [ C:_ | O:7 ]    (Upd: O -> 5)
 		//
 		// Also work for the first channel, the order will be 0.
-		self.channels.values_mut().any(|c| if c.order == channel_order && c.parent == channel_parent {
+		self.channels.values_mut().any(|c| if c.order == channel_order && c.parent == channel_parent && c.id != channel_id {
 			c.order = channel_id;
 			true
 		} else {
@@ -661,29 +661,34 @@ impl Connection {
 	}
 
 	fn channel_order_ce_fun(&mut self, channel_id: ChannelId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
-		if let Ok(order) = cmd.get_arg("channel_order") {
-			let order = ChannelId(order.parse()?);
-			let old_order;
-			let parent;
-			{
-				let channel = self.get_mut_channel(channel_id)?;
-				old_order = channel.order;
-				parent = channel.parent;
-				channel.order = order;
-			}
-			events.push(Event::PropertyChanged {
-				id: PropertyId::ChannelOrder(channel_id),
-				old: PropertyValue::ChannelId(old_order),
-				invoker: None,
-			});
-			self.channel_order_remove(channel_id, old_order);
-			self.channel_order_insert(channel_id, order, parent);
-		}
-		Ok(())
+		let new_order = cmd.get_arg("channel_order").ok().map(str::parse).transpose()?.map(ChannelId);
+		let parent = cmd.get_arg("cpid").ok().map(str::parse).transpose()?.map(ChannelId);
+		self.channel_order_move_fun(channel_id, new_order, parent, events)
 	}
 
 	fn channel_order_cm_fun(&mut self, channel_id: ChannelId, cmd: &CanonicalCommand, events: &mut Vec<Event>) -> Result<()> {
-		self.channel_order_ce_fun(channel_id, cmd, events)
+		let new_order = cmd.get_arg("order").ok().map(str::parse).transpose()?.map(ChannelId);
+		let parent = cmd.get_arg("cpid").ok().map(str::parse).transpose()?.map(ChannelId);
+		self.channel_order_move_fun(channel_id, new_order, parent, events)
+	}
+
+	fn channel_order_move_fun(&mut self, channel_id: ChannelId, new_order: Option<ChannelId>, parent: Option<ChannelId>, events: &mut Vec<Event>) -> Result<()> {
+		let old_order;
+		let new_parent;
+		{
+			let channel = self.get_mut_channel(channel_id)?;
+			old_order = channel.order;
+			new_parent = parent.unwrap_or(channel.parent);
+			channel.order = new_order.unwrap_or(old_order);
+		}
+		events.push(Event::PropertyChanged {
+			id: PropertyId::ChannelOrder(channel_id),
+			old: PropertyValue::ChannelId(old_order),
+			invoker: None,
+		});
+		self.channel_order_remove(channel_id, old_order);
+		self.channel_order_insert(channel_id, new_order.unwrap_or(old_order), new_parent);
+		Ok(())
 	}
 
 	// Book to messages
