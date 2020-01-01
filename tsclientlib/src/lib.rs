@@ -808,6 +808,32 @@ impl Connection {
 		self.get_file_stream(packet, code_handle, recv)
 	}
 
+	/// **This is part of the unstable interface.**
+	///
+	/// Return the size of the file, the port, ip and the token.
+	///
+	/// TODO This is temporary code until I get my runtime fixed.
+	#[doc(hidden)]
+	pub fn download_file_token(&self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, seek_position: Option<u64>) -> BoxFuture<(TokenWrapper, u64, SocketAddr)> {
+		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(self.inner.file_transfer_handler.clone());
+
+		let packet = c2s::OutFtInitDownloadMessage::new(
+			vec![c2s::FtInitDownloadPart {
+				client_file_transfer_id: code_handle.id,
+				name: path,
+				channel_id,
+				channel_password: channel_password.unwrap_or(""),
+				seek_position: seek_position.unwrap_or_default(),
+				protocol: 1,
+				phantom: PhantomData,
+			}]
+			.into_iter(),
+		);
+
+		self.get_file_stream_token(packet, code_handle, recv)
+	}
+
 	/// Return the size of the part which is already uploaded (when resume is
 	/// specified) and a tcp stream where the requested file should be uploaded.
 	pub fn upload_file(&self, channel_id: ChannelId, path: &str,
@@ -880,6 +906,52 @@ impl Connection {
 			})
 		)
 	}
+
+	// TODO This is temporary code until I get my runtime fixed.
+	fn get_file_stream_token(&self, packet: OutPacket, code_handle: FileTransferIdHandle,
+		recv: mpsc::UnboundedReceiver<FileTransferStatus>
+	) -> BoxFuture<(TokenWrapper, u64, SocketAddr)> {
+		let default_ip;
+		if let Some(con) = self.inner.client_connection.upgrade() {
+			default_ip = con.mutex.lock().1.address.ip();
+		} else {
+			return Box::new(future::err(format_err!("Connection is gone").into()));
+		}
+
+		// Send a message and wait until we get an answer for the return code
+		Box::new(self.get_packet_sink()
+			.send(packet)
+			.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
+			.and_then(move |(status, _recv)| {
+				match status {
+					Some(FileTransferStatus::Start {
+						key,
+						port,
+						size,
+						ip,
+					}) => {
+						let ip = ip.unwrap_or(default_ip);
+						let token = TokenWrapper {
+							token: key,
+							_code_handle: code_handle,
+						};
+						Ok((token, size, SocketAddr::new(ip, port)))
+					}
+					Some(FileTransferStatus::Status { status }) => {
+						Err(status.into())
+					}
+					None => Err(format_err!("Connection canceled").into()),
+				}
+			})
+		)
+	}
+}
+
+/// TODO Temporary struct
+#[doc(hidden)]
+pub struct TokenWrapper {
+	pub token: String,
+	_code_handle: FileTransferIdHandle,
 }
 
 impl<CM: ConnectionManager> ConnectionListener<CM> for DisconnectListener {

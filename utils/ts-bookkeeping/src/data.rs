@@ -490,7 +490,7 @@ impl Connection {
 
 	fn away_cev_fun(&self, cmd: &CanonicalCommand) -> Result<Option<String>> {
 		if cmd.get_arg("client_away")? == "1" {
-			Ok(Some(cmd.get_arg("client_away_message")?.to_string()))
+			Ok(cmd.get_arg("client_away_message").ok().map(|s| s.to_string()))
 		} else {
 			Ok(None)
 		}
@@ -502,7 +502,7 @@ impl Connection {
 			let invoker = cmd.get_invoker()?;
 
 			let away = if away == "1" {
-				Some(cmd.get_arg("client_away_message")?.to_string())
+				cmd.get_arg("client_away_message").ok().map(|s| s.to_string())
 			} else {
 				None
 			};
