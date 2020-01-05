@@ -10,7 +10,6 @@ categories = ["multimedia"]
 license = "OSL-3.0"
 edition = "2018"
 autobenches = false
-build = "build/build.rs"
 include = [
 	"/Cargo.toml",
 	"/README.md",
@@ -33,6 +32,7 @@ derive_more = "0.14"
 eax = "0.1"
 failure = "0.1"
 futures = "0.1"
+git-testament = "0.1"
 num-bigint = "0.2"
 num-derive = "0.2"
 num-traits = "0.2"
@@ -55,9 +55,6 @@ quicklz = "0.2"
 [dependencies.slog]
 version = "2"
 features = ["max_level_debug", "release_max_level_debug"]
-
-[build-dependencies]
-built = "0.3"
 
 [dev-dependencies]
 #cpuprofiler = "0.0.3"

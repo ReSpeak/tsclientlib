@@ -18,7 +18,6 @@ use rug::Integer;
 use slog::{debug, error, info, Logger};
 
 use crate::algorithms as algs;
-use crate::built_info;
 use crate::connection::*;
 use crate::connectionmanager::{
 	Resender, ResenderEvent, SocketConnectionManager,
@@ -30,7 +29,7 @@ use crate::handler_data::{
 };
 use crate::license::Licenses;
 use tsproto_packets::packets::*;
-use crate::{Error, Result};
+use crate::{Error, Result, TESTAMENT};
 
 pub type CM<PH> =
 	SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
@@ -912,17 +911,12 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						let mut version = format!(
 							"{} {}",
 							env!("CARGO_PKG_NAME"),
-							env!("CARGO_PKG_VERSION")
+							git_testament::render_testament!(TESTAMENT),
 						);
-						if let Some(v) = &built_info::GIT_VERSION {
-							version.push('-');
-							version.push_str(v);
-						}
-						if built_info::PROFILE != "release" {
-							version.push_str(" (");
-							version.push_str(built_info::PROFILE);
-							version.push(')');
-						}
+						#[cfg(debug_assertions)]
+						version.push_str(" (Debug)");
+						#[cfg(not(debug_assertions))]
+						version.push_str(" (Release)");
 
 						let mut sign_data = version.as_bytes().to_vec();
 						sign_data.extend_from_slice(&nonce);

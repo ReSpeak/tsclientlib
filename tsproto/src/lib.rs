@@ -27,10 +27,10 @@ pub mod packet_codec;
 pub mod resend;
 pub mod utils;
 
-/// Access the build environment of tsproto.
-pub mod built_info {
-	include!(concat!(env!("OUT_DIR"), "/built.rs"));
-}
+// The build environment of tsproto.
+git_testament::git_testament!(TESTAMENT);
+#[doc(hidden)]
+pub fn get_testament() -> &'static git_testament::GitTestament<'static> { &TESTAMENT }
 
 type Result<T> = std::result::Result<T, Error>;
 type LockedHashMap<K, V> =
