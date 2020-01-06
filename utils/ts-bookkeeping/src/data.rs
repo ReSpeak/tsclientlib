@@ -144,7 +144,7 @@ impl Connection {
 					handled = true;
 				}
 			}
-			"clientpoke" => {
+			"notifyclientpoke" => {
 				let cmd = s2c::InClientPoke::new(cmd)?;
 				for cmd in cmd.iter() {
 					events.push(Event::Message {
