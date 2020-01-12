@@ -26,6 +26,28 @@ impl<'a> Into<Uid> for UidRef<'a> {
 }
 impl Uid {
 	pub fn as_ref(&self) -> UidRef { UidRef(self.0.as_ref()) }
+
+	/// TeamSpeak uses a different encoding of the uid for fetching avatars.
+	///
+	/// The raw data (base64-decoded) is encoded in hex, but instead of using
+	/// [0-9a-f] with [a-p].
+	pub fn as_avatar(&self) -> String { self.as_ref().as_avatar() }
+}
+
+impl UidRef<'_> {
+	/// TeamSpeak uses a different encoding of the uid for fetching avatars.
+	///
+	/// The raw data (base64-decoded) is encoded in hex, but instead of using
+	/// [0-9a-f] with [a-p].
+	pub fn as_avatar(&self) -> String {
+		let bytes = self.0.as_bytes();
+		let mut res = String::with_capacity(bytes.len() * 2);
+		for b in base64::decode(bytes).unwrap() {
+			res.push((b'a' + (b >> 4)) as char);
+			res.push((b'a' + (b & 0xf)) as char);
+		}
+		res
+	}
 }
 
 /// The database id of a client.
