@@ -23,12 +23,9 @@ use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
 use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
-use futures03::future::TryFutureExt;
-use futures03::future::FutureExt;
 use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
-use tokio02::net::TcpStream;
-use tokio02::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use tsproto::connectionmanager::ConnectionManager;
 use tsproto::connectionmanager::Resender;
 use tsproto::handler_data::{ConnectionListener, ConnectionValue};
@@ -884,20 +881,21 @@ impl Connection {
 					None => Err(format_err!("Connection canceled").into()),
 				}
 			})
-			.and_then(|(key, size, addr)| {
-				async move {
-					let mut s = TcpStream::connect(&addr).await?;
-					s.write_all(key.as_bytes()).await?;
-					s.flush().await?;
-					Result::Ok(s)
-				}.boxed().compat()
+			.and_then(|(key, size, addr)| TcpStream::connect(&addr)
+				.and_then(move |s| {
+					tokio::io::write_all(s, key)
+				})
+				.and_then(move |(s, _)| {
+					tokio::io::flush(s)
+				})
+				.from_err()
 				.map(move |s| {
 					// TODO Select with recv
 					// Drop file transfer code
 					drop(code_handle);
 					(size, s)
 				})
-			})
+			)
 		)
 	}
 
