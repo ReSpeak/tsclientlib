@@ -1141,11 +1141,13 @@ impl ConnectOptions {
 	///
 	/// # Example
 	/// ```
+	/// # use tsclientlib::ConnectOptions;
 	/// let opts = ConnectOptions::new("localhost").channel("Default Channel".to_string());
 	/// ```
 	///
 	/// Connecting to a channel further down in the hierarchy.
 	/// ```
+	/// # use tsclientlib::ConnectOptions;
 	/// let opts = ConnectOptions::new("localhost")
 	///		.channel("Default Channel/Nested".to_string());
 	/// ```
@@ -1161,6 +1163,7 @@ impl ConnectOptions {
 	///
 	/// # Example
 	/// ```
+	/// # use tsclientlib::{ChannelId, ConnectOptions};
 	/// let opts = ConnectOptions::new("localhost").channel_id(ChannelId(2));
 	/// ```
 	#[inline]

@@ -173,7 +173,18 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 pub fn vector_value_deserializer(field: &Field) -> String {
 	let rust_type = field.get_rust_type("", true);
 	let inner_type = &rust_type[4..rust_type.len()-1];
-	String::from(format!("val.split(',').map(|val| {{ let val = val.trim(); Ok({}) }}).collect::<Result<Vec<{}>>>()?",
+	String::from(format!("val.split(',')
+						.filter_map(|val| {{
+							let val = val.trim();
+							if val.is_empty() {{
+								None
+							}} else {{
+								Some(val)
+							}}
+						}}).map(|val| {{
+							let val = val.trim();
+							Ok({})
+						}}).collect::<Result<Vec<{}>>>()?",
 		single_value_deserializer(field, inner_type), inner_type))
 }
 

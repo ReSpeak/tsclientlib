@@ -127,7 +127,7 @@ impl ClientMut<'_> {
 	/// let con_lock = connection.lock();
 	/// let con_mut = con_lock.to_mut();
 	/// // Get our own client in mutable form
-	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
+	/// let client = con_mut.get_client(&con_lock.own_client).unwrap();
 	/// // Send a message
 	/// tokio::spawn(client.send_textmessage("Hi me!")
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
@@ -150,7 +150,7 @@ impl ClientMut<'_> {
 	/// let con_lock = connection.lock();
 	/// let con_mut = con_lock.to_mut();
 	/// // Get our own client in mutable form
-	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
+	/// let client = con_mut.get_client(&con_lock.own_client).unwrap();
 	/// // Send a message
 	/// tokio::spawn(client.poke("Hihihi")
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
