@@ -1,0 +1,29 @@
+version: 0.1.{build}
+image: Ubuntu1804
+platform: x64
+clone_depth: 1
+branches:
+  only:
+  # Release tags
+  - /^v\d+\.\d+\.\d+.*$/
+  - master
+  - develop
+
+environment:
+  PATH: /home/appveyor/.rvm/gems/ruby-2.0.0-p648/bin:/home/appveyor/.rvm/gems/ruby-2.0.0-p648@global/bin:/home/appveyor/.rvm/rubies/ruby-2.0.0-p648/bin:/usr/lib/jvm/java-9-openjdk-amd64/bin:/home/appveyor/.gvm/bin:/home/appveyor/.gvm/bin:/home/appveyor/.nvm/versions/node/v4.9.1/bin:/opt/appveyor/build-agent:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/home/appveyor/.dotnet/tools:/home/appveyor/.rvm/bin:/home/appveyor/.rvm/bin:/opt/mssql-tools/bin:/home/appveyor/.cargo/bin
+
+cache:
+- /home/appveyor/.cargo
+- /home/appveyor/projects/tsclientlib/target
+
+install:
+- git submodule update --init --recursive
+- sh: curl https://sh.rustup.rs -sSf | sh -s -- -y
+- rustc -Vv
+- cargo -V
+
+build_script:
+- cargo check
+
+test_script:
+- cargo test

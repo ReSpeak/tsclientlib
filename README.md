@@ -1,4 +1,4 @@
-# TsClientlib
+# TsClientlib [![Build status](https://ci.appveyor.com/api/projects/status/ylne3ku7265xa22j/branch/master?svg=true)](https://ci.appveyor.com/project/Flakebi/tsclientlib/branch/master)
 TsClientlib is a library that enables you to write voip clients and bots using
 the TeamSpeak protocol.
 
