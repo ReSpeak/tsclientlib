@@ -2,12 +2,14 @@
 name = "analyzer"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
+edition = "2018"
+description = "Analyze recorded TeamSpeak packet logs"
 
 [dependencies]
 failure = "0.1"
 num-traits = "0.2"
 pcap = "0.7"
-pnet_packet = "0.21"
-structopt = "0.2"
-structopt-derive = "0.2"
-#tsproto = { path = "../tsproto" }
+pnet_packet = "0.25"
+structopt = { version = "0.3", default-features = false }
+tsproto = { path = "../../tsproto" }
+tsproto-packets = { path = "../tsproto-packets" }

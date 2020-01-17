@@ -1,22 +1,15 @@
-extern crate base64;
-extern crate structopt;
-extern crate tsproto;
-
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsproto::license::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
+#[structopt(author, about)]
 struct Args {
-	#[structopt(help = "The license data (base64)")]
+	/// The license data (base64)
+	#[structopt()]
 	license: String,
 }
 
 fn main() {
-	tsproto::init().unwrap();
-
 	// Parse command line options
 	let args = Args::from_args();
 

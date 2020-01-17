@@ -1,36 +1,19 @@
-#[macro_use]
-extern crate failure;
-extern crate pcap;
-extern crate pnet_packet;
-extern crate structopt;
-#[macro_use]
-extern crate structopt_derive;
-extern crate tsproto;
-
-use std::io::Cursor;
-
+use failure::bail;
 use pnet_packet::ip::IpNextHeaderProtocols;
 use pnet_packet::Packet;
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsproto::algorithms as algs;
-use tsproto::packets;
-use tsproto::packets::*;
+use tsproto_packets::HexSlice;
+use tsproto_packets::packets::*;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(
-	global_settings = "&[AppSettings::ColoredHelp, \
-	                   AppSettings::VersionlessSubcommands]"
-))]
+#[structopt(author, about)]
 struct Args {
-	#[structopt(long = "file", short = "f", help = "The capture file")]
+	/// The capture file
+	#[structopt(short = "f", long)]
 	file: String,
-}
-
-fn main() {
-	real_main().unwrap();
 }
 
 fn get_udp_payload(data: &[u8]) -> Result<Vec<u8>> {
@@ -59,29 +42,21 @@ fn get_udp_payload(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn get_packet(
-	packet: &mut Vec<u8>,
-	is_client: bool,
-) -> Result<packets::Packet> {
-	let (header, pos) = {
-		let mut r = Cursor::new(packet.as_slice());
-		(Header::read(&is_client, &mut r)?, r.position() as usize)
-	};
-	let mut udp_packet = packet.split_off(pos);
+	data: &[u8],
+	dir: Direction,
+) -> Result<InPacket> {
+	let mut packet = InPacket::try_new(data.into(), dir)?;
+	let header = packet.header();
 
-	// Try to fake decrypt the packet
-	println!("Header: {:?}", header);
-	if header.get_type() == PacketType::Command {
-		let udp_packet_bak = udp_packet.clone();
-		if algs::decrypt_fake(&header, &mut udp_packet).is_err() {
-			udp_packet.copy_from_slice(&udp_packet_bak);
+	if header.packet_type() == PacketType::Command {
+		if let Ok(dec) = algs::decrypt_fake(&packet) {
+			packet.set_content(dec);
 		}
 	}
-	let p_data = Data::read(&header, &mut Cursor::new(udp_packet.as_slice()))?;
-	let packet = tsproto::packets::Packet::new(header, p_data);
 	Ok(packet)
 }
 
-fn real_main() -> Result<()> {
+fn main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
@@ -90,13 +65,13 @@ fn real_main() -> Result<()> {
 	while let Ok(packet) = capture.next() {
 		match get_udp_payload(&*packet) {
 			Ok(packet) => {
-				println!("Packet: {:?}", tsproto::utils::HexSlice(&packet));
+				println!("Packet: {:?}", HexSlice(&packet));
 				// Try to parse as ts packet
 				let packet = if let Ok(p) =
-					get_packet(&mut packet.clone(), true)
+					get_packet(&packet, Direction::S2C)
 				{
 					p
-				} else if let Ok(p) = get_packet(&mut packet.clone(), false) {
+				} else if let Ok(p) = get_packet(&packet, Direction::C2S) {
 					p
 				} else {
 					println!("Error, no ts packet");

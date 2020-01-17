@@ -1,17 +1,10 @@
-extern crate base64;
-extern crate ring;
-extern crate tsproto;
-
-use std::io::Cursor;
-
 use tsproto::algorithms as algs;
 use tsproto::utils;
+use tsproto_packets::packets::{Direction, InPacket};
 
 use ring::digest;
 
 fn main() {
-	tsproto::init().unwrap();
-
 	let shared_iv = utils::read_hex(
 		"C2 45 6F CB FC 22 08 AE 44 2B 7D E7 3A 67 1B DA 93 09 B2 00 F2 CD 10 \
 		 49 08 CD 3A B0 7B DD 58 AD",
@@ -51,9 +44,8 @@ fn main() {
 
 	let all = utils::read_hex("2b982443ab38be6b00020000329abf64d4572e1349897b5e1e96fbc4a763a4c4ce1f64f0c1e3febd0a5f04a82ab1f2bc2344bb374fd16181beb8233b5b06944280470e9b6893290a1da0776ffcd89f3beec2ce23b9694930c09efaaea0d88a6895a08ede4d5cbfea61291fc553ac651f1e2bc1d2bd277a8bd9ab5386415579a9e56fac46d8b6b119f454bebd99179cd317dec60af205341d11f274d02bbacdd7e9773f72a426358ca1d39016dd95bde2409cd81bf99b340887e997ea982370c6790cf4d23150460820224766838ea4ec4d71dd102ede701ea0001f392623aa410dd9ab0e45874da82e29e6e370515ec30a37dd73f5a364c233ff014384beab5f1708c9f48dfba33a520f8fcdcef055789c54693c3fe72c5bfaca7cb4ca1fed77b8624660b8abc882f4b95b1284cb6dc55019c6082dd6dd146fa50383662d7298bef04ababaf1af80e15cd4c1f81326f085788e2918e00324147dce39b23db71326abc3de4b94df10f1531e9cce202bba71fa3ebeefd77b21fa3260a62e92eeee2183421d384a8c48777e2f9efbc58d4f442c5f0529c7c0e27e81b2b6b1b05eb8fa19256886248d553582dfd24c7cfab3c3f7317a5cebc6504b53fa0e86fc8c1100fc1d506fcf96caa76a7c0b6a27e577f2efdecd4070e847a559bf37d75bfdbe9e814c702426ce696d8645bc300b5f28f9e7f1ce").unwrap();
 
-	let mut cursor = Cursor::new(all.as_slice());
-	let header = tsproto::packets::Header::read(&true, &mut cursor).unwrap();
-	println!("Header: {:?}", header);
+	let packet = InPacket::try_new(all.into(), Direction::C2S).unwrap();
+	println!("Packet: {:?}", packet);
 	let mut key = [0; 16];
 	let mut nonce = [0; 16];
 	key.copy_from_slice(&keynonce[..16]);
@@ -69,9 +61,8 @@ fn main() {
 	assert_eq!(&expected_nonce, &nonce);
 	assert_eq!(&expected_key, &key);
 
-	let mut all = all[cursor.position() as usize..].to_vec();
 	key[1] ^= 2; // packet id
-	algs::decrypt_key_nonce(&header, &mut all, &key, &nonce).unwrap();
+	let dec = algs::decrypt_key_nonce(&packet, &key.into(), &nonce.into()).unwrap();
 
-	println!("Decrypted: {:?}", String::from_utf8_lossy(&all));
+	println!("Decrypted: {:?}", String::from_utf8_lossy(&dec));
 }

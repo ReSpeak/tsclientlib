@@ -85,26 +85,6 @@ pub enum MessageTarget {
 }
 
 /// The configuration to create a new connection.
-///
-/// # Example
-///
-/// ```no_run
-/// # extern crate tokio;
-/// # extern crate tsclientlib;
-/// #
-/// # use tokio::prelude::Future;
-/// # use tsclientlib::{Connection, ConnectOptions};
-/// # fn main() {
-/// #
-/// let con_config = ConnectOptions::new("localhost");
-///
-/// tokio::run(
-///     Connection::new(con_config)
-///     .map(|connection| ())
-///     .map_err(|_| ())
-/// );
-/// # }
-/// ```
 pub struct ConnectOptions {
 	address: ServerAddress,
 	local_address: Option<SocketAddr>,

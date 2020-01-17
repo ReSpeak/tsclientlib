@@ -2,14 +2,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use futures::{future, Future, Sink, Stream};
+use slog::{info, Level, Logger};
 use tokio;
 use tsproto::algorithms as algs;
 use tsproto::client::ServerConnectionData;
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto::handler_data::PacketHandler;
-use tsproto::packets::*;
 use tsproto::*;
-use {slog, slog_perf};
+use tsproto_packets::packets::*;
 
 pub struct SimplePacketHandler;
 
@@ -46,7 +46,7 @@ impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
 
 pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 	local_address: SocketAddr,
-	logger: slog::Logger,
+	logger: Logger,
 	packet_handler: PH,
 	verbose: u8,
 ) -> client::ClientDataM<PH>
@@ -79,7 +79,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 }
 
 pub fn connect<PH: PacketHandler<ServerConnectionData>>(
-	logger: slog::Logger,
+	logger: Logger,
 	client: client::ClientDataM<PH>,
 	server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error>
@@ -95,7 +95,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 			let mut time_reporter = slog_perf::TimeReporter::new_with_level(
 				"Compute public key hash cash level",
 				logger.clone(),
-				slog::Level::Info,
+				Level::Info,
 			);
 			time_reporter.start("Compute public key hash cash level");
 			let private_key_as_pub = private_key.to_pub();
@@ -160,7 +160,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
 	client: &client::ClientDataM<PH>,
 	con: client::ClientConVal,
-) -> Box<Future<Item = (), Error = Error> + Send>
+) -> Box<dyn Future<Item = (), Error = Error> + Send>
 {
 	let packet =
 		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(

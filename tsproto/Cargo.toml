@@ -59,11 +59,7 @@ features = ["max_level_debug", "release_max_level_debug"]
 [dev-dependencies]
 #cpuprofiler = "0.0.3"
 criterion = "0.2"
-#glib = "0.5"
-#gstreamer = { version = "0.11", features = ["futures"] }
-#gstreamer-app = "0.11"
-#gstreamer-audio = "0.11"
-structopt = "0.2"
+structopt = { version = "0.3", default-features = false }
 tokio-signal = "0.2"
 
 [[bench]]

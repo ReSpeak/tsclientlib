@@ -1,31 +1,25 @@
-extern crate base64;
-extern crate openssl;
-extern crate structopt;
-extern crate tsproto;
-
 use std::io::Write;
 
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsproto::algorithms as algs;
-use tsproto::packets::*;
 use tsproto::utils;
+use tsproto_packets::packets::*;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
+#[structopt(author, about)]
 struct Args {
-	#[structopt(short = "d", long = "debug", help = "Print backtrace")]
+	/// Print backtrace
+	#[structopt(short, long = "debug")]
 	debug: bool,
-	#[structopt(short = "c", long = "client", help = "Server to client")]
+	/// Server to client
+	#[structopt(short, long = "client")]
 	c2s: bool,
-	#[structopt(help = "Data (hex)")]
+	/// Data (hex)
+	#[structopt()]
 	data: String,
 }
 
 fn main() {
-	tsproto::init().unwrap();
-
 	// Parse command line options
 	let args = Args::from_args();
 

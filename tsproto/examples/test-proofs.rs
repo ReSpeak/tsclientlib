@@ -1,27 +1,21 @@
-extern crate base64;
-extern crate openssl;
-extern crate structopt;
-extern crate tsproto;
-
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tsproto::crypto::EccKeyPubP256;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
+#[structopt(author, about)]
 struct Args {
-	#[structopt(short = "k", long = "key", help = "Public key")]
+	/// Public key
+	#[structopt(short = "k", long)]
 	key: String,
-	#[structopt(short = "d", long = "data", help = "Data (base64)")]
+	/// Data (base64)
+	#[structopt(short = "d", long)]
 	data: String,
-	#[structopt(short = "s", long = "signature", help = "Signature (base64)")]
+	/// Signature (base64)
+	#[structopt(short = "s", long)]
 	signature: String,
 }
 
 fn main() {
-	tsproto::init().unwrap();
-
 	// Parse command line options
 	let args = Args::from_args();
 

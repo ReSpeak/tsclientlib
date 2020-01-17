@@ -1,27 +1,19 @@
-extern crate base64;
-extern crate curve25519_dalek;
-extern crate openssl;
-extern crate structopt;
-extern crate tsproto;
-
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use curve25519_dalek::scalar::Scalar;
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
+#[structopt(author, about)]
 struct Args {
-	#[structopt(short = "e", long = "pub", help = "Public key")]
+	/// Public key
+	#[structopt(short, long = "pub")]
 	pub_key: String,
-	#[structopt(short = "d", long = "priv", help = "Private key")]
+	/// Private key
+	#[structopt(short, long = "priv")]
 	priv_key: String,
 }
 
 fn main() {
-	tsproto::init().unwrap();
-
 	// Parse command line options
 	let args = Args::from_args();
 
