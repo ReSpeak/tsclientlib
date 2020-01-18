@@ -14,7 +14,7 @@ environment:
 
 cache:
 - /home/appveyor/.cargo
-- /home/appveyor/projects/tsclientlib/target
+#- /home/appveyor/projects/tsclientlib/target
 
 install:
 - git submodule update --init --recursive
