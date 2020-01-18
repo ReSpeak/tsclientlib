@@ -18,6 +18,8 @@ cache:
 
 install:
 - git submodule update --init --recursive
+- sudo apt-get update
+- sudo apt-get install -y libpcap-dev
 - sh: curl https://sh.rustup.rs -sSf | sh -s -- -y
 - rustc -Vv
 - cargo -V
