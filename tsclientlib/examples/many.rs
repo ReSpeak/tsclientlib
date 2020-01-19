@@ -3,37 +3,30 @@ use std::time::{Duration, Instant};
 use failure::format_err;
 use futures::{stream, Future, Stream};
 use slog::{o, Drain};
-use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::timer::Delay;
 
 use tsclientlib::{ConnectOptions, Connection, Identity};
 
 #[derive(StructOpt, Debug)]
-#[structopt(raw(global_settings = "&[AppSettings::ColoredHelp, \
-	AppSettings::VersionlessSubcommands]"))]
+#[structopt(author, about)]
 struct Args {
-	#[structopt(
-		short = "a",
-		long = "address",
-		default_value = "localhost",
-		help = "The address of the server to connect to"
-	)]
+	/// The address of the server to connect to
+	#[structopt(short = "a", long, default_value = "localhost")]
 	address: String,
-	#[structopt(
-		short = "v",
-		long = "verbose",
-		help = "Print the content of all packets",
-		parse(from_occurrences)
-	)]
+	/// Print the content of all packets
+	///
+	/// 0. Print nothing
+	/// 1. Print command string
+	/// 2. Print packets
+	/// 3. Print udp packets
+	#[structopt(short = "v", long, parse(from_occurrences))]
 	verbose: u8,
-	// 0. Print nothing
-	// 1. Print command string
-	// 2. Print packets
-	// 3. Print udp packets
-	#[structopt(help = "How many connections")]
+	/// How many connections
+	#[structopt()]
 	count: usize,
 }
+
 
 fn main() -> Result<(), failure::Error> {
 	// Parse command line options
