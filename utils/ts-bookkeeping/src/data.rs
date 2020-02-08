@@ -120,7 +120,12 @@ impl Connection {
 							MessageTarget::Channel
 						}
 						TextMessageTargetMode::Client => {
-							MessageTarget::Client(cmd.invoker_id)
+							let client = if let Some(client) = cmd.target_client_id {
+								client
+							} else {
+								return Err(format_err!("Target client id missing for a client text message").into());
+							};
+							MessageTarget::Client(client)
 						}
 						TextMessageTargetMode::Unknown => {
 							return Err(format_err!(
