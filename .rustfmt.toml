@@ -1,7 +1,9 @@
+version = "Two"
 max_width = 80
 
-hard_tabs = true
 fn_single_line = true
 format_strings = true
+hard_tabs = true
+use_small_heuristics = "Max"
 use_try_shorthand = true
 where_single_line = true
