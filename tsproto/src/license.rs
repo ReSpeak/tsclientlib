@@ -364,11 +364,7 @@ impl License {
 				w.write_all(issuer.as_bytes())?;
 				w.write_u8(0)?;
 			}
-			InnerLicense::Server {
-				ref issuer,
-				license_type,
-				data,
-			} => {
+			InnerLicense::Server { ref issuer, license_type, data } => {
 				w.write_u8(license_type.to_u8().unwrap())?;
 				w.write_u32::<BigEndian>(data)?;
 				w.write_all(issuer.as_bytes())?;

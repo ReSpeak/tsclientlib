@@ -171,15 +171,8 @@ pub struct Event<'a> {
 
 #[derive(Debug)]
 pub enum RuleKind<'a> {
-	Map {
-		from: &'a Field,
-		to: &'a Property,
-		op: RuleOp,
-	},
-	Function {
-		name: String,
-		to: Vec<&'a Property>,
-	},
+	Map { from: &'a Field, to: &'a Property, op: RuleOp },
+	Function { name: String, to: Vec<&'a Property> },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -259,10 +252,6 @@ fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
 
 impl<'a> RuleKind<'a> {
 	pub fn is_function(&self) -> bool {
-		if let RuleKind::Function { .. } = *self {
-			true
-		} else {
-			false
-		}
+		if let RuleKind::Function { .. } = *self { true } else { false }
 	}
 }

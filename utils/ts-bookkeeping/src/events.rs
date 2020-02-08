@@ -21,10 +21,7 @@ pub enum Event {
 	///
 	/// Like a client gets assigned a new server group or a new client joins the
 	/// server.
-	PropertyAdded {
-		id: PropertyId,
-		invoker: Option<Invoker>,
-	},
+	PropertyAdded { id: PropertyId, invoker: Option<Invoker> },
 	/// The attribute with this id has changed.
 	///
 	/// The second tuple item holds the old value of the changed attribute.

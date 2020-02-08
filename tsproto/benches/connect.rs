@@ -62,10 +62,7 @@ fn connect(b: &mut Bencher) {
 }
 
 fn bench_connect(c: &mut Criterion) {
-	c.bench(
-		"connect",
-		Benchmark::new("connect", connect).sample_size(20),
-	);
+	c.bench("connect", Benchmark::new("connect", connect).sample_size(20));
 }
 
 criterion_group!(benches, bench_connect);

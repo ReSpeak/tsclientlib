@@ -7,7 +7,7 @@ use tokio::runtime::current_thread::Runtime;
 use tokio::sync::mpsc;
 use tsproto_packets::packets::{InAudio, InCommand};
 
-use tsclientlib::{ConnectOptions, Connection, Identity, PacketHandler, PHBox};
+use tsclientlib::{ConnectOptions, Connection, Identity, PHBox, PacketHandler};
 
 mod audio_utils;
 
@@ -144,21 +144,28 @@ impl PacketHandler for AudioPacketHandler {
 	)
 	{
 		let logger = self.logger.clone();
-		tokio::runtime::current_thread::spawn(command_stream.for_each(|_| Ok(())).then(move |r| {
-			if let Err(e) = r {
-				error!(logger, "Failed to handle packets"; "error" => ?e);
-			}
-			Ok(())
-		}));
+		tokio::runtime::current_thread::spawn(
+			command_stream.for_each(|_| Ok(())).then(move |r| {
+				if let Err(e) = r {
+					error!(logger, "Failed to handle packets"; "error" => ?e);
+				}
+				Ok(())
+			}),
+		);
 
 		let logger = self.logger.clone();
 		let con = self.con;
 		let mut send = self.send.clone();
-		tokio::runtime::current_thread::spawn(audio_stream.for_each(move |packet| {
-				send.try_send((con, packet)).unwrap();
-				Ok(())
-			})
-			.map_err(move |e| error!(logger, "Failed to handle packets"; "error" => ?e)));
+		tokio::runtime::current_thread::spawn(
+			audio_stream
+				.for_each(move |packet| {
+					send.try_send((con, packet)).unwrap();
+					Ok(())
+				})
+				.map_err(
+					move |e| error!(logger, "Failed to handle packets"; "error" => ?e),
+				),
+		);
 	}
 
 	/// Clone into a box.

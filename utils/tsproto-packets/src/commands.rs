@@ -146,13 +146,9 @@ impl<'a> Iterator for CommandDataIterator<'a> {
 
 impl<'a> CommandData<'a> {
 	pub fn static_arg(&self, k: &str) -> Option<&str> {
-		self.static_args.iter().find_map(|(k2, v)| {
-			if *k2 == k {
-				Some(v.as_ref())
-			} else {
-				None
-			}
-		})
+		self.static_args
+			.iter()
+			.find_map(|(k2, v)| if *k2 == k { Some(v.as_ref()) } else { None })
 	}
 
 	pub fn iter(&self) -> CommandDataIterator { self.into_iter() }
@@ -162,16 +158,9 @@ impl<'a> IntoIterator for &'a CommandData<'a> {
 	type Item = crate::commands::CanonicalCommand<'a>;
 	type IntoIter = CommandDataIterator<'a>;
 	fn into_iter(self) -> Self::IntoIter {
-		let statics = self
-			.static_args
-			.iter()
-			.map(|(a, b)| (*a, b.as_ref()))
-			.collect();
-		CommandDataIterator {
-			cmd: self,
-			statics,
-			i: 0,
-		}
+		let statics =
+			self.static_args.iter().map(|(a, b)| (*a, b.as_ref())).collect();
+		CommandDataIterator { cmd: self, statics, i: 0 }
 	}
 }
 

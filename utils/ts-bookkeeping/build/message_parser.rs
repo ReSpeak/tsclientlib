@@ -19,7 +19,10 @@ impl MessageDeclarations<'static> {
 
 		// All messages that do not occur in M2B declarations
 		let not_needed: HashSet<&str> = tsproto_structs::messages_to_book::DATA
-			.decls.iter().map(|e| e.msg.name.as_str()).collect();
+			.decls
+			.iter()
+			.map(|e| e.msg.name.as_str())
+			.collect();
 		for g in &mut res.msg_group {
 			g.msg.retain(|msg| !not_needed.contains(msg.name.as_str()))
 		}
@@ -32,7 +35,10 @@ impl MessageDeclarations<'static> {
 
 		// All messages that do not occur in B2M declarations
 		let not_needed: HashSet<&str> = tsproto_structs::book_to_messages::DATA
-			.decls.iter().map(|e| e.msg.name.as_str()).collect();
+			.decls
+			.iter()
+			.map(|e| e.msg.name.as_str())
+			.collect();
 		for g in &mut res.msg_group {
 			g.msg.retain(|msg| !not_needed.contains(msg.name.as_str()))
 		}
@@ -55,28 +61,36 @@ pub fn generate_deserializer(field: &Field) -> String {
 
 pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 	let res = match rust_type {
-		 "i8" |  "u8" |
-		"i16" | "u16" |
-		"i32" | "u32" |
-		"i64" | "u64" => format!("val.parse().map_err(|e| ParseError::ParseInt {{
+		"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" => format!(
+			"val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
-			}})?", field.pretty),
-		"f32" | "f64" => format!("val.parse().map_err(|e| ParseError::ParseFloat {{
+			}})?",
+			field.pretty
+		),
+		"f32" | "f64" => format!(
+			"val.parse().map_err(|e| ParseError::ParseFloat {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
-			}})?", field.pretty),
-		"bool" => format!("match *val {{ \"0\" => false, \"1\" => true, _ => Err(ParseError::ParseBool {{
+			}})?",
+			field.pretty
+		),
+		"bool" => format!(
+			"match *val {{ \"0\" => false, \"1\" => true, _ => \
+			 Err(ParseError::ParseBool {{
 				arg: \"{}\",
 				value: val.to_string(),
-			}})? }}", field.pretty),
+			}})? }}",
+			field.pretty
+		),
 		"UidRef" => "UidRef(val)".into(),
 		"Uid" => "Uid(val.to_string())".into(),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
-		"IconHash" => format!("IconHash(if val.starts_with('-') {{
+		"IconHash" => format!(
+			"IconHash(if val.starts_with('-') {{
 			val.parse::<i32>().map(|i| i as u32)
 		}} else {{
 			val.parse::<u64>().map(|i| i as u32)
@@ -84,57 +98,68 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			arg: \"{}\",
 			value: val.to_string(),
 			error: e,
-		}})?)", field.pretty),
-		"ClientId" |
-		"ClientDbId" |
-		"ChannelId" |
-		"ServerGroupId" |
-		"ChannelGroupId" => format!("{}(val.parse().map_err(|e| ParseError::ParseInt {{
+		}})?)",
+			field.pretty
+		),
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
+		| "ChannelGroupId" => format!(
+			"{}(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
-			}})?)", rust_type, field.pretty),
-		"IpAddr" |
-		"SocketAddr" => format!("val.parse().map_err(|e| ParseError::ParseAddr {{
+			}})?)",
+			rust_type, field.pretty
+		),
+		"IpAddr" | "SocketAddr" => format!(
+			"val.parse().map_err(|e| ParseError::ParseAddr {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
-			}})?", field.pretty),
-		"TextMessageTargetMode" |
-		"HostMessageMode" |
-		"HostBannerMode" |
-		"LicenseType" |
-		"LogLevel" |
-		"Codec" |
-		"CodecEncryptionMode" |
-		"Reason" |
-		"ClientType" |
-		"GroupNamingMode" |
-		"GroupType" |
-		"Permission" |
-		"PermissionType" |
-		"TokenType" |
-		"PluginTargetMode" |
-		"Error" => format!("{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
-				arg: \"{}\",
-				value: val.to_string(),
-				error: e,
-			}})?).ok_or(ParseError::InvalidValue {{
-				arg: \"{1}\",
-				value: val.to_string(),
-				}})?", rust_type, field.pretty),
-		"ChannelPermissionHint" |
-		"ClientPermissionHint" => format!("{}::from_bits(val.parse().map_err(|e| ParseError::ParseInt {{
+			}})?",
+			field.pretty
+		),
+		"TextMessageTargetMode"
+		| "HostMessageMode"
+		| "HostBannerMode"
+		| "LicenseType"
+		| "LogLevel"
+		| "Codec"
+		| "CodecEncryptionMode"
+		| "Reason"
+		| "ClientType"
+		| "GroupNamingMode"
+		| "GroupType"
+		| "Permission"
+		| "PermissionType"
+		| "TokenType"
+		| "PluginTargetMode"
+		| "Error" => format!(
+			"{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
 			}})?).ok_or(ParseError::InvalidValue {{
 				arg: \"{1}\",
 				value: val.to_string(),
-				}})?", rust_type, field.pretty),
-		"Duration" =>
+				}})?",
+			rust_type, field.pretty
+		),
+		"ChannelPermissionHint" | "ClientPermissionHint" => format!(
+			"{}::from_bits(val.parse().map_err(|e| ParseError::ParseInt {{
+				arg: \"{}\",
+				value: val.to_string(),
+				error: e,
+			}})?).ok_or(ParseError::InvalidValue {{
+				arg: \"{1}\",
+				value: val.to_string(),
+				}})?",
+			rust_type, field.pretty
+		),
+		"Duration" => {
 			if field.type_s == "DurationSeconds" {
-				format!("let val = val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
+				format!(
+					"let val = val.parse::<i64>().map_err(|e| \
+					 ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
 					error: e,
@@ -143,37 +168,45 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				else {{ Err(ParseError::InvalidValue {{
 					arg: \"{0}\",
 					value: val.to_string(),
-					}})? }}", field.pretty)
+					}})? }}",
+					field.pretty
+				)
 			} else if field.type_s == "DurationMilliseconds" {
-				format!("Duration::milliseconds(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
+				format!(
+					"Duration::milliseconds(val.parse::<i64>().map_err(|e| \
+					 ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
 					error: e,
-				}})?)", field.pretty)
+				}})?)",
+					field.pretty
+				)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
-			},
-		"DateTime<Utc>" => format!("DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.parse().map_err(|e| ParseError::ParseInt {{
+			}
+		}
+		"DateTime<Utc>" => format!(
+			"DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.\
+			 parse().map_err(|e| ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
 					error: e,
 				}})?, 0).ok_or(ParseError::InvalidValue {{
 					arg: \"{0}\",
 					value: val.to_string(),
-				}})?, Utc)", field.pretty),
+				}})?, Utc)",
+			field.pretty
+		),
 		_ => panic!("Unknown type '{}'", rust_type),
 	};
-	if res.contains('\n') {
-		indent(&res, 2)
-	} else {
-		res
-	}
+	if res.contains('\n') { indent(&res, 2) } else { res }
 }
 
 pub fn vector_value_deserializer(field: &Field) -> String {
 	let rust_type = field.get_rust_type("", true);
-	let inner_type = &rust_type[4..rust_type.len()-1];
-	String::from(format!("val.split(',')
+	let inner_type = &rust_type[4..rust_type.len() - 1];
+	String::from(format!(
+		"val.split(',')
 						.filter_map(|val| {{
 							let val = val.trim();
 							if val.is_empty() {{
@@ -185,73 +218,88 @@ pub fn vector_value_deserializer(field: &Field) -> String {
 							let val = val.trim();
 							Ok({})
 						}}).collect::<Result<Vec<{}>>>()?",
-		single_value_deserializer(field, inner_type), inner_type))
+		single_value_deserializer(field, inner_type),
+		inner_type
+	))
 }
 
 pub fn generate_serializer(field: &Field, name: &str) -> String {
 	let rust_type = field.get_rust_type("", true);
 	if rust_type.starts_with("Vec<") {
-		let inner_type = &rust_type[4..rust_type.len()-1];
+		let inner_type = &rust_type[4..rust_type.len() - 1];
 		vector_value_serializer(field, inner_type, name)
 	} else {
 		single_value_serializer(field, &rust_type, name)
 	}
 }
 
-pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str) -> String {
+pub fn single_value_serializer(
+	field: &Field,
+	rust_type: &str,
+	name: &str,
+) -> String
+{
 	match rust_type {
-		 "i8" |  "u8" |
-		"i16" | "u16" |
-		"i32" | "u32" |
-		"i64" | "u64" |
-		"f32" | "f64" => format!("Cow::Owned({}.to_string())", name),
-		"bool" => format!("Cow::Borrowed(if {} {{ \"1\" }} else {{ \"0\" }})", name),
+		"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32"
+		| "f64" => format!("Cow::Owned({}.to_string())", name),
+		"bool" => {
+			format!("Cow::Borrowed(if {} {{ \"1\" }} else {{ \"0\" }})", name)
+		}
 		"&str" => format!("Cow::Borrowed({})", name),
 		"String" => format!("Cow::Borrowed(&{})", name),
 		"UidRef" => format!("Cow::Borrowed({}.0)", name),
 		"Uid" => format!("Cow::Borrowed({}.0)", name),
-		"ClientId" |
-		"ClientDbId" |
-		"ChannelId" |
-		"ServerGroupId" |
-		"ChannelGroupId" |
-		"IconHash" => format!("Cow::Owned({}.0.to_string())", name),
-		"TextMessageTargetMode" |
-		"HostMessageMode" |
-		"HostBannerMode" |
-		"LicenseType" |
-		"LogLevel" |
-		"Codec" |
-		"CodecEncryptionMode" |
-		"Reason" |
-		"ClientType" |
-		"GroupNamingMode" |
-		"GroupType" |
-		"Permission" |
-		"PermissionType" |
-		"TokenType" |
-		"PluginTargetMode" |
-		"Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
-		"Duration" =>
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
+		| "ChannelGroupId" | "IconHash" => {
+			format!("Cow::Owned({}.0.to_string())", name)
+		}
+		"TextMessageTargetMode"
+		| "HostMessageMode"
+		| "HostBannerMode"
+		| "LicenseType"
+		| "LogLevel"
+		| "Codec"
+		| "CodecEncryptionMode"
+		| "Reason"
+		| "ClientType"
+		| "GroupNamingMode"
+		| "GroupType"
+		| "Permission"
+		| "PermissionType"
+		| "TokenType"
+		| "PluginTargetMode"
+		| "Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
+		"Duration" => {
 			if field.type_s == "DurationSeconds" {
 				format!("Cow::Owned({}.num_seconds().to_string())", name)
 			} else if field.type_s == "DurationMilliseconds" {
 				format!("Cow::Owned({}.num_milliseconds().to_string())", name)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
-			},
-		"DateTime<Utc>" => format!("Cow::Owned({}.timestamp().to_string())", name),
-		"IpAddr" |
-		"SocketAddr" => format!("Cow::Owned({}.to_string())", name),
+			}
+		}
+		"DateTime<Utc>" => {
+			format!("Cow::Owned({}.timestamp().to_string())", name)
+		}
+		"IpAddr" | "SocketAddr" => format!("Cow::Owned({}.to_string())", name),
 		_ => panic!("Unknown type '{}'", rust_type),
 	}
 }
 
-pub fn vector_value_serializer(field: &Field, inner_type: &str, name: &str) -> String {
-	format!("{{ let mut s = String::new();
+pub fn vector_value_serializer(
+	field: &Field,
+	inner_type: &str,
+	name: &str,
+) -> String
+{
+	format!(
+		"{{ let mut s = String::new();
 				for val in {} {{
 					if !s.is_empty() {{ s += \",\" }}
 					let t: Cow<str> = {}; s += t.as_ref();
 				}}
-				Cow::Owned(s) }}", name, single_value_serializer(field, inner_type, "val"))
+				Cow::Owned(s) }}",
+		name,
+		single_value_serializer(field, inner_type, "val")
+	)
 }

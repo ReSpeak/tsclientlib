@@ -5,8 +5,8 @@ use std::ops::Deref;
 use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::book::*;
-use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
 use tsproto_structs::convert_type;
+use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
 
 #[derive(Template)]
 #[TemplatePath = "build/Events.tt"]
@@ -27,20 +27,12 @@ impl Default for EventDeclarations<'static> {
 
 pub fn get_rust_type(p: &Property) -> String {
 	let res = convert_type(&p.type_s, false);
-	if p.opt {
-		format!("Option<{}>", res)
-	} else {
-		res
-	}
+	if p.opt { format!("Option<{}>", res) } else { res }
 }
 
 pub fn get_rust_ref_type(p: &Property) -> String {
 	let res = convert_type(&p.type_s, true);
-	if p.opt {
-		format!("Option<{}>", res)
-	} else {
-		res
-	}
+	if p.opt { format!("Option<{}>", res) } else { res }
 }
 
 fn get_ids(structs: &[Struct], struc: &Struct) -> String {

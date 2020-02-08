@@ -101,12 +101,7 @@ impl Property {
 	pub fn get_rust_type(&self) -> String {
 		let mut res = convert_type(&self.type_s, false);
 
-		if self
-			.modifier
-			.as_ref()
-			.map(|s| s == "array")
-			.unwrap_or(false)
-		{
+		if self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
 			res = format!("Vec<{}>", res);
 		} else if self.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
 			let key = self.key.as_ref().expect("Specified map without key");

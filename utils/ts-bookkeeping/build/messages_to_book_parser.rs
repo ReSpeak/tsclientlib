@@ -35,10 +35,14 @@ fn get_id_args(event: &Event) -> String {
 		if is_ref_type(&f.get_rust_type("", false)) {
 			res.push('&');
 		}
-		res.push_str(&format!("{{
+		res.push_str(&format!(
+			"{{
 			let val = cmd.get_arg(\"{}\")?;
 			{}
-		}}", f.ts, generate_deserializer(f)));
+		}}",
+			f.ts,
+			generate_deserializer(f)
+		));
 	}
 	res
 }
@@ -58,11 +62,7 @@ fn gen_return_match(to: &[&Property]) -> String {
 }
 
 fn get_property_name(e: &Event, p: &Property) -> String {
-	format!(
-		"{}{}",
-		e.book_struct.name,
-		crate::events::get_property_name(p)
-	)
+	format!("{}{}", e.book_struct.name, crate::events::get_property_name(p))
 }
 
 fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
@@ -72,10 +72,14 @@ fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
 			ids.push_str(", ");
 		}
 		if m == "map" || m == "array" {
-			ids.push_str(&format!("{{
+			ids.push_str(&format!(
+				"{{
 				let val = cmd.get_arg(\"{}\")?;
 				{}
-			}}", from.ts, generate_deserializer(from)));
+			}}",
+				from.ts,
+				generate_deserializer(from)
+			));
 		} else {
 			panic!("Unknown modifier {}", m);
 		}

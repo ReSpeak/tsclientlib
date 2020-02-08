@@ -28,8 +28,8 @@ use crate::handler_data::{
 	PacketHandler,
 };
 use crate::license::Licenses;
-use tsproto_packets::packets::*;
 use crate::{Error, Result, TESTAMENT};
+use tsproto_packets::packets::*;
 
 pub type CM<PH> =
 	SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
@@ -355,11 +355,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					}
 				}
 
-				if ignore_packet {
-					Ok(None)
-				} else {
-					Ok(Some(p))
-				}
+				if ignore_packet { Ok(None) } else { Ok(Some(p)) }
 			})
 			.filter_map(|p| p);
 
@@ -492,11 +488,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					d.lock().remove_connection(&addr);
 				}
 
-				if ignore_packet {
-					Ok(None)
-				} else {
-					Ok(Some(cmd))
-				}
+				if ignore_packet { Ok(None) } else { Ok(Some(cmd)) }
 			})
 			.filter_map(|p| p);
 
@@ -564,13 +556,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 			ServerConnectionState::Init2 { version } => {
 				// Handle an Init3
 				packet.with_data(|init| {
-					if let S2CInitData::Init3 {
-						x,
-						n,
-						level,
-						random2,
-					} = init
-					{
+					if let S2CInitData::Init3 { x, n, level, random2 } = init {
 						let level = *level;
 						// Solve RSA puzzle: y = x ^ (2 ^ level) % n
 						// Use Montgomery Reduction
@@ -650,7 +636,8 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 									let _ = send.send((x, n, y));
 								});
 
-								recv.from_err().and_then(move |(x, n, y)| -> Box<
+								recv.from_err().and_then(
+									move |(x, n, y)| -> Box<
 										dyn Future<Item = _, Error = _> + Send,
 									> {
 										// Create the command string
@@ -1132,12 +1119,8 @@ mod tests {
 
 					let client_con = Self::set_connected(&c);
 					let server_con = Self::set_connected(&s);
-					let res = Self {
-						client: c,
-						server: s,
-						client_con,
-						server_con,
-					};
+					let res =
+						Self { client: c, server: s, client_con, server_con };
 
 					Ok(res)
 				}))

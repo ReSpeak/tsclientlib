@@ -74,29 +74,32 @@ fn main() -> Result<(), failure::Error> {
 			// Listen to events
 			let con_config = con_config.add_event_listener(
 				"listener".into(),
-				Box::new(|ev| {
-					match ev {
-						Event::ConEvents(con, evs) => {
-							println!("Got events: {:?}", evs);
-							print_channel_tree(&*con);
-						}
-						Event::IdentityLevelIncreased(id) => {
-							println!("Increased identity level to {} with counter {}",
-								id.level().unwrap(), id.counter());
-						}
-						_ => {}
+				Box::new(|ev| match ev {
+					Event::ConEvents(con, evs) => {
+						println!("Got events: {:?}", evs);
+						print_channel_tree(&*con);
 					}
+					Event::IdentityLevelIncreased(id) => {
+						println!(
+							"Increased identity level to {} with counter {}",
+							id.level().unwrap(),
+							id.counter()
+						);
+					}
+					_ => {}
 				}),
 			);
-
 
 			// Optionally set the key of this client, otherwise a new key is generated.
 			let id = Identity::new_from_str(
 				"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
 				k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
 				C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
-			println!("Using identity with counter {} and level {}", id.counter(),
-				id.level().unwrap());
+			println!(
+				"Using identity with counter {} and level {}",
+				id.counter(),
+				id.level().unwrap()
+			);
 			let con_config = con_config.identity(id);
 
 			// Connect

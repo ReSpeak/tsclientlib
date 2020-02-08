@@ -109,52 +109,66 @@ impl TsToAudio {
 
 	fn start(t2a: Arc<Mutex<Self>>) {
 		let logger = t2a.lock().logger.clone();
-		tokio::runtime::current_thread::spawn(Interval::new_interval(Duration::from_secs(1)).for_each(move |_| {
-			let mut t2a = t2a.lock();
-			if !t2a.decoders.is_empty() {
-				// Check for inactive connections
-				let now = Instant::now();
-				let dur = Duration::from_secs(VOICE_TIMEOUT_SECS);
-				let logger = t2a.logger.clone();
-				t2a.decoders.retain(|id, (_, last)| {
-					if now.duration_since(*last) > dur {
-						trace!(logger, "Removing stale connection"; "id" => %id);
-						false
-					} else {
-						true
-					}
-				});
+		tokio::runtime::current_thread::spawn(
+			Interval::new_interval(Duration::from_secs(1))
+				.for_each(move |_| {
+					let mut t2a = t2a.lock();
+					if !t2a.decoders.is_empty() {
+						// Check for inactive connections
+						let now = Instant::now();
+						let dur = Duration::from_secs(VOICE_TIMEOUT_SECS);
+						let logger = t2a.logger.clone();
+						t2a.decoders.retain(|id, (_, last)| {
+							if now.duration_since(*last) > dur {
+								trace!(logger, "Removing stale connection"; "id" => %id);
+								false
+							} else {
+								true
+							}
+						});
 
-				if t2a.decoders.is_empty() {
-					debug!(logger, "Pausing playback");
-					t2a.device.pause();
-				}
-			}
-
-			if t2a.device.status() == AudioStatus::Stopped {
-				// Try to reconnect to audio
-				match Self::open_playback(
-					t2a.logger.clone(),
-					&t2a.audio_subsystem,
-					t2a.data.clone(),
-				) {
-					Ok(d) => {
-						t2a.device = d;
-						debug!(t2a.logger, "Reconnected to playback device");
-						if !t2a.decoders.is_empty() {
-							t2a.device.resume();
+						if t2a.decoders.is_empty() {
+							debug!(logger, "Pausing playback");
+							t2a.device.pause();
 						}
 					}
-					Err(e) => {
-						error!(t2a.logger, "Failed to open playback device"; "error" => ?e);
+
+					if t2a.device.status() == AudioStatus::Stopped {
+						// Try to reconnect to audio
+						match Self::open_playback(
+							t2a.logger.clone(),
+							&t2a.audio_subsystem,
+							t2a.data.clone(),
+						) {
+							Ok(d) => {
+								t2a.device = d;
+								debug!(
+									t2a.logger,
+									"Reconnected to playback device"
+								);
+								if !t2a.decoders.is_empty() {
+									t2a.device.resume();
+								}
+							}
+							Err(e) => {
+								error!(t2a.logger, "Failed to open playback device"; "error" => ?e);
+							}
+						};
 					}
-				};
-			}
-			Ok(())
-		}).map_err(move |e| error!(logger, "t2a interval failed"; "error" => ?e)));
+					Ok(())
+				})
+				.map_err(
+					move |e| error!(logger, "t2a interval failed"; "error" => ?e),
+				),
+		);
 	}
 
-	pub(crate) fn play_packet(&mut self, con: ConnectionId, packet: &InAudio) -> Result<(), Error> {
+	pub(crate) fn play_packet(
+		&mut self,
+		con: ConnectionId,
+		packet: &InAudio,
+	) -> Result<(), Error>
+	{
 		if let AudioData::S2C { id: _, from, codec, data }
 		| AudioData::S2CWhisper { id: _, from, codec, data } = packet.data()
 		{

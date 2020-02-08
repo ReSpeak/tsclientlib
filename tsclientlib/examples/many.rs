@@ -27,7 +27,6 @@ struct Args {
 	count: usize,
 }
 
-
 fn main() -> Result<(), failure::Error> {
 	// Parse command line options
 	let args = Args::from_args();

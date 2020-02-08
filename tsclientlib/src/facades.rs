@@ -4,8 +4,8 @@ use std::net::IpAddr;
 use std::ops::Deref;
 
 use futures::Future;
-use ts_bookkeeping::*;
 use ts_bookkeeping::data::*;
+use ts_bookkeeping::*;
 
 use crate::{Error, MessageTarget};
 

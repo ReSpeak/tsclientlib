@@ -15,11 +15,7 @@ use crate::handler_data::{
 
 fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {
 	let in_s = if incoming {
-		if !cfg!(windows) {
-			"\x1b[1;32mIN\x1b[0m"
-		} else {
-			"IN"
-		}
+		if !cfg!(windows) { "\x1b[1;32mIN\x1b[0m" } else { "IN" }
 	} else if !cfg!(windows) {
 		"\x1b[1;31mOUT\x1b[0m"
 	} else {
@@ -89,11 +85,7 @@ impl OutUdpPacketObserver for UdpPacketLogger {
 	fn observe(&self, addr: SocketAddr, udp_packet: &[u8]) {
 		match InPacket::try_new(
 			udp_packet.into(),
-			if self.is_client {
-				Direction::C2S
-			} else {
-				Direction::S2C
-			},
+			if self.is_client { Direction::C2S } else { Direction::S2C },
 		) {
 			Ok(packet) => log_udp_packet(
 				&self.logger,
@@ -174,15 +166,11 @@ pub fn add_udp_packet_logger<CM: ConnectionManager + 'static>(
 pub fn add_packet_logger<CM: ConnectionManager + 'static>(data: &mut Data<CM>) {
 	data.add_in_packet_observer(
 		"log".into(),
-		Box::new(PacketLogger {
-			is_client: data.is_client,
-		}),
+		Box::new(PacketLogger { is_client: data.is_client }),
 	);
 	data.add_out_packet_observer(
 		"log".into(),
-		Box::new(PacketLogger {
-			is_client: data.is_client,
-		}),
+		Box::new(PacketLogger { is_client: data.is_client }),
 	);
 }
 
@@ -191,14 +179,10 @@ pub fn add_command_logger<CM: ConnectionManager + 'static>(
 ) {
 	data.add_in_command_observer(
 		"cmdlog".into(),
-		Box::new(CommandLogger {
-			is_client: data.is_client,
-		}),
+		Box::new(CommandLogger { is_client: data.is_client }),
 	);
 	data.add_out_packet_observer(
 		"cmdlog".into(),
-		Box::new(CommandLogger {
-			is_client: data.is_client,
-		}),
+		Box::new(CommandLogger { is_client: data.is_client }),
 	);
 }

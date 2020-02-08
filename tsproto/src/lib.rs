@@ -30,7 +30,9 @@ pub mod utils;
 // The build environment of tsproto.
 git_testament::git_testament!(TESTAMENT);
 #[doc(hidden)]
-pub fn get_testament() -> &'static git_testament::GitTestament<'static> { &TESTAMENT }
+pub fn get_testament() -> &'static git_testament::GitTestament<'static> {
+	&TESTAMENT
+}
 
 type Result<T> = std::result::Result<T, Error>;
 type LockedHashMap<K, V> =

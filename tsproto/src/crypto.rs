@@ -156,7 +156,10 @@ impl EccKeyPubP256 {
 	///
 	/// returns sha1(ts encoded key)
 	pub fn get_uid_no_base64(&self) -> Result<Vec<u8>> {
-		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, self.to_ts()?.as_bytes());
+		let hash = digest::digest(
+			&digest::SHA1_FOR_LEGACY_USE_ONLY,
+			self.to_ts()?.as_bytes(),
+		);
 		Ok(hash.as_ref().to_vec())
 	}
 
@@ -169,7 +172,9 @@ impl EccKeyPubP256 {
 
 	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let key = ring::signature::UnparsedPublicKey::new(
-			&ring::signature::ECDSA_P256_SHA256_ASN1, &self.0);
+			&ring::signature::ECDSA_P256_SHA256_ASN1,
+			&self.0,
+		);
 		key.verify(data, signature).map_err(|_| Error::WrongSignature)
 	}
 }
@@ -181,7 +186,8 @@ impl EccKeyPrivP256 {
 			ring::signature::EcdsaKeyPair::generate_private_key(
 				&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 				&ring::rand::SystemRandom::new(),
-			).map_err(|_| format_err!("Failed to generate private key"))?,
+			)
+			.map_err(|_| format_err!("Failed to generate private key"))?,
 		))
 	}
 
@@ -226,7 +232,8 @@ impl EccKeyPrivP256 {
 		let _ = ring::signature::EcdsaKeyPair::from_private_key(
 			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 			Input::from(&data),
-		).map_err(|_| format_err!("Failed to parse private key"))?;
+		)
+		.map_err(|_| format_err!("Failed to parse private key"))?;
 		Ok(Self(data))
 	}
 
@@ -263,7 +270,10 @@ impl EccKeyPrivP256 {
 			.iter()
 			.position(|b| *b == b'\0')
 			.unwrap_or(data.len() - 20);
-		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
+		let hash = digest::digest(
+			&digest::SHA1_FOR_LEGACY_USE_ONLY,
+			&data[20..20 + pos],
+		);
 		let hash = hash.as_ref();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
@@ -343,7 +353,10 @@ impl EccKeyPrivP256 {
 			.iter()
 			.position(|b| *b == b'\0')
 			.unwrap_or(data.len() - 20);
-		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
+		let hash = digest::digest(
+			&digest::SHA1_FOR_LEGACY_USE_ONLY,
+			&data[20..20 + pos],
+		);
 		let hash = hash.as_ref();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
@@ -437,9 +450,7 @@ impl EccKeyPubEd25519 {
 impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
 	pub fn create() -> Result<Self> {
-		Ok(EccKeyPrivEd25519(Scalar::random(
-			&mut ::rand::rngs::OsRng::new()?,
-		)))
+		Ok(EccKeyPrivEd25519(Scalar::random(&mut ::rand::rngs::OsRng::new()?)))
 	}
 
 	pub fn from_base64(data: &str) -> Result<Self> {

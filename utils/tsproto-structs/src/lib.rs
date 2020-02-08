@@ -65,11 +65,7 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 	}
 
 	if t == "str" || t == "string" {
-		if is_ref {
-			String::from("&str")
-		} else {
-			String::from("String")
-		}
+		if is_ref { String::from("&str") } else { String::from("String") }
 	} else if t == "byte" {
 		String::from("u8")
 	} else if t == "ushort" {
@@ -91,11 +87,7 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 	} else if t.starts_with("Duration") {
 		String::from("Duration")
 	} else if t == "ClientUid" {
-		if is_ref {
-			String::from("UidRef")
-		} else {
-			String::from("Uid")
-		}
+		if is_ref { String::from("UidRef") } else { String::from("Uid") }
 	} else if t == "TalkPowerRequest" && is_ref {
 		String::from("&TalkPowerRequest")
 	} else if t == "Ts3ErrorCode" {

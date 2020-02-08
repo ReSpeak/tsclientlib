@@ -18,9 +18,9 @@ use crate::connection::*;
 use crate::connectionmanager::ConnectionManager;
 use crate::crypto::EccKeyPrivP256;
 use crate::packet_codec::{PacketCodecReceiver, PacketCodecSender};
-use tsproto_packets::packets::*;
 use crate::resend::DefaultResender;
 use crate::{Error, LockedHashMap, Result};
+use tsproto_packets::packets::*;
 
 pub type DataM<CM> = Arc<Mutex<Data<CM>>>;
 
@@ -121,19 +121,21 @@ impl<T: Send + 'static> ConnectionValue<T> {
 	pub(crate) fn new(
 		data: T,
 		con: Connection,
-		out_packet_observer: LockedHashMap<String, Box<dyn OutPacketObserver<T>>>,
+		out_packet_observer: LockedHashMap<
+			String,
+			Box<dyn OutPacketObserver<T>>,
+		>,
 	) -> Self
 	{
-		Self {
-			mutex: Arc::new(Mutex::new((data, con))),
-			out_packet_observer,
-		}
+		Self { mutex: Arc::new(Mutex::new((data, con))), out_packet_observer }
 	}
 
 	fn encode_packet(
 		&self,
 		mut packet: OutPacket,
-	) -> Box<dyn Stream<Item = (PacketType, u32, u16, Bytes), Error = Error> + Send>
+	) -> Box<
+		dyn Stream<Item = (PacketType, u32, u16, Bytes), Error = Error> + Send,
+	>
 	{
 		let mut con = self.mutex.lock();
 		let con = &mut *con;
@@ -371,11 +373,11 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		packet_handler: CM::PacketHandler,
 		connection_manager: CM,
 		sink: impl Sink<SinkItem = (Bytes, SocketAddr), SinkError = E1>
-			+ Send
-			+ 'static,
+		+ Send
+		+ 'static,
 		stream: impl Stream<Item = (BytesMut, SocketAddr), Error = E2>
-			+ Send
-			+ 'static,
+		+ Send
+		+ 'static,
 		logger: slog::Logger,
 	) -> Result<Arc<Mutex<Self>>>
 	{
@@ -511,9 +513,8 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 			audio_send,
 		);
 
-		let mut key = self
-			.connection_manager
-			.new_connection_key(&mut data, &mut con);
+		let mut key =
+			self.connection_manager.new_connection_key(&mut data, &mut con);
 		// Call listeners
 		let mut i = 0;
 		while i < self.connection_listeners.len() {
@@ -663,10 +664,7 @@ struct DisconnectListener<T: Eq> {
 
 impl<T: Eq> DisconnectListener<T> {
 	fn new(key: T, sender: oneshot::Sender<()>) -> Self {
-		Self {
-			key,
-			sender: Some(sender),
-		}
+		Self { key, sender: Some(sender) }
 	}
 }
 

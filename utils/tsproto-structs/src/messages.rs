@@ -106,12 +106,7 @@ impl Field {
 	pub fn get_rust_type(&self, a: &str, is_ref: bool) -> String {
 		let mut res = convert_type(&self.type_s, is_ref);
 
-		if self
-			.modifier
-			.as_ref()
-			.map(|s| s == "array")
-			.unwrap_or(false)
-		{
+		if self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
 			res = format!("Vec<{}>", res);
 		}
 		if a.ends_with('?') {

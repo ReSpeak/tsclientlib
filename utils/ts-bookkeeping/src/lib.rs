@@ -12,10 +12,11 @@ pub mod messages;
 pub use tsproto_types::errors::Error as TsError;
 pub use tsproto_types::versions::Version;
 pub use tsproto_types::{
-	ChannelGroupId, ChannelId, ChannelPermissionHint, ChannelType, ClientDbId, ClientId,
-	ClientPermissionHint, ClientType, Codec, CodecEncryptionMode, GroupNamingMode, GroupType,
-	HostBannerMode, HostMessageMode, IconHash, Invoker, InvokerRef,
-	LicenseType, LogLevel, MaxClients, Permission, PermissionType, PluginTargetMode, Reason, ServerGroupId, TalkPowerRequest,
+	ChannelGroupId, ChannelId, ChannelPermissionHint, ChannelType, ClientDbId,
+	ClientId, ClientPermissionHint, ClientType, Codec, CodecEncryptionMode,
+	GroupNamingMode, GroupType, HostBannerMode, HostMessageMode, IconHash,
+	Invoker, InvokerRef, LicenseType, LogLevel, MaxClients, Permission,
+	PermissionType, PluginTargetMode, Reason, ServerGroupId, TalkPowerRequest,
 	TextMessageTargetMode, TokenType, Uid, UidRef,
 };
 
@@ -198,9 +199,9 @@ impl fmt::Debug for ConnectOptions {
 		} = self;
 		write!(
 			f,
-			"ConnectOptions {{ address: {:?}, local_address: {:?}, \
-			 name: {}, version: {}, \
-			 log_commands: {}, log_packets: {}, log_udp_packets: {} }}",
+			"ConnectOptions {{ address: {:?}, local_address: {:?}, name: {}, \
+			 version: {}, log_commands: {}, log_packets: {}, log_udp_packets: \
+			 {} }}",
 			address,
 			local_address,
 			name,
@@ -220,12 +221,7 @@ pub struct DisconnectOptions {
 
 impl Default for DisconnectOptions {
 	#[inline]
-	fn default() -> Self {
-		Self {
-			reason: None,
-			message: None,
-		}
-	}
+	fn default() -> Self { Self { reason: None, message: None } }
 }
 
 impl DisconnectOptions {

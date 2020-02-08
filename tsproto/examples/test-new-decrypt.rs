@@ -10,9 +10,8 @@ fn main() {
 		 49 08 CD 3A B0 7B DD 58 AD",
 	)
 	.unwrap();
-	let mut shared_iv = digest::digest(&digest::SHA512, &shared_iv)
-		.as_ref()
-		.to_vec();
+	let mut shared_iv =
+		digest::digest(&digest::SHA512, &shared_iv).as_ref().to_vec();
 	assert_eq!(
 		utils::read_hex(
 			"4D 3F DA B7 D8 B0 2C 82 70 6A 39 3E 97 17 61 09 FA 03 AB 30 5C \
@@ -62,7 +61,8 @@ fn main() {
 	assert_eq!(&expected_key, &key);
 
 	key[1] ^= 2; // packet id
-	let dec = algs::decrypt_key_nonce(&packet, &key.into(), &nonce.into()).unwrap();
+	let dec =
+		algs::decrypt_key_nonce(&packet, &key.into(), &nonce.into()).unwrap();
 
 	println!("Decrypted: {:?}", String::from_utf8_lossy(&dec));
 }

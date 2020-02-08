@@ -12,8 +12,8 @@ use ring::digest;
 
 use crate::connection::{CachedKey, SharedIv};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use tsproto_packets::packets::*;
 use crate::{Error, Result};
+use tsproto_packets::packets::*;
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -142,9 +142,7 @@ fn create_key_nonce(
 			temp[0] = 0x30;
 		}
 		temp[1] = p_type.to_u8().unwrap();
-		(&mut temp[2..6])
-			.write_u32::<NetworkEndian>(generation_id)
-			.unwrap();
+		(&mut temp[2..6]).write_u32::<NetworkEndian>(generation_id).unwrap();
 		let len;
 		match iv {
 			SharedIv::ProtocolOrig(data) => {
@@ -281,7 +279,8 @@ pub fn compute_iv_mac(
 	let shared_secret = our_key.create_shared_secret(other_key)?;
 	let mut shared_iv = [0; 20];
 	shared_iv.copy_from_slice(
-		digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_secret).as_ref(),
+		digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_secret)
+			.as_ref(),
 	);
 	for i in 0..10 {
 		shared_iv[i] ^= alpha[i];
@@ -291,7 +290,8 @@ pub fn compute_iv_mac(
 	}
 	let mut shared_mac = [0; 8];
 	shared_mac.copy_from_slice(
-		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()[..8],
+		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()
+			[..8],
 	);
 	Ok((shared_iv, shared_mac))
 }
@@ -316,7 +316,8 @@ pub fn compute_iv_mac31(
 	}
 	let mut shared_mac = [0; 8];
 	shared_mac.copy_from_slice(
-		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()[..8],
+		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()
+			[..8],
 	);
 	Ok((shared_iv, shared_mac))
 }

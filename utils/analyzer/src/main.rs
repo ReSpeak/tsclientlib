@@ -3,8 +3,8 @@ use pnet_packet::ip::IpNextHeaderProtocols;
 use pnet_packet::Packet;
 use structopt::StructOpt;
 use tsproto::algorithms as algs;
-use tsproto_packets::HexSlice;
 use tsproto_packets::packets::*;
+use tsproto_packets::HexSlice;
 
 type Result<T> = std::result::Result<T, failure::Error>;
 
@@ -41,10 +41,7 @@ fn get_udp_payload(data: &[u8]) -> Result<Vec<u8>> {
 	}
 }
 
-fn get_packet(
-	data: &[u8],
-	dir: Direction,
-) -> Result<InPacket> {
+fn get_packet(data: &[u8], dir: Direction) -> Result<InPacket> {
 	let mut packet = InPacket::try_new(data.into(), dir)?;
 	let header = packet.header();
 
@@ -67,8 +64,7 @@ fn main() -> Result<()> {
 			Ok(packet) => {
 				println!("Packet: {:?}", HexSlice(&packet));
 				// Try to parse as ts packet
-				let packet = if let Ok(p) =
-					get_packet(&packet, Direction::S2C)
+				let packet = if let Ok(p) = get_packet(&packet, Direction::S2C)
 				{
 					p
 				} else if let Ok(p) = get_packet(&packet, Direction::C2S) {

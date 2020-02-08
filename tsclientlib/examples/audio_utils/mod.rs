@@ -41,7 +41,11 @@ pub struct AudioData {
 	pub ts2a: Arc<Mutex<TsToAudio>>,
 }
 
-pub(crate) fn start(logger: Logger, executor: Handle) -> Result<AudioData, Error> {
+pub(crate) fn start(
+	logger: Logger,
+	executor: Handle,
+) -> Result<AudioData, Error>
+{
 	let sdl_context = sdl2::init().unwrap();
 
 	let audio_subsystem = sdl_context.audio().unwrap();
@@ -51,7 +55,8 @@ pub(crate) fn start(logger: Logger, executor: Handle) -> Result<AudioData, Error
 	}
 
 	let ts2a = TsToAudio::new(logger.clone(), audio_subsystem.clone())?;
-	let a2ts = AudioToTs::new(logger.clone(), audio_subsystem, executor.clone())?;
+	let a2ts =
+		AudioToTs::new(logger.clone(), audio_subsystem, executor.clone())?;
 
 	Ok(AudioData { executor, a2ts, ts2a })
 }

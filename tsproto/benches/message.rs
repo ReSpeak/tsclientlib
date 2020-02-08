@@ -60,8 +60,7 @@ fn send_messages(b: &mut Bencher) {
 		i += 1;
 
 		let sink = con.as_packet_sink();
-		rt.block_on(future::lazy(move || sink.send(packet)))
-			.unwrap();
+		rt.block_on(future::lazy(move || sink.send(packet))).unwrap();
 	});
 	let c2 = c.clone();
 	rt.block_on(future::lazy(move || {

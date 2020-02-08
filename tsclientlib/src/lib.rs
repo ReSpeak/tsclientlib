@@ -26,19 +26,20 @@ use futures::{future, stream, Future, Sink, Stream};
 use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
 use tokio::net::TcpStream;
+use ts_bookkeeping::messages::c2s;
+use ts_bookkeeping::messages::s2c::{InMessage, InMessages};
 use tsproto::connectionmanager::ConnectionManager;
 use tsproto::connectionmanager::Resender;
 use tsproto::handler_data::{ConnectionListener, ConnectionValue};
+use tsproto::{client, log};
 use tsproto_packets::packets::{
 	Direction, InAudio, InCommand, OutCommand, OutPacket, PacketType,
 };
-use tsproto::{client, log};
-use ts_bookkeeping::messages::c2s;
-use ts_bookkeeping::messages::s2c::{InMessage, InMessages};
 
+use crate::filetransfer::{
+	FileTransferHandler, FileTransferIdHandle, FileTransferStatus,
+};
 use crate::packet_handler::{ReturnCodeHandler, SimplePacketHandler};
-use crate::filetransfer::{FileTransferIdHandle, FileTransferHandler,
-	FileTransferStatus};
 
 mod facades;
 mod filetransfer;
@@ -57,8 +58,7 @@ pub use tsproto::connection::Identity;
 
 type BoxFuture<T> = Box<dyn Future<Item = T, Error = Error> + Send>;
 type Result<T> = std::result::Result<T, Error>;
-pub type EventListener =
-	Box<dyn Fn(&Event) + Send + Sync>;
+pub type EventListener = Box<dyn Fn(&Event) + Send + Sync>;
 
 #[derive(Fail, Debug, From)]
 pub enum Error {
@@ -257,7 +257,9 @@ impl Connection {
 		let options = Arc::new(Mutex::new(options));
 		let logger2 = logger.clone();
 		Box::new(
-			addr.and_then(move |addr| Self::connect_to(logger.clone(), options.clone(), addr))
+			addr.and_then(move |addr| {
+				Self::connect_to(logger.clone(), options.clone(), addr)
+			})
 			.then(move |r| -> Result<_> {
 				if let Err(e) = &r {
 					debug!(logger2, "Connecting failed, trying next address";
@@ -278,7 +280,12 @@ impl Connection {
 		)
 	}
 
-	fn connect_to(logger: Logger, options: Arc<Mutex<ConnectOptions>>, addr: SocketAddr) -> BoxFuture<Connection> {
+	fn connect_to(
+		logger: Logger,
+		options: Arc<Mutex<ConnectOptions>>,
+		addr: SocketAddr,
+	) -> BoxFuture<Connection>
+	{
 		let (initserver_send, initserver_recv) = oneshot::channel();
 		let (connection_send, connection_recv) = oneshot::channel();
 		let opts = options.lock();
@@ -306,9 +313,7 @@ impl Connection {
 			logger.clone(),
 		) {
 			Ok(client) => client,
-			Err(error) => {
-				return Box::new(future::err(error.into()))
-			}
+			Err(error) => return Box::new(future::err(error.into())),
 		};
 
 		{
@@ -335,12 +340,9 @@ impl Connection {
 
 		// Create a connection
 		debug!(logger, "Connecting"; "address" => %addr);
-		let connect_fut = client::connect(
-			Arc::downgrade(&client),
-			&mut *client.lock(),
-			addr,
-		)
-		.from_err();
+		let connect_fut =
+			client::connect(Arc::downgrade(&client), &mut *client.lock(), addr)
+				.from_err();
 
 		let options2 = options.clone();
 		let options3 = options.clone();
@@ -462,7 +464,7 @@ impl Connection {
 							Self::connect_to(logger, options2, addr)
 						}
 					})
-			})
+			}),
 		)
 	}
 
@@ -485,12 +487,16 @@ impl Connection {
 		} else if let InMessages::CommandError(e) = msg.msg() {
 			let e = e.iter().next().unwrap();
 			if e.id == ts_bookkeeping::TsError::ClientCouldNotValidateIdentity {
-				if let Some(needed) = e.extra_message.and_then(|m| m.parse::<u8>().ok()) {
+				if let Some(needed) =
+					e.extra_message.and_then(|m| m.parse::<u8>().ok())
+				{
 					if needed > 20 {
 						return Box::new(future::err(Error::ConnectionFailed(
-							format!("The server needs an \
-								identity of level {}, please \
-								increase your identity level", needed)
+							format!(
+								"The server needs an identity of level {}, \
+								 please increase your identity level",
+								needed
+							),
 						)));
 					}
 
@@ -499,17 +505,23 @@ impl Connection {
 						match opts.identity.as_ref().unwrap().level() {
 							Ok(level) => {
 								if level >= needed {
-									return Box::new(future::err(Error::ConnectionFailed(
-										format!("The server requested an \
-											identity of level {}, but we already \
-											have level {}", needed, level)
-									)));
+									return Box::new(future::err(
+										Error::ConnectionFailed(format!(
+											"The server requested an identity \
+											 of level {}, but we already have \
+											 level {}",
+											needed, level
+										)),
+									));
 								}
 							}
 							Err(e) => return Box::new(future::err(e.into())),
 						}
 
-						let e = Event::IdentityLevelIncreasing(opts.identity.as_ref().unwrap(), needed);
+						let e = Event::IdentityLevelIncreasing(
+							opts.identity.as_ref().unwrap(),
+							needed,
+						);
 						for (_, l) in &opts.event_listeners {
 							l(&e);
 						}
@@ -521,27 +533,38 @@ impl Connection {
 					// TODO Performance log
 					std::thread::spawn(move || {
 						let mut opts = options.lock();
-						let _ = send.send(opts.identity.as_mut().unwrap()
-							.upgrade_level(needed).map_err(|e| e.into()));
+						let _ = send.send(
+							opts.identity
+								.as_mut()
+								.unwrap()
+								.upgrade_level(needed)
+								.map_err(|e| e.into()),
+						);
 					});
-					return Box::new(recv.from_err().and_then(|r| r).map(move |()| {
-						let opts = options2.lock();
-						let e = Event::IdentityLevelIncreased(&opts.identity.as_ref().unwrap());
-						for (_, l) in &opts.event_listeners {
-							l(&e);
-						}
-						// Try to connect again
-						None
-					}));
+					return Box::new(recv.from_err().and_then(|r| r).map(
+						move |()| {
+							let opts = options2.lock();
+							let e = Event::IdentityLevelIncreased(
+								&opts.identity.as_ref().unwrap(),
+							);
+							for (_, l) in &opts.event_listeners {
+								l(&e);
+							}
+							// Try to connect again
+							None
+						},
+					));
 				}
 			}
-			Box::new(future::err(Error::ConnectionFailed(
-				format!("Got no initserver but {:?}", msg)
-			)))
+			Box::new(future::err(Error::ConnectionFailed(format!(
+				"Got no initserver but {:?}",
+				msg
+			))))
 		} else {
-			Box::new(future::err(Error::ConnectionFailed(
-				format!("Got no initserver but {:?}", msg)
-			)))
+			Box::new(future::err(Error::ConnectionFailed(format!(
+				"Got no initserver but {:?}",
+				msg
+			))))
 		}
 	}
 
@@ -552,10 +575,7 @@ impl Connection {
 	pub fn get_packet_sink(
 		&self,
 	) -> impl Sink<SinkItem = OutPacket, SinkError = Error> {
-		self.inner
-			.client_connection
-			.as_packet_sink()
-			.sink_map_err(|e| e.into())
+		self.inner.client_connection.as_packet_sink().sink_map_err(|e| e.into())
 	}
 
 	/// **This is part of the unstable interface.**
@@ -621,24 +641,14 @@ impl Connection {
 
 		let (code, recv) = self.inner.return_code_handler.get_return_code();
 		// Add return code
-		packet
-			.data_mut()
-			.extend_from_slice(" return_code=".as_bytes());
-		packet
-			.data_mut()
-			.extend_from_slice(code.to_string().as_bytes());
+		packet.data_mut().extend_from_slice(" return_code=".as_bytes());
+		packet.data_mut().extend_from_slice(code.to_string().as_bytes());
 
 		// Send a message and wait until we get an answer for the return code
 		self.get_packet_sink()
 			.send(packet)
 			.and_then(|_| recv.from_err())
-			.and_then(|r| {
-				if r == TsError::Ok {
-					Ok(())
-				} else {
-					Err(r.into())
-				}
-			})
+			.and_then(|r| if r == TsError::Ok { Ok(()) } else { Err(r.into()) })
 	}
 
 	pub fn lock(&self) -> ConnectionLock {
@@ -779,9 +789,17 @@ impl Connection {
 	}
 
 	/// Return the size of the file and a tcp stream of the requested file.
-	pub fn download_file(&self, channel_id: ChannelId, path: &str,
-		channel_password: Option<&str>, seek_position: Option<u64>) -> BoxFuture<(u64, TcpStream)> {
-		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(self.inner.file_transfer_handler.clone());
+	pub fn download_file(
+		&self,
+		channel_id: ChannelId,
+		path: &str,
+		channel_password: Option<&str>,
+		seek_position: Option<u64>,
+	) -> BoxFuture<(u64, TcpStream)>
+	{
+		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(
+			self.inner.file_transfer_handler.clone(),
+		);
 
 		let packet = c2s::OutFtInitDownloadMessage::new(
 			vec![c2s::FtInitDownloadPart {
@@ -805,9 +823,17 @@ impl Connection {
 	///
 	/// TODO This is temporary code until I get my runtime fixed.
 	#[doc(hidden)]
-	pub fn download_file_token(&self, channel_id: ChannelId, path: &str,
-		channel_password: Option<&str>, seek_position: Option<u64>) -> BoxFuture<(TokenWrapper, u64, SocketAddr)> {
-		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(self.inner.file_transfer_handler.clone());
+	pub fn download_file_token(
+		&self,
+		channel_id: ChannelId,
+		path: &str,
+		channel_password: Option<&str>,
+		seek_position: Option<u64>,
+	) -> BoxFuture<(TokenWrapper, u64, SocketAddr)>
+	{
+		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(
+			self.inner.file_transfer_handler.clone(),
+		);
 
 		let packet = c2s::OutFtInitDownloadMessage::new(
 			vec![c2s::FtInitDownloadPart {
@@ -827,10 +853,19 @@ impl Connection {
 
 	/// Return the size of the part which is already uploaded (when resume is
 	/// specified) and a tcp stream where the requested file should be uploaded.
-	pub fn upload_file(&self, channel_id: ChannelId, path: &str,
-		channel_password: Option<&str>, size: u64, overwrite: bool, resume: bool
-	) -> BoxFuture<(u64, TcpStream)> {
-		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(self.inner.file_transfer_handler.clone());
+	pub fn upload_file(
+		&self,
+		channel_id: ChannelId,
+		path: &str,
+		channel_password: Option<&str>,
+		size: u64,
+		overwrite: bool,
+		resume: bool,
+	) -> BoxFuture<(u64, TcpStream)>
+	{
+		let (code_handle, recv) = FileTransferHandler::get_file_transfer_id(
+			self.inner.file_transfer_handler.clone(),
+		);
 
 		let packet = c2s::OutFtInitUploadMessage::new(
 			vec![c2s::FtInitUploadPart {
@@ -850,28 +885,29 @@ impl Connection {
 		self.get_file_stream(packet, code_handle, recv)
 	}
 
-	fn get_file_stream(&self, packet: OutPacket, code_handle: FileTransferIdHandle,
-		recv: mpsc::UnboundedReceiver<FileTransferStatus>
-	) -> BoxFuture<(u64, TcpStream)> {
+	fn get_file_stream(
+		&self,
+		packet: OutPacket,
+		code_handle: FileTransferIdHandle,
+		recv: mpsc::UnboundedReceiver<FileTransferStatus>,
+	) -> BoxFuture<(u64, TcpStream)>
+	{
 		let default_ip;
 		if let Some(con) = self.inner.client_connection.upgrade() {
 			default_ip = con.mutex.lock().1.address.ip();
 		} else {
-			return Box::new(future::err(format_err!("Connection is gone").into()));
+			return Box::new(future::err(
+				format_err!("Connection is gone").into(),
+			));
 		}
 
 		// Send a message and wait until we get an answer for the return code
-		Box::new(self.get_packet_sink()
-			.send(packet)
-			.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
-			.and_then(move |(status, _recv)| {
-				match status {
-					Some(FileTransferStatus::Start {
-						key,
-						port,
-						size,
-						ip,
-					}) => {
+		Box::new(
+			self.get_packet_sink()
+				.send(packet)
+				.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
+				.and_then(move |(status, _recv)| match status {
+					Some(FileTransferStatus::Start { key, port, size, ip }) => {
 						let ip = ip.unwrap_or(default_ip);
 						Ok((key, size, SocketAddr::new(ip, port)))
 					}
@@ -879,49 +915,46 @@ impl Connection {
 						Err(status.into())
 					}
 					None => Err(format_err!("Connection canceled").into()),
-				}
-			})
-			.and_then(|(key, size, addr)| TcpStream::connect(&addr)
-				.and_then(move |s| {
-					tokio::io::write_all(s, key)
 				})
-				.and_then(move |(s, _)| {
-					tokio::io::flush(s)
-				})
-				.from_err()
-				.map(move |s| {
-					// TODO Select with recv
-					// Drop file transfer code
-					drop(code_handle);
-					(size, s)
-				})
-			)
+				.and_then(|(key, size, addr)| {
+					TcpStream::connect(&addr)
+						.and_then(move |s| tokio::io::write_all(s, key))
+						.and_then(move |(s, _)| tokio::io::flush(s))
+						.from_err()
+						.map(move |s| {
+							// TODO Select with recv
+							// Drop file transfer code
+							drop(code_handle);
+							(size, s)
+						})
+				}),
 		)
 	}
 
 	// TODO This is temporary code until I get my runtime fixed.
-	fn get_file_stream_token(&self, packet: OutPacket, code_handle: FileTransferIdHandle,
-		recv: mpsc::UnboundedReceiver<FileTransferStatus>
-	) -> BoxFuture<(TokenWrapper, u64, SocketAddr)> {
+	fn get_file_stream_token(
+		&self,
+		packet: OutPacket,
+		code_handle: FileTransferIdHandle,
+		recv: mpsc::UnboundedReceiver<FileTransferStatus>,
+	) -> BoxFuture<(TokenWrapper, u64, SocketAddr)>
+	{
 		let default_ip;
 		if let Some(con) = self.inner.client_connection.upgrade() {
 			default_ip = con.mutex.lock().1.address.ip();
 		} else {
-			return Box::new(future::err(format_err!("Connection is gone").into()));
+			return Box::new(future::err(
+				format_err!("Connection is gone").into(),
+			));
 		}
 
 		// Send a message and wait until we get an answer for the return code
-		Box::new(self.get_packet_sink()
-			.send(packet)
-			.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
-			.and_then(move |(status, _recv)| {
-				match status {
-					Some(FileTransferStatus::Start {
-						key,
-						port,
-						size,
-						ip,
-					}) => {
+		Box::new(
+			self.get_packet_sink()
+				.send(packet)
+				.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
+				.and_then(move |(status, _recv)| match status {
+					Some(FileTransferStatus::Start { key, port, size, ip }) => {
 						let ip = ip.unwrap_or(default_ip);
 						let token = TokenWrapper {
 							token: key,
@@ -933,8 +966,7 @@ impl Connection {
 						Err(status.into())
 					}
 					None => Err(format_err!("Connection canceled").into()),
-				}
-			})
+				}),
 		)
 	}
 }
@@ -1004,13 +1036,14 @@ impl<'a> ConnectionLock<'a> {
 	///
 	/// To access the connection data, use the dereferenced object of this
 	/// `ConnectionLock`.
-	pub fn get_locked(&self) -> Connection {
-		self.connection.clone()
-	}
+	pub fn get_locked(&self) -> Connection { self.connection.clone() }
 }
 
 trait ServerAddressExt {
-	fn resolve(&self, logger: &Logger) -> Box<dyn Stream<Item = SocketAddr, Error = Error> + Send>;
+	fn resolve(
+		&self,
+		logger: &Logger,
+	) -> Box<dyn Stream<Item = SocketAddr, Error = Error> + Send>;
 }
 
 impl ServerAddressExt for ServerAddress {
@@ -1224,7 +1257,12 @@ impl ConnectOptions {
 	/// be removed and returned. Internally all listeners are stored in a
 	/// `HashMap`.
 	#[inline]
-	pub fn add_event_listener(mut self, key: String, event_listener: EventListener) -> Self {
+	pub fn add_event_listener(
+		mut self,
+		key: String,
+		event_listener: EventListener,
+	) -> Self
+	{
 		self.event_listeners.push((key, event_listener));
 		self
 	}
@@ -1290,10 +1328,9 @@ impl fmt::Debug for ConnectOptions {
 		} = self;
 		write!(
 			f,
-			"ConnectOptions {{ address: {:?}, local_address: {:?}, \
-			 identity: {:?}, name: {}, version: {}, channel: {:?}, \
-			 logger: {:?}, log_commands: {}, log_packets: {}, \
-			 log_udp_packets: {},",
+			"ConnectOptions {{ address: {:?}, local_address: {:?}, identity: \
+			 {:?}, name: {}, version: {}, channel: {:?}, logger: {:?}, \
+			 log_commands: {}, log_packets: {}, log_udp_packets: {},",
 			address,
 			local_address,
 			identity,

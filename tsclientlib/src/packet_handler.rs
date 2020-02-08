@@ -6,13 +6,13 @@ use failure::format_err;
 use futures::sync::oneshot;
 use futures::{task, try_ready, Async, Future, Poll, Stream};
 use slog::{error, warn, Logger};
-use tsproto::handler_data::ConnectionValue;
-use tsproto_packets::packets::*;
 use ts_bookkeeping::messages::s2c::{InCommandError, InMessageTrait};
+use tsproto::handler_data::ConnectionValue;
 use tsproto_packets::packets::InCommand;
+use tsproto_packets::packets::*;
 
-use crate::{Connection, PHBox, TsError};
 use crate::filetransfer::FileTransferHandler;
+use crate::{Connection, PHBox, TsError};
 
 pub(crate) struct ReturnCodeHandler {
 	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,

@@ -7,8 +7,8 @@ use std::str::{self, FromStr};
 use std::time::Duration;
 
 use failure::format_err;
-use futures::{future, stream, Async, Future, Poll, Stream};
 use futures::sync::oneshot;
+use futures::{future, stream, Async, Future, Poll, Stream};
 use itertools::Itertools;
 use rand::{thread_rng, Rng};
 use slog::{debug, o, warn, Logger};
@@ -120,24 +120,25 @@ pub fn resolve(
 	let p = port.clone();
 	let address = addr.clone();
 	let logger2 = logger.clone();
-	let nickname_res = (move || -> Box<dyn Stream<Item = _, Error = _> + Send> {
-		let addr = address;
-		if !addr.contains('.') && addr != "localhost" {
-			let addr2 = addr.clone();
-			debug!(logger2, "Resolving nickname"; "address" => addr2);
-			// Could be a server nickname
-			Box::new(resolve_nickname(addr).map(move |mut addr| {
-				if let Some(port) = p {
-					addr.set_port(port);
-				}
-				addr
-			}))
-		} else {
-			Box::new(stream::once(Err(
-				format_err!("Not a valid nickname").into()
-			)))
-		}
-	})();
+	let nickname_res =
+		(move || -> Box<dyn Stream<Item = _, Error = _> + Send> {
+			let addr = address;
+			if !addr.contains('.') && addr != "localhost" {
+				let addr2 = addr.clone();
+				debug!(logger2, "Resolving nickname"; "address" => addr2);
+				// Could be a server nickname
+				Box::new(resolve_nickname(addr).map(move |mut addr| {
+					if let Some(port) = p {
+						addr.set_port(port);
+					}
+					addr
+				}))
+			} else {
+				Box::new(stream::once(Err(
+					format_err!("Not a valid nickname").into()
+				)))
+			}
+		})();
 
 	// The system config does not yet work on android:
 	// https://github.com/bluejekyll/trust-dns/issues/652
@@ -316,8 +317,7 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 		));
 	}
 	let port = if let Some(port) = port.map(|p| {
-		p.parse()
-			.map_err(|e| format_err!("Cannot parse port ({:?})", e))
+		p.parse().map_err(|e| format_err!("Cannot parse port ({:?})", e))
 	}) {
 		Some(port?)
 	} else {
@@ -348,28 +348,25 @@ pub fn resolve_nickname(
 				.collect::<Vec<_>>())
 		});
 
-	stream::futures_ordered(Some(
-		addrs
-		.map(|addrs| {
-			stream::futures_ordered(addrs.iter().map(
-				|addr| -> Result<Box<dyn Stream<Item = _, Error = _> + Send>> {
-					match parse_ip(addr) {
-						Err(e) => Ok(Box::new(stream::once(Err(e)))),
-						Ok(ParseIpResult::Addr(a)) => {
-							Ok(Box::new(stream::once(Ok(a))))
-						}
-						Ok(ParseIpResult::Other(a, p)) => {
-							Ok(Box::new(resolve_hostname(
-								a.to_string(),
-								p.unwrap_or(DEFAULT_PORT),
-							)))
-						}
+	stream::futures_ordered(Some(addrs.map(|addrs| {
+		stream::futures_ordered(addrs.iter().map(
+			|addr| -> Result<Box<dyn Stream<Item = _, Error = _> + Send>> {
+				match parse_ip(addr) {
+					Err(e) => Ok(Box::new(stream::once(Err(e)))),
+					Ok(ParseIpResult::Addr(a)) => {
+						Ok(Box::new(stream::once(Ok(a))))
 					}
-				},
-			))
-			.flatten()
-		}),
-	))
+					Ok(ParseIpResult::Other(a, p)) => {
+						Ok(Box::new(resolve_hostname(
+							a.to_string(),
+							p.unwrap_or(DEFAULT_PORT),
+						)))
+					}
+				}
+			},
+		))
+		.flatten()
+	})))
 	.flatten()
 }
 
@@ -505,8 +502,11 @@ fn resolve_hostname(
 	let (send, recv) = oneshot::channel();
 	std::thread::spawn(move || {
 		// Ignore error if the future was canceled
-		let _ = send.send((name.as_str(), port).to_socket_addrs()
-			.map(|i| i.collect::<Vec<_>>()));
+		let _ = send.send(
+			(name.as_str(), port)
+				.to_socket_addrs()
+				.map(|i| i.collect::<Vec<_>>()),
+		);
 	});
 
 	stream::futures_ordered(Some(recv))
@@ -631,9 +631,11 @@ mod test {
 		let res = rt.block_on(future::lazy(move || {
 			resolve(&logger, "localhost").collect()
 		}));
-		assert!(res
-			.unwrap()
-			.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+		assert!(
+			res.unwrap().contains(
+				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 
 	#[test]
@@ -652,8 +654,10 @@ mod test {
 		let (logger, mut rt) = setup();
 		let res = rt
 			.block_on(future::lazy(move || resolve(&logger, "loc").collect()));
-		assert!(res
-			.unwrap()
-			.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+		assert!(
+			res.unwrap().contains(
+				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
+			)
+		);
 	}
 }

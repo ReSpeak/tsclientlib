@@ -5,8 +5,8 @@ use std::num::ParseIntError;
 use chrono::naive::NaiveDateTime;
 use chrono::{DateTime, Duration, Utc};
 use failure::Fail;
-use tsproto_packets::packets::{Direction, PacketType};
 use tsproto_packets::commands::CanonicalCommand;
+use tsproto_packets::packets::{Direction, PacketType};
 use tsproto_types::errors::Error;
 
 use crate::*;
@@ -16,15 +16,9 @@ type Result<T> = std::result::Result<T, ParseError>;
 #[derive(Fail, Debug)]
 pub enum ParseError {
 	#[fail(display = "Parameter {} not found in {}", arg, name)]
-	ParameterNotFound {
-		arg: &'static str,
-		name: &'static str,
-	},
+	ParameterNotFound { arg: &'static str, name: &'static str },
 	#[fail(display = "Parameter {} not found in {}", arg, name)]
-	ParameterNotFound2 {
-		arg: String,
-		name: String,
-	},
+	ParameterNotFound2 { arg: String, name: String },
 	#[fail(display = "Command {} is unknown", _0)]
 	UnknownCommand(String),
 	/// Gets thrown when parsing a specific command with the wrong input.
@@ -85,10 +79,12 @@ impl CommandExt for CanonicalCommand<'_> {
 		if let Some(id) = self.get("invokerid") {
 			if let Some(name) = self.get("invokername") {
 				Ok(Some(Invoker {
-					id: ClientId(id.parse().map_err(|e| ParseError::ParseInt {
-						arg: "invokerid",
-						value: id.into(),
-						error: e,
+					id: ClientId(id.parse().map_err(|e| {
+						ParseError::ParseInt {
+							arg: "invokerid",
+							value: id.into(),
+							error: e,
+						}
 					})?),
 					name: name.to_string(),
 					uid: self.get("invokeruid").map(|i| Uid(i.to_string())),
@@ -102,11 +98,10 @@ impl CommandExt for CanonicalCommand<'_> {
 	}
 
 	fn get_arg(&self, name: &str) -> Result<&str> {
-		self.get(name)
-			.ok_or_else(|| ParseError::ParameterNotFound2 {
-				arg: name.into(),
-				name: "unknown".into(),
-			})
+		self.get(name).ok_or_else(|| ParseError::ParameterNotFound2 {
+			arg: name.into(),
+			name: "unknown".into(),
+		})
 	}
 }
 

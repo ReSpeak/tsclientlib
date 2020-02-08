@@ -16,7 +16,16 @@ use crate::commands::{CommandData, CommandDataIterator};
 use crate::{Error, HexSlice, Result};
 
 #[derive(
-	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive, Serialize
+	Clone,
+	Copy,
+	Debug,
+	Deserialize,
+	Eq,
+	FromPrimitive,
+	Hash,
+	PartialEq,
+	ToPrimitive,
+	Serialize,
 )]
 #[repr(u8)]
 pub enum PacketType {
@@ -495,11 +504,7 @@ impl<'a> InHeader<'a> {
 	/// The offset to the packet type.
 	#[inline]
 	fn get_off(&self) -> usize {
-		if self.1 == Direction::S2C {
-			10
-		} else {
-			12
-		}
+		if self.1 == Direction::S2C { 10 } else { 12 }
 	}
 
 	#[inline]
@@ -575,10 +580,7 @@ impl InC2SInit {
 
 	#[inline]
 	pub fn into_packet(self) -> InPacket {
-		InPacket {
-			inner: *self.0.into_head(),
-			dir: Direction::C2S,
-		}
+		InPacket { inner: *self.0.into_head(), dir: Direction::C2S }
 	}
 }
 
@@ -595,12 +597,7 @@ impl InCommand {
 			crate::commands::parse_command(s)
 		})
 		.map_err(|e| (e.1, e.0))?;
-		Ok(Self {
-			inner,
-			p_type,
-			newprotocol,
-			dir,
-		})
+		Ok(Self { inner, p_type, newprotocol, dir })
 	}
 
 	pub fn with_content(
@@ -812,11 +809,8 @@ impl OutPacket {
 		packet_type: PacketType,
 	) -> Self
 	{
-		let dir = if client_id.is_some() {
-			Direction::C2S
-		} else {
-			Direction::S2C
-		};
+		let dir =
+			if client_id.is_some() { Direction::C2S } else { Direction::S2C };
 		let mut res = Self::new_with_dir(dir, flags, packet_type);
 		res.data[..8].copy_from_slice(&mac);
 		res.packet_id(packet_id);
@@ -885,17 +879,13 @@ impl OutPacket {
 	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
 	#[inline]
 	pub fn packet_id(&mut self, packet_id: u16) {
-		(&mut self.data[8..10])
-			.write_u16::<NetworkEndian>(packet_id)
-			.unwrap();
+		(&mut self.data[8..10]).write_u16::<NetworkEndian>(packet_id).unwrap();
 	}
 	#[inline]
 	pub fn client_id(&mut self, client_id: u16) {
 		// Client id is only valid for client to server packets.
 		assert_eq!(self.dir, Direction::C2S);
-		(&mut self.data[10..12])
-			.write_u16::<NetworkEndian>(client_id)
-			.unwrap();
+		(&mut self.data[10..12]).write_u16::<NetworkEndian>(client_id).unwrap();
 	}
 	#[inline]
 	pub fn flags(&mut self, flags: Flags) {
@@ -1124,11 +1114,7 @@ impl OutC2SInit4 {
 		content.write_u32::<NetworkEndian>(level).unwrap();
 		content.write_all(random2).unwrap();
 		content.write_all(y).unwrap();
-		let ip = if ip.is_empty() {
-			String::new()
-		} else {
-			format!("={}", ip)
-		};
+		let ip = if ip.is_empty() { String::new() } else { format!("={}", ip) };
 		content
 			.write_all(
 				format!(
@@ -1231,11 +1217,7 @@ impl OutAudio {
 				content.extend_from_slice(data);
 			}
 			AudioData::C2SWhisper {
-				codec,
-				channels,
-				clients,
-				data,
-				..
+				codec, channels, clients, data, ..
 			} => {
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.write_u8(channels.len() as u8).unwrap();
@@ -1263,12 +1245,8 @@ impl OutAudio {
 				content.write_u64::<NetworkEndian>(*target_id).unwrap();
 				content.extend_from_slice(data);
 			}
-			AudioData::S2C {
-				from, codec, data, ..
-			}
-			| AudioData::S2CWhisper {
-				from, codec, data, ..
-			} => {
+			AudioData::S2C { from, codec, data, .. }
+			| AudioData::S2CWhisper { from, codec, data, .. } => {
 				content.write_u16::<NetworkEndian>(*from).unwrap();
 				content.write_u8(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);

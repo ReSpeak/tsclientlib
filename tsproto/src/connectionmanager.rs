@@ -8,8 +8,8 @@ use futures::Sink;
 
 use crate::connection::Connection;
 use crate::handler_data::PacketHandler;
-use tsproto_packets::packets::{InPacket, PacketType};
 use crate::Error;
+use tsproto_packets::packets::{InPacket, PacketType};
 
 /// The unique identification of a connection is handled by the implementation.
 pub trait ConnectionManager: Send {
@@ -100,10 +100,7 @@ impl<PH: PacketHandler<T>, T: Send + 'static> Default
 	for SocketConnectionManager<PH, T>
 {
 	fn default() -> Self {
-		SocketConnectionManager {
-			phantom: PhantomData,
-			phantom2: PhantomData,
-		}
+		SocketConnectionManager { phantom: PhantomData, phantom2: PhantomData }
 	}
 }
 

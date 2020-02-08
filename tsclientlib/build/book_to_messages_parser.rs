@@ -23,11 +23,7 @@ impl Default for BookToMessagesDeclarations<'static> {
 }
 
 fn to_ref_type(s: &str) -> String {
-	if s == "String" {
-		"&str".into()
-	} else {
-		s.into()
-	}
+	if s == "String" { "&str".into() } else { s.into() }
 }
 
 fn get_arguments(r: &RuleKind) -> String {
@@ -48,12 +44,16 @@ fn get_arguments(r: &RuleKind) -> String {
 	}
 }
 
-fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> String {
+fn get_all_arguments<'a>(
+	e: &'a Event<'a>,
+	r: Option<&'a RuleKind<'a>>,
+) -> String
+{
 	let mut args = String::new();
 	for r in e.ids.iter().chain(r.iter().cloned()) {
 		match r {
-			RuleKind::ArgumentMap { .. } |
-			RuleKind::ArgumentFunction { .. } => {
+			RuleKind::ArgumentMap { .. }
+			| RuleKind::ArgumentFunction { .. } => {
 				let arg = get_arguments(r);
 				if !arg.is_empty() {
 					args.push_str(", ");
@@ -68,26 +68,28 @@ fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> Strin
 
 fn get_arguments_use(r: &RuleKind) -> String {
 	match r {
-		RuleKind::Map { .. } | RuleKind::Function { .. } => format!(
-			"{}",
-			r.from_name().to_snake_case(),
-		),
-		RuleKind::ArgumentMap { from, .. } => format!(
-			"{}",
-			from.to_snake_case(),
-		),
+		RuleKind::Map { .. } | RuleKind::Function { .. } => {
+			format!("{}", r.from_name().to_snake_case(),)
+		}
+		RuleKind::ArgumentMap { from, .. } => {
+			format!("{}", from.to_snake_case(),)
+		}
 		RuleKind::ArgumentFunction { from, .. } => {
 			format!("{}", from.to_snake_case())
 		}
 	}
 }
 
-fn get_all_arguments_use<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> String {
+fn get_all_arguments_use<'a>(
+	e: &'a Event<'a>,
+	r: Option<&'a RuleKind<'a>>,
+) -> String
+{
 	let mut args = String::new();
 	for r in e.ids.iter().chain(r.iter().cloned()) {
 		match r {
-			RuleKind::ArgumentMap { .. } |
-			RuleKind::ArgumentFunction { .. } => {
+			RuleKind::ArgumentMap { .. }
+			| RuleKind::ArgumentFunction { .. } => {
 				let arg = get_arguments_use(r);
 				if !arg.is_empty() {
 					args.push_str(&arg);

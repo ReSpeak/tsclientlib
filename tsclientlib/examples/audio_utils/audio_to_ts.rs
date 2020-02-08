@@ -122,9 +122,7 @@ impl AudioToTs {
 		*listener = Some(con.get_tsproto_connection());
 	}
 
-	pub fn set_volume(&mut self, volume: f32) {
-		*self.volume.lock() = volume;
-	}
+	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock() = volume; }
 
 	pub fn set_playing(&mut self, playing: bool) {
 		if playing {
@@ -137,31 +135,40 @@ impl AudioToTs {
 
 	fn start(a2t: Arc<Mutex<Self>>) {
 		let logger = a2t.lock().logger.clone();
-		tokio::runtime::current_thread::spawn(Interval::new_interval(Duration::from_secs(1)).for_each(move |_| {
-			let mut a2t = a2t.lock();
-			if a2t.device.status() == AudioStatus::Stopped {
-				// Try to reconnect to audio
-				match Self::open_capture(
-					a2t.logger.clone(),
-					&a2t.audio_subsystem,
-					a2t.executor.clone(),
-					a2t.listener.clone(),
-					a2t.volume.clone(),
-				) {
-					Ok(d) => {
-						a2t.device = d;
-						debug!(a2t.logger, "Reconnected to capture device");
-						if a2t.is_playing {
-							a2t.device.resume();
-						}
+		tokio::runtime::current_thread::spawn(
+			Interval::new_interval(Duration::from_secs(1))
+				.for_each(move |_| {
+					let mut a2t = a2t.lock();
+					if a2t.device.status() == AudioStatus::Stopped {
+						// Try to reconnect to audio
+						match Self::open_capture(
+							a2t.logger.clone(),
+							&a2t.audio_subsystem,
+							a2t.executor.clone(),
+							a2t.listener.clone(),
+							a2t.volume.clone(),
+						) {
+							Ok(d) => {
+								a2t.device = d;
+								debug!(
+									a2t.logger,
+									"Reconnected to capture device"
+								);
+								if a2t.is_playing {
+									a2t.device.resume();
+								}
+							}
+							Err(e) => {
+								error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
+							}
+						};
 					}
-					Err(e) => {
-						error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
-					}
-				};
-			}
-			Ok(())
-		}).map_err(move |e| error!(logger, "a2t interval failed"; "error" => ?e)));
+					Ok(())
+				})
+				.map_err(
+					move |e| error!(logger, "a2t interval failed"; "error" => ?e),
+				),
+		);
 	}
 }
 
@@ -208,7 +215,8 @@ impl AudioCallback for SdlCallback {
 							move |e| {
 								error!(logger, "Failed to send packet"; "error" => ?e);
 							},
-						)).unwrap();
+						))
+						.unwrap();
 				}
 			}
 		}

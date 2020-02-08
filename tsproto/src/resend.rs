@@ -121,31 +121,19 @@ enum ResendStates {
 	/// yet, so we don't know if the server exists.
 	///
 	/// The `Vec` is unsorted in this case as there exists no real sorting.
-	Connecting {
-		to_send: BinaryHeap<SendRecord>,
-		start_time: DateTime<Utc>,
-	},
+	Connecting { to_send: BinaryHeap<SendRecord>, start_time: DateTime<Utc> },
 	/// Everything is clear, normal operation.
 	///
 	/// Voice packets are only sent in this mode.
 	Normal { to_send: BinaryHeap<SendRecord> },
 	/// No acks were received for a while, so only try to resend the next packet
 	/// until the connection is stable again.
-	Stalling {
-		to_send: Vec<SendRecord>,
-		start_time: DateTime<Utc>,
-	},
+	Stalling { to_send: Vec<SendRecord>, start_time: DateTime<Utc> },
 	/// Resending did not succeed for a longer time. Don't even try anymore.
-	Dead {
-		to_send: Vec<SendRecord>,
-		start_time: DateTime<Utc>,
-	},
+	Dead { to_send: Vec<SendRecord>, start_time: DateTime<Utc> },
 	/// Sent the packet to close the connection, but the acknowledgement was not
 	/// yet received.
-	Disconnecting {
-		to_send: BinaryHeap<SendRecord>,
-		start_time: DateTime<Utc>,
-	},
+	Disconnecting { to_send: BinaryHeap<SendRecord>, start_time: DateTime<Utc> },
 }
 
 impl DefaultResender {
@@ -169,11 +157,8 @@ impl DefaultResender {
 
 	/// Add another duration to the stored smoothed rtt.
 	pub fn update_srtt(&mut self, rtt: Duration) {
-		let diff = if rtt > self.srtt {
-			rtt - self.srtt
-		} else {
-			self.srtt - rtt
-		};
+		let diff =
+			if rtt > self.srtt { rtt - self.srtt } else { self.srtt - rtt };
 		self.srtt_dev = self.srtt_dev * 3 / 4 + diff / 4;
 		self.srtt = self.srtt * 7 / 8 + rtt / 8;
 	}
@@ -329,14 +314,12 @@ impl Resender for DefaultResender {
 		};
 
 		let next_state = match event {
-			ResenderEvent::Connecting => ResendStates::Connecting {
-				to_send,
-				start_time: Utc::now(),
-			},
-			ResenderEvent::Disconnecting => ResendStates::Disconnecting {
-				to_send,
-				start_time: Utc::now(),
-			},
+			ResenderEvent::Connecting => {
+				ResendStates::Connecting { to_send, start_time: Utc::now() }
+			}
+			ResenderEvent::Disconnecting => {
+				ResendStates::Disconnecting { to_send, start_time: Utc::now() }
+			}
 			ResenderEvent::Connected => ResendStates::Normal { to_send },
 		};
 
@@ -350,15 +333,10 @@ impl Resender for DefaultResender {
 	fn udp_packet_received(&mut self, _: &Bytes) {
 		// Restart sending packets if we got a new packet
 		let next_state = match self.state {
-			ResendStates::Dead {
-				ref mut to_send, ..
-			} => {
+			ResendStates::Dead { ref mut to_send, .. } => {
 				let to_send = mem::replace(to_send, Vec::new());
 				// Switch to Stalling if the connection was dead
-				Some(ResendStates::Stalling {
-					to_send,
-					start_time: Utc::now(),
-				})
+				Some(ResendStates::Stalling { to_send, start_time: Utc::now() })
 			}
 			// We will switch to Normal from stalling after we received an ack
 			// again
@@ -404,14 +382,8 @@ impl Sink for DefaultResender {
 		// otherwise, put it into rec_res.
 		let mut rec_res = None;
 		match &mut self.state {
-			ResendStates::Connecting {
-				to_send,
-				start_time,
-			}
-			| ResendStates::Disconnecting {
-				to_send,
-				start_time,
-			} => {
+			ResendStates::Connecting { to_send, start_time }
+			| ResendStates::Disconnecting { to_send, start_time } => {
 				if to_send.len() >= self.config.max_send_queue_len {
 					rec_res = Some(rec);
 				} else {
@@ -497,16 +469,14 @@ impl ResendStates {
 	/// Returns the next record which should be sent, if there is one.
 	fn peek_mut_next_record(&mut self) -> Option<PeekMut<SendRecord>> {
 		match *self {
-			ResendStates::Stalling {
-				ref mut to_send, ..
-			} => to_send.first_mut().map(|r| r.into()),
-			ResendStates::Connecting {
-				ref mut to_send, ..
+			ResendStates::Stalling { ref mut to_send, .. } => {
+				to_send.first_mut().map(|r| r.into())
 			}
+			ResendStates::Connecting { ref mut to_send, .. }
 			| ResendStates::Normal { ref mut to_send }
-			| ResendStates::Disconnecting {
-				ref mut to_send, ..
-			} => to_send.peek_mut().map(|r| r.into()),
+			| ResendStates::Disconnecting { ref mut to_send, .. } => {
+				to_send.peek_mut().map(|r| r.into())
+			}
 			ResendStates::Dead { .. } => None,
 		}
 	}
@@ -701,10 +671,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 					}
 				}
 				ResendStates::Normal { .. } => StateChange::Nothing,
-				ResendStates::Stalling {
-					ref mut to_send,
-					ref start_time,
-				} => {
+				ResendStates::Stalling { ref mut to_send, ref start_time } => {
 					if now_naive.signed_duration_since(start_time.naive_utc())
 						>= resender.config.stalling_timeout
 					{
@@ -933,10 +900,8 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 				};
 			to_send.sort_by(|a, b| a.id.1.cmp(&b.id.1));
 
-			con.resender.set_state(ResendStates::Stalling {
-				to_send,
-				start_time: now,
-			});
+			con.resender
+				.set_state(ResendStates::Stalling { to_send, start_time: now });
 			task::current().notify();
 		}
 

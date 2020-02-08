@@ -9,14 +9,14 @@ use failure::format_err;
 use futures::sync::mpsc;
 use futures::{self, AsyncSink, Sink};
 use num_traits::ToPrimitive;
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde::de::{Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use slog;
-use tsproto_packets::HexSlice;
 use tsproto_packets::packets::*;
+use tsproto_packets::HexSlice;
 
 use crate::algorithms as algs;
-use crate::crypto::{EccKeyPubP256, EccKeyPrivP256};
+use crate::crypto::{EccKeyPrivP256, EccKeyPubP256};
 use crate::handler_data::{ConnectionValue, ConnectionValueWeak};
 use crate::resend::DefaultResender;
 use crate::{Error, Result};
@@ -53,16 +53,12 @@ pub enum SharedIv {
 impl fmt::Debug for SharedIv {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match *self {
-			SharedIv::ProtocolOrig(ref data) => write!(
-				f,
-				"SharedIv::ProtocolOrig({:?})",
-				HexSlice(data)
-			),
-			SharedIv::Protocol31(ref data) => write!(
-				f,
-				"SharedIv::Protocol32({:?})",
-				HexSlice(data)
-			),
+			SharedIv::ProtocolOrig(ref data) => {
+				write!(f, "SharedIv::ProtocolOrig({:?})", HexSlice(data))
+			}
+			SharedIv::Protocol31(ref data) => {
+				write!(f, "SharedIv::Protocol32({:?})", HexSlice(data))
+			}
 		}
 	}
 }
@@ -227,11 +223,7 @@ impl Connection {
 		(
 			(!next_gen && p_id >= cur_next && p_id < limit)
 				|| (next_gen && (p_id >= cur_next || p_id < limit)),
-			if next_gen && p_id < limit {
-				gen + 1
-			} else {
-				gen
-			},
+			if next_gen && p_id < limit { gen + 1 } else { gen },
 			cur_next,
 			limit,
 		)
@@ -285,7 +277,12 @@ impl Identity {
 	}
 
 	#[inline]
-	pub fn new_with_max_counter(key: EccKeyPrivP256, counter: u64, max_counter: u64) -> Self {
+	pub fn new_with_max_counter(
+		key: EccKeyPrivP256,
+		counter: u64,
+		max_counter: u64,
+	) -> Self
+	{
 		Self { key, counter, max_counter }
 	}
 
@@ -357,11 +354,7 @@ impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
 			udp_packet_sink = con.1.udp_packet_sink.clone();
 		}
 
-		Self {
-			con: con.downgrade(),
-			address,
-			udp_packet_sink,
-		}
+		Self { con: con.downgrade(), address, udp_packet_sink }
 	}
 }
 

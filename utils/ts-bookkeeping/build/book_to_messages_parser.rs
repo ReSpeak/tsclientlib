@@ -26,11 +26,7 @@ impl Default for BookToMessagesDeclarations<'static> {
 }
 
 fn to_ref_type(s: &str) -> String {
-	if s == "String" {
-		"&str".into()
-	} else {
-		s.into()
-	}
+	if s == "String" { "&str".into() } else { s.into() }
 }
 
 /// The prefix is written before from, if from is a mapped argument
@@ -39,17 +35,27 @@ fn arg_to_value(r: &RuleKind, prefix: &str) -> String {
 		RuleKind::Map { to, .. } | RuleKind::ArgumentMap { to, .. } => {
 			let fr = r.from_name().to_snake_case();
 			if let RuleKind::Map { .. } = r {
-				format!("args.push((\"{}\", {{ {} }}));", to.ts, generate_serializer(to, &format!("{}{}", prefix, fr)))
+				format!(
+					"args.push((\"{}\", {{ {} }}));",
+					to.ts,
+					generate_serializer(to, &format!("{}{}", prefix, fr))
+				)
 			} else {
-				format!("args.push((\"{}\", {{ {} }}));", to.ts, generate_serializer(to, &fr))
+				format!(
+					"args.push((\"{}\", {{ {} }}));",
+					to.ts,
+					generate_serializer(to, &fr)
+				)
 			}
 		}
 		RuleKind::Function { name, .. } => {
 			format!("self.{}(&mut args);", name.to_snake_case())
 		}
-		RuleKind::ArgumentFunction { from, name, .. } => {
-			format!("self.{}(&mut args, {});", name.to_snake_case(), from.to_snake_case())
-		}
+		RuleKind::ArgumentFunction { from, name, .. } => format!(
+			"self.{}(&mut args, {});",
+			name.to_snake_case(),
+			from.to_snake_case()
+		),
 	}
 }
 
@@ -74,7 +80,7 @@ fn get_arguments(r: &RuleKind) -> String {
 pub fn generate_serializer(field: &Field, name: &str) -> String {
 	let rust_type = field.get_rust_type("", false);
 	if rust_type.starts_with("Vec<") {
-		let inner_type = &rust_type[4..rust_type.len()-1];
+		let inner_type = &rust_type[4..rust_type.len() - 1];
 		vector_value_serializer(field, inner_type, name)
 	} else {
 		single_value_serializer(field, &rust_type, name)
