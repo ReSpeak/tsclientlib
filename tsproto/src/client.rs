@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Weak};
 
-use chrono::Utc;
 use failure::format_err;
 use futures::sync::{mpsc, oneshot};
 use futures::{future, Future, Sink, Stream};
@@ -16,6 +15,7 @@ use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
 use slog::{debug, error, info, Logger};
+use time::OffsetDateTime;
 
 use crate::algorithms as algs;
 use crate::connection::*;
@@ -178,7 +178,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 {
 	// Send the first init packet
 	// Get the current timestamp
-	let now = Utc::now();
+	let now = OffsetDateTime::now();
 	let timestamp = now.timestamp() as u32;
 	let mut rng = rand::thread_rng();
 

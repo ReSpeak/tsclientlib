@@ -3,6 +3,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use derive_more::From;
 use failure::{Fail, ResultExt};
+use serde::{Deserialize, Serialize};
 
 pub mod data;
 pub mod events;
@@ -49,7 +50,7 @@ impl From<failure::Error> for Error {
 	}
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ServerAddress {
 	SocketAddr(SocketAddr),
 	Other(String),
@@ -77,7 +78,7 @@ impl fmt::Display for ServerAddress {
 }
 
 /// All possible targets to send messages.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum MessageTarget {
 	Server,
 	Channel,
@@ -86,6 +87,7 @@ pub enum MessageTarget {
 }
 
 /// The configuration to create a new connection.
+#[derive(Deserialize, Serialize)]
 pub struct ConnectOptions {
 	address: ServerAddress,
 	local_address: Option<SocketAddr>,
@@ -214,6 +216,7 @@ impl fmt::Debug for ConnectOptions {
 	}
 }
 
+#[derive(Deserialize, Serialize)]
 pub struct DisconnectOptions {
 	reason: Option<Reason>,
 	message: Option<String>,

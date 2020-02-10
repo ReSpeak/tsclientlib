@@ -5,9 +5,10 @@ use std::mem;
 use std::net::{IpAddr, SocketAddr};
 use std::u16;
 
-use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use time::{Duration, OffsetDateTime};
 use failure::format_err;
 use num_traits::FromPrimitive;
+use serde::{Deserialize, Serialize};
 use tsproto_packets::commands::{CanonicalCommand, CommandData};
 use tsproto_packets::packets::{
 	Direction, InCommand, OutCommand, OutPacket, PacketType,
@@ -565,15 +566,7 @@ impl Connection {
 		let timestamp: i64 = cmd.get_arg("client_talk_request")?.parse()?;
 		if timestamp > 0 {
 			Ok(Some(TalkPowerRequest {
-				time: DateTime::<Utc>::from_utc(
-					NaiveDateTime::from_timestamp_opt(timestamp, 0).ok_or(
-						ParseError::InvalidValue {
-							arg: "client_talk_request",
-							value: timestamp.to_string(),
-						},
-					)?,
-					Utc,
-				),
+				time: OffsetDateTime::from_unix_timestamp(timestamp),
 				message: cmd.get_arg("client_talk_request_msg")?.into(),
 			}))
 		} else {
@@ -595,15 +588,7 @@ impl Connection {
 
 			let talk_request = if timestamp > 0 {
 				Some(TalkPowerRequest {
-					time: DateTime::<Utc>::from_utc(
-						NaiveDateTime::from_timestamp_opt(timestamp, 0).ok_or(
-							ParseError::InvalidValue {
-								arg: "client_talk_request",
-								value: timestamp.to_string(),
-							},
-						)?,
-						Utc,
-					),
+					time: OffsetDateTime::from_unix_timestamp(timestamp),
 					message: cmd.get_arg("client_talk_request_msg")?.into(),
 				})
 			} else {
@@ -881,6 +866,7 @@ impl Client {
 }
 
 // TODO?
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ClientServerGroup {
 	database_id: ClientDbId,
 	inner: ServerGroupId,
@@ -898,6 +884,7 @@ impl ClientServerGroup {
 /// default value.
 ///
 /// [`ServerMut::add_channel`]: struct.ServerMut.html#method.add_channel
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ChannelOptions<'a> {
 	name: &'a str,
 	description: Option<&'a str>,

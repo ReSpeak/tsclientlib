@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
-use chrono::{DateTime, Duration, Utc};
+use time::{OffsetDateTime, Duration};
+use serde::{Deserialize, Serialize};
 
 use crate::data::{
 	Channel, ChatEntry, Client, Connection, ConnectionClientData,
@@ -13,7 +14,7 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 
 /// An event gets fired when something in the data structure of a connection
 /// changes or something happens like we receive a text message or get poked.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum Event {
 	/// The object with this id was added.
 	///

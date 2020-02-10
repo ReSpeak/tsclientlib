@@ -9,7 +9,7 @@ use std::sync::Weak;
 use std::time::Instant;
 
 use bytes::Bytes;
-use chrono::{DateTime, Duration, Utc};
+use time::{Duration, OffsetDateTime};
 use failure::format_err;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
@@ -31,9 +31,9 @@ struct PacketId(PacketType, u32, u16);
 #[derive(Clone, Debug)]
 struct SendRecord {
 	/// When this packet was sent.
-	pub sent: DateTime<Utc>,
+	pub sent: OffsetDateTime,
 	/// The last time when the packet was sent.
-	pub last: DateTime<Utc>,
+	pub last: OffsetDateTime,
 	/// How often the packet was already resent.
 	pub tries: usize,
 	pub id: PacketId,
@@ -121,19 +121,19 @@ enum ResendStates {
 	/// yet, so we don't know if the server exists.
 	///
 	/// The `Vec` is unsorted in this case as there exists no real sorting.
-	Connecting { to_send: BinaryHeap<SendRecord>, start_time: DateTime<Utc> },
+	Connecting { to_send: BinaryHeap<SendRecord>, start_time: OffsetDateTime },
 	/// Everything is clear, normal operation.
 	///
 	/// Voice packets are only sent in this mode.
 	Normal { to_send: BinaryHeap<SendRecord> },
 	/// No acks were received for a while, so only try to resend the next packet
 	/// until the connection is stable again.
-	Stalling { to_send: Vec<SendRecord>, start_time: DateTime<Utc> },
+	Stalling { to_send: Vec<SendRecord>, start_time: OffsetDateTime },
 	/// Resending did not succeed for a longer time. Don't even try anymore.
-	Dead { to_send: Vec<SendRecord>, start_time: DateTime<Utc> },
+	Dead { to_send: Vec<SendRecord>, start_time: OffsetDateTime },
 	/// Sent the packet to close the connection, but the acknowledgement was not
 	/// yet received.
-	Disconnecting { to_send: BinaryHeap<SendRecord>, start_time: DateTime<Utc> },
+	Disconnecting { to_send: BinaryHeap<SendRecord>, start_time: OffsetDateTime },
 }
 
 impl DefaultResender {
@@ -144,7 +144,7 @@ impl DefaultResender {
 			logger,
 			state: ResendStates::Connecting {
 				to_send: Default::default(),
-				start_time: Utc::now(),
+				start_time: OffsetDateTime::now(),
 			},
 			config,
 			srtt,
@@ -233,9 +233,8 @@ impl Resender for DefaultResender {
 		if let Some(rec) = rec {
 			// Update srtt only if the packet was not resent
 			if rec.tries == 1 {
-				let now = Utc::now();
-				let diff =
-					now.naive_utc().signed_duration_since(rec.sent.naive_utc());
+				let now = OffsetDateTime::now();
+				let diff = now - rec.sent;
 				self.update_srtt(diff);
 			}
 		}
@@ -315,10 +314,10 @@ impl Resender for DefaultResender {
 
 		let next_state = match event {
 			ResenderEvent::Connecting => {
-				ResendStates::Connecting { to_send, start_time: Utc::now() }
+				ResendStates::Connecting { to_send, start_time: OffsetDateTime::now() }
 			}
 			ResenderEvent::Disconnecting => {
-				ResendStates::Disconnecting { to_send, start_time: Utc::now() }
+				ResendStates::Disconnecting { to_send, start_time: OffsetDateTime::now() }
 			}
 			ResenderEvent::Connected => ResendStates::Normal { to_send },
 		};
@@ -336,7 +335,7 @@ impl Resender for DefaultResender {
 			ResendStates::Dead { ref mut to_send, .. } => {
 				let to_send = mem::replace(to_send, Vec::new());
 				// Switch to Stalling if the connection was dead
-				Some(ResendStates::Stalling { to_send, start_time: Utc::now() })
+				Some(ResendStates::Stalling { to_send, start_time: OffsetDateTime::now() })
 			}
 			// We will switch to Normal from stalling after we received an ack
 			// again
@@ -371,8 +370,8 @@ impl Sink for DefaultResender {
 	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
 	{
 		let rec = SendRecord {
-			sent: Utc::now(),
-			last: Utc::now(),
+			sent: OffsetDateTime::now(),
+			last: OffsetDateTime::now(),
 			tries: 0,
 			id: PacketId(p_type, p_gen, p_id),
 			packet,
@@ -389,7 +388,7 @@ impl Sink for DefaultResender {
 				} else {
 					to_send.push(rec);
 					// Update start time
-					*start_time = Utc::now();
+					*start_time = OffsetDateTime::now();
 				}
 			}
 			ResendStates::Stalling { to_send, .. }
@@ -636,8 +635,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 		// Set task
 		con.resender.resender_future_task = Some(task::current());
 
-		let now = Utc::now();
-		let now_naive = now.naive_utc();
+		let now = OffsetDateTime::now();
 
 		// Check if we are over time in the current state
 		enum StateChange {
@@ -648,19 +646,17 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 
 		let next_state = {
 			let resender = &mut con.resender;
-			match resender.state {
-				ResendStates::Connecting { ref start_time, .. } => {
-					if now_naive.signed_duration_since(start_time.naive_utc())
-						>= resender.config.connecting_timeout
+			match &mut resender.state {
+				ResendStates::Connecting { start_time, .. } => {
+					if now - *start_time >= resender.config.connecting_timeout
 					{
 						StateChange::EndConnection
 					} else {
 						// Schedule timeout
 						let dur = (*start_time
 							+ resender.config.connecting_timeout)
-							.naive_utc()
-							.signed_duration_since(now_naive);
-						let next = Instant::now() + dur.to_std().unwrap();
+							- now;
+						let next = Instant::now() + dur;
 						self.state_timeout.reset(next);
 						if let futures::Async::Ready(()) =
 							self.state_timeout.poll()?
@@ -671,21 +667,19 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 					}
 				}
 				ResendStates::Normal { .. } => StateChange::Nothing,
-				ResendStates::Stalling { ref mut to_send, ref start_time } => {
-					if now_naive.signed_duration_since(start_time.naive_utc())
-						>= resender.config.stalling_timeout
+				ResendStates::Stalling { to_send, start_time } => {
+					if now - *start_time >= resender.config.stalling_timeout
 					{
 						StateChange::NewState(ResendStates::Dead {
 							to_send: mem::replace(to_send, Vec::new()),
-							start_time: Utc::now(),
+							start_time: OffsetDateTime::now(),
 						})
 					} else {
 						// Schedule timeout
 						let dur = (*start_time
 							+ resender.config.stalling_timeout)
-							.naive_utc()
-							.signed_duration_since(now_naive);
-						let next = Instant::now() + dur.to_std().unwrap();
+							- now;
+						let next = Instant::now() + dur;
 						self.state_timeout.reset(next);
 						if let futures::Async::Ready(()) =
 							self.state_timeout.poll()?
@@ -695,17 +689,15 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 						StateChange::Nothing
 					}
 				}
-				ResendStates::Dead { ref start_time, .. } => {
-					if now_naive.signed_duration_since(start_time.naive_utc())
-						>= resender.config.dead_timeout
+				ResendStates::Dead { start_time, .. } => {
+					if now - *start_time >= resender.config.dead_timeout
 					{
 						StateChange::EndConnection
 					} else {
 						// Schedule timeout
 						let dur = (*start_time + resender.config.dead_timeout)
-							.naive_utc()
-							.signed_duration_since(now_naive);
-						let next = Instant::now() + dur.to_std().unwrap();
+							- now;
+						let next = Instant::now() + dur;
 						self.state_timeout.reset(next);
 						if let futures::Async::Ready(()) =
 							self.state_timeout.poll()?
@@ -715,18 +707,16 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 						StateChange::Nothing
 					}
 				}
-				ResendStates::Disconnecting { ref start_time, .. } => {
-					if now_naive.signed_duration_since(start_time.naive_utc())
-						>= resender.config.disconnect_timeout
+				ResendStates::Disconnecting { start_time, .. } => {
+					if now - *start_time >= resender.config.disconnect_timeout
 					{
 						StateChange::EndConnection
 					} else {
 						// Schedule timeout
 						let dur = (*start_time
 							+ resender.config.disconnect_timeout)
-							.naive_utc()
-							.signed_duration_since(now_naive);
-						let next = Instant::now() + dur.to_std().unwrap();
+							- now;
+						let next = Instant::now() + dur;
 						self.state_timeout.reset(next);
 						if let futures::Async::Ready(()) =
 							self.state_timeout.poll()?
@@ -790,11 +780,8 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 				// Check if we should resend this packet or not
 				if rec.tries != 0 && rec.last > last_threshold {
 					// Schedule next send
-					let dur = rec
-						.last
-						.naive_utc()
-						.signed_duration_since(last_threshold.naive_utc());
-					let next = Instant::now() + dur.to_std().unwrap();
+					let dur = rec.last - last_threshold;
+					let next = Instant::now() + dur;
 					self.timeout.reset(next);
 					if let futures::Async::Ready(()) = self.timeout.poll()? {
 						task::current().notify();
@@ -865,23 +852,22 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 							"p_type" => ?rec.id.0,
 							"p_id" => rec.id.1,
 							"tries" => rec.tries,
-							"last" => %rec.last,
+							"last" => ?rec.last,
 							"to" => to_s,
-							"srtt" => %con.resender.srtt,
-							"srtt_dev" => %con.resender.srtt_dev,
-							"rto" => %rto,
-							"threshold" => %last_threshold,
+							"srtt" => ?con.resender.srtt,
+							"srtt_dev" => ?con.resender.srtt_dev,
+							"rto" => ?rto,
+							"threshold" => ?last_threshold,
 						);
 					}
 				}
 
 				let next = now + rto;
-				let dur =
-					next.naive_utc().signed_duration_since(now.naive_utc());
+				let dur = next - now;
 
 				if is_normal_state && dur > con.resender.config.normal_timeout {
 					warn!(self.logger, "Max resend timeout exceeded";
-						"p_id" => p_id, "dur" => %dur);
+						"p_id" => p_id, "dur" => ?dur);
 					// Switch connection to stalling state
 					switch_to_stalling = true;
 					break;

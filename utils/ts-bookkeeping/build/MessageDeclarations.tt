@@ -182,6 +182,7 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 	let defs = &msg_group.default;
 	for msg in &msg_group.msg { #>
 
+#[derive(Deserialize, Serialize)]
 pub struct Out<#= msg.name #>Message;
 impl Out<#= msg.name #>Message {
 	pub fn new<'a, I: Iterator<Item=<#= msg.name #>Part<'a>>>(list: I<#=

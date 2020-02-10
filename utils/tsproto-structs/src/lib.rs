@@ -13,7 +13,7 @@
 //! A change in the way data are stored and made accessible is considered an API
 //! breaking change and will increment the minor version number.
 
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 pub mod book;
 pub mod book_to_messages;
@@ -83,7 +83,7 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 	} else if t == "ushort" {
 		String::from("u16")
 	} else if t == "DateTime" {
-		String::from("DateTime<Utc>")
+		String::from("OffsetDateTime")
 	} else if t.starts_with("Duration") {
 		String::from("Duration")
 	} else if t == "ClientUid" {

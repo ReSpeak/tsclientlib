@@ -8,11 +8,12 @@ build = "build/build.rs"
 
 [dependencies]
 base64 = "0.10"
-chrono = "0.4"
 derive_more = "0.14"
 failure = "0.1"
 num-traits = "0.2"
 num-derive = "0.2"
+serde = { version = "1", features = ["derive"] }
+time = { version = "0.2", features = ["serde"] }
 tsproto-packets = { path = "../tsproto-packets" }
 tsproto-types = { path = "../tsproto-types" }
 

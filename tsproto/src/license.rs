@@ -3,7 +3,7 @@ use std::io::prelude::*;
 use std::str;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use chrono::{DateTime, NaiveDateTime, Utc};
+use time::OffsetDateTime;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -27,8 +27,8 @@ pub enum LicenseKey {
 #[derive(Debug, Clone)]
 pub struct License {
 	pub key: LicenseKey,
-	pub not_valid_before: DateTime<Utc>,
-	pub not_valid_after: DateTime<Utc>,
+	pub not_valid_before: OffsetDateTime,
+	pub not_valid_after: OffsetDateTime,
 	/// First 32 byte of SHA512(last 4 bytes from key || rest of license block)
 	pub hash: [u8; 32],
 	pub inner: InnerLicense,
@@ -123,7 +123,7 @@ impl Licenses {
 		let mut res = Licenses { blocks: Vec::new() };
 		data = &data[1..];
 
-		let now = Utc::now();
+		let now = OffsetDateTime::now();
 		let mut bounds = None;
 		while !data.is_empty() {
 			if res.blocks.len() >= 8 {
@@ -319,20 +319,10 @@ impl License {
 		Ok((
 			License {
 				key: LicenseKey::Public(EccKeyPubEd25519::from_bytes(key_data)),
-				not_valid_before: DateTime::from_utc(
-					NaiveDateTime::from_timestamp(
-						i64::from(before_ts) + TIMESTAMP_OFFSET,
-						0,
-					),
-					Utc,
-				),
-				not_valid_after: DateTime::from_utc(
-					NaiveDateTime::from_timestamp(
-						i64::from(after_ts) + TIMESTAMP_OFFSET,
-						0,
-					),
-					Utc,
-				),
+				not_valid_before: OffsetDateTime::from_unix_timestamp(
+					i64::from(before_ts) + TIMESTAMP_OFFSET),
+				not_valid_after: OffsetDateTime::from_unix_timestamp(
+					i64::from(after_ts) + TIMESTAMP_OFFSET),
 				hash,
 				inner,
 			},

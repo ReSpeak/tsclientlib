@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use lazy_static::lazy_static;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 use crate::book::{BookDeclarations, Property, Struct};
 use crate::messages::{Field, Message, MessageDeclarations};

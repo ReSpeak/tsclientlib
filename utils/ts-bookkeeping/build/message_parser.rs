@@ -185,16 +185,13 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				panic!("Unknown original time type {} found.", field.type_s);
 			}
 		}
-		"DateTime<Utc>" => format!(
-			"DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp_opt(val.\
-			 parse().map_err(|e| ParseError::ParseInt {{
+		"OffsetDateTime" => format!(
+			"OffsetDateTime::from_unix_timestamp(
+				val.parse().map_err(|e| ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
 					error: e,
-				}})?, 0).ok_or(ParseError::InvalidValue {{
-					arg: \"{0}\",
-					value: val.to_string(),
-				}})?, Utc)",
+				}})?)",
 			field.pretty
 		),
 		_ => panic!("Unknown type '{}'", rust_type),
@@ -271,14 +268,14 @@ pub fn single_value_serializer(
 		| "Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
 		"Duration" => {
 			if field.type_s == "DurationSeconds" {
-				format!("Cow::Owned({}.num_seconds().to_string())", name)
+				format!("Cow::Owned({}.whole_seconds().to_string())", name)
 			} else if field.type_s == "DurationMilliseconds" {
-				format!("Cow::Owned({}.num_milliseconds().to_string())", name)
+				format!("Cow::Owned({}.whole_milliseconds().to_string())", name)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
 			}
 		}
-		"DateTime<Utc>" => {
+		"OffsetDateTime" => {
 			format!("Cow::Owned({}.timestamp().to_string())", name)
 		}
 		"IpAddr" | "SocketAddr" => format!("Cow::Owned({}.to_string())", name),

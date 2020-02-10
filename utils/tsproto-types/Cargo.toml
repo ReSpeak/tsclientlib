@@ -12,9 +12,10 @@ edition = "2018"
 [dependencies]
 base64 = "0.10"
 bitflags = "1"
-chrono = "0.4"
 num-traits = "0.2"
 num-derive = "0.2"
+serde = { version = "1", features = ["derive"] }
+time = { version = "0.2", features = ["serde"] }
 
 [build-dependencies]
 heck = "0.3"

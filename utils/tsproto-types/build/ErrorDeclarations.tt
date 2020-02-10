@@ -1,5 +1,7 @@
 <#@ template cleanws="true" #>
-#[derive(Debug, PartialEq, Eq, Clone, Copy, FromPrimitive, ToPrimitive)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive)]
 pub enum Error {
 <# for e in &**self { #>
 	<# if !e.doc.is_empty() { #>

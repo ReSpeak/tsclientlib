@@ -2,9 +2,8 @@ use std::net::{AddrParseError, IpAddr};
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
 
-use chrono::naive::NaiveDateTime;
-use chrono::{DateTime, Duration, Utc};
 use failure::Fail;
+use time::{Duration, OffsetDateTime};
 use tsproto_packets::commands::CanonicalCommand;
 use tsproto_packets::packets::{Direction, PacketType};
 use tsproto_types::errors::Error;

@@ -1,6 +1,6 @@
 use heck::*;
 use lazy_static::lazy_static;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 use crate::*;
 

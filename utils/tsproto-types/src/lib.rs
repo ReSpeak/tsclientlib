@@ -2,8 +2,9 @@ use std::fmt;
 use std::u64;
 
 use bitflags::bitflags;
-use chrono::{DateTime, Utc};
 use num_derive::{FromPrimitive, ToPrimitive};
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 
 pub mod errors;
 pub mod versions;
@@ -12,14 +13,14 @@ pub mod versions;
 ///
 /// Every client that we see on a server has a `ClientId`, even our own
 /// connection.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ClientId(pub u16);
 /// Describes a client or server uid which is a base64
 /// encoded hash or a special reserved name.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Uid(pub String);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct UidRef<'a>(pub &'a str);
 impl<'a> Into<Uid> for UidRef<'a> {
 	fn into(self) -> Uid { Uid(self.0.into()) }
@@ -54,25 +55,25 @@ impl UidRef<'_> {
 ///
 /// This is the id which is saved for a client in the database of one specific
 /// server.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ClientDbId(pub u64);
 
 /// Identifies a channel on a server.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ChannelId(pub u64);
 
 /// Identifies a server group on a server.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ServerGroupId(pub u64);
 
 /// Identifies a channel group on a server.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct ChannelGroupId(pub u64);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct IconHash(pub u32);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Permission(pub u32);
 impl Permission {
 	/// Never fails
@@ -82,7 +83,7 @@ impl Permission {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum PermissionType {
 	/// Server group permission. (id1: ServerGroupId, id2: 0)
@@ -99,6 +100,7 @@ pub enum PermissionType {
 
 bitflags! {
 	/// Hints if the client has the permission to make specific actions.
+	#[derive(Deserialize, Serialize)]
 	pub struct ChannelPermissionHint: u16 {
 		/// b_channel_join_*
 		const JOIN = 1 << 0;
@@ -131,6 +133,7 @@ bitflags! {
 
 bitflags! {
 	/// Hints if the client has the permission to make specific actions.
+	#[derive(Deserialize, Serialize)]
 	pub struct ClientPermissionHint: u16 {
 		/// i_client_kick_from_server_power
 		const KICK_SERVER = 1 << 0;
@@ -154,7 +157,7 @@ bitflags! {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum TextMessageTargetMode {
 	/// Maybe to all servers?
@@ -168,7 +171,7 @@ pub enum TextMessageTargetMode {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum HostMessageMode {
 	/// Dont display anything
@@ -182,7 +185,7 @@ pub enum HostMessageMode {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum HostBannerMode {
 	/// Do not adjust
@@ -194,7 +197,7 @@ pub enum HostBannerMode {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum Codec {
 	/// Mono,   16bit,  8kHz, bitrate dependent on the quality setting
@@ -212,7 +215,7 @@ pub enum Codec {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum CodecEncryptionMode {
 	/// Voice encryption is configured per channel
@@ -224,7 +227,7 @@ pub enum CodecEncryptionMode {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum Reason {
 	/// No reason data
@@ -250,7 +253,7 @@ pub enum Reason {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum ClientType {
 	Normal,
@@ -259,7 +262,7 @@ pub enum ClientType {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum GroupNamingMode {
 	/// No group name is displayed.
@@ -271,7 +274,7 @@ pub enum GroupNamingMode {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum GroupType {
 	/// Template group (used for new virtual servers).
@@ -283,7 +286,7 @@ pub enum GroupType {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum LicenseType {
 	/// No licence
@@ -299,7 +302,7 @@ pub enum LicenseType {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum ChannelType {
 	Permanent,
@@ -308,7 +311,7 @@ pub enum ChannelType {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum TokenType {
 	/// Server group token (`id1={groupId}, id2=0`)
@@ -318,7 +321,7 @@ pub enum TokenType {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum PluginTargetMode {
 	/// Send to all clients in the current channel.
@@ -333,7 +336,7 @@ pub enum PluginTargetMode {
 }
 
 #[derive(
-	Debug, PartialEq, Eq, Clone, Copy, Hash, FromPrimitive, ToPrimitive,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
 )]
 pub enum LogLevel {
 	/// Everything that is really bad.
@@ -346,27 +349,27 @@ pub enum LogLevel {
 	Info,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum MaxClients {
 	Unlimited,
 	Inherited,
 	Limited(u16),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TalkPowerRequest {
-	pub time: DateTime<Utc>,
+	pub time: OffsetDateTime,
 	pub message: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Invoker {
 	pub name: String,
 	pub id: ClientId,
 	pub uid: Option<Uid>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct InvokerRef<'a> {
 	pub name: &'a str,
 	pub id: ClientId,

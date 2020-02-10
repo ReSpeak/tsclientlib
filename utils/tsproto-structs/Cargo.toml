@@ -27,6 +27,5 @@ csv = "1"
 heck = "0.3"
 lazy_static = "1"
 regex = "1"
-serde = "1"
-serde_derive = "1"
+serde = { version = "1", features = ["derive"] }
 toml = "0.5"

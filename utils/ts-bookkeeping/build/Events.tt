@@ -6,7 +6,7 @@
 /// channel.
 ///
 /// [`EventListener`]: ../type.EventListener.html
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum PropertyId {
 <# for struc in &self.structs {
 	let mut ids = get_ids(&self.structs, struc);
@@ -52,7 +52,7 @@ pub enum PropertyId {
 /// channel.
 ///
 /// [`EventListener`]: ../type.EventListener.html
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum PropertyValue {
 <# for struc in &self.structs { #>
 	<#= struc.name #>(<#= struc.name #>),
