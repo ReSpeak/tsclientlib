@@ -117,7 +117,7 @@ impl Connection {
 			"notifytextmessage" => {
 				let cmd = s2c::InTextMessage::new(cmd)?;
 				for cmd in cmd.iter() {
-					let from = match cmd.target {
+					let target = match cmd.target {
 						TextMessageTargetMode::Server => MessageTarget::Server,
 						TextMessageTargetMode::Channel => {
 							MessageTarget::Channel
@@ -143,7 +143,7 @@ impl Connection {
 						}
 					};
 					events.push(Event::Message {
-						from,
+						target,
 						invoker: Invoker {
 							name: cmd.invoker_name.into(),
 							id: cmd.invoker_id,
@@ -161,7 +161,7 @@ impl Connection {
 				let cmd = s2c::InClientPoke::new(cmd)?;
 				for cmd in cmd.iter() {
 					events.push(Event::Message {
-						from: MessageTarget::Poke(cmd.invoker_id),
+						target: MessageTarget::Poke(cmd.invoker_id),
 						invoker: Invoker {
 							name: cmd.invoker_name.into(),
 							id: cmd.invoker_id,
