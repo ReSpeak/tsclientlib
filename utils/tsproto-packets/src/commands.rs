@@ -368,4 +368,11 @@ mod tests {
 		assert!(cmd.static_args.is_empty());
 		assert!(cmd.list_args.is_empty());
 	}
+
+	#[test]
+	fn newline_command() {
+		let s = "sendtextmessage text=\\nmess\\nage\\n return_code=11";
+		let cmd = test_loop(s);
+		assert_eq!(cmd.name, "sendtextmessage");
+	}
 }

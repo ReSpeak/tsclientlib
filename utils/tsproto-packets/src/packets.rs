@@ -1029,7 +1029,7 @@ impl OutCommand {
 				'\\' => write!(w, "\\\\"),
 				'\t' => write!(w, "\\t"),
 				'\r' => write!(w, "\\r"),
-				'\n' => writeln!(w),
+				'\n' => write!(w, "\\n"),
 				'|' => write!(w, "\\p"),
 				' ' => write!(w, "\\s"),
 				'/' => write!(w, "\\/"),
