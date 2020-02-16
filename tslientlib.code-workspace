@@ -9,12 +9,20 @@
 			"name": "Clientlib"
 		},
 		{
-			"path": "tsproto-commands",
-			"name": "Commands"
+			"path": "utils/ts-bookkeeping",
+			"name": "Bookkeeping"
 		},
 		{
-			"path": "declarations",
-			"name": "Declarations"
+			"path": "utils/tsproto-structs",
+			"name": "TSP Structs"
+		},
+		{
+			"path": "utils/tsproto-types",
+			"name": "TSP Types"
+		},
+		{
+			"path": "utils/tsproto-packets",
+			"name": "TSP Packets"
 		},
 		{
 			"path": "tsproto-util"
