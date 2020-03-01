@@ -62,6 +62,7 @@ const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
 const UDP_SINK_CAPACITY: usize = 20;
 
 #[derive(Fail, Debug, From)]
+#[non_exhaustive]
 pub enum Error {
 	#[fail(display = "{}", _0)]
 	Asn1Decode(#[cause] simple_asn1::ASN1DecodeErr),
@@ -109,10 +110,6 @@ pub enum Error {
 	WrongSignature,
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
-
-	#[fail(display = "Not an error – non exhaustive enum")]
-	#[doc(hidden)]
-	__Nonexhaustive,
 }
 
 impl From<failure::Error> for Error {

@@ -15,6 +15,7 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 /// An event gets fired when something in the data structure of a connection
 /// changes or something happens like we receive a text message or get poked.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[non_exhaustive]
 pub enum Event {
 	/// The object with this id was added.
 	///
@@ -57,9 +58,6 @@ pub enum Event {
 		/// The content of the message.
 		message: String,
 	},
-
-	#[doc(hidden)]
-	__NonExhaustive,
 }
 
 impl Event {
@@ -69,9 +67,6 @@ impl Event {
 			| Event::PropertyChanged { invoker, .. }
 			| Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
 			Event::Message { invoker, .. } => Some(invoker),
-			Event::__NonExhaustive => {
-				panic!("Non exhaustive event should not be created")
-			}
 		}
 	}
 }

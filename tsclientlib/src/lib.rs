@@ -61,6 +61,7 @@ type Result<T> = std::result::Result<T, Error>;
 pub type EventListener = Box<dyn Fn(&Event) + Send + Sync>;
 
 #[derive(Fail, Debug, From)]
+#[non_exhaustive]
 pub enum Error {
 	#[fail(display = "{}", _0)]
 	Base64(#[cause] base64::DecodeError),
@@ -89,10 +90,6 @@ pub enum Error {
 
 	#[fail(display = "Connection failed ({})", _0)]
 	ConnectionFailed(String),
-
-	#[doc(hidden)]
-	#[fail(display = "Not an error – non exhaustive enum")]
-	__NonExhaustive,
 }
 
 impl From<failure::Error> for Error {
@@ -419,7 +416,7 @@ impl Connection {
 										format_err!("Connection params do not exist").into()));
 								};
 
-								match params.public_key.get_uid() {
+								match params.public_key.get_uid_no_base64() {
 									Ok(r) => r,
 									Err(e) => return Box::new(future::err(e.into())),
 								}
@@ -905,7 +902,7 @@ impl Connection {
 		Box::new(
 			self.get_packet_sink()
 				.send(packet)
-				.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
+				.and_then(|_| recv.into_future().map_err(|(_, _)| format_err!("Failed to receive return_code").into()))
 				.and_then(move |(status, _recv)| match status {
 					Some(FileTransferStatus::Start { key, port, size, ip }) => {
 						let ip = ip.unwrap_or(default_ip);
@@ -952,7 +949,7 @@ impl Connection {
 		Box::new(
 			self.get_packet_sink()
 				.send(packet)
-				.and_then(|_| recv.into_future().map_err(|(e, _)| e.into()))
+				.and_then(|_| recv.into_future().map_err(|(_, _)| format_err!("Failed to receive return_code").into()))
 				.and_then(move |(status, _recv)| match status {
 					Some(FileTransferStatus::Start { key, port, size, ip }) => {
 						let ip = ip.unwrap_or(default_ip);

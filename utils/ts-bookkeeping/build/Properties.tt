@@ -3,7 +3,6 @@ impl Connection {
 	/// Get a property by its id.
 	pub fn get_property(&self, id: &PropertyId) -> Result<PropertyValueRef> {
 		Ok(match id {
-			PropertyId::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
 <# for struc in &self.0.structs {
 	let mut ids = get_ids(struc);
 	let mut ids2 = get_ids2(&self.0.structs, struc);

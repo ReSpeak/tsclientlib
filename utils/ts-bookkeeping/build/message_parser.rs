@@ -51,7 +51,7 @@ impl Default for MessageDeclarations<'static> {
 }
 
 pub fn generate_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("", true);
+	let rust_type = field.get_rust_type("", true).replace("UidRef", "Uid");
 	if rust_type.starts_with("Vec<") {
 		vector_value_deserializer(field)
 	} else {
@@ -85,8 +85,11 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}})? }}",
 			field.pretty
 		),
-		"UidRef" => "UidRef(val)".into(),
-		"Uid" => "Uid(val.to_string())".into(),
+		"Uid" => format!("Uid(base64::decode(val).map_err(|e| ParseError::ParseUid {{
+				arg: \"{}\",
+				value: val.to_string(),
+				error: e,
+			}})?)", field.pretty),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
 		"IconHash" => format!(
@@ -221,7 +224,7 @@ pub fn vector_value_deserializer(field: &Field) -> String {
 }
 
 pub fn generate_serializer(field: &Field, name: &str) -> String {
-	let rust_type = field.get_rust_type("", true);
+	let rust_type = field.get_rust_type("", true).replace("UidRef", "Uid");
 	if rust_type.starts_with("Vec<") {
 		let inner_type = &rust_type[4..rust_type.len() - 1];
 		vector_value_serializer(field, inner_type, name)
@@ -244,8 +247,8 @@ pub fn single_value_serializer(
 		}
 		"&str" => format!("Cow::Borrowed({})", name),
 		"String" => format!("Cow::Borrowed(&{})", name),
-		"UidRef" => format!("Cow::Borrowed({}.0)", name),
-		"Uid" => format!("Cow::Borrowed({}.0)", name),
+		"UidRef" => format!("Cow::Owned(base64::encode({}.0))", name),
+		"Uid" => format!("Cow::Owned(base64::encode(&{}.0))", name),
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
 		| "ChannelGroupId" | "IconHash" => {
 			format!("Cow::Owned({}.0.to_string())", name)

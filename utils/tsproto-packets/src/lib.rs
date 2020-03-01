@@ -15,6 +15,7 @@ pub const S2C_HEADER_LEN: usize = 11;
 pub const C2S_HEADER_LEN: usize = 13;
 
 #[derive(Fail, Debug, From)]
+#[non_exhaustive]
 pub enum Error {
 	#[fail(display = "{}", _0)]
 	Base64(#[cause] base64::DecodeError),
@@ -54,10 +55,6 @@ pub enum Error {
 	WrongSignature,
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
-
-	#[fail(display = "Not an error – non exhaustive enum")]
-	#[doc(hidden)]
-	__Nonexhaustive,
 }
 
 impl From<failure::Error> for Error {

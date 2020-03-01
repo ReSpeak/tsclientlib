@@ -7,6 +7,7 @@
 ///
 /// [`EventListener`]: ../type.EventListener.html
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[non_exhaustive]
 pub enum PropertyId {
 <# for struc in &self.structs {
 	let mut ids = get_ids(&self.structs, struc);
@@ -42,8 +43,6 @@ pub enum PropertyId {
 	<#= struc.name #><#= get_property_name(p) #><#= ids #>,
 <# }
 } #>
-	#[doc(hidden)]
-	__NonExhaustive,
 }
 
 /// A `PropertyValue` contains the value of an attribute in the data structures.
@@ -53,6 +52,7 @@ pub enum PropertyId {
 ///
 /// [`EventListener`]: ../type.EventListener.html
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[non_exhaustive]
 pub enum PropertyValue {
 <# for struc in &self.structs { #>
 	<#= struc.name #>(<#= struc.name #>),
@@ -70,8 +70,6 @@ for struc in &self.structs {
 	<#= type_s.replace('<', "_").replace('>', "").to_camel_case() #>(<#= type_s #>),
 <# }
 } #>
-	#[doc(hidden)]
-	__NonExhaustive,
 }
 
 /// A `PropertyValueRef` contains a reference to the value of an attribute in
@@ -81,6 +79,7 @@ for struc in &self.structs {
 ///
 /// [`PropertyValue`]: enum.PropertyValue.html
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum PropertyValueRef<'a> {
 <# for struc in &self.structs { #>
 	<#= struc.name #>(&'a <#= struc.name #>),
@@ -98,14 +97,11 @@ for struc in &self.structs {
 	<#= type_s.replace('<', "_").replace('>', "").to_camel_case() #>(<#= get_rust_ref_type(p).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>),
 <# }
 } #>
-	#[doc(hidden)]
-	__NonExhaustive,
 }
 
 impl PropertyValue {
 	pub fn as_ref(&self) -> PropertyValueRef {
 		match self {
-			PropertyValue::__NonExhaustive => panic!("Non exhaustive variant should not be created"),
 <# for struc in &self.structs { #>
 			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(s),
 <# } #>

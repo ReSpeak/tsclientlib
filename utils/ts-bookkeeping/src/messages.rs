@@ -13,6 +13,7 @@ use crate::*;
 type Result<T> = std::result::Result<T, ParseError>;
 
 #[derive(Fail, Debug)]
+#[non_exhaustive]
 pub enum ParseError {
 	#[fail(display = "Parameter {} not found in {}", arg, name)]
 	ParameterNotFound { arg: &'static str, name: &'static str },
@@ -64,6 +65,16 @@ pub enum ParseError {
 		value, arg
 	)]
 	ParseBool { arg: &'static str, value: String },
+	#[fail(
+		display = "Cannot parse \"{}\" as SocketAddr for parameter {} ({})",
+		value, arg, error
+	)]
+	ParseUid {
+		arg: &'static str,
+		value: String,
+		#[cause]
+		error: base64::DecodeError,
+	},
 	#[fail(display = "Invalid value \"{}\" for parameter {}", value, arg)]
 	InvalidValue { arg: &'static str, value: String },
 }
@@ -86,7 +97,12 @@ impl CommandExt for CanonicalCommand<'_> {
 						}
 					})?),
 					name: name.to_string(),
-					uid: self.get("invokeruid").map(|i| Uid(i.to_string())),
+					uid: self.get("invokeruid").map(|i| Ok(Uid(
+						base64::decode(i).map_err(|e| ParseError::ParseUid {
+							arg: "invokeruid",
+							value: i.into(),
+							error: e,
+						})?))).transpose()?,
 				}))
 			} else {
 				Ok(None)

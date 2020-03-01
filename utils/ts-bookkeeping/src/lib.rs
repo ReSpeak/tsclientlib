@@ -24,6 +24,7 @@ pub use tsproto_types::{
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Fail, Debug, From)]
+#[non_exhaustive]
 pub enum Error {
 	#[fail(display = "{}", _0)]
 	Base64(#[cause] base64::DecodeError),
@@ -37,10 +38,6 @@ pub enum Error {
 	ParseError(#[cause] messages::ParseError),
 	#[fail(display = "{}", _0)]
 	Other(#[cause] failure::Compat<failure::Error>),
-
-	#[doc(hidden)]
-	#[fail(display = "Not an error – non exhaustive enum")]
-	__NonExhaustive,
 }
 
 impl From<failure::Error> for Error {

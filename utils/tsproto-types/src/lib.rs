@@ -17,11 +17,13 @@ pub mod versions;
 pub struct ClientId(pub u16);
 /// Describes a client or server uid which is a base64
 /// encoded hash or a special reserved name.
+///
+/// This is saved raw, so the base64-decoded TeamSpeak uid.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Uid(pub String);
+pub struct Uid(pub Vec<u8>);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct UidRef<'a>(pub &'a str);
+pub struct UidRef<'a>(pub &'a [u8]);
 impl<'a> Into<Uid> for UidRef<'a> {
 	fn into(self) -> Uid { Uid(self.0.into()) }
 }
@@ -41,9 +43,8 @@ impl UidRef<'_> {
 	/// The raw data (base64-decoded) is encoded in hex, but instead of using
 	/// [0-9a-f] with [a-p].
 	pub fn as_avatar(&self) -> String {
-		let bytes = self.0.as_bytes();
-		let mut res = String::with_capacity(bytes.len() * 2);
-		for b in base64::decode(bytes).unwrap() {
+		let mut res = String::with_capacity(self.0.len() * 2);
+		for b in self.0 {
 			res.push((b'a' + (b >> 4)) as char);
 			res.push((b'a' + (b & 0xf)) as char);
 		}
@@ -393,7 +394,7 @@ impl fmt::Display for ClientId {
 }
 impl fmt::Display for Uid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
+		write!(f, "{}", base64::encode(&self.0))
 	}
 }
 impl fmt::Display for ClientDbId {

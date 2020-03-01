@@ -193,7 +193,7 @@ impl Connection {
 			}
 		}
 
-		if !handled {
+		if !handled && cmd.name() != "error" {
 			// TODO
 			//debug!(logger, "Unknown message"; "message" => msg.command().name());
 			eprintln!("Unknown message {}", cmd.name());
