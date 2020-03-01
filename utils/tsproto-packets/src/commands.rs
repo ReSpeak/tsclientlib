@@ -1,58 +1,72 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::mem;
-use std::str;
-use std::str::FromStr;
+use std::str::{self, FromStr};
 
-use nom::types::CompleteStr;
-use nom::{
-	alphanumeric, alt, do_parse, eof, is_not, many0, many1, map, multispace,
-	named, opt, preceded, tag,
-};
+use nom::IResult;
+use nom::branch::alt;
+use nom::bytes::complete::{is_not, tag};
+use nom::character::complete::{alphanumeric1, multispace0, multispace1};
+use nom::combinator::{map, opt};
+use nom::multi::{many0, many1};
 
 use crate::Result;
 
-named!(command_arg(CompleteStr) -> (&str, Cow<str>), do_parse!(many0!(multispace) >>
-	name: is_not!("\u{b}\u{c}\\\t\r\n| /=") >> // Argument name
-	value: map!(opt!( // Argument value
-		preceded!(tag!("="),
-			do_parse!(
-				// Try to parse the value without escaped characters
-				prefix: opt!(is_not!("\u{b}\u{c}\\\t\r\n| ")) >>
-				rest: many0!(alt!(
-					map!(tag!("\\v"), |_| "\x0b") | // Vertical tab
-					map!(tag!("\\f"), |_| "\x0c") | // Form feed
-					map!(tag!("\\\\"), |_| "\\") |
-					map!(tag!("\\t"), |_| "\t") |
-					map!(tag!("\\r"), |_| "\r") |
-					map!(tag!("\\n"), |_| "\n") |
-					map!(tag!("\\p"), |_| "|") |
-					map!(tag!("\\s"), |_| " ") |
-					map!(tag!("\\/"), |_| "/") |
-					map!(is_not!("\u{b}\u{c}\\\t\r\n| "), |s| *s)
-				)) >> (if rest.is_empty() { Cow::Borrowed(prefix.map(|p| *p).unwrap_or("")) }
-					else { Cow::Owned(format!("{}{}", prefix.map(|p| *p).unwrap_or(""), rest.concat())) })
-			)
-		)), |o| o.unwrap_or(Cow::Borrowed("")))
-	>> (*name, value)
-));
+fn command_arg(i: &str) -> IResult<&str, (&str, Cow<str>)> {
+	let (i, _) = multispace0(i)?;
+	let (i, name) = is_not("\u{b}\u{c}\\\t\r\n| /=")(i)?;
+	let (i, value) = opt(|i| {
+		let (i, _) = tag("=")(i)?;
+		let (i, prefix) = opt(is_not("\u{b}\u{c}\\\t\r\n| "))(i)?;
+		let (i, rest) = many0(alt((
+			map(tag("\\v"), |_| "\x0b"), // Vertical tab
+			map(tag("\\f"), |_| "\x0c"), // Form feed
+			map(tag("\\\\"), |_| "\\"),
+			map(tag("\\t"), |_| "\t"),
+			map(tag("\\r"), |_| "\r"),
+			map(tag("\\n"), |_| "\n"),
+			map(tag("\\p"), |_| "|"),
+			map(tag("\\s"), |_| " "),
+			map(tag("\\/"), |_| "/"),
+			is_not("\u{b}\u{c}\\\t\r\n| "),
+		)))(i)?;
 
-named!(inner_parse_command(CompleteStr) -> CommandData, do_parse!(
-	name: alt!(do_parse!(res: alphanumeric >> alt!(multispace | eof!()) >> (res)) | tag!("")) >> // Command
-	static_args: many0!(command_arg) >>
-	list_args: many0!(do_parse!(many0!(multispace) >>
-		tag!("|") >>
-		args: many1!(command_arg) >>
-		(args)
-	)) >>
-	many0!(multispace) >>
-	eof!() >>
-	(CommandData {
-		name: *name,
-		static_args,
-		list_args,
-	})
-));
+		let res = if rest.is_empty() {
+			Cow::Borrowed(prefix.unwrap_or(""))
+		} else {
+			Cow::Owned(format!("{}{}", prefix.unwrap_or(""), rest.concat()))
+		};
+
+		Ok((i, res))
+	})(i)?;
+	let value = value.unwrap_or(Cow::Borrowed(""));
+
+	Ok((i, (name, value)))
+}
+
+fn inner_parse_command<'a>(i: &'a str) -> IResult<&'a str, CommandData> {
+	let (i, name) = alt((|i: &'a str| {
+		let (i, res) = alphanumeric1(i)?;
+		let i = if i.is_empty() {
+			i
+		} else {
+			multispace1(i)?.0
+		};
+		Ok((i, res))
+	}, tag("")))(i)?;
+
+	let (i, static_args) = many0(command_arg)(i)?;
+	let (i, list_args) = many0(|i| {
+		let (i, _) = multispace0(i)?;
+		let (i, _) = tag("|")(i)?;
+		let (i, args) = many1(command_arg)(i)?;
+		Ok((i, args))
+	})(i)?;
+
+	let (i, _) = multispace0(i)?;
+
+	Ok((i, CommandData { name, static_args, list_args }))
+}
 
 #[derive(Debug, Clone)]
 pub struct CommandData<'a> {
@@ -82,7 +96,7 @@ impl<'a> CanonicalCommand<'a> {
 }
 
 pub fn parse_command(s: &str) -> Result<CommandData> {
-	match inner_parse_command(CompleteStr(s)) {
+	match inner_parse_command(s) {
 		Ok((rest, mut cmd)) => {
 			// Error if rest contains something
 			if !rest.is_empty() {

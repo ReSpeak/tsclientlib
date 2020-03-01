@@ -216,7 +216,7 @@ impl TsToAudio {
 
 			let len = loop {
 				match decoder.decode_float(
-					*data,
+					Some(*data),
 					&mut self.opus_output[..],
 					false,
 				) {

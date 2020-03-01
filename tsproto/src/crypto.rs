@@ -450,7 +450,7 @@ impl EccKeyPubEd25519 {
 impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
 	pub fn create() -> Result<Self> {
-		Ok(EccKeyPrivEd25519(Scalar::random(&mut ::rand::rngs::OsRng::new()?)))
+		Ok(EccKeyPrivEd25519(Scalar::random(&mut rand::rngs::OsRng)))
 	}
 
 	pub fn from_base64(data: &str) -> Result<Self> {

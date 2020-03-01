@@ -37,6 +37,7 @@ pub enum Error {
 		p_type: packets::PacketType,
 	},
 	#[fail(display = "{}", _0)]
+	#[from(ignore)]
 	ParsePacket(String),
 	#[fail(display = "Got unallowed unencrypted packet")]
 	UnallowedUnencryptedPacket,
@@ -48,8 +49,10 @@ pub enum Error {
 	#[fail(display = "Got a packet with unknown type ({})", _0)]
 	UnknownPacketType(u8),
 	#[fail(display = "Maximum length exceeded for {}", _0)]
+	#[from(ignore)]
 	MaxLengthExceeded(String),
 	#[fail(display = "Cannot parse command ({})", _0)]
+	#[from(ignore)]
 	ParseCommand(String),
 	#[fail(display = "Wrong signature")]
 	WrongSignature,

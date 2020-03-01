@@ -119,8 +119,8 @@ impl<'a> fmt::Debug for InUdpPacket<'a> {
 
 #[derive(Debug)]
 pub(crate) struct MyBytes(Bytes);
-unsafe impl ::stable_deref_trait::StableDeref for MyBytes {}
-impl ::std::ops::Deref for MyBytes {
+unsafe impl stable_deref_trait::StableDeref for MyBytes {}
+impl std::ops::Deref for MyBytes {
 	type Target = [u8];
 	fn deref(&self) -> &Self::Target { self.0.as_ref() }
 }
@@ -455,7 +455,7 @@ impl InPacket {
 					if content.len() < len + 20 {
 						return Err(format_err!("Packet too short"));
 					}
-					let s = ::std::str::from_utf8(&content[len..])?;
+					let s = std::str::from_utf8(&content[len..])?;
 					let command = crate::commands::parse_command(s)?;
 					Ok(C2SInitData::Init4 {
 						version,
@@ -593,7 +593,7 @@ impl InCommand {
 	) -> std::result::Result<Self, (Vec<u8>, Error)>
 	{
 		let inner = rentals::Command::try_new(content, |c| {
-			let s = ::std::str::from_utf8(c)?;
+			let s = std::str::from_utf8(c)?;
 			crate::commands::parse_command(s)
 		})
 		.map_err(|e| (e.1, e.0))?;
