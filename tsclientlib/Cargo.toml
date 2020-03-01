@@ -17,6 +17,13 @@ include = [
 	"/build/*.tt",
 ]
 
+[package.metadata.docs.rs]
+features = ["unstable"]
+
+[features]
+# Enable the unstable api
+unstable = []
+
 [dependencies]
 base64 = "0.10"
 bytes = "0.4"

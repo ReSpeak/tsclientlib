@@ -116,9 +116,16 @@ impl AudioToTs {
 		}).map_err(|e| format_err!("SDL error: {}", e))
 	}
 
+	#[cfg(feature = "unstable")]
 	pub fn set_listener(&self, con: &Connection) {
 		let mut listener = self.listener.lock().unwrap();
 		*listener = Some(con.get_tsproto_connection());
+		#[cfg(not(feature = "unstable"))]
+		panic!("`unstable` feature needs to be enabled!");
+	}
+	#[cfg(not(feature = "unstable"))]
+	pub fn set_listener(&self, _: &Connection) {
+		panic!("`unstable` feature needs to be enabled!");
 	}
 
 	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock().unwrap() = volume; }

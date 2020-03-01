@@ -19,12 +19,17 @@ pub(crate) struct ReturnCodeHandler {
 	cur_return_code: AtomicUsize,
 }
 
-/// **This is part of the unstable interface.**
-///
-/// You can use it if you need access to lower level functions, but this
-/// interface may change on any version changes.
-#[doc(hidden)]
+#[cfg(feature = "unstable")]
 pub struct SimplePacketHandler {
+	logger: Logger,
+	handle_packets: Option<PHBox>,
+	initserver_sender: Option<oneshot::Sender<InCommand>>,
+	connection_recv: Option<oneshot::Receiver<Connection>>,
+	pub(crate) return_codes: Arc<ReturnCodeHandler>,
+	pub(crate) ft_ids: Arc<FileTransferHandler>,
+}
+#[cfg(not(feature = "unstable"))]
+pub(crate) struct SimplePacketHandler {
 	logger: Logger,
 	handle_packets: Option<PHBox>,
 	initserver_sender: Option<oneshot::Sender<InCommand>>,

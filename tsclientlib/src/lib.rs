@@ -564,20 +564,20 @@ impl Connection {
 		}
 	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// You can use it if you need access to lower level functions, but this
-	/// interface may change on any version changes.
+	#[cfg(feature = "unstable")]
 	pub fn get_packet_sink(
 		&self,
 	) -> impl Sink<SinkItem = OutPacket, SinkError = Error> {
 		self.inner.client_connection.as_packet_sink().sink_map_err(|e| e.into())
 	}
+	#[cfg(not(feature = "unstable"))]
+	fn get_packet_sink(
+		&self,
+	) -> impl Sink<SinkItem = OutPacket, SinkError = Error> {
+		self.inner.client_connection.as_packet_sink().sink_map_err(|e| e.into())
+	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// You can use it if you need access to lower level functions, but this
-	/// interface may change on any version changes.
+	#[cfg(feature = "unstable")]
 	pub fn get_udp_packet_sink(
 		&self,
 	) -> impl Sink<SinkItem = (PacketType, u32, u16, bytes::Bytes), SinkError = Error>
@@ -588,20 +588,13 @@ impl Connection {
 			.sink_map_err(|e| e.into())
 	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// You can use it if you need access to lower level functions, but this
-	/// interface may change on any version changes.
+	#[cfg(feature = "unstable")]
 	pub fn get_tsproto_connection(&self) -> client::ClientConVal {
 		self.inner.client_connection.clone()
 	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// You can use it if you need access to lower level functions, but this
-	/// interface may change on any version changes.
-	///
 	/// Returns the public key of the server.
+	#[cfg(feature = "unstable")]
 	pub fn get_server_key(&self) -> Result<tsproto::crypto::EccKeyPubP256> {
 		let con = if let Some(con) = self.inner.client_connection.upgrade() {
 			con
@@ -618,15 +611,27 @@ impl Connection {
 		}
 	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// You can use it if you need access to lower level functions, but this
-	/// interface may change on any version changes.
-	///
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
+	#[cfg(feature = "unstable")]
 	#[must_use = "futures do nothing unless polled"]
 	pub fn send_packet(
+		&self,
+		packet: OutPacket,
+	) -> impl Future<Item = (), Error = Error> + Send + 'static
+	{
+		self.internal_send_packet(packet)
+	}
+	#[cfg(not(feature = "unstable"))]
+	#[must_use = "futures do nothing unless polled"]
+	fn send_packet(
+		&self,
+		packet: OutPacket,
+	) -> impl Future<Item = (), Error = Error> + Send + 'static
+	{
+		self.internal_send_packet(packet)
+	}
+	fn internal_send_packet(
 		&self,
 		mut packet: OutPacket,
 	) -> impl Future<Item = (), Error = Error> + Send + 'static
@@ -813,12 +818,8 @@ impl Connection {
 		self.get_file_stream(packet, code_handle, recv)
 	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// Return the size of the file, the port, ip and the token.
-	///
 	/// TODO This is temporary code until I get my runtime fixed.
-	#[doc(hidden)]
+	#[cfg(feature = "unstable")]
 	pub fn download_file_token(
 		&self,
 		channel_id: ChannelId,
@@ -928,6 +929,7 @@ impl Connection {
 	}
 
 	// TODO This is temporary code until I get my runtime fixed.
+	#[cfg(feature = "unstable")]
 	fn get_file_stream_token(
 		&self,
 		packet: OutPacket,
@@ -968,7 +970,7 @@ impl Connection {
 }
 
 /// TODO Temporary struct
-#[doc(hidden)]
+#[cfg(feature = "unstable")]
 pub struct TokenWrapper {
 	pub token: String,
 	_code_handle: FileTransferIdHandle,
@@ -1277,11 +1279,6 @@ impl ConnectOptions {
 		self
 	}
 
-	/// **This is part of the unstable interface.**
-	///
-	/// You can use it if you need access to lower level functions, but this
-	/// interface may change on any version changes.
-	///
 	/// This can be used to access the underlying client before it is used to
 	/// connect to a server.
 	///
@@ -1291,6 +1288,7 @@ impl ConnectOptions {
 	///
 	/// # Default
 	/// The client is setup the default way.
+	#[cfg(feature = "unstable")]
 	#[inline]
 	pub fn prepare_client(
 		mut self,
