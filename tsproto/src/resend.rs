@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
-use std::sync::Weak;
+use std::sync::{Mutex, Weak};
 use std::time::Instant;
 
 use bytes::Bytes;
@@ -14,7 +14,6 @@ use failure::format_err;
 use futures::sync::mpsc;
 use futures::task::{self, Task};
 use futures::{self, Async, Future, Sink};
-use parking_lot::Mutex;
 use slog::{info, warn, Logger};
 use tokio::timer::Delay;
 use tsproto_packets::packets::*;
@@ -606,7 +605,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 	type Error = Error;
 
 	fn poll(&mut self) -> futures::Poll<Self::Item, Self::Error> {
-		if !self.connections.read().contains_key(&self.connection_key) {
+		if !self.connections.read().unwrap().contains_key(&self.connection_key) {
 			// Quit if the connection does not exist anymore
 			return Ok(futures::Async::Ready(()));
 		}
@@ -630,7 +629,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 			Some(c) => c,
 			None => return Ok(Async::Ready(())),
 		};
-		let mut con = con.mutex.lock();
+		let mut con = con.mutex.lock().unwrap();
 		let con = &mut con.1;
 		// Set task
 		con.resender.resender_future_task = Some(task::current());
@@ -742,7 +741,7 @@ impl<CM: ConnectionManager + 'static> Future for ResendFuture<CM> {
 				// Connection is gone
 				None => return Ok(futures::Async::Ready(())),
 			};
-			let mut data = data.lock();
+			let mut data = data.lock().unwrap();
 			info!(self.logger, "Exiting connection because it is not responding";
 				"current state" => state);
 			data.remove_connection(&self.connection_key);

@@ -61,7 +61,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	) -> impl Future<Item = (), Error = Error>
 	{
 		// Find the right connection
-		let cons = self.connections.read();
+		let cons = self.connections.read().unwrap();
 		if let Some(con) =
 			cons.get(&CM::get_connection_key(addr, &packet)).cloned()
 		{
@@ -148,7 +148,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 	{
 		let con2 = connection.downgrade();
 		let packet_sink = con2.as_packet_sink();
-		let mut con = connection.mutex.lock();
+		let mut con = connection.mutex.lock().unwrap();
 		let con = &mut *con;
 		let packet_res;
 		let mut ack = false;
@@ -218,7 +218,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 				PacketType::Command | PacketType::CommandLow => {
 					ack = true;
 
-					for o in in_packet_observer.read().values() {
+					for o in in_packet_observer.read().unwrap().values() {
 						o.observe(con, &packet);
 					}
 					let in_ids = &mut con.1.incoming_p_ids;
@@ -233,7 +233,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					// Be careful with command packets, they are
 					// guaranteed to be in the right order now, because
 					// we hold a lock on the connection.
-					let observer = in_command_observer.read();
+					let observer = in_command_observer.read().unwrap();
 					for c in commands {
 						for o in observer.values() {
 							o.observe(con, &c);
@@ -279,7 +279,7 @@ impl<CM: ConnectionManager + 'static> PacketCodecReceiver<CM> {
 					}
 
 					// Call observer after handling acks
-					for o in in_packet_observer.read().values() {
+					for o in in_packet_observer.read().unwrap().values() {
 						o.observe(con, &packet);
 					}
 

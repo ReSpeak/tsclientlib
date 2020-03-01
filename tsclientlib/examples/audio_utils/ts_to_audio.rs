@@ -2,13 +2,12 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use audiopus::coder::{Decoder, GenericCtl};
 use failure::{format_err, Error};
 use futures::prelude::*;
-use parking_lot::Mutex;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired, AudioStatus};
 use sdl2::AudioSubsystem;
 use slog::{debug, error, o, trace, Logger};
@@ -108,11 +107,11 @@ impl TsToAudio {
 	}
 
 	fn start(t2a: Arc<Mutex<Self>>) {
-		let logger = t2a.lock().logger.clone();
+		let logger = t2a.lock().unwrap().logger.clone();
 		tokio::runtime::current_thread::spawn(
 			Interval::new_interval(Duration::from_secs(1))
 				.for_each(move |_| {
-					let mut t2a = t2a.lock();
+					let mut t2a = t2a.lock().unwrap();
 					if !t2a.decoders.is_empty() {
 						// Check for inactive connections
 						let now = Instant::now();
@@ -250,7 +249,7 @@ impl TsToAudio {
 
 			// Put into queue
 			{
-				let mut data = self.data.lock();
+				let mut data = self.data.lock().unwrap();
 				let queue = data.entry(id).or_insert_with(Default::default);
 				if queue.len() > size * 2 {
 					debug!(self.logger, "Removing samples from playback queue"; "id" => %id, "count" => queue.len() - size);
@@ -278,7 +277,7 @@ impl AudioCallback for SdlCallback {
 		}
 
 		// Mix data
-		let mut data = self.data.lock();
+		let mut data = self.data.lock().unwrap();
 		data.retain(|id, queue| {
 
 			let len = std::cmp::min(buffer.len(), queue.len());

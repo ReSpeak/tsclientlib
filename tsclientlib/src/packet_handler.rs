@@ -152,7 +152,7 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 			};
 
 			// 3.
-			let mut con = connection.inner.connection.write();
+			let mut con = connection.inner.connection.write().unwrap();
 			let name = cmd.name().to_string();
 			// 3.1
 			if cmd.name() == "error" {
@@ -214,7 +214,7 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 			drop(con);
 			if let Some(events) = events {
 				let con = connection.lock();
-				let listeners = connection.inner.event_listeners.read();
+				let listeners = connection.inner.event_listeners.read().unwrap();
 				let ev = crate::Event::ConEvents(&con, &events);
 				for l in listeners.values() {
 					l(&ev);

@@ -2,13 +2,12 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::mem;
 use std::net::SocketAddr;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use bytes::{Bytes, BytesMut};
 use failure::format_err;
 use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
-use parking_lot::{Mutex, RwLock};
 use slog::{debug, error, o, warn, Drain};
 use tokio::codec::BytesCodec;
 use tokio::net::{UdpFramed, UdpSocket};
@@ -137,10 +136,10 @@ impl<T: Send + 'static> ConnectionValue<T> {
 		dyn Stream<Item = (PacketType, u32, u16, Bytes), Error = Error> + Send,
 	>
 	{
-		let mut con = self.mutex.lock();
+		let mut con = self.mutex.lock().unwrap();
 		let con = &mut *con;
 		// Call observer
-		for o in self.out_packet_observer.read().values() {
+		for o in self.out_packet_observer.read().unwrap().values() {
 			o.observe(con, &mut packet);
 		}
 
@@ -311,7 +310,7 @@ impl<CM: ConnectionManager + 'static> Drop for Data<CM> {
 
 		// Remove all connections
 		while let Some(con) = {
-			let cons = self.connections.read();
+			let cons = self.connections.read().unwrap();
 			match cons.keys().next() {
 				Some(k) => Some(k.clone()),
 				None => None,
@@ -418,7 +417,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		tokio::spawn(
 			udp_packet_sink_sender
 				.map(move |(addr, p)| {
-					for o in out_udp_packet_observer.read().values() {
+					for o in out_udp_packet_observer.read().unwrap().values() {
 						o.observe(addr, &p);
 					}
 					(p, addr)
@@ -452,7 +451,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 							},
 						) {
 							Ok(packet) => {
-								for o in in_udp_packet_observer.read().values()
+								for o in in_udp_packet_observer.read().unwrap().values()
 								{
 									o.observe(a, &packet);
 								}
@@ -538,7 +537,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		);
 
 		// Add connection
-		self.connections.write().insert(key.clone(), con_val);
+		self.connections.write().unwrap().insert(key.clone(), con_val);
 
 		// Start resender
 		let resend_fut =
@@ -559,7 +558,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		let mut res = self.get_connection(key);
 		if let Some(con) = &mut res {
 			// Remove connection
-			self.connections.write().remove(key);
+			self.connections.write().unwrap().remove(key);
 
 			// Call listeners
 			let mut i = 0;
@@ -580,7 +579,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		key: &CM::Key,
 	) -> Option<ConnectionValue<CM::AssociatedData>>
 	{
-		self.connections.read().get(key).cloned()
+		self.connections.read().unwrap().get(key).cloned()
 	}
 
 	pub fn wait_for_disconnect(
@@ -588,7 +587,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		key: CM::Key,
 	) -> Box<dyn Future<Item = (), Error = Error> + Send>
 	{
-		if self.connections.read().contains_key(&key) {
+		if self.connections.read().unwrap().contains_key(&key) {
 			let (send, recv) = oneshot::channel();
 			self.connection_listeners
 				.push(Box::new(DisconnectListener::new(key, send)));
@@ -604,7 +603,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		o: Box<dyn InUdpPacketObserver>,
 	)
 	{
-		self.in_udp_packet_observer.write().insert(key, o);
+		self.in_udp_packet_observer.write().unwrap().insert(key, o);
 	}
 	pub fn add_out_udp_packet_observer(
 		&mut self,
@@ -612,13 +611,13 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		o: Box<dyn OutUdpPacketObserver>,
 	)
 	{
-		self.out_udp_packet_observer.write().insert(key, o);
+		self.out_udp_packet_observer.write().unwrap().insert(key, o);
 	}
 	pub fn remove_in_udp_packet_observer(&mut self, key: &str) {
-		self.in_udp_packet_observer.write().remove(key);
+		self.in_udp_packet_observer.write().unwrap().remove(key);
 	}
 	pub fn remove_out_udp_packet_observer(&mut self, key: &str) {
-		self.out_udp_packet_observer.write().remove(key);
+		self.out_udp_packet_observer.write().unwrap().remove(key);
 	}
 
 	pub fn add_in_packet_observer(
@@ -627,7 +626,7 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		o: Box<dyn InPacketObserver<CM::AssociatedData>>,
 	)
 	{
-		self.in_packet_observer.write().insert(key, o);
+		self.in_packet_observer.write().unwrap().insert(key, o);
 	}
 	pub fn add_out_packet_observer(
 		&mut self,
@@ -635,13 +634,13 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		o: Box<dyn OutPacketObserver<CM::AssociatedData>>,
 	)
 	{
-		self.out_packet_observer.write().insert(key, o);
+		self.out_packet_observer.write().unwrap().insert(key, o);
 	}
 	pub fn remove_in_packet_observer(&mut self, key: &str) {
-		self.in_packet_observer.write().remove(key);
+		self.in_packet_observer.write().unwrap().remove(key);
 	}
 	pub fn remove_out_packet_observer(&mut self, key: &str) {
-		self.out_packet_observer.write().remove(key);
+		self.out_packet_observer.write().unwrap().remove(key);
 	}
 
 	pub fn add_in_command_observer(
@@ -650,10 +649,10 @@ impl<CM: ConnectionManager + 'static> Data<CM> {
 		o: Box<dyn InCommandObserver<CM::AssociatedData>>,
 	)
 	{
-		self.in_command_observer.write().insert(key, o);
+		self.in_command_observer.write().unwrap().insert(key, o);
 	}
 	pub fn remove_in_command_observer(&mut self, key: &str) {
-		self.in_command_observer.write().remove(key);
+		self.in_command_observer.write().unwrap().remove(key);
 	}
 }
 

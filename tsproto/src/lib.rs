@@ -11,6 +11,8 @@
 //! For more info on this project, take a look at the
 //! [tsclientlib README](https://github.com/ReSpeak/tsclientlib).
 
+use std::sync::RwLock;
+
 use derive_more::From;
 use failure::{Fail, ResultExt};
 use tsproto_packets::packets;
@@ -36,7 +38,7 @@ pub fn get_testament() -> &'static git_testament::GitTestament<'static> {
 
 type Result<T> = std::result::Result<T, Error>;
 type LockedHashMap<K, V> =
-	std::sync::Arc<parking_lot::RwLock<std::collections::HashMap<K, V>>>;
+	std::sync::Arc<RwLock<std::collections::HashMap<K, V>>>;
 
 /// The maximum number of bytes for a fragmented packet.
 #[allow(clippy::unreadable_literal)]

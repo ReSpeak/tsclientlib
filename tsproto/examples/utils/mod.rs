@@ -61,7 +61,7 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		.unwrap();
 
 	{
-		let mut c = c.lock();
+		let mut c = c.lock().unwrap();
 		let c = &mut *c;
 		// Logging
 		if verbose > 0 {
@@ -84,7 +84,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 	server_addr: SocketAddr,
 ) -> impl Future<Item = client::ClientConVal, Error = Error>
 {
-	client::connect(Arc::downgrade(&client), &mut *client.lock(), server_addr)
+	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
 		.and_then(move |con| {
 			let private_key = EccKeyPrivP256::import_str(
 			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
@@ -177,11 +177,11 @@ pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
 		);
 
 	let addr = if let Some(con) = con.upgrade() {
-		con.mutex.lock().1.address
+		con.mutex.lock().unwrap().1.address
 	} else {
 		return Box::new(future::ok(()));
 	};
-	let wait = client.lock().wait_for_disconnect(addr);
+	let wait = client.lock().unwrap().wait_for_disconnect(addr);
 
 	Box::new(con.as_packet_sink().send(packet).and_then(|_| wait))
 }

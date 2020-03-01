@@ -349,7 +349,7 @@ impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
 		let address;
 		let udp_packet_sink;
 		{
-			let con = con.mutex.lock();
+			let con = con.mutex.lock().unwrap();
 			address = con.1.address;
 			udp_packet_sink = con.1.udp_packet_sink.clone();
 		}
@@ -370,7 +370,7 @@ impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
 		match p_type {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
 				if let Some(mutex) = self.con.mutex.upgrade() {
-					let mut con = mutex.lock();
+					let mut con = mutex.lock().unwrap();
 					con.1.resender.start_send((p_type, p_gen, p_id, udp_packet))
 				} else {
 					Err(format_err!("Connection is gone").into())

@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 
 use failure::format_err;
 use futures::sync::{mpsc, oneshot};
@@ -8,7 +8,6 @@ use futures::{future, Future, Sink, Stream};
 use num_bigint::BigUint;
 #[cfg(not(feature = "rug"))]
 use num_traits::One;
-use parking_lot::Mutex;
 use rand::{self, Rng};
 #[cfg(feature = "rug")]
 use rug::integer::Order;
@@ -89,7 +88,7 @@ pub fn wait_for_state<
 			));
 		}
 	};
-	let mut con = con.lock();
+	let mut con = con.lock().unwrap();
 	con.0.state_change_listener.push(Box::new(move |s| {
 		// Check if it is the right state
 		if f(s) {
@@ -147,7 +146,7 @@ pub fn new<
 
 	let c2 = Arc::downgrade(&c);
 	{
-		let mut c = c.lock();
+		let mut c = c.lock().unwrap();
 		let c = &mut *c;
 		// Set the data reference
 		c.packet_handler.complete(c2.clone());
@@ -268,7 +267,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						)
 						.into());
 					};
-					let d = d.lock();
+					let d = d.lock().unwrap();
 					d.private_key.clone()
 				};
 
@@ -277,7 +276,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 					.upgrade()
 					.ok_or_else(|| format_err!("Connection is gone"))?;
 				let con_val3 = con_val.clone();
-				let mut con = con_val.mutex.lock();
+				let mut con = con_val.mutex.lock().unwrap();
 				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
 				let handle_res = match Self::handle_init(
@@ -315,7 +314,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 											format_err!("Connection is gone")
 										})?
 										.mutex;
-									let mut con = mutex.lock();
+									let mut con = mutex.lock().unwrap();
 									let state = &mut con.0;
 									// Notify state changed listeners
 									let mut i = 0;
@@ -386,7 +385,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						)
 						.into());
 					};
-					let d = d.lock();
+					let d = d.lock().unwrap();
 					d.private_key.clone()
 				};
 
@@ -394,7 +393,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 				let con_val = con_val2
 					.upgrade()
 					.ok_or_else(|| format_err!("Connection is gone"))?;
-				let mut con = con_val.mutex.lock();
+				let mut con = con_val.mutex.lock().unwrap();
 				let logger = con.1.logger.clone();
 				let mut ignore_packet = true;
 				let handle_res = match Self::handle_command(
@@ -434,7 +433,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 											format_err!("Connection is gone")
 										})?
 										.mutex;
-									let mut con = mutex.lock();
+									let mut con = mutex.lock().unwrap();
 									let state = &mut con.0;
 									// Notify state changed listeners
 									let mut i = 0;
@@ -485,7 +484,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 						// connection is already gone.
 						return Ok(None);
 					};
-					d.lock().remove_connection(&addr);
+					d.lock().unwrap().remove_connection(&addr);
 				}
 
 				if ignore_packet { Ok(None) } else { Ok(Some(cmd)) }
@@ -1072,7 +1071,7 @@ mod tests {
 
 					let c2 = Arc::downgrade(&c);
 					{
-						let mut c = c.lock();
+						let mut c = c.lock().unwrap();
 						let c = &mut *c;
 						// Set the data reference
 						c.packet_handler.complete(c2.clone());
@@ -1110,7 +1109,7 @@ mod tests {
 
 					let s2 = Arc::downgrade(&s);
 					{
-						let mut c = s.lock();
+						let mut c = s.lock().unwrap();
 						let c = &mut *c;
 						// Set the data reference
 						c.packet_handler.complete(s2.clone());
@@ -1133,7 +1132,7 @@ mod tests {
 		fn set_connected(
 			data: &Arc<Mutex<ClientData<TestPacketHandler>>>,
 		) -> ClientConVal {
-			let mut client = data.lock();
+			let mut client = data.lock().unwrap();
 			let con_key = client.add_connection(
 				Arc::downgrade(&data),
 				ServerConnectionData {
@@ -1143,7 +1142,7 @@ mod tests {
 				"127.0.0.1:1".parse().unwrap(),
 			);
 			let connection = client.get_connection(&con_key).unwrap();
-			let mut con = connection.mutex.lock();
+			let mut con = connection.mutex.lock().unwrap();
 			con.1.resender.handle_event(ResenderEvent::Connected);
 			con.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
 				(0, 1);
@@ -1202,14 +1201,14 @@ mod tests {
 			let cw = Arc::downgrade(&con.client);
 			// Add observer
 			let (send, recv) = mpsc::unbounded();
-			con.server.lock().add_in_packet_observer(
+			con.server.lock().unwrap().add_in_packet_observer(
 				"tsproto::test".into(),
 				Box::new(InitObserver(send)),
 			);
 
 			let r = connect(
 				cw,
-				&mut *con.client.lock(),
+				&mut *con.client.lock().unwrap(),
 				"127.0.0.1:1".parse().unwrap(),
 			);
 			r.map(|_| panic!("Should not connect")).then(|_| {
@@ -1264,7 +1263,7 @@ mod tests {
 
 				// Add observer
 				let (send, recv) = mpsc::unbounded();
-				con.server.lock().add_in_packet_observer(
+				con.server.lock().unwrap().add_in_packet_observer(
 					"tsproto::test".into(),
 					Box::new(PongObserver(send)),
 				);
@@ -1281,7 +1280,7 @@ mod tests {
 		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
 			let header = packet.header();
 			if header.packet_type() == PacketType::Command
-				&& *self.1.lock() == 0
+				&& *self.1.lock().unwrap() == 0
 			{
 				tokio::spawn(
 					self.0
@@ -1291,7 +1290,7 @@ mod tests {
 						.map_err(|e| panic!("Failed to send: {:?}", e)),
 				);
 			} else {
-				*self.1.lock() -= 1;
+				*self.1.lock().unwrap() -= 1;
 			}
 		}
 	}
@@ -1303,7 +1302,7 @@ mod tests {
 		// Set current id
 		for c in &[&con.client_con, &con.server_con] {
 			let c = c.upgrade().unwrap();
-			let mut c = c.mutex.lock();
+			let mut c = c.mutex.lock().unwrap();
 			c.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
 				(0, 65_000);
 			c.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
@@ -1320,7 +1319,7 @@ mod tests {
 			let mut msgs = Vec::new();
 			let count = 5_000;
 			let (send, recv) = mpsc::unbounded();
-			con.client.lock().add_in_packet_observer(
+			con.client.lock().unwrap().add_in_packet_observer(
 				"tsproto::test".into(),
 				Box::new(CounterObserver(send, Mutex::new(count - 1))),
 			);

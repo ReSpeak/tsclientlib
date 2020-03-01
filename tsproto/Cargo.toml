@@ -35,7 +35,6 @@ git-testament = "0.1"
 num-bigint = "0.2"
 num-derive = "0.2"
 num-traits = "0.2"
-parking_lot = "0.7"
 rand = "0.6"
 flakebi-ring = "0.16.9"
 rug = { version = "1", optional = true }

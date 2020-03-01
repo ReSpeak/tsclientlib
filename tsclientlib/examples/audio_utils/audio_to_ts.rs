@@ -1,10 +1,9 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use audiopus::coder::Encoder;
 use failure::{format_err, Error};
 use futures::prelude::*;
-use parking_lot::Mutex;
 use sdl2::audio::{
 	AudioCallback, AudioDevice, AudioSpec, AudioSpecDesired, AudioStatus,
 };
@@ -118,11 +117,11 @@ impl AudioToTs {
 	}
 
 	pub fn set_listener(&self, con: &Connection) {
-		let mut listener = self.listener.lock();
+		let mut listener = self.listener.lock().unwrap();
 		*listener = Some(con.get_tsproto_connection());
 	}
 
-	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock() = volume; }
+	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock().unwrap() = volume; }
 
 	pub fn set_playing(&mut self, playing: bool) {
 		if playing {
@@ -134,11 +133,11 @@ impl AudioToTs {
 	}
 
 	fn start(a2t: Arc<Mutex<Self>>) {
-		let logger = a2t.lock().logger.clone();
+		let logger = a2t.lock().unwrap().logger.clone();
 		tokio::runtime::current_thread::spawn(
 			Interval::new_interval(Duration::from_secs(1))
 				.for_each(move |_| {
-					let mut a2t = a2t.lock();
+					let mut a2t = a2t.lock().unwrap();
 					if a2t.device.status() == AudioStatus::Stopped {
 						// Try to reconnect to audio
 						match Self::open_capture(
@@ -176,7 +175,7 @@ impl AudioCallback for SdlCallback {
 	type Channel = f32;
 	fn callback(&mut self, buffer: &mut [Self::Channel]) {
 		// Handle volume
-		let volume = *self.volume.lock();
+		let volume = *self.volume.lock().unwrap();
 		if volume != 1.0 {
 			for d in &mut *buffer {
 				*d *= volume;
@@ -201,7 +200,7 @@ impl AudioCallback for SdlCallback {
 				});
 
 				// Write into packet sink
-				let mut listener = self.listener.lock();
+				let mut listener = self.listener.lock().unwrap();
 				if let Some(con) = &mut *listener {
 					if con.upgrade().is_none() {
 						*listener = None;

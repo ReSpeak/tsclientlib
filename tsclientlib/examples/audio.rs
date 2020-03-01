@@ -85,7 +85,7 @@ fn main() -> Result<(), failure::Error> {
 				tokio::runtime::current_thread::spawn(recv
 					.map_err(|e| e.into())
 					.for_each(move |(con, packet)| {
-						let mut t2a = t2a.lock();
+						let mut t2a = t2a.lock().unwrap();
 						t2a.play_packet(con, &packet)
 					})
 					.map_err(move |e| error!(logger2,
@@ -103,7 +103,7 @@ fn main() -> Result<(), failure::Error> {
 			})
 			.and_then(move |(con, audiodata)| -> Box<dyn Future<Item=_, Error=_>> {
 				{
-					let mut a2t = audiodata.a2ts.lock();
+					let mut a2t = audiodata.a2ts.lock().unwrap();
 					a2t.set_listener(&con);
 					a2t.set_volume(vol);
 					a2t.set_playing(true);

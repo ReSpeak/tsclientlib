@@ -17,13 +17,12 @@ use std::fmt;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::ops::Deref;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard};
 
 use derive_more::From;
 use failure::{format_err, Fail, ResultExt};
 use futures::sync::{mpsc, oneshot};
 use futures::{future, stream, Future, Sink, Stream};
-use parking_lot::{Mutex, RwLock, RwLockReadGuard};
 use slog::{debug, info, o, warn, Drain, Logger};
 use tokio::net::TcpStream;
 use ts_bookkeeping::messages::c2s;
@@ -285,7 +284,7 @@ impl Connection {
 	{
 		let (initserver_send, initserver_recv) = oneshot::channel();
 		let (connection_send, connection_recv) = oneshot::channel();
-		let opts = options.lock();
+		let opts = options.lock().unwrap();
 		let ph: Option<PHBox> =
 			opts.handle_packets.as_ref().map(|h| (*h).clone());
 		let packet_handler = SimplePacketHandler::new(
@@ -314,7 +313,7 @@ impl Connection {
 		};
 
 		{
-			let mut c = client.lock();
+			let mut c = client.lock().unwrap();
 			let c = &mut *c;
 			// Logging
 			if opts.log_commands {
@@ -338,7 +337,7 @@ impl Connection {
 		// Create a connection
 		debug!(logger, "Connecting"; "address" => %addr);
 		let connect_fut =
-			client::connect(Arc::downgrade(&client), &mut *client.lock(), addr)
+			client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), addr)
 				.from_err();
 
 		let options2 = options.clone();
@@ -346,7 +345,7 @@ impl Connection {
 		Box::new(
 			connect_fut.and_then(move |con| {
 				// Create clientinit packet
-				let opts = options.lock();
+				let opts = options.lock().unwrap();
 				let version_string = opts.version.get_version_string();
 				let version_platform = opts.version.get_platform();
 				let version_sign = base64::encode(opts.version.get_signature());
@@ -408,7 +407,7 @@ impl Connection {
 										format_err!("Connection does not exist anymore").into()));
 								};
 								let mutex = con.mutex;
-								let con = mutex.lock();
+								let con = mutex.lock().unwrap();
 								let params = if let Some(r) = &con.1.params {
 									r
 								} else {
@@ -435,7 +434,7 @@ impl Connection {
 
 							// Send connection to packet handler
 							let con = Connection { inner: con };
-							let mut opts = options2.lock();
+							let mut opts = options2.lock().unwrap();
 							if let Err(_) = connection_send.send(con.clone()) {
 								return Box::new(future::err(
 									format_err!("Failed to send connection to \
@@ -498,7 +497,7 @@ impl Connection {
 					}
 
 					{
-						let opts = options.lock();
+						let opts = options.lock().unwrap();
 						match opts.identity.as_ref().unwrap().level() {
 							Ok(level) => {
 								if level >= needed {
@@ -529,7 +528,7 @@ impl Connection {
 					let (send, recv) = oneshot::channel();
 					// TODO Performance log
 					std::thread::spawn(move || {
-						let mut opts = options.lock();
+						let mut opts = options.lock().unwrap();
 						let _ = send.send(
 							opts.identity
 								.as_mut()
@@ -540,7 +539,7 @@ impl Connection {
 					});
 					return Box::new(recv.from_err().and_then(|r| r).map(
 						move |()| {
-							let opts = options2.lock();
+							let opts = options2.lock().unwrap();
 							let e = Event::IdentityLevelIncreased(
 								&opts.identity.as_ref().unwrap(),
 							);
@@ -609,7 +608,7 @@ impl Connection {
 		} else {
 			return Err(format_err!("Connection is gone").into());
 		};
-		let con = con.mutex.lock();
+		let con = con.mutex.lock().unwrap();
 
 		if let Some(params) = &con.1.params {
 			Ok(params.public_key.clone())
@@ -649,7 +648,7 @@ impl Connection {
 	}
 
 	pub fn lock(&self) -> ConnectionLock {
-		ConnectionLock::new(self.clone(), self.inner.connection.read())
+		ConnectionLock::new(self.clone(), self.inner.connection.read().unwrap())
 	}
 
 	/// Disconnect from the server.
@@ -707,14 +706,14 @@ impl Connection {
 		options: O,
 	) -> BoxFuture<()>
 	{
-		let packet = self.inner.connection.read().disconnect(options);
+		let packet = self.inner.connection.read().unwrap().disconnect(options);
 
 		let addr = if let Some(con) = self.inner.client_connection.upgrade() {
-			con.mutex.lock().1.address
+			con.mutex.lock().unwrap().1.address
 		} else {
 			return Box::new(future::ok(()));
 		};
-		let wait = self.inner.client_data.lock().wait_for_disconnect(addr);
+		let wait = self.inner.client_data.lock().unwrap().wait_for_disconnect(addr);
 		let inner = self.inner.clone();
 		Box::new(
 			self.inner
@@ -754,7 +753,7 @@ impl Connection {
 	pub fn add_on_disconnect(&self, f: Box<dyn Fn() + Send>) {
 		self.inner
 			.client_data
-			.lock()
+			.lock().unwrap()
 			.connection_listeners
 			.push(Box::new(DisconnectListener(Some(f))));
 	}
@@ -774,7 +773,7 @@ impl Connection {
 		f: EventListener,
 	) -> Option<EventListener>
 	{
-		self.inner.event_listeners.write().insert(key, f)
+		self.inner.event_listeners.write().unwrap().insert(key, f)
 	}
 
 	/// Remove an event listener which was registered with the specified `key`.
@@ -782,7 +781,7 @@ impl Connection {
 	/// The removed event listener is returned if the key was found in the
 	/// listeners.
 	pub fn remove_event_listener(&self, key: &str) -> Option<EventListener> {
-		self.inner.event_listeners.write().remove(key)
+		self.inner.event_listeners.write().unwrap().remove(key)
 	}
 
 	/// Return the size of the file and a tcp stream of the requested file.
@@ -891,7 +890,7 @@ impl Connection {
 	{
 		let default_ip;
 		if let Some(con) = self.inner.client_connection.upgrade() {
-			default_ip = con.mutex.lock().1.address.ip();
+			default_ip = con.mutex.lock().unwrap().1.address.ip();
 		} else {
 			return Box::new(future::err(
 				format_err!("Connection is gone").into(),
@@ -938,7 +937,7 @@ impl Connection {
 	{
 		let default_ip;
 		if let Some(con) = self.inner.client_connection.upgrade() {
-			default_ip = con.mutex.lock().1.address.ip();
+			default_ip = con.mutex.lock().unwrap().1.address.ip();
 		} else {
 			return Box::new(future::err(
 				format_err!("Connection is gone").into(),
@@ -992,10 +991,10 @@ impl Drop for Connection {
 		if Arc::strong_count(&self.inner.connection) <= 2 {
 			// The last 2 references are in the packet handler and this one
 			// Disconnect
-			let logger = self.inner.client_data.lock().logger.clone();
+			let logger = self.inner.client_data.lock().unwrap().logger.clone();
 			// Check that we are not yet disconnecting
 			if let Some(con) = self.inner.client_connection.upgrade() {
-				if con.mutex.lock().1.resender.is_disconnecting() {
+				if con.mutex.lock().unwrap().1.resender.is_disconnecting() {
 					return;
 				}
 			} else {

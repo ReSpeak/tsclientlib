@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use failure::Error;
-use parking_lot::Mutex;
 use slog::Logger;
 use tokio::runtime::current_thread::Handle;
 
