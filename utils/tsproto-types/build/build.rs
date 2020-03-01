@@ -3,21 +3,28 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 
-mod error_parser;
-mod version_parser;
+mod enums;
+mod errors;
+mod versions;
 
-use crate::error_parser::Errors;
-use crate::version_parser::Versions;
+use crate::enums::Enums;
+use crate::errors::Errors;
+use crate::versions::Versions;
 
 fn main() {
 	let out_dir = env::var("OUT_DIR").unwrap();
 
-	// Error declarations
+	// Enums
+	let path = Path::new(&out_dir);
+	let mut structs = File::create(&path.join("enums.rs")).unwrap();
+	write!(&mut structs, "{}", Enums::default()).unwrap();
+
+	// Errors
 	let path = Path::new(&out_dir);
 	let mut structs = File::create(&path.join("errors.rs")).unwrap();
 	write!(&mut structs, "{}", Errors::default()).unwrap();
 
-	// Write versions
+	// Versions
 	let mut structs = File::create(&path.join("versions.rs")).unwrap();
 	write!(&mut structs, "{}", Versions::default()).unwrap();
 }

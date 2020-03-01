@@ -1,0 +1,34 @@
+<#@ template cleanws="true" #>
+<# for e in &self.enums { #>
+<# if let Some(doc) = &e.doc { #>
+<#= doc_comment(doc) #>
+<# } #>
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive)]
+pub enum <#= e.name #><# if let Some(ty) = &e.use_type { #>: <#= ty #><# } #> {
+<# for v in &e.variants { #>
+	<# if let Some(doc) = &v.doc { #>
+<#= indent(&doc_comment(doc), 1) #>
+	<# } #>
+	<#= v.name #><# if let Some(val) = v.value { #> = <#= val #><# } #>,
+<# } #>
+}
+
+<# }
+
+for e in &self.bitflags { #>
+
+bitflags! {
+	<# if let Some(doc) = &e.doc { #>
+<#= indent(&doc_comment(doc), 1) #>
+	<# } #>
+	#[derive(Deserialize, Serialize)]
+	pub struct <#= e.name #>: <#= e.use_type.clone().unwrap_or_else(|| format!("u{}", e.bitwidth())) #> {
+	<# for v in &e.variants { #>
+		<# if let Some(doc) = &v.doc { #>
+<#= indent(&doc_comment(doc), 2) #>
+		<# } #>
+		const <#= v.name.to_shouty_snake_case() #><# if let Some(val) = v.value { #> = <#= val #><# } #>;
+	<# } #>
+	}
+}
+<# } #>

@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 pub mod book;
 pub mod book_to_messages;
+pub mod enums;
 pub mod errors;
 pub mod messages;
 pub mod messages_to_book;

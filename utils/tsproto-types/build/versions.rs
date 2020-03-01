@@ -4,7 +4,7 @@ use t4rust_derive::Template;
 use tsproto_structs::versions::*;
 
 #[derive(Template)]
-#[TemplatePath = "build/VersionDeclarations.tt"]
+#[TemplatePath = "build/Versions.tt"]
 #[derive(Default, Debug)]
 pub struct Versions;
 
