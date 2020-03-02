@@ -45,8 +45,8 @@ impl Connection {
 				.ok_or_else(|| format_err!("<#= p.name #> {} not found", m))?<#
 				}
 
-				if p.opt && p.type_s == "str" {
-					#>.as_ref().map(String::as_ref)<#
+				if p.opt && (p.type_s == "str" || p.type_s == "Uid") {
+					#>.as_ref().map(|r| r.as_ref())<#
 				} else if p.type_s == "str" || p.type_s == "Uid" || p.type_s == "TalkPowerRequest" {
 					#>.as_ref()<#
 				} #>),

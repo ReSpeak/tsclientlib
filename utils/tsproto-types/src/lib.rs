@@ -85,13 +85,11 @@ impl Permission {
 	pub fn to_u32(&self) -> Option<u32> { Some(self.0) }
 }
 
-#[derive(
-	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive
-)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum ClientType {
 	Normal,
 	/// Server query client
-	Query,
+	Query { admin: bool }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

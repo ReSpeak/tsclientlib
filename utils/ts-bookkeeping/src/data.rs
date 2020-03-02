@@ -532,6 +532,17 @@ impl Connection {
 		}
 	}
 
+	fn client_type_cev_fun(&self, cmd: &CanonicalCommand) -> Result<ClientType> {
+		match cmd.get_arg("client_type")? {
+			"0" => Ok(ClientType::Normal),
+			"1" => Ok(ClientType::Query { admin: cmd.get_arg("client_unique_identifier")? == "ServerAdmin" }),
+			val => Err(ParseError::InvalidValue {
+				arg: "client_type",
+				value: val.to_string(),
+			}.into()),
+		}
+	}
+
 	fn away_cu_fun(
 		&mut self,
 		client_id: ClientId,

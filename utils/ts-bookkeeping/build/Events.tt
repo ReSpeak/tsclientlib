@@ -119,6 +119,8 @@ for struc in &self.structs {
 		let has_ref = ref_name.contains('&');
 		if p.opt && p.type_s == "str" { #>
 			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref().map(String::as_ref)),
+		<# } else if p.opt && p.type_s == "Uid" { #>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref().map(Uid::as_ref)),
 		<# } else if p.type_s == "Uid" { #>
 			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
 		<# } else if p.opt && has_ref { #>

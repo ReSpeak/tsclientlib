@@ -121,6 +121,16 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}})?",
 			field.pretty
 		),
+		"ClientType" => {
+			format!("match *val {{
+				\"0\" => ClientType::Normal,
+				\"1\" => ClientType::Query {{ admin: false }},
+				_ => return Err(ParseError::InvalidValue {{
+					arg: \"{}\",
+					value: val.to_string(),
+				}}),
+			}}", field.pretty)
+		}
 		"TextMessageTargetMode"
 		| "HostMessageMode"
 		| "HostBannerMode"
@@ -129,7 +139,6 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 		| "Codec"
 		| "CodecEncryptionMode"
 		| "Reason"
-		| "ClientType"
 		| "GroupNamingMode"
 		| "GroupType"
 		| "Permission"
@@ -197,7 +206,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				}})?)",
 			field.pretty
 		),
-		_ => panic!("Unknown type '{}'", rust_type),
+		_ => panic!("Unknown type '{}' when trying to deserialize {:?}", rust_type, field),
 	};
 	if res.contains('\n') { indent(&res, 2) } else { res }
 }
@@ -253,6 +262,12 @@ pub fn single_value_serializer(
 		| "ChannelGroupId" | "IconHash" => {
 			format!("Cow::Owned({}.0.to_string())", name)
 		}
+		"ClientType" => {
+			format!("match {} {{
+				ClientType::Normal => Cow::Borrowed(\"0\"),
+				ClientType::Query {{ .. }} => Cow::Borrowed(\"1\"),
+			}}", name)
+		}
 		"TextMessageTargetMode"
 		| "HostMessageMode"
 		| "HostBannerMode"
@@ -261,7 +276,6 @@ pub fn single_value_serializer(
 		| "Codec"
 		| "CodecEncryptionMode"
 		| "Reason"
-		| "ClientType"
 		| "GroupNamingMode"
 		| "GroupType"
 		| "Permission"
