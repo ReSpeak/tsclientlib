@@ -6,12 +6,11 @@ use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
 use bytes::Bytes;
 use failure::format_err;
-use futures::sync::mpsc;
-use futures::{self, AsyncSink, Sink};
+use futures::prelude::*;
 use num_traits::ToPrimitive;
 use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use slog;
+use tokio::sync::mpsc;
 use tsproto_packets::packets::*;
 use tsproto_packets::HexSlice;
 
@@ -25,56 +24,9 @@ use crate::{Error, Result};
 /// This has to be stored for each packet type.
 #[derive(Debug)]
 pub struct CachedKey {
-	/// The generation id
 	pub generation_id: u32,
-	/// The key
 	pub key: GenericArray<u8, U16>,
-	/// The nonce
 	pub nonce: GenericArray<u8, U16>,
-}
-
-impl Default for CachedKey {
-	fn default() -> Self {
-		CachedKey {
-			generation_id: u32::max_value(),
-			key: [0; 16].into(),
-			nonce: [0; 16].into(),
-		}
-	}
-}
-
-pub enum SharedIv {
-	/// The protocol until TeamSpeak server 3.1 (excluded) uses this format.
-	ProtocolOrig([u8; 20]),
-	/// The protocol since TeamSpeak server 3.1 uses this format.
-	Protocol31([u8; 64]),
-}
-
-impl fmt::Debug for SharedIv {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match *self {
-			SharedIv::ProtocolOrig(ref data) => {
-				write!(f, "SharedIv::ProtocolOrig({:?})", HexSlice(data))
-			}
-			SharedIv::Protocol31(ref data) => {
-				write!(f, "SharedIv::Protocol32({:?})", HexSlice(data))
-			}
-		}
-	}
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Identity {
-	#[serde(
-		serialize_with = "serialize_id_key",
-		deserialize_with = "deserialize_id_key"
-	)]
-	key: EccKeyPrivP256,
-	/// The `client_key_offest`/counter for hash cash.
-	counter: u64,
-	/// The maximum counter that was tried, this is greater equal to `counter`
-	/// but may yield a lower level.
-	max_counter: u64,
 }
 
 /// Data that has to be stored for a connection when it is connected.
@@ -88,7 +40,7 @@ pub struct ConnectedParams {
 	/// The public key of the other side.
 	pub public_key: EccKeyPubP256,
 	/// The iv used to encrypt and decrypt packets.
-	pub shared_iv: SharedIv,
+	pub shared_iv: [u8; 64],
 	/// The mac used for unencrypted packets.
 	pub shared_mac: [u8; 8],
 	/// Cached key and nonce per packet type and for server to client (without
@@ -96,30 +48,29 @@ pub struct ConnectedParams {
 	pub key_cache: [[CachedKey; 2]; 8],
 }
 
-impl ConnectedParams {
-	/// Fills the parameters for a connection with their default state.
-	pub fn new(
-		public_key: EccKeyPubP256,
-		shared_iv: SharedIv,
-		shared_mac: [u8; 8],
-	) -> Self
-	{
-		Self {
-			c_id: 0,
-			voice_encryption: true,
-			public_key,
-			shared_iv,
-			shared_mac,
-			key_cache: Default::default(),
-		}
-	}
+/// An event that originates from a tsproto raw connection.
+///
+/// The event may borrow the connection so the buffer can be reused.
+#[derive(Clone, Debug)]
+pub enum Event<'a> {
+	/// The connection has been established and `ConnectedParams` are available.
+	Connected,
+	/// The other side did not react to pings for a long time or did not
+	/// acknowledge packets. This connection is marked as dead and should be
+	/// removed.
+	Disconnected,
+	ReceiveUdpPacket(&'a mut InUdpPacket),
+	ReceivePacket(&'a mut InPacket),
+	ReceiveCommand(&'a mut InCommand),
+	ReceiveAudio(&'a mut InAudio),
+	ReceiveC2SInit(&'a mut InC2SInit),
+	ReceiveS2CInit(&'a mut InS2CInit),
 }
 
 /// Represents a currently alive connection.
 #[derive(Debug)]
 pub struct Connection {
 	pub is_client: bool,
-	/// A logger for this connection.
 	pub logger: slog::Logger,
 	/// The parameters of this connection, if it is already established.
 	pub params: Option<ConnectedParams>,
@@ -154,6 +105,35 @@ pub struct Connection {
 	///
 	/// Works like the `outgoing_p_ids`.
 	pub incoming_p_ids: [(u32, u16); 8],
+}
+
+impl Default for CachedKey {
+	fn default() -> Self {
+		CachedKey {
+			generation_id: u32::max_value(),
+			key: [0; 16].into(),
+			nonce: [0; 16].into(),
+		}
+	}
+}
+
+impl ConnectedParams {
+	/// Fills the parameters for a connection with their default state.
+	pub fn new(
+		public_key: EccKeyPubP256,
+		shared_iv: [u8; 64],
+		shared_mac: [u8; 8],
+	) -> Self
+	{
+		Self {
+			c_id: 0,
+			voice_encryption: true,
+			public_key,
+			shared_iv,
+			shared_mac,
+			key_cache: Default::default(),
+		}
+	}
 }
 
 impl Connection {
@@ -227,175 +207,5 @@ impl Connection {
 			cur_next,
 			limit,
 		)
-	}
-}
-
-struct IdKeyVisitor;
-impl<'de> Visitor<'de> for IdKeyVisitor {
-	type Value = EccKeyPrivP256;
-
-	fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "a P256 private ecc key")
-	}
-
-	fn visit_str<E: serde::de::Error>(
-		self,
-		s: &str,
-	) -> std::result::Result<Self::Value, E>
-	{
-		EccKeyPrivP256::import_str(s).map_err(|_| {
-			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
-		})
-	}
-}
-
-fn serialize_id_key<S: Serializer>(
-	key: &EccKeyPrivP256,
-	s: S,
-) -> std::result::Result<S::Ok, S::Error>
-{
-	s.serialize_str(&base64::encode(&key.to_short()))
-}
-
-fn deserialize_id_key<'de, D: Deserializer<'de>>(
-	d: D,
-) -> std::result::Result<EccKeyPrivP256, D::Error> {
-	d.deserialize_str(IdKeyVisitor)
-}
-
-impl Identity {
-	#[inline]
-	pub fn create() -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::create()?, 0);
-		res.upgrade_level(8)?;
-		Ok(res)
-	}
-
-	#[inline]
-	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
-		Self::new_with_max_counter(key, counter, counter)
-	}
-
-	#[inline]
-	pub fn new_with_max_counter(
-		key: EccKeyPrivP256,
-		counter: u64,
-		max_counter: u64,
-	) -> Self
-	{
-		Self { key, counter, max_counter }
-	}
-
-	#[inline]
-	pub fn new_from_str(key: &str) -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::import_str(key)?, 0);
-		res.upgrade_level(8)?;
-		Ok(res)
-	}
-
-	#[inline]
-	pub fn new_from_bytes(key: &[u8]) -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::import(key)?, 0);
-		res.upgrade_level(8)?;
-		Ok(res)
-	}
-
-	#[inline]
-	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
-	#[inline]
-	pub fn counter(&self) -> u64 { self.counter }
-	#[inline]
-	pub fn max_counter(&self) -> u64 { self.max_counter }
-
-	#[inline]
-	pub fn set_key(&mut self, key: EccKeyPrivP256) { self.key = key }
-	#[inline]
-	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
-	#[inline]
-	pub fn set_max_counter(&mut self, max_counter: u64) {
-		self.max_counter = max_counter;
-	}
-
-	/// Compute the current hash cash level.
-	#[inline]
-	pub fn level(&self) -> Result<u8> {
-		let omega = self.key.to_pub().to_ts()?;
-		Ok(algs::get_hash_cash_level(&omega, self.counter))
-	}
-
-	/// Compute a better hash cash level.
-	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
-		let omega = self.key.to_pub().to_ts()?;
-		let mut offset = self.max_counter;
-		while offset < u64::MAX
-			&& algs::get_hash_cash_level(&omega, offset) < target
-		{
-			offset += 1;
-		}
-		self.counter = offset;
-		self.max_counter = offset;
-		Ok(())
-	}
-}
-
-pub struct ConnectionUdpPacketSink<T: Send + 'static> {
-	con: ConnectionValueWeak<T>,
-	address: SocketAddr,
-	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-}
-
-impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
-	pub fn new(con: &ConnectionValue<T>) -> Self {
-		let address;
-		let udp_packet_sink;
-		{
-			let con = con.mutex.lock().unwrap();
-			address = con.1.address;
-			udp_packet_sink = con.1.udp_packet_sink.clone();
-		}
-
-		Self { con: con.downgrade(), address, udp_packet_sink }
-	}
-}
-
-impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
-	type SinkItem = (PacketType, u32, u16, Bytes);
-	type SinkError = Error;
-
-	fn start_send(
-		&mut self,
-		(p_type, p_gen, p_id, udp_packet): Self::SinkItem,
-	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
-	{
-		match p_type {
-			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
-				if let Some(mutex) = self.con.mutex.upgrade() {
-					let mut con = mutex.lock().unwrap();
-					con.1.resender.start_send((p_type, p_gen, p_id, udp_packet))
-				} else {
-					Err(format_err!("Connection is gone").into())
-				}
-			}
-			_ => Ok(
-				match self
-					.udp_packet_sink
-					.start_send((self.address, udp_packet))
-					.map_err(|e| {
-						format_err!("Failed to send udp packet ({:?})", e)
-					})? {
-					AsyncSink::Ready => AsyncSink::Ready,
-					AsyncSink::NotReady((_, p)) => {
-						AsyncSink::NotReady((p_type, p_gen, p_id, p))
-					}
-				},
-			),
-		}
-	}
-
-	fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-		self.udp_packet_sink.poll_complete().map_err(|e| {
-			format_err!("Failed to complete sending udp packet ({:?})", e)
-				.into()
-		})
 	}
 }

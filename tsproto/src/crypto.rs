@@ -170,12 +170,16 @@ impl EccKeyPubP256 {
 		Ok(base64::encode(&self.get_uid_no_base64()?))
 	}
 
-	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
+	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let key = ring::signature::UnparsedPublicKey::new(
 			&ring::signature::ECDSA_P256_SHA256_ASN1,
 			&self.0,
 		);
-		key.verify(data, signature).map_err(|_| Error::WrongSignature)
+		key.verify(data, signature).map_err(|_| BasicError::WrongSignature {
+			key: self.clone(),
+			data: data.to_vec(),
+			signature: signature.to_vec(),
+		})
 	}
 }
 

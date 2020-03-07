@@ -13,21 +13,23 @@
 
 use std::sync::RwLock;
 
-use derive_more::From;
-use failure::{Fail, ResultExt};
+use anyhow::Error;
+use serde::de::{Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use thiserror::Error;
 use tsproto_packets::packets;
 
 pub mod algorithms;
 pub mod client;
 pub mod connection;
-pub mod connectionmanager;
 pub mod crypto;
-pub mod handler_data;
 pub mod license;
 pub mod log;
 pub mod packet_codec;
 pub mod resend;
 pub mod utils;
+
+use algorithms as algs;
 
 // The build environment of tsproto.
 git_testament::git_testament!(TESTAMENT);
@@ -40,6 +42,14 @@ type Result<T> = std::result::Result<T, Error>;
 type LockedHashMap<K, V> =
 	std::sync::Arc<RwLock<std::collections::HashMap<K, V>>>;
 
+/// The maximum number of bytes for a fragmented packet.
+///
+/// The maximum packet size is 500 bytes, as used by
+/// `algorithms::compress_and_split`.
+/// We pick the ethernet MTU for possible future compatibility, it is unlikely
+/// that a packet will get bigger.
+#[allow(clippy::unreadable_literal)]
+const MAX_UDP_PACKET_LENGTH: usize = 1500;
 /// The maximum number of bytes for a fragmented packet.
 #[allow(clippy::unreadable_literal)]
 const MAX_FRAGMENTS_LENGTH: usize = 40960;
@@ -63,60 +73,175 @@ const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
 	62a4a017bb394833aa0983e6e";
 const UDP_SINK_CAPACITY: usize = 20;
 
-#[derive(Fail, Debug, From)]
+#[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum Error {
-	#[fail(display = "{}", _0)]
-	Asn1Decode(#[cause] simple_asn1::ASN1DecodeErr),
-	#[fail(display = "{}", _0)]
-	Asn1Encode(#[cause] simple_asn1::ASN1EncodeErr),
-	#[fail(display = "{}", _0)]
-	Base64(#[cause] base64::DecodeError),
-	#[fail(display = "{}", _0)]
-	FutureCanceled(#[cause] futures::Canceled),
-	#[fail(display = "{}", _0)]
-	Io(#[cause] std::io::Error),
-	#[fail(display = "{}", _0)]
-	ParseInt(#[cause] std::num::ParseIntError),
-	#[fail(display = "{}", _0)]
-	Quicklz(#[cause] quicklz::Error),
-	#[fail(display = "{}", _0)]
-	Rand(#[cause] rand::Error),
-	#[fail(display = "{}", _0)]
-	Timer(#[cause] tokio::timer::Error),
-	#[fail(display = "{}", _0)]
-	TsprotoPackets(#[cause] tsproto_packets::Error),
-	#[fail(display = "{}", _0)]
-	Utf8(#[cause] std::str::Utf8Error),
+enum BasicError {
+	#[error(transparent)]
+	Asn1Decode(#[from] simple_asn1::ASN1DecodeErr),
+	#[error(transparent)]
+	Asn1Encode(#[from] simple_asn1::ASN1EncodeErr),
+	#[error(transparent)]
+	Base64(#[from] base64::DecodeError),
+	#[error(transparent)]
+	FutureCanceled(#[from] futures::Canceled),
+	#[error(transparent)]
+	Io(#[from] std::io::Error),
+	#[error(transparent)]
+	ParseInt(#[from] std::num::ParseIntError),
+	#[error(transparent)]
+	Quicklz(#[from] quicklz::Error),
+	#[error(transparent)]
+	Rand(#[from] rand::Error),
+	#[error(transparent)]
+	TsprotoPackets(#[from] tsproto_packets::Error),
+	#[error(transparent)]
+	Utf8(#[from] std::str::Utf8Error),
 
-	#[fail(
-		display = "Packet {} not in receive window [{};{}) for type {:?}",
-		id, next, limit, p_type
-	)]
+	#[error("Packet {id} not in receive window [{next};{limit}) for type {p_type:?}")]
 	NotInReceiveWindow {
 		id: u16,
 		next: u16,
 		limit: u16,
 		p_type: packets::PacketType,
 	},
-	#[fail(display = "Got unallowed unencrypted packet")]
+	#[error("Got unallowed unencrypted packet")]
 	UnallowedUnencryptedPacket,
-	#[fail(display = "Got unexpected init packet")]
+	#[error("Got unexpected init packet")]
 	UnexpectedInitPacket,
-	/// Store packet type, generation id and packet id.
-	#[fail(display = "{:?} Packet {}:{} has a wrong mac", _0, _1, _2)]
-	WrongMac(packets::PacketType, u32, u16),
-	#[fail(display = "Maximum length exceeded for {}", _0)]
+	#[error("{p_type:?} Packet {generation_id}:{packet_id} has a wrong mac")]
+	WrongMac {
+		p_type: packets::PacketType,
+		generation_id: u32,
+		packet_id: u16,
+	},
+	#[error("Maximum length exceeded for {}")]
 	MaxLengthExceeded(String),
-	#[fail(display = "Wrong signature")]
-	WrongSignature,
-	#[fail(display = "{}", _0)]
-	Other(#[cause] failure::Compat<failure::Error>),
+	#[error("Wrong signature")]
+	WrongSignature {
+		key: EccKeyPubP256,
+		data: Vec<u8>,
+		signature: Vec<u8>,
+	},
 }
 
-impl From<failure::Error> for Error {
-	fn from(e: failure::Error) -> Self {
-		let r: std::result::Result<(), _> = Err(e);
-		Error::Other(r.compat().unwrap_err())
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Identity {
+	#[serde(
+		serialize_with = "serialize_id_key",
+		deserialize_with = "deserialize_id_key"
+	)]
+	key: EccKeyPrivP256,
+	/// The `client_key_offest`/counter for hash cash.
+	counter: u64,
+	/// The maximum counter that was tried, this is greater or equal to
+	/// `counter` but may yield a lower level.
+	max_counter: u64,
+}
+
+struct IdKeyVisitor;
+impl<'de> Visitor<'de> for IdKeyVisitor {
+	type Value = EccKeyPrivP256;
+
+	fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "a P256 private ecc key")
+	}
+
+	fn visit_str<E: serde::de::Error>(
+		self,
+		s: &str,
+	) -> std::result::Result<Self::Value, E>
+	{
+		EccKeyPrivP256::import_str(s).map_err(|_| {
+			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
+		})
+	}
+}
+
+fn serialize_id_key<S: Serializer>(
+	key: &EccKeyPrivP256,
+	s: S,
+) -> std::result::Result<S::Ok, S::Error>
+{
+	s.serialize_str(&base64::encode(&key.to_short()))
+}
+
+fn deserialize_id_key<'de, D: Deserializer<'de>>(
+	d: D,
+) -> std::result::Result<EccKeyPrivP256, D::Error> {
+	d.deserialize_str(IdKeyVisitor)
+}
+
+impl Identity {
+	#[inline]
+	pub fn create() -> Result<Self> {
+		let mut res = Self::new(EccKeyPrivP256::create()?, 0);
+		res.upgrade_level(8)?;
+		Ok(res)
+	}
+
+	#[inline]
+	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
+		Self::new_with_max_counter(key, counter, counter)
+	}
+
+	#[inline]
+	pub fn new_with_max_counter(
+		key: EccKeyPrivP256,
+		counter: u64,
+		max_counter: u64,
+	) -> Self
+	{
+		Self { key, counter, max_counter }
+	}
+
+	#[inline]
+	pub fn new_from_str(key: &str) -> Result<Self> {
+		let mut res = Self::new(EccKeyPrivP256::import_str(key)?, 0);
+		res.upgrade_level(8)?;
+		Ok(res)
+	}
+
+	#[inline]
+	pub fn new_from_bytes(key: &[u8]) -> Result<Self> {
+		let mut res = Self::new(EccKeyPrivP256::import(key)?, 0);
+		res.upgrade_level(8)?;
+		Ok(res)
+	}
+
+	#[inline]
+	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
+	#[inline]
+	pub fn counter(&self) -> u64 { self.counter }
+	#[inline]
+	pub fn max_counter(&self) -> u64 { self.max_counter }
+
+	#[inline]
+	pub fn set_key(&mut self, key: EccKeyPrivP256) { self.key = key }
+	#[inline]
+	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
+	#[inline]
+	pub fn set_max_counter(&mut self, max_counter: u64) {
+		self.max_counter = max_counter;
+	}
+
+	/// Compute the current hash cash level.
+	#[inline]
+	pub fn level(&self) -> Result<u8> {
+		let omega = self.key.to_pub().to_ts()?;
+		Ok(algs::get_hash_cash_level(&omega, self.counter))
+	}
+
+	/// Compute a better hash cash level.
+	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
+		let omega = self.key.to_pub().to_ts()?;
+		let mut offset = self.max_counter;
+		while offset < u64::MAX
+			&& algs::get_hash_cash_level(&omega, offset) < target
+		{
+			offset += 1;
+		}
+		self.counter = offset;
+		self.max_counter = offset;
+		Ok(())
 	}
 }

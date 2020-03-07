@@ -1,15 +1,11 @@
-#![allow(unused_variables, clippy::new_ret_no_self)]
-use std::borrow::Cow;
 use std::io::prelude::*;
-use std::{fmt, mem};
+use std::{fmt, str};
 
 use arrayref::{array_mut_ref, array_ref};
 use bitflags::bitflags;
-use byteorder::{NetworkEndian, ReadBytesExt, WriteBytesExt};
-use bytes::Bytes;
-use failure::format_err;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
+use omnom::{ReadExt, WriteExt};
 use serde::{Deserialize, Serialize};
 
 use crate::commands::{CommandData, CommandDataIterator};
@@ -87,10 +83,10 @@ pub enum CodecType {
 }
 
 /// Used for debugging.
-pub struct InUdpPacket<'a>(&'a InPacket);
+pub struct InUdpPacket<'a>(pub InPacket<'a>);
 
 impl<'a> InUdpPacket<'a> {
-	pub fn new(packet: &'a InPacket) -> Self { Self(packet) }
+	pub fn new(packet: InPacket<'a>) -> Self { Self(packet) }
 }
 
 impl<'a> fmt::Debug for InUdpPacket<'a> {
@@ -112,71 +108,27 @@ impl<'a> fmt::Debug for InUdpPacket<'a> {
 		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
 
-		write!(f, "}}, raw: {:?} }}", HexSlice(self.0.header_data()))?;
+		write!(f, "}}, content: {:?} }}", HexSlice(self.0.content))?;
 		Ok(())
 	}
 }
 
-#[derive(Debug)]
-pub(crate) struct MyBytes(Bytes);
-unsafe impl stable_deref_trait::StableDeref for MyBytes {}
-impl std::ops::Deref for MyBytes {
-	type Target = [u8];
-	fn deref(&self) -> &Self::Target { self.0.as_ref() }
+#[derive(Clone)]
+pub struct InPacket<'a> {
+	header: InHeader<'a>,
+	content: &'a [u8],
 }
 
-rental! {
-	mod rentals {
-		use std::borrow::Cow;
-		use super::*;
-
-		#[rental(covariant, debug)]
-		pub(crate) struct Packet {
-			header: MyBytes,
-			content: Cow<'header, [u8]>,
-		}
-
-		#[rental(covariant, debug)]
-		pub(crate) struct Command {
-			content: Vec<u8>,
-			data: CommandData<'content>,
-		}
-
-		#[rental(debug)]
-		pub(crate) struct S2CInit {
-			#[subrental = 2]
-			packet: Box<Packet>,
-			data: S2CInitData<'packet_1>,
-		}
-
-		#[rental(debug)]
-		pub(crate) struct C2SInit {
-			#[subrental = 2]
-			packet: Box<Packet>,
-			data: C2SInitData<'packet_1>,
-		}
-
-		#[rental(debug, covariant)]
-		pub(crate) struct Audio {
-			packet: Box<Packet>,
-			data: AudioData<'packet>,
-		}
-	}
+#[derive(Clone, Debug)]
+pub struct InHeader<'a> {
+	direction: Direction,
+	data: &'a [u8],
 }
 
-pub struct InPacket {
-	inner: rentals::Packet,
-	dir: Direction,
-}
-
-pub struct InHeader<'a>(&'a [u8], Direction);
-
-#[derive(Debug)]
-pub struct InCommand {
-	inner: rentals::Command,
-	p_type: PacketType,
-	newprotocol: bool,
-	dir: Direction,
+#[derive(Clone, Debug)]
+pub struct InCommand<'a> {
+	packet: InPacket<'a>,
+	data: CommandData<'a>,
 }
 
 #[derive(Clone, Deserialize, Eq, PartialEq, Hash, Serialize)]
@@ -190,6 +142,7 @@ pub struct OutPacket {
 /// `version` always contains the Teamspeak version as timestamp.
 ///
 /// `timestamp` contains a current timestamp.
+#[derive(Clone)]
 pub enum C2SInitData<'a> {
 	Init0 {
 		version: u32,
@@ -214,6 +167,7 @@ pub enum C2SInitData<'a> {
 	},
 }
 
+#[derive(Clone)]
 pub enum S2CInitData<'a> {
 	Init1 {
 		random1: &'a [u8; 16],
@@ -227,12 +181,19 @@ pub enum S2CInitData<'a> {
 	},
 }
 
-#[derive(Debug)]
-pub struct InS2CInit(rentals::S2CInit);
-#[derive(Debug)]
-pub struct InC2SInit(rentals::C2SInit);
+#[derive(Clone, Debug)]
+pub struct InS2CInit<'a> {
+	packet: InPacket<'a>,
+	data: S2CInitData<'a>,
+}
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
+pub struct InC2SInit<'a> {
+	packet: InPacket<'a>,
+	data: C2SInitData<'a>,
+}
+
+#[derive(Clone, Debug)]
 pub enum AudioData<'a> {
 	C2S {
 		id: u16,
@@ -270,8 +231,12 @@ pub enum AudioData<'a> {
 	},
 }
 
-#[derive(Debug)]
-pub struct InAudio(rentals::Audio);
+#[derive(Clone, Debug)]
+pub struct InAudio<'a> {
+	packet: InPacket<'a>,
+	data: AudioData<'a>,
+}
+
 
 impl Direction {
 	pub fn reverse(self) -> Self {
@@ -282,214 +247,210 @@ impl Direction {
 	}
 }
 
-impl InPacket {
+impl<'a> InPacket<'a> {
 	/// Do some sanity checks before creating the object.
-	pub fn try_new(data: Bytes, dir: Direction) -> Result<Self> {
-		let header_len = if dir == Direction::S2C {
+	#[inline]
+	pub fn try_new(direction: Direction, data: &'a [u8]) -> Result<Self> {
+		let header_len = if direction == Direction::S2C {
 			crate::S2C_HEADER_LEN
 		} else {
 			crate::C2S_HEADER_LEN
 		};
 		if data.len() < header_len {
-			return Err(format_err!("Packet too short").into());
+			return Err(Error::PacketTooShort(data.len()));
 		}
 
 		// Check packet type
-		if (data[header_len - 1] & 0xf) > 8 {
-			return Err(format_err!("Invalid packet type").into());
+		let p_type = data[header_len - 1] & 0xf;
+		if p_type > 8 {
+			return Err(Error::UnknownPacketType(p_type));
 		}
 
-		Ok(Self::new(data, dir))
+		Ok(Self::new(direction, data))
 	}
 
 	/// This method expects that `data` holds a valid packet.
 	///
 	/// If not, further function calls may panic.
-	pub fn new(data: Bytes, dir: Direction) -> Self {
+	#[inline]
+	pub fn new(direction: Direction, data: &'a [u8]) -> Self {
+		let header_len = if direction == Direction::S2C {
+			crate::S2C_HEADER_LEN
+		} else {
+			crate::C2S_HEADER_LEN
+		};
+
 		Self {
-			inner: rentals::Packet::new(MyBytes(data), |data| {
-				if dir == Direction::S2C {
-					Cow::Borrowed(&data[crate::S2C_HEADER_LEN..])
-				} else {
-					Cow::Borrowed(&data[crate::C2S_HEADER_LEN..])
-				}
-			}),
-			dir,
+			header: InHeader { direction, data: &data[..header_len] },
+			content: &data[header_len..],
 		}
 	}
 
 	#[inline]
-	fn header_data(&self) -> &[u8] { self.inner.head() }
+	fn header(&self) -> &InHeader<'a> { &self.header }
 
 	#[inline]
-	pub fn set_content(&mut self, content: Vec<u8>) {
-		self.inner.rent_mut(|c| *c = Cow::Owned(content));
-	}
-
-	#[inline]
-	pub fn content(&self) -> &[u8] { self.inner.ref_rent(|d| &**d) }
-
-	#[inline]
-	pub fn take_content(&mut self) -> Vec<u8> {
-		self.inner
-			.rent_mut(|d| mem::replace(d, Cow::Borrowed(&[])).into_owned())
-	}
-
-	#[inline]
-	pub fn header(&self) -> InHeader { InHeader(self.inner.head(), self.dir) }
-	#[inline]
-	pub fn direction(&self) -> Direction { self.dir }
+	pub fn content(&self) -> &[u8] { self.content }
 
 	/// Get the acknowledged packet id if this is an ack packet.
 	#[inline]
 	pub fn ack_packet(&self) -> Option<u16> {
 		let p_type = self.header().packet_type();
 		if p_type.is_ack() {
-			self.content().read_u16::<NetworkEndian>().ok()
+			self.content().read_be().ok()
 		} else {
 			None
 		}
 	}
 
 	/// Parse this packet into a voice packet.
-	pub fn into_audio(self) -> Result<InAudio> {
+	pub fn into_audio(self) -> Result<InAudio<'a>> {
 		let p_type = self.header().packet_type();
 		let newprotocol = self.header().flags().contains(Flags::NEWPROTOCOL);
-		let dir = self.dir;
-		let id = self.content().read_u16::<NetworkEndian>()?;
+		let data = AudioData::parse(p_type, newprotocol, self.header.direction, self.content)?;
 
-		Ok(InAudio(rentals::Audio::try_new_or_drop(
-			Box::new(self.inner),
-			|p| -> Result<_> {
-				let content = p.suffix();
-				AudioData::parse(p_type, newprotocol, dir, content)
-			},
-		)?))
+		Ok(InAudio {
+			packet: self,
+			data,
+		})
 	}
 
-	pub fn into_s2cinit(self) -> Result<InS2CInit> {
-		if self.dir != Direction::S2C {
-			return Err(format_err!("Wrong direction").into());
-		}
-		if self.header().packet_type() != PacketType::Init {
-			return Err(format_err!("Not an init packet").into());
-		}
-		if self.header().mac() != b"TS3INIT1" {
-			return Err(format_err!("Wrong init packet mac").into());
-		}
+	/// Parse this packet into a command packet.
+	pub fn into_command(self) -> Result<InCommand<'a>> {
+		let s = str::from_utf8(self.content)?;
+		let data = crate::commands::parse_command(s)?;
 
-		Ok(InS2CInit(rentals::S2CInit::try_new_or_drop(
-			Box::new(self.inner),
-			|p| -> Result<_> {
-				let content = &p.content;
-				if content.len() < 1 {
-					return Err(format_err!("Packet too short").into());
-				}
-
-				if content[0] == 1 {
-					if content.len() < 21 {
-						return Err(format_err!("Packet too short").into());
-					}
-					Ok(S2CInitData::Init1 {
-						random1: array_ref!(content, 1, 16),
-						random0_r: array_ref!(content, 17, 4),
-					})
-				} else if content[0] == 3 {
-					if content.len() < 233 {
-						return Err(format_err!("Packet too short").into());
-					}
-					Ok(S2CInitData::Init3 {
-						x: array_ref!(content, 1, 64),
-						n: array_ref!(content, 65, 64),
-						level: (&content[129..]).read_u32::<NetworkEndian>()?,
-						random2: array_ref!(content, 133, 100),
-					})
-				} else {
-					Err(format_err!("Invalid init step").into())
-				}
-			},
-		)?))
+		Ok(InCommand {
+			packet: self,
+			data,
+		})
 	}
 
-	pub fn into_c2sinit(self) -> std::result::Result<InC2SInit, (Self, Error)> {
-		if self.dir != Direction::C2S {
-			return Err((self, format_err!("Wrong direction").into()));
+	pub fn into_s2cinit(self) -> Result<InS2CInit<'a>> {
+		if self.header.direction != Direction::S2C {
+			return Err(Error::WrongDirection);
 		}
-		if self.header().packet_type() != PacketType::Init {
-			return Err((self, format_err!("Not an init packet").into()));
+		let p_type = self.header().packet_type();
+		if p_type != PacketType::Init {
+			return Err(Error::WrongPacketType(p_type));
 		}
-		if self.header().mac() != b"TS3INIT1" {
-			return Err((self, format_err!("Wrong init packet mac").into()));
+		let mac = self.header().mac();
+		if mac != b"TS3INIT1" {
+			return Err(Error::WrongInitMac(mac.to_vec()));
 		}
 
-		let dir = self.dir;
-		Ok(InC2SInit(
-			rentals::C2SInit::try_new(Box::new(self.inner), |p| {
-				let content = &p.content;
-				if content.len() < 5 {
-					return Err(format_err!("Packet too short"));
-				}
+		if self.content.len() < 1 {
+			return Err(Error::PacketContentTooShort(self.content.len()));
+		}
 
-				let version = (&content[0..]).read_u32::<NetworkEndian>()?;
-				if content[4] == 0 {
-					if content.len() < 13 {
-						return Err(format_err!("Packet too short"));
-					}
-					Ok(C2SInitData::Init0 {
-						version,
-						timestamp: (&content[5..])
-							.read_u32::<NetworkEndian>()?,
-						random0: array_ref!(content, 9, 4),
-					})
-				} else if content[4] == 2 {
-					if content.len() < 25 {
-						return Err(format_err!("Packet too short"));
-					}
-					Ok(C2SInitData::Init2 {
-						version,
-						random1: array_ref!(content, 5, 16),
-						random0_r: array_ref!(content, 21, 4),
-					})
-				} else if content[4] == 4 {
-					let len = 5 + 128 + 4 + 100 + 64;
-					if content.len() < len + 20 {
-						return Err(format_err!("Packet too short"));
-					}
-					let s = std::str::from_utf8(&content[len..])?;
-					let command = crate::commands::parse_command(s)?;
-					Ok(C2SInitData::Init4 {
-						version,
-						x: array_ref!(content, 5, 64),
-						n: array_ref!(content, 69, 64),
-						level: (&content[128 + 5..])
-							.read_u32::<NetworkEndian>()?,
-						random2: array_ref!(content, 128 + 9, 100),
-						y: array_ref!(content, 228 + 9, 64),
-						command,
-					})
-				} else {
-					Err(format_err!("Invalid init step"))
-				}
-			})
-			.map_err(|r| (Self { inner: *r.1, dir }, r.0.into()))?,
-		))
+		let data;
+		if self.content[0] == 1 {
+			if self.content.len() < 21 {
+				return Err(Error::PacketContentTooShort(self.content.len()));
+			}
+			data = S2CInitData::Init1 {
+				random1: array_ref!(self.content, 1, 16),
+				random0_r: array_ref!(self.content, 17, 4),
+			};
+		} else if self.content[0] == 3 {
+			if self.content.len() < 233 {
+				return Err(Error::PacketContentTooShort(self.content.len()));
+			}
+			data = S2CInitData::Init3 {
+				x: array_ref!(self.content, 1, 64),
+				n: array_ref!(self.content, 65, 64),
+				level: (&self.content[129..]).read_be()?,
+				random2: array_ref!(self.content, 133, 100),
+			};
+		} else {
+			return Err(Error::InvalidInitStep(self.content[0]));
+		}
+
+		Ok(InS2CInit {
+			packet: self,
+			data,
+		})
+	}
+
+	pub fn into_c2sinit(self) -> Result<InC2SInit<'a>> {
+		if self.header.direction != Direction::C2S {
+			return Err(Error::WrongDirection);
+		}
+		let p_type = self.header().packet_type();
+		if p_type != PacketType::Init {
+			return Err(Error::WrongPacketType(p_type));
+		}
+		let mac = self.header().mac();
+		if mac != b"TS3INIT1" {
+			return Err(Error::WrongInitMac(mac.to_vec()));
+		}
+
+		if self.content.len() < 5 {
+			return Err(Error::PacketContentTooShort(self.content.len()));
+		}
+
+		let data;
+		let version = (&self.content[0..]).read_be()?;
+		if self.content[4] == 0 {
+			if self.content.len() < 13 {
+				return Err(Error::PacketContentTooShort(self.content.len()));
+			}
+			data = C2SInitData::Init0 {
+				version,
+				timestamp: (&self.content[5..])
+					.read_be()?,
+				random0: array_ref!(self.content, 9, 4),
+			};
+		} else if self.content[4] == 2 {
+			if self.content.len() < 25 {
+				return Err(Error::PacketContentTooShort(self.content.len()));
+			}
+			data = C2SInitData::Init2 {
+				version,
+				random1: array_ref!(self.content, 5, 16),
+				random0_r: array_ref!(self.content, 21, 4),
+			};
+		} else if self.content[4] == 4 {
+			let len = 5 + 128 + 4 + 100 + 64;
+			if self.content.len() < len + 20 {
+				return Err(Error::PacketContentTooShort(self.content.len()));
+			}
+			let s = str::from_utf8(&self.content[len..])?;
+			let command = crate::commands::parse_command(s)?;
+			data = C2SInitData::Init4 {
+				version,
+				x: array_ref!(self.content, 5, 64),
+				n: array_ref!(self.content, 69, 64),
+				level: (&self.content[128 + 5..])
+					.read_be()?,
+				random2: array_ref!(self.content, 128 + 9, 100),
+				y: array_ref!(self.content, 228 + 9, 64),
+				command,
+			};
+		} else {
+			return Err(Error::InvalidInitStep(self.content[0]));
+		}
+
+		Ok(InC2SInit {
+			packet: self,
+			data,
+		})
 	}
 }
 
-impl fmt::Debug for InPacket {
+impl fmt::Debug for InPacket<'_> {
 	#[rustfmt::skip]
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "Packet {{ header: {{ ")?;
 
-		let header = self.header();
-		write!(f, "mac: {:?}, ", HexSlice(header.mac()))?;
-		write!(f, "p_id: {}, ", header.packet_id())?;
-		if let Some(c_id) = header.client_id() {
+		write!(f, "mac: {:?}, ", HexSlice(self.header.mac()))?;
+		write!(f, "p_id: {}, ", self.header.packet_id())?;
+		if let Some(c_id) = self.header.client_id() {
 			write!(f, "c_id: {}, ", c_id)?;
 		}
-		write!(f, "type: {:?}, ", header.packet_type())?;
+		write!(f, "type: {:?}, ", self.header.packet_type())?;
 		write!(f, "flags: ")?;
-		let flags = header.flags();
+		let flags = self.header.flags();
 		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
@@ -504,45 +465,36 @@ impl<'a> InHeader<'a> {
 	/// The offset to the packet type.
 	#[inline]
 	fn get_off(&self) -> usize {
-		if self.1 == Direction::S2C { 10 } else { 12 }
+		if self.direction == Direction::S2C { 10 } else { 12 }
 	}
 
 	#[inline]
-	pub fn mac(&self) -> &[u8; 8] { array_ref![self.0, 0, 8] }
+	pub fn mac(&self) -> &'a [u8; 8] { array_ref![self.data, 0, 8] }
 
 	#[inline]
-	pub fn packet_id(&self) -> u16 {
-		(&self.0[8..10]).read_u16::<NetworkEndian>().unwrap()
-	}
+	pub fn packet_id(&self) -> u16 { (&self.data[8..10]).read_be().unwrap() }
 
 	#[inline]
 	pub fn client_id(&self) -> Option<u16> {
-		if self.1 == Direction::S2C {
+		if self.direction == Direction::S2C {
 			None
 		} else {
-			Some((&self.0[10..12]).read_u16::<NetworkEndian>().unwrap())
+			Some((&self.data[10..12]).read_be().unwrap())
 		}
 	}
 
 	#[inline]
 	pub fn flags(&self) -> Flags {
-		Flags::from_bits(self.0[self.get_off()] & 0xf0).unwrap()
+		Flags::from_bits(self.data[self.get_off()] & 0xf0).unwrap()
 	}
 
 	#[inline]
 	pub fn packet_type(&self) -> PacketType {
-		PacketType::from_u8(self.0[self.get_off()] & 0xf).unwrap()
+		PacketType::from_u8(self.data[self.get_off()] & 0xf).unwrap()
 	}
 
-	pub fn get_meta(&self) -> Vec<u8> {
-		let mut res = Vec::with_capacity(5);
-		res.write_u16::<NetworkEndian>(self.packet_id()).unwrap();
-		if let Some(c_id) = self.client_id() {
-			res.write_u16::<NetworkEndian>(c_id).unwrap();
-		}
-		// Packet type and flags
-		res.write_u8(self.0[self.get_off()]).unwrap();
-		res
+	pub fn get_meta(&self) -> &'a [u8] {
+		&self.data[8..]
 	}
 }
 
@@ -565,76 +517,21 @@ impl<'a> fmt::Debug for S2CInitData<'a> {
 	}
 }
 
-impl InS2CInit {
+impl<'a> InCommand<'a> {
 	#[inline]
-	pub fn with_data<R, F: FnOnce(&S2CInitData) -> R>(&self, f: F) -> R {
-		self.0.rent(f)
-	}
-}
-
-impl InC2SInit {
-	#[inline]
-	pub fn with_data<R, F: FnOnce(&C2SInitData) -> R>(&self, f: F) -> R {
-		self.0.rent(f)
-	}
+	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
 
 	#[inline]
-	pub fn into_packet(self) -> InPacket {
-		InPacket { inner: *self.0.into_head(), dir: Direction::C2S }
-	}
-}
-
-impl InCommand {
-	pub fn new(
-		content: Vec<u8>,
-		p_type: PacketType,
-		newprotocol: bool,
-		dir: Direction,
-	) -> std::result::Result<Self, (Vec<u8>, Error)>
-	{
-		let inner = rentals::Command::try_new(content, |c| {
-			let s = std::str::from_utf8(c)?;
-			crate::commands::parse_command(s)
-		})
-		.map_err(|e| (e.1, e.0))?;
-		Ok(Self { inner, p_type, newprotocol, dir })
-	}
-
-	pub fn with_content(
-		packet: &InPacket,
-		content: Vec<u8>,
-	) -> std::result::Result<Self, (Vec<u8>, Error)>
-	{
-		let header = packet.header();
-		Self::new(
-			content,
-			header.packet_type(),
-			header.flags().contains(Flags::NEWPROTOCOL),
-			packet.dir,
-		)
-	}
-
-	#[inline]
-	pub fn content(&self) -> &[u8] { self.inner.head() }
-	#[inline]
-	pub fn packet_type(&self) -> PacketType { self.p_type }
-	#[inline]
-	pub fn newprotocol(&self) -> bool { self.newprotocol }
-	#[inline]
-	pub fn direction(&self) -> Direction { self.dir }
-	#[inline]
-	pub fn name(&self) -> &str { self.inner.ref_rent(|d| d.name) }
-	#[inline]
-	pub fn data(&self) -> &CommandData { self.inner.suffix() }
+	pub fn data(&self) -> &CommandData { &self.data }
 
 	#[inline]
 	pub fn iter(&self) -> CommandDataIterator { self.into_iter() }
 }
 
-impl<'a> IntoIterator for &'a InCommand {
+impl<'a> IntoIterator for &'a InCommand<'_> {
 	type Item = crate::commands::CanonicalCommand<'a>;
 	type IntoIter = CommandDataIterator<'a>;
-	fn into_iter(self) -> Self::IntoIter { self.inner.suffix().iter() }
+	fn into_iter(self) -> Self::IntoIter { self.data.iter() }
 }
 
 impl<'a> AudioData<'a> {
@@ -645,68 +542,62 @@ impl<'a> AudioData<'a> {
 		content: &'a [u8],
 	) -> Result<Self>
 	{
-		let id = (&content[..]).read_u16::<NetworkEndian>()?;
+		let id = (&content[..]).read_be()?;
 		if p_type == PacketType::Voice {
 			if dir == Direction::S2C {
 				if content.len() < 5 {
-					return Err(format_err!("Voice packet too short").into());
+					return Err(Error::PacketContentTooShort(content.len()));
 				}
 				Ok(AudioData::S2C {
 					id,
-					from: (&content[2..]).read_u16::<NetworkEndian>()?,
+					from: (&content[2..]).read_be()?,
 					codec: CodecType::from_u8(content[4])
-						.ok_or_else::<Error, _>(|| {
-							format_err!("Invalid codec").into()
-						})?,
+						.ok_or_else(|| Error::InvalidCodec(content[4]))?,
 					data: &content[5..],
 				})
 			} else {
 				if content.len() < 3 {
-					return Err(format_err!("Voice packet too short").into());
+					return Err(Error::PacketContentTooShort(content.len()));
 				}
 				Ok(AudioData::C2S {
 					id,
 					codec: CodecType::from_u8(content[2])
-						.ok_or_else::<Error, _>(|| {
-							format_err!("Invalid codec").into()
-						})?,
+						.ok_or_else(|| Error::InvalidCodec(content[4]))?,
 					data: &content[3..],
 				})
 			}
 		} else if dir == Direction::S2C {
 			if content.len() < 5 {
-				return Err(format_err!("Voice packet too short").into());
+				return Err(Error::PacketContentTooShort(content.len()));
 			}
 			Ok(AudioData::S2CWhisper {
 				id,
-				from: (&content[2..]).read_u16::<NetworkEndian>()?,
-				codec: CodecType::from_u8(content[4]).ok_or_else::<Error, _>(
-					|| format_err!("Invalid codec").into(),
-				)?,
+				from: (&content[2..]).read_be()?,
+				codec: CodecType::from_u8(content[4])
+					.ok_or_else(|| Error::InvalidCodec(content[4]))?,
 				data: &content[5..],
 			})
 		} else {
 			if content.len() < 3 {
-				return Err(format_err!("Voice packet too short").into());
+				return Err(Error::PacketContentTooShort(content.len()));
 			}
-			let codec = CodecType::from_u8(content[2]).ok_or_else::<Error, _>(
-				|| format_err!("Invalid codec").into(),
-			)?;
+			let codec = CodecType::from_u8(content[2])
+				.ok_or_else(|| Error::InvalidCodec(content[4]))?;
 			if newprotocol {
 				if content.len() < 14 {
-					return Err(format_err!("Voice packet too short").into());
+					return Err(Error::PacketContentTooShort(content.len()));
 				}
 				Ok(AudioData::C2SWhisperNew {
 					id,
 					codec,
 					whisper_type: content[3],
 					target: content[4],
-					target_id: (&content[5..]).read_u64::<NetworkEndian>()?,
+					target_id: (&content[5..]).read_be()?,
 					data: &content[13..],
 				})
 			} else {
 				if content.len() < 5 {
-					return Err(format_err!("Voice packet too short").into());
+					return Err(Error::PacketContentTooShort(content.len()));
 				}
 				let channel_count = content[3] as usize;
 				let client_count = content[4] as usize;
@@ -714,7 +605,7 @@ impl<'a> AudioData<'a> {
 				let client_off = channel_off + channel_count * 8;
 				let off = client_off + client_count * 2;
 				if content.len() < off {
-					return Err(format_err!("Voice packet too short").into());
+					return Err(Error::PacketContentTooShort(content.len()));
 				}
 
 				Ok(AudioData::C2SWhisper {
@@ -723,13 +614,13 @@ impl<'a> AudioData<'a> {
 					channels: (0..channel_count)
 						.map(|i| {
 							(&content[channel_off + i * 8..])
-								.read_u64::<NetworkEndian>()
+								.read_be()
 						})
 						.collect::<::std::result::Result<Vec<_>, _>>()?,
 					clients: (0..client_count)
 						.map(|i| {
 							(&content[client_off + i * 2..])
-								.read_u16::<NetworkEndian>()
+								.read_be()
 						})
 						.collect::<::std::result::Result<Vec<_>, _>>()?,
 					data: &content[off..],
@@ -794,9 +685,11 @@ impl<'a> AudioData<'a> {
 	}
 }
 
-impl InAudio {
+impl<'a> InAudio<'a> {
 	#[inline]
-	pub fn data(&self) -> &AudioData { self.0.suffix() }
+	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
+	#[inline]
+	pub fn data(&self) -> &AudioData { &self.data }
 }
 
 impl OutPacket {
@@ -871,7 +764,7 @@ impl OutPacket {
 	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
-	pub fn header(&self) -> InHeader { InHeader(&self.data, self.dir) }
+	pub fn header(&self) -> InHeader { InHeader { direction: self.dir, data: self.header_bytes() } }
 	#[inline]
 	pub fn header_bytes(&self) -> &[u8] { &self.data[..self.content_offset()] }
 
@@ -879,13 +772,13 @@ impl OutPacket {
 	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
 	#[inline]
 	pub fn packet_id(&mut self, packet_id: u16) {
-		(&mut self.data[8..10]).write_u16::<NetworkEndian>(packet_id).unwrap();
+		(&mut self.data[8..10]).write_be(packet_id).unwrap();
 	}
 	#[inline]
 	pub fn client_id(&mut self, client_id: u16) {
 		// Client id is only valid for client to server packets.
 		assert_eq!(self.dir, Direction::C2S);
-		(&mut self.data[10..12]).write_u16::<NetworkEndian>(client_id).unwrap();
+		(&mut self.data[10..12]).write_be(client_id).unwrap();
 	}
 	#[inline]
 	pub fn flags(&mut self, flags: Flags) {
@@ -1051,9 +944,9 @@ impl OutC2SInit0 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_u32::<NetworkEndian>(version).unwrap();
-		content.write_u8(0).unwrap();
-		content.write_u32::<NetworkEndian>(timestamp).unwrap();
+		content.write_be(version).unwrap();
+		content.write_be(0).unwrap();
+		content.write_be(timestamp).unwrap();
 		content.write_all(&random0).unwrap();
 		// Reserved
 		content.write_all(&[0u8; 8]).unwrap();
@@ -1077,8 +970,8 @@ impl OutC2SInit2 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_u32::<NetworkEndian>(version).unwrap();
-		content.write_u8(2).unwrap();
+		content.write_be(version).unwrap();
+		content.write_be(2).unwrap();
 		content.write_all(random1).unwrap();
 		content.write_all(&random0_r).unwrap();
 		res
@@ -1107,11 +1000,11 @@ impl OutC2SInit4 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_u32::<NetworkEndian>(version).unwrap();
-		content.write_u8(4).unwrap();
+		content.write_be(version).unwrap();
+		content.write_be(4).unwrap();
 		content.write_all(x).unwrap();
 		content.write_all(n).unwrap();
-		content.write_u32::<NetworkEndian>(level).unwrap();
+		content.write_be(level).unwrap();
 		content.write_all(random2).unwrap();
 		content.write_all(y).unwrap();
 		let ip = if ip.is_empty() { String::new() } else { format!("={}", ip) };
@@ -1141,7 +1034,7 @@ impl OutS2CInit1 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_u8(1).unwrap();
+		content.write_be(1).unwrap();
 		content.write_all(random1).unwrap();
 		content.write_all(&random0_r).unwrap();
 		res
@@ -1165,10 +1058,10 @@ impl OutS2CInit3 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_u8(3).unwrap();
+		content.write_be(3).unwrap();
 		content.write_all(x).unwrap();
 		content.write_all(n).unwrap();
-		content.write_u32::<NetworkEndian>(level).unwrap();
+		content.write_be(level).unwrap();
 		content.write_all(random2).unwrap();
 		res
 	}
@@ -1195,7 +1088,7 @@ impl OutAck {
 
 		let mut res = OutPacket::new_with_dir(dir, Flags::empty(), p_type);
 		let content = res.data_mut();
-		content.write_u16::<NetworkEndian>(packet_id).unwrap();
+		content.write_be(packet_id).unwrap();
 		res
 	}
 }
@@ -1210,24 +1103,24 @@ impl OutAudio {
 		);
 		let content = res.data_mut();
 
-		content.write_u16::<NetworkEndian>(data.id()).unwrap();
+		content.write_be(data.id()).unwrap();
 		match data {
 			AudioData::C2S { codec, data, .. } => {
-				content.write_u8(codec.to_u8().unwrap()).unwrap();
+				content.write_be(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);
 			}
 			AudioData::C2SWhisper {
 				codec, channels, clients, data, ..
 			} => {
-				content.write_u8(codec.to_u8().unwrap()).unwrap();
-				content.write_u8(channels.len() as u8).unwrap();
-				content.write_u8(clients.len() as u8).unwrap();
+				content.write_be(codec.to_u8().unwrap()).unwrap();
+				content.write_be(channels.len() as u8).unwrap();
+				content.write_be(clients.len() as u8).unwrap();
 
 				for c in channels {
-					content.write_u64::<NetworkEndian>(*c).unwrap();
+					content.write_be(*c).unwrap();
 				}
 				for c in clients {
-					content.write_u16::<NetworkEndian>(*c).unwrap();
+					content.write_be(*c).unwrap();
 				}
 				content.extend_from_slice(data);
 			}
@@ -1239,16 +1132,16 @@ impl OutAudio {
 				data,
 				..
 			} => {
-				content.write_u8(codec.to_u8().unwrap()).unwrap();
-				content.write_u8(whisper_type.to_u8().unwrap()).unwrap();
-				content.write_u8(*target).unwrap();
-				content.write_u64::<NetworkEndian>(*target_id).unwrap();
+				content.write_be(codec.to_u8().unwrap()).unwrap();
+				content.write_be(whisper_type.to_u8().unwrap()).unwrap();
+				content.write_be(*target).unwrap();
+				content.write_be(*target_id).unwrap();
 				content.extend_from_slice(data);
 			}
 			AudioData::S2C { from, codec, data, .. }
 			| AudioData::S2CWhisper { from, codec, data, .. } => {
-				content.write_u16::<NetworkEndian>(*from).unwrap();
-				content.write_u8(codec.to_u8().unwrap()).unwrap();
+				content.write_be(*from).unwrap();
+				content.write_be(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);
 			}
 		}

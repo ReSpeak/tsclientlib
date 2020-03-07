@@ -8,7 +8,6 @@ use futures::sync::mpsc;
 use futures::{future, Future, IntoFuture, Sink};
 use num_traits::ToPrimitive;
 use slog::{error, o, warn, Logger};
-use tokio;
 use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
