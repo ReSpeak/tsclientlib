@@ -114,7 +114,18 @@ impl InnerLicense {
 impl Licenses {
 	pub fn new() -> Self { Self::default() }
 
-	pub fn parse(mut data: &[u8]) -> Result<Self> {
+	/// Parse a license but ignore expired licenses.
+	///
+	/// This is useful for tests but should not be used otherwise.
+	pub fn parse_ignore_expired(data: &[u8]) -> Result<Self> {
+		Self::parse_internal(data, false)
+	}
+
+	pub fn parse(data: &[u8]) -> Result<Self> {
+		Self::parse_internal(data, true)
+	}
+
+	fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
 		let version = data[0];
 		if version != 1 {
 			return Err(format_err!("Unsupported version").into());
@@ -135,10 +146,10 @@ impl Licenses {
 			let (license, len) = License::parse(data)?;
 
 			// Check if the certificate is valid
-			if license.not_valid_before > now {
+			if license.not_valid_before > now && check_expired {
 				return Err(format_err!("License is not yet valid").into());
 			}
-			if license.not_valid_after < now {
+			if license.not_valid_after < now && check_expired {
 				return Err(format_err!("License expired").into());
 			}
 			if let Some((start, end)) = bounds {

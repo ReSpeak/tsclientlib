@@ -37,7 +37,7 @@ num-derive = "0.3"
 num-traits = "0.2"
 rand = "0.7"
 flakebi-ring = "0.16.9"
-rug = { version = "1", optional = true }
+rug = { version = "1", optional = true, default-features = false, features = ["integer"] }
 serde = { version = "1", features = ["derive"] }
 simple_asn1 = "0.4"
 slog-async = "2"
@@ -70,6 +70,10 @@ harness = false
 
 [[bench]]
 name = "connect"
+harness = false
+
+[[bench]]
+name = "license"
 harness = false
 
 [[bench]]

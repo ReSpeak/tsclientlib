@@ -601,16 +601,7 @@ impl<IPH: PacketHandler<ServerConnectionData> + 'static>
 											Order::Msf,
 										);
 										e.set_bit(level, true);
-										let y = match x.pow_mod(&e, &n) {
-											Ok(r) => r,
-											Err(_) => {
-												return Err(format_err!(
-													"Failed to solve RSA \
-													 challenge"
-												)
-												.into());
-											}
-										};
+										let y = x.pow_mod(&e, &n).unwrap();
 										let mut yi = [0; 64];
 										y.write_digits(&mut yi, Order::Msf);
 										yi

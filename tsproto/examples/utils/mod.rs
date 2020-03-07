@@ -122,7 +122,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 				"clientinit",
 				vec![
 					("client_nickname", "Bot"),
-					("client_version", "3.1.8 [Build: 1516614607]"),
+					("client_version", "3.?.? [Build: 5680278000]"),
 					("client_platform", "Linux"),
 					("client_input_hardware", "1"),
 					("client_output_hardware", "1"),
@@ -132,8 +132,7 @@ pub fn connect<PH: PacketHandler<ServerConnectionData>>(
 					("client_meta_data", ""),
 					(
 						"client_version_sign",
-						"LJ5q+KWT4KwBX7oR\\/\
-						 9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==",
+						"Hjd+N58Gv3ENhoKmGYy2bNRBsNNgm5kpiaQWxOj5HN2DXttG6REjymSwJtpJ8muC2gSwRuZi0R+8Laan5ts5CQ==",
 					),
 					("client_nickname_phonetic", ""),
 					("client_key_offset", &offset),

@@ -1,13 +1,6 @@
-#[macro_use]
-extern crate criterion;
-extern crate futures;
-#[macro_use]
-extern crate slog;
-extern crate tokio;
-extern crate tsproto;
-
-use criterion::{Bencher, Benchmark, Criterion};
+use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
 use futures::{future, Future};
+use slog::{info, o};
 
 mod utils;
 use crate::utils::*;
