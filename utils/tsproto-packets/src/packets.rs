@@ -131,6 +131,12 @@ pub struct InCommand<'a> {
 	data: CommandData<'a>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Hash, Serialize)]
+pub struct OutUdpPacket {
+	generation_id: u32,
+	data: OutPacket,
+}
+
 #[derive(Clone, Deserialize, Eq, PartialEq, Hash, Serialize)]
 pub struct OutPacket {
 	dir: Direction,
@@ -239,6 +245,7 @@ pub struct InAudio<'a> {
 
 
 impl Direction {
+	#[inline]
 	pub fn reverse(self) -> Self {
 		match self {
 			Direction::S2C => Direction::C2S,
@@ -274,21 +281,17 @@ impl<'a> InPacket<'a> {
 	/// If not, further function calls may panic.
 	#[inline]
 	pub fn new(direction: Direction, data: &'a [u8]) -> Self {
-		let header_len = if direction == Direction::S2C {
-			crate::S2C_HEADER_LEN
-		} else {
-			crate::C2S_HEADER_LEN
-		};
+		let header = InHeader::new(direction, data);
+		let header_len = header.data.len();
 
 		Self {
-			header: InHeader { direction, data: &data[..header_len] },
+			header,
 			content: &data[header_len..],
 		}
 	}
 
 	#[inline]
-	fn header(&self) -> &InHeader<'a> { &self.header }
-
+	pub fn header(&self) -> &InHeader<'a> { &self.header }
 	#[inline]
 	pub fn content(&self) -> &[u8] { self.content }
 
@@ -462,6 +465,17 @@ impl fmt::Debug for InPacket<'_> {
 }
 
 impl<'a> InHeader<'a> {
+	#[inline]
+	pub fn new(direction: Direction, data: &'a [u8]) -> Self {
+		let header_len = if direction == Direction::S2C {
+			crate::S2C_HEADER_LEN
+		} else {
+			crate::C2S_HEADER_LEN
+		};
+
+		Self { direction, data: &data[..header_len] }
+	}
+
 	/// The offset to the packet type.
 	#[inline]
 	fn get_off(&self) -> usize {
@@ -469,8 +483,9 @@ impl<'a> InHeader<'a> {
 	}
 
 	#[inline]
+	pub fn data(&self) -> &'a [u8] { self.data }
+	#[inline]
 	pub fn mac(&self) -> &'a [u8; 8] { array_ref![self.data, 0, 8] }
-
 	#[inline]
 	pub fn packet_id(&self) -> u16 { (&self.data[8..10]).read_be().unwrap() }
 
@@ -753,6 +768,8 @@ impl OutPacket {
 	}
 
 	#[inline]
+	pub fn data(&self) -> &[u8] { &self.data }
+	#[inline]
 	pub fn data_mut(&mut self) -> &mut Vec<u8> { &mut self.data }
 	#[inline]
 	pub fn content(&self) -> &[u8] { &self.data[self.content_offset()..] }
@@ -814,6 +831,33 @@ impl fmt::Debug for OutPacket {
 		write!(f, "}}, content: {:?} }}", HexSlice(self.content()))?;
 		Ok(())
 	}
+}
+
+impl OutUdpPacket {
+	#[inline]
+	pub fn new(generation_id: u32, data: OutPacket) -> Self {
+		Self { generation_id, data }
+	}
+
+	#[inline]
+	pub fn generation_id(&self) -> u32 { self.generation_id }
+	#[inline]
+	pub fn data(&self) -> &OutPacket { &self.data }
+
+	#[inline]
+	pub fn packet_id(&self) -> u16 {
+		if self.packet_type() == PacketType::Init {
+			if self.data.dir == Direction::S2C {
+				u16::from(self.data.content()[0])
+			} else {
+				u16::from(self.data.content()[4])
+			}
+		} else {
+			self.data.header().packet_id()
+		}
+	}
+	#[inline]
+	pub fn packet_type(&self) -> PacketType { self.data.header().packet_type() }
 }
 
 pub struct OutCommand;

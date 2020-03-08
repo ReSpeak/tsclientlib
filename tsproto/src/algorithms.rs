@@ -3,17 +3,19 @@ use std::u64;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use byteorder::{NetworkEndian, WriteBytesExt};
+use omnom::WriteExt;
 use curve25519_dalek::edwards::EdwardsPoint;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use quicklz::CompressionLevel;
 use ring::digest;
 
-use crate::connection::{CachedKey, SharedIv};
+use crate::connection::CachedKey;
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use crate::{Error, Result};
+use crate::BasicError;
 use tsproto_packets::packets::*;
+
+type Result<T> = std::result::Result<T, BasicError>;
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -126,7 +128,7 @@ fn create_key_nonce(
 	c_id: Option<u16>,
 	p_id: u16,
 	generation_id: u32,
-	iv: &SharedIv,
+	iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> (GenericArray<u8, U16>, GenericArray<u8, U16>)
 {
@@ -142,20 +144,10 @@ fn create_key_nonce(
 			temp[0] = 0x30;
 		}
 		temp[1] = p_type.to_u8().unwrap();
-		(&mut temp[2..6]).write_u32::<NetworkEndian>(generation_id).unwrap();
-		let len;
-		match iv {
-			SharedIv::ProtocolOrig(data) => {
-				temp[6..26].copy_from_slice(data);
-				len = 26;
-			}
-			SharedIv::Protocol31(data) => {
-				temp[6..].copy_from_slice(data);
-				len = 70;
-			}
-		}
+		(&mut temp[2..6]).write_be(generation_id).unwrap();
+		temp[6..].copy_from_slice(iv);
 
-		let keynonce = digest::digest(&digest::SHA256, &temp[..len]);
+		let keynonce = digest::digest(&digest::SHA256, &temp[..]);
 		let keynonce = keynonce.as_ref();
 		cache.generation_id = generation_id;
 		cache.key.copy_from_slice(&keynonce[..16]);
@@ -176,7 +168,7 @@ pub fn encrypt_key_nonce(
 	nonce: &GenericArray<u8, U16>,
 ) -> Result<()>
 {
-	let meta = packet.header().get_meta();
+	let meta = packet.header().get_meta().to_vec();
 	let mac = eax::Eax::<aes::Aes128>::encrypt(
 		key,
 		nonce,
@@ -198,7 +190,7 @@ pub fn encrypt_fake(packet: &mut OutPacket) -> Result<()> {
 pub fn encrypt(
 	packet: &mut OutPacket,
 	generation_id: u32,
-	iv: &SharedIv,
+	iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<()>
 {
@@ -232,7 +224,11 @@ pub fn decrypt_key_nonce(
 		header.mac(),
 	)
 	.map(|()| content)
-	.map_err(|_| Error::WrongMac(header.packet_type(), 0, header.packet_id()))
+	.map_err(|_| BasicError::WrongMac {
+		p_type: header.packet_type(),
+		generation_id: 0,
+		packet_id: header.packet_id(),
+	})
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
@@ -246,7 +242,7 @@ pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
 pub fn decrypt(
 	packet: &InPacket,
 	generation_id: u32,
-	iv: &SharedIv,
+	iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<Vec<u8>>
 {
@@ -260,8 +256,8 @@ pub fn decrypt(
 		cache,
 	);
 	decrypt_key_nonce(packet, &key, &nonce).map_err(|e| {
-		if let Error::WrongMac(t, _, i) = e {
-			Error::WrongMac(t, generation_id, i)
+		if let BasicError::WrongMac { p_type, packet_id, .. } = e {
+			BasicError::WrongMac { p_type, generation_id, packet_id }
 		} else {
 			e
 		}

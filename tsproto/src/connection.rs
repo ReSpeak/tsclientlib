@@ -1,24 +1,25 @@
-use std::fmt;
+use std::collections::VecDeque;
+use std::mem;
 use std::net::SocketAddr;
-use std::{u16, u64};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::u16;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use bytes::Bytes;
-use failure::format_err;
+use anyhow::{bail, format_err, Context as _};
 use futures::prelude::*;
+use futures::stream::FuturesUnordered;
 use num_traits::ToPrimitive;
-use serde::de::{Unexpected, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tokio::sync::mpsc;
-use tsproto_packets::packets::*;
+use slog::{o, Logger};
+use tokio::net::UdpSocket;
 use tsproto_packets::HexSlice;
+use tsproto_packets::packets::*;
 
-use crate::algorithms as algs;
-use crate::crypto::{EccKeyPrivP256, EccKeyPubP256};
-use crate::handler_data::{ConnectionValue, ConnectionValueWeak};
-use crate::resend::DefaultResender;
-use crate::{Error, Result};
+use crate::{Error, MAX_UDP_PACKET_LENGTH, Result, UDP_SINK_CAPACITY};
+use crate::crypto::EccKeyPubP256;
+use crate::packet_codec::{PacketCodecReceiver, PacketCodecSender};
+use crate::resend::{DefaultResender, ResenderState};
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -30,7 +31,6 @@ pub struct CachedKey {
 }
 
 /// Data that has to be stored for a connection when it is connected.
-#[derive(Debug)]
 pub struct ConnectedParams {
 	/// The client id of this connection.
 	pub c_id: u16,
@@ -49,29 +49,34 @@ pub struct ConnectedParams {
 }
 
 /// An event that originates from a tsproto raw connection.
-///
-/// The event may borrow the connection so the buffer can be reused.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum Event<'a> {
-	/// The connection has been established and `ConnectedParams` are available.
-	Connected,
-	/// The other side did not react to pings for a long time or did not
-	/// acknowledge packets. This connection is marked as dead and should be
-	/// removed.
-	Disconnected,
-	ReceiveUdpPacket(&'a mut InUdpPacket),
-	ReceivePacket(&'a mut InPacket),
-	ReceiveCommand(&'a mut InCommand),
-	ReceiveAudio(&'a mut InAudio),
-	ReceiveC2SInit(&'a mut InC2SInit),
-	ReceiveS2CInit(&'a mut InS2CInit),
+	ReceiveUdpPacket(&'a InUdpPacket<'a>),
+	ReceivePacket(&'a InPacket<'a>),
+	SendUdpPacket(&'a OutUdpPacket),
+	SendPacket(&'a OutPacket),
 }
 
-/// Represents a currently alive connection.
+/// An item that originates from a tsproto raw event stream.
+///
+/// The disconnected event is signaled by returning `None` from the stream.
 #[derive(Debug)]
+pub enum StreamItem {
+	/// The connection has been established and `ConnectedParams` are available.
+	Connected,
+	Command(Vec<u8>),
+	Audio(Vec<u8>),
+	C2SInit(Vec<u8>),
+	S2CInit(Vec<u8>),
+	Error(Error),
+}
+
+type EventListener = Box<dyn for<'a> FnMut(&'a Event<'a>) -> () + Send>;
+
+/// Represents a currently alive connection.
 pub struct Connection {
 	pub is_client: bool,
-	pub logger: slog::Logger,
+	pub logger: Logger,
 	/// The parameters of this connection, if it is already established.
 	pub params: Option<ConnectedParams>,
 	/// The adress of the other side, where packets are coming from and going
@@ -79,28 +84,41 @@ pub struct Connection {
 	pub address: SocketAddr,
 
 	pub resender: DefaultResender,
-	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-	pub s2c_init_sink: mpsc::UnboundedSender<InS2CInit>,
-	pub c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
-	pub command_sink: mpsc::UnboundedSender<InCommand>,
-	pub audio_sink: mpsc::UnboundedSender<InAudio>,
+	pub udp_socket: UdpSocket,
+	udp_buffer: Vec<u8>,
+
+	/// Used in the stream implementation.
+	next_poll: u8,
+
+	/// A buffer of packets that should be returned from the stream.
+	///
+	/// If a new udp packet is received and we already received the following
+	/// ids, we can get multiple packets back at once. As we can only return one
+	/// from the stream, the rest is stored here.
+	pub(crate) stream_items: VecDeque<StreamItem>,
+
+	/// The internal queue of ack packets that should be sent.
+	///
+	/// If it gets too long, polling from the udp socket is blocked.
+	acks_to_send: VecDeque<OutUdpPacket>,
+
+	pub event_listeners: Vec<EventListener>,
 
 	/// The next packet id that should be sent.
 	///
-	/// This list is indexed by the [`PacketType`], [`PacketType::Init`] is an
+	/// This list is indexed by the `PacketType`, `PacketType::Init` is an
 	/// invalid index.
-	///
-	/// [`PacketType`]: udp/enum.PacketType.html
-	/// [`PacketType::Init`]: udp/enum.PacketType.html
 	pub outgoing_p_ids: [(u32, u16); 8],
 	/// Used for incoming out-of-order packets.
 	///
 	/// Only used for `Command` and `CommandLow` packets.
-	pub receive_queue: [Vec<InPacket>; 2],
+	pub receive_queue: [Vec<Vec<u8>>; 2],
 	/// Used for incoming fragmented packets.
 	///
+	/// Contains the accumulated data from fragmented packets, the header of the
+	/// first packet is at the beginning, all other headers are stripped away.
 	/// Only used for `Command` and `CommandLow` packets.
-	pub fragmented_queue: [Option<(InPacket, Vec<u8>)>; 2],
+	pub fragmented_queue: [Option<Vec<u8>>; 2],
 	/// The next packet id that is expected.
 	///
 	/// Works like the `outgoing_p_ids`.
@@ -139,28 +157,27 @@ impl ConnectedParams {
 impl Connection {
 	/// Creates a new connection struct.
 	pub fn new(
-		address: SocketAddr,
-		resender: DefaultResender,
-		logger: slog::Logger,
-		udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
 		is_client: bool,
-		s2c_init_sink: mpsc::UnboundedSender<InS2CInit>,
-		c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
-		command_sink: mpsc::UnboundedSender<InCommand>,
-		audio_sink: mpsc::UnboundedSender<InAudio>,
+		logger: Logger,
+		address: SocketAddr,
+		udp_socket: UdpSocket,
 	) -> Self
 	{
+		let logger = logger.new(o!("address" => address.to_string()));
+
 		let mut res = Self {
 			is_client,
 			logger,
 			params: None,
 			address,
-			resender,
-			udp_packet_sink,
-			s2c_init_sink,
-			c2s_init_sink,
-			command_sink,
-			audio_sink,
+			resender: Default::default(),
+			udp_socket,
+			udp_buffer:  Default::default(),
+			next_poll: Default::default(),
+
+			stream_items: Default::default(),
+			acks_to_send: Default::default(),
+			event_listeners: Default::default(),
 
 			outgoing_p_ids: Default::default(),
 			receive_queue: Default::default(),
@@ -179,6 +196,7 @@ impl Connection {
 		res
 	}
 
+	// TODO Dont care for audio packets
 	/// Check if a given id is in the receive window.
 	///
 	/// Returns
@@ -207,5 +225,206 @@ impl Connection {
 			cur_next,
 			limit,
 		)
+	}
+
+	pub fn send_event(&mut self, event: &Event) {
+		for l in &mut self.event_listeners {
+			l(event)
+		}
+	}
+
+	pub fn hand_back_buffer(&mut self, buffer: Vec<u8>) {
+		if self.udp_buffer.capacity() < MAX_UDP_PACKET_LENGTH
+			&& buffer.capacity() >= MAX_UDP_PACKET_LENGTH {
+			self.udp_buffer = buffer;
+		}
+	}
+
+	fn poll_incoming_udp_packet(&mut self, cx: &mut Context) -> Poll<Result<StreamItem>> {
+		// Poll acks_to_send
+		while let Some(packet) = self.acks_to_send.front() {
+			match self.poll_send_udp_packet(cx, packet) {
+				Poll::Ready(Ok(())) => {}
+				Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+				Poll::Pending => break,
+			}
+			self.acks_to_send.pop_front();
+		}
+		if self.acks_to_send.len() >= UDP_SINK_CAPACITY
+			|| self.resender.get_state() == ResenderState::Disconnecting {
+			return Poll::Pending;
+		}
+
+		// Poll stream_items
+		if let Some(item) = self.stream_items.pop_front() {
+			return Poll::Ready(Ok(item));
+		}
+
+		// Poll udp_socket
+		if self.udp_buffer.len() != MAX_UDP_PACKET_LENGTH {
+			self.udp_buffer.resize(MAX_UDP_PACKET_LENGTH, 0);
+		}
+
+		match self.udp_socket.poll_recv_from(cx, &mut self.udp_buffer) {
+			Poll::Ready(Ok((size, addr))) => {
+				let mut udp_buffer = mem::replace(&mut self.udp_buffer, Vec::new());
+				udp_buffer.truncate(size);
+				match self.handle_udp_packet(cx, udp_buffer, addr) {
+					Ok(()) => if let Some(item) = self.stream_items.pop_front() {
+						Poll::Ready(Ok(item))
+					} else {
+						Poll::Pending
+					}
+					Err(e) => {
+						Poll::Ready(Ok(StreamItem::Error(e)))
+					}
+				}
+			}
+			// Udp socket closed
+			Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+			Poll::Pending => Poll::Pending,
+		}
+	}
+
+	fn poll_resender_ping(&mut self, _cx: &mut Context) -> Poll<Option<Result<StreamItem>>> {
+		// Return None if disconnected
+		Poll::Pending
+	}
+
+	fn handle_udp_packet(&mut self, cx: &mut Context, udp_buffer: Vec<u8>, addr: SocketAddr) -> Result<()> {
+		if addr != self.address {
+			bail!("Received UDP packet from wrong address");
+		}
+
+		let dir = if self.is_client { Direction::S2C } else { Direction::C2S };
+		let packet = InUdpPacket(InPacket::try_new(dir, &udp_buffer)
+			.with_context(|| format!("{:?}", HexSlice(&udp_buffer)))?);
+		let event = Event::ReceiveUdpPacket(&packet);
+		self.send_event(&event);
+
+		PacketCodecReceiver::handle_udp_packet(self, cx, udp_buffer)?;
+
+		Ok(())
+	}
+
+	/// Try to send an ack packet.
+	///
+	/// If it does not work, add it to the ack queue.
+	pub(crate) fn send_ack_packet(&mut self, cx: &mut Context, packet: OutPacket) -> Result<()> {
+		self.send_event(&Event::SendPacket(&packet));
+		let mut udp_packets = PacketCodecSender::encode_packet(self, packet)?;
+		assert_eq!(udp_packets.len(), 1, "Encoding an ack packet should only yield a single packet");
+		let packet = udp_packets.pop().unwrap();
+		self.send_event(&Event::SendUdpPacket(&packet));
+
+		match self.poll_send_udp_packet(cx, &packet) {
+			Poll::Ready(r) => r,
+			Poll::Pending => {
+				self.acks_to_send.push_back(packet);
+				Ok(())
+			}
+		}
+	}
+
+	/// Send a packet. The `send_packet` function will resolve to a future when
+	/// the packet has been sent.
+	///
+	/// If the packet has an acknowledgement (ack or pong), the returned future
+	/// will resolve when it is received. Otherwise it will resolve instantly.
+	pub async fn send_packet(&mut self, packet: OutPacket) -> impl Future<Output=Result<()>> {
+		self.send_event(&Event::SendPacket(&packet));
+		let udp_packets = match PacketCodecSender::encode_packet(self, packet) {
+			Ok(r) => r,
+			Err(e) => return future::err(e).left_future(),
+		};
+
+		let fut = FuturesUnordered::new();
+		for p in udp_packets {
+			fut.push(self.send_udp_packet(p).await);
+		}
+		fut.try_for_each_concurrent(None, |_| future::ok(())).right_future()
+	}
+
+	// Non-command packets are not influenced by congestion control
+	/// Send a udp packet.
+	///
+	/// If the packet has an acknowledgement (ack or pong), the future will
+	/// resolve when it is received.
+	pub async fn send_udp_packet(&mut self, packet: OutUdpPacket) -> impl Future<Output=Result<()>> {
+		self.send_event(&Event::SendUdpPacket(&packet));
+		match packet.packet_type() {
+			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
+				match DefaultResender::send_packet(self, packet).await {
+					Ok(r) => r.map_err(|e| e.into()).left_future(),
+					Err(e) => future::err(e).right_future(),
+				}
+			}
+			_ => {
+				future::ready(future::poll_fn(|cx| self.poll_send_udp_packet(cx, &packet)).await).right_future()
+			}
+		}
+	}
+
+	pub fn poll_send_udp_packet(&self, cx: &mut Context, packet: &OutUdpPacket) -> Poll<Result<()>> {
+		Self::static_poll_send_udp_packet(&self.udp_socket, &self.address, cx, packet)
+	}
+
+	pub fn static_poll_send_udp_packet(udp_socket: &UdpSocket, address: &SocketAddr, cx: &mut Context,
+		packet: &OutUdpPacket) -> Poll<Result<()>> {
+		let data = packet.data().data();
+		match udp_socket.poll_send_to(cx, data, address)? {
+			Poll::Pending => Poll::Pending,
+			Poll::Ready(size) => {
+				if size != data.len() {
+					Poll::Ready(Err(format_err!("Failed to send whole udp packet")))
+				} else {
+					Poll::Ready(Ok(()))
+				}
+			}
+		}
+	}
+}
+
+/// Pull for events.
+///
+/// `Ok(StreamItem::Error)` is recoverable, `Err()` is not.
+///
+/// Polling does a few things in round robin fashion:
+/// 1. Check for new udp packets
+/// 2. Use the resender to resend packets if necessary
+/// 3. Use the resender to send ping packets if necessary
+impl Stream for Connection {
+	type Item = Result<StreamItem>;
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+		const COUNT: u8 = 3;
+		for _ in 0..COUNT {
+			self.next_poll = (self.next_poll + 1) % COUNT;
+			match self.next_poll {
+				0 => {
+					// Check for new udp packets
+					match self.poll_incoming_udp_packet(cx) {
+						Poll::Pending => {}
+						Poll::Ready(r) => return Poll::Ready(Some(r)),
+					}
+				}
+				1 => {
+					// Use the resender to resend packes
+					match DefaultResender::poll_resend(&mut *self, cx) {
+						Ok(()) => {}
+						Err(e) => return Poll::Ready(Some(Err(e))),
+					}
+				}
+				2 => {
+					// Use the resender to send pings
+					match self.poll_resender_ping(cx) {
+						Poll::Pending => {}
+						r => return r,
+					}
+				}
+				_ => unreachable!(),
+			}
+		}
+
+		Poll::Pending
 	}
 }

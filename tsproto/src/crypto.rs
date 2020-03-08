@@ -1,20 +1,21 @@
 //! This module contains cryptography related code.
 use std::{cmp, fmt, str};
 
+use anyhow::format_err;
 use arrayref::array_ref;
 use base64;
+use curve25519_dalek::constants;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
 use num_bigint::{BigInt, Sign};
 use ring::digest;
 use ring::signature::KeyPair;
 use simple_asn1::ASN1Block;
-
-use curve25519_dalek::constants;
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::scalar::Scalar;
-use failure::format_err;
 use untrusted::Input;
 
-use crate::{Error, Result};
+use crate::BasicError;
+
+type Result<T> = std::result::Result<T, BasicError>;
 
 pub enum KeyType {
 	Public,
