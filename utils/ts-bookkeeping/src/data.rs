@@ -5,10 +5,10 @@ use std::mem;
 use std::net::{IpAddr, SocketAddr};
 use std::u16;
 
-use time::{Duration, OffsetDateTime};
 use failure::format_err;
 use num_traits::FromPrimitive;
 use serde::{Deserialize, Serialize};
+use time::{Duration, OffsetDateTime};
 use tsproto_packets::commands::{CanonicalCommand, CommandData};
 use tsproto_packets::packets::{
 	Direction, InCommand, OutCommand, OutPacket, PacketType,
@@ -532,14 +532,22 @@ impl Connection {
 		}
 	}
 
-	fn client_type_cev_fun(&self, cmd: &CanonicalCommand) -> Result<ClientType> {
+	fn client_type_cev_fun(
+		&self,
+		cmd: &CanonicalCommand,
+	) -> Result<ClientType>
+	{
 		match cmd.get_arg("client_type")? {
 			"0" => Ok(ClientType::Normal),
-			"1" => Ok(ClientType::Query { admin: cmd.get_arg("client_unique_identifier")? == "ServerAdmin" }),
+			"1" => Ok(ClientType::Query {
+				admin: cmd.get_arg("client_unique_identifier")?
+					== "ServerAdmin",
+			}),
 			val => Err(ParseError::InvalidValue {
 				arg: "client_type",
 				value: val.to_string(),
-			}.into()),
+			}
+			.into()),
 		}
 	}
 
@@ -555,7 +563,11 @@ impl Connection {
 			let invoker = cmd.get_invoker()?;
 
 			let away = if away == "1" {
-				cmd.get_arg("client_away_message").ok().map(|s| s.to_string())
+				Some(
+					cmd.get_arg("client_away_message")
+						.map(|s| s.to_string())
+						.unwrap_or_else(|_| String::new()),
+				)
 			} else {
 				None
 			};
