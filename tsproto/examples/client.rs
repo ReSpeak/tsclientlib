@@ -1,10 +1,10 @@
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
 
-use futures::{future, Future, Sink};
-use slog::{info, o, Drain};
+use anyhow::Result;
+use futures::prelude::*;
+use slog::info;
 use structopt::StructOpt;
-use tokio::timer::Delay;
+use tokio::time::{self, Duration};
 use tsproto_packets::packets::*;
 
 mod utils;
@@ -29,78 +29,51 @@ struct Args {
 	verbose: u8,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
+	let logger = create_logger();
 
-	let logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
+	let mut con = create_client(
+		args.local_address,
+		args.address,
+		logger.clone(),
+		args.verbose,
+	).await?;
 
-		slog::Logger::root(drain, o!())
-	};
+	// Connect
+	connect(&mut con).await?;
+	info!(logger, "Connected");
 
-	tokio::run(
-		future::lazy(move || {
-			let c = create_client(
-				args.local_address,
-				logger.clone(),
-				SimplePacketHandler,
-				args.verbose,
-			);
+	// Wait some time
+	time::delay_for(Duration::from_secs(2)).await;
+	info!(logger, "Waited");
 
-			// Connect
-			let logger2 = logger.clone();
-			connect(logger.clone(), c.clone(), args.address)
-				.map_err(|e| panic!("Failed to connect ({:?})", e))
-				.and_then(move |con| {
-					info!(logger2, "Connected");
-					// Wait some time
-					Delay::new(Instant::now() + Duration::from_secs(2))
-						.map(move |_| con)
-				})
-				.and_then(move |con| {
-					info!(logger, "Waited");
-
-					// Send packet
-					let packet = OutCommand::new::<
-						_,
-						_,
-						String,
-						String,
-						_,
-						_,
-						std::iter::Empty<_>,
-					>(
-						Direction::C2S,
-						PacketType::Command,
-						"sendtextmessage",
-						vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
-						std::iter::empty(),
-					);
-					let c2 = c.clone();
-					con.as_packet_sink()
-						.send(packet)
-						.map(|_| ())
-						.map_err(|e| panic!("Failed to send packet ({:?})", e))
-						//.and_then(|_| {
-							//Delay::new(Instant::now() + Duration::from_secs(3))
-						//})
-						.and_then(move |_| {
-							// Disconnect
-							disconnect(&c2, con).map_err(|e| {
-								panic!("Failed to disconnect ({:?})", e)
-							})
-						})
-						.and_then(move |_| {
-							info!(logger, "Disconnected");
-							// Quit client
-							drop(c);
-							Ok(())
-						})
-				})
-		})
-		.map_err(|e| panic!("An error occurred {:?}", e)),
+	// Send packet
+	let packet = OutCommand::new::<
+		_,
+		_,
+		String,
+		String,
+		_,
+		_,
+		std::iter::Empty<_>,
+	>(
+		Direction::C2S,
+		PacketType::Command,
+		"sendtextmessage",
+		vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
+		std::iter::empty(),
 	);
+	let fut = con.send_packet(packet).await;
+	con.next().await.transpose()?;
+	// TODO
+	//fut.await?;
+
+	// Disconnect
+	disconnect(&mut con).await?;
+	info!(logger, "Disconnected");
+
+	Ok(())
 }

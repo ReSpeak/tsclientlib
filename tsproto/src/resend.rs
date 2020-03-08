@@ -47,7 +47,7 @@ pub trait Resender {
 	fn ack_packet(&mut self, p_type: PacketType, p_id: u16);
 
 	/// This method informs the resender of state changes of the connection.
-	fn change_state(&mut self, event: ResenderState);
+	fn set_state(&mut self, event: ResenderState);
 }
 
 /// A record of a packet that can be resent.
@@ -187,7 +187,7 @@ impl Resender for DefaultResender {
 		}
 	}
 
-	fn change_state(&mut self, state: ResenderState) {
+	fn set_state(&mut self, state: ResenderState) {
 		self.state = state;
 	}
 }
@@ -254,7 +254,7 @@ impl DefaultResender {
 		let mut packet_loss = false;
 		let timeout = con.resender.get_timeout();
 		let max_rto = timeout / 2;
-		while let Some(rec) = {
+		while let Some(mut rec) = {
 			// Handle congestion window when the resender is not borrowed
 			if packet_loss {
 				con.resender.w_max = con.resender.get_window();
@@ -270,7 +270,7 @@ impl DefaultResender {
 			}
 			last_threshold = now - rto;
 
-			if let Some(rec) = &mut con.resender.to_send.peek_mut() {
+			let res = if let Some(rec) = con.resender.to_send.peek_mut() {
 				// Check if we should resend this packet or not
 				if rec.tries != 0 && rec.last > last_threshold {
 					// Schedule next send
@@ -284,14 +284,18 @@ impl DefaultResender {
 				Some(rec)
 			} else {
 				None
-			}
-		} {
-			if now - rec.sent > timeout {
+			};
+
+			if res.as_ref().map(|rec| now - rec.sent > timeout).unwrap_or_default() {
+				drop(res);
+				con.resender.to_send.clear();
 				bail!("Connection timed out");
 			}
 
+			res
+		} {
 			// Try to send this packet
-			match Connection::static_poll_send_udp_packet(&con.udp_socket, &con.address, cx, &rec.packet) {
+			match Connection::static_poll_send_udp_packet(&con.udp_socket, &con.address, &con.event_listeners, cx, &rec.packet) {
 				Poll::Pending => break,
 				Poll::Ready(Err(e)) => return Err(e),
 				Poll::Ready(Ok(())) => {
@@ -340,7 +344,7 @@ impl Default for ResendConfig {
 			normal_timeout: Duration::from_secs(30),
 			disconnect_timeout: Duration::from_secs(5),
 
-			srtt: Duration::from_millis(2500),
+			srtt: Duration::from_millis(1000),
 			srtt_dev: Duration::from_millis(0),
 		}
 	}

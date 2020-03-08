@@ -11,7 +11,7 @@ use quicklz::CompressionLevel;
 use ring::digest;
 
 use crate::connection::CachedKey;
-use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
+use crate::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 use crate::BasicError;
 use tsproto_packets::packets::*;
 
@@ -267,33 +267,6 @@ pub fn decrypt(
 /// Compute shared iv and shared mac.
 pub fn compute_iv_mac(
 	alpha: &[u8; 10],
-	beta: &[u8; 10],
-	our_key: EccKeyPrivP256,
-	other_key: EccKeyPubP256,
-) -> Result<([u8; 20], [u8; 8])>
-{
-	let shared_secret = our_key.create_shared_secret(other_key)?;
-	let mut shared_iv = [0; 20];
-	shared_iv.copy_from_slice(
-		digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_secret)
-			.as_ref(),
-	);
-	for i in 0..10 {
-		shared_iv[i] ^= alpha[i];
-	}
-	for i in 0..10 {
-		shared_iv[i + 10] ^= beta[i];
-	}
-	let mut shared_mac = [0; 8];
-	shared_mac.copy_from_slice(
-		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()
-			[..8],
-	);
-	Ok((shared_iv, shared_mac))
-}
-
-pub fn compute_iv_mac31(
-	alpha: &[u8; 10],
 	beta: &[u8; 54],
 	our_key: &EccKeyPrivEd25519,
 	other_key: &EdwardsPoint,
@@ -443,7 +416,7 @@ mod tests {
 		];
 
 		let (mut shared_iv, _shared_mac) =
-			compute_iv_mac31(&alpha, &beta, &priv_key, &derived_key).unwrap();
+			compute_iv_mac(&alpha, &beta, &priv_key, &derived_key).unwrap();
 
 		assert_eq!(
 			&shared_iv as &[u8],

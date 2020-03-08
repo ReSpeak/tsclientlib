@@ -68,7 +68,7 @@ fn inner_parse_command<'a>(i: &'a str) -> IResult<&'a str, CommandData> {
 	Ok((i, CommandData { name, static_args, list_args }))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug)]
 pub struct CommandData<'a> {
 	/// The name is empty for serverquery commands
 	pub name: &'a str,
@@ -76,10 +76,12 @@ pub struct CommandData<'a> {
 	pub list_args: Vec<Vec<(&'a str, Cow<'a, str>)>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CanonicalCommand<'a>(pub HashMap<&'a str, &'a str>);
 impl<'a> CanonicalCommand<'a> {
+	#[inline]
 	pub fn has(&self, arg: &str) -> bool { self.0.contains_key(arg) }
+	#[inline]
 	pub fn get(&self, arg: &str) -> Option<&str> { self.0.get(arg).map(|s| *s) }
 
 	pub fn get_parse<F: FromStr>(
@@ -159,12 +161,14 @@ impl<'a> Iterator for CommandDataIterator<'a> {
 }
 
 impl<'a> CommandData<'a> {
+	#[inline]
 	pub fn static_arg(&self, k: &str) -> Option<&str> {
 		self.static_args
 			.iter()
 			.find_map(|(k2, v)| if *k2 == k { Some(v.as_ref()) } else { None })
 	}
 
+	#[inline]
 	pub fn iter(&self) -> CommandDataIterator { self.into_iter() }
 }
 

@@ -82,47 +82,64 @@ pub enum CodecType {
 	OpusMusic,
 }
 
+macro_rules! create_buf {
+	($($name:ident, $borrow_name:ident, $convert:ident);*) => {
+		rental! {
+			mod rentals {
+				$(
+				#[rental(covariant, debug)]
+				pub(crate) struct $name {
+					data: Vec<u8>,
+					content: super::$borrow_name<'data>,
+				}
+				)*
+			}
+		}
+
+		$(
+		#[derive(Debug)]
+		pub struct $name(rentals::$name);
+		impl $name {
+			/// `InPacket::try_new` is not checked and must succeed. Otherwise, it
+			/// panics.
+			#[inline]
+			pub fn try_new(direction: Direction, data: Vec<u8>) -> Result<Self> {
+				Ok(Self(rentals::$name::try_new(data, |d| {
+					InPacket::new(direction, d).$convert()
+				}).map_err(|e| e.0)?))
+			}
+			#[inline]
+			pub fn raw_data(&self) -> &[u8] { self.0.head() }
+			#[inline]
+			pub fn data(&self) -> &$borrow_name { self.0.suffix() }
+		}
+		)*
+	}
+}
+
+create_buf!(InAudioBuf, InAudio, into_audio;
+	InCommandBuf, InCommand, into_command;
+	InC2SInitBuf, InC2SInit, into_c2sinit;
+	InS2CInitBuf, InS2CInit, into_s2cinit);
+
 /// Used for debugging.
+#[derive(Clone, Debug)]
 pub struct InUdpPacket<'a>(pub InPacket<'a>);
 
 impl<'a> InUdpPacket<'a> {
 	pub fn new(packet: InPacket<'a>) -> Self { Self(packet) }
 }
 
-impl<'a> fmt::Debug for InUdpPacket<'a> {
-	#[rustfmt::skip]
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "UdpPacket {{ header: {{ ")?;
-
-		let header = self.0.header();
-		write!(f, "mac: {:?}, ", HexSlice(header.mac()))?;
-		write!(f, "p_id: {}, ", header.packet_id())?;
-		if let Some(c_id) = header.client_id() {
-			write!(f, "c_id: {}, ", c_id)?;
-		}
-		write!(f, "type: {:?}, ", header.packet_type())?;
-		write!(f, "flags: ")?;
-		let flags = header.flags();
-		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
-		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
-		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
-		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
-
-		write!(f, "}}, content: {:?} }}", HexSlice(self.0.content))?;
-		Ok(())
-	}
-}
-
 #[derive(Clone)]
-pub struct InPacket<'a> {
-	header: InHeader<'a>,
-	content: &'a [u8],
-}
-
-#[derive(Clone, Debug)]
 pub struct InHeader<'a> {
 	direction: Direction,
 	data: &'a [u8],
+}
+
+#[derive(Clone, Debug)]
+pub struct InPacket<'a> {
+	header: InHeader<'a>,
+	content: &'a [u8],
 }
 
 #[derive(Clone, Debug)]
@@ -297,12 +314,32 @@ impl<'a> InPacket<'a> {
 
 	/// Get the acknowledged packet id if this is an ack packet.
 	#[inline]
-	pub fn ack_packet(&self) -> Option<u16> {
+	pub fn ack_packet(&self) -> Result<Option<u16>> {
 		let p_type = self.header().packet_type();
 		if p_type.is_ack() {
-			self.content().read_be().ok()
+			Ok(Some(self.content().read_be().map_err(|_|
+				Error::PacketContentTooShort(self.content().len()))?))
+		} else if p_type == PacketType::Init {
+			if self.header.direction == Direction::S2C {
+				Ok(Some(self.content.get(0).ok_or_else(||
+						Error::PacketContentTooShort(self.content().len()))
+					.and_then(|i| match u16::from(*i) {
+						1 => Ok(0),
+						3 => Ok(2),
+						_ => Err(Error::InvalidInitStep(*i)),
+					})?))
+			} else {
+				Ok(self.content.get(4).ok_or_else(||
+						Error::PacketContentTooShort(self.content().len()))
+					.and_then(|i| match u16::from(*i) {
+						0 => Ok(None),
+						2 => Ok(Some(1)),
+						4 => Ok(Some(3)),
+						_ => Err(Error::InvalidInitStep(*i)),
+					})?)
+			}
 		} else {
-			None
+			Ok(None)
 		}
 	}
 
@@ -441,25 +478,24 @@ impl<'a> InPacket<'a> {
 	}
 }
 
-impl fmt::Debug for InPacket<'_> {
+impl fmt::Debug for InHeader<'_> {
 	#[rustfmt::skip]
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Packet {{ header: {{ ")?;
-
-		write!(f, "mac: {:?}, ", HexSlice(self.header.mac()))?;
-		write!(f, "p_id: {}, ", self.header.packet_id())?;
-		if let Some(c_id) = self.header.client_id() {
+		write!(f, "Header {{ ")?;
+		write!(f, "mac: {:?}, ", HexSlice(self.mac()))?;
+		write!(f, "p_id: {}, ", self.packet_id())?;
+		if let Some(c_id) = self.client_id() {
 			write!(f, "c_id: {}, ", c_id)?;
 		}
-		write!(f, "type: {:?}, ", self.header.packet_type())?;
+		write!(f, "type: {:?}, ", self.packet_type())?;
 		write!(f, "flags: ")?;
-		let flags = self.header.flags();
+		let flags = self.flags();
 		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
 
-		write!(f, "}}, content: {:?} }}", HexSlice(self.content()))?;
+		write!(f, "}}")?;
 		Ok(())
 	}
 }
@@ -700,6 +736,20 @@ impl<'a> AudioData<'a> {
 	}
 }
 
+impl<'a> InS2CInit<'a> {
+	#[inline]
+	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
+	#[inline]
+	pub fn data(&self) -> &S2CInitData { &self.data }
+}
+
+impl<'a> InC2SInit<'a> {
+	#[inline]
+	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
+	#[inline]
+	pub fn data(&self) -> &C2SInitData { &self.data }
+}
+
 impl<'a> InAudio<'a> {
 	#[inline]
 	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
@@ -809,30 +859,6 @@ impl OutPacket {
 	}
 }
 
-impl fmt::Debug for OutPacket {
-	#[rustfmt::skip]
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Packet {{ header: {{ ")?;
-
-		let header = self.header();
-		write!(f, "mac: {:?}, ", HexSlice(header.mac()))?;
-		write!(f, "p_id: {}, ", header.packet_id())?;
-		if let Some(c_id) = header.client_id() {
-			write!(f, "c_id: {}, ", c_id)?;
-		}
-		write!(f, "type: {:?}, ", header.packet_type())?;
-		write!(f, "flags: ")?;
-		let flags = header.flags();
-		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
-		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
-		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
-		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
-
-		write!(f, "}}, content: {:?} }}", HexSlice(self.content()))?;
-		Ok(())
-	}
-}
-
 impl OutUdpPacket {
 	#[inline]
 	pub fn new(generation_id: u32, data: OutPacket) -> Self {
@@ -858,6 +884,15 @@ impl OutUdpPacket {
 	}
 	#[inline]
 	pub fn packet_type(&self) -> PacketType { self.data.header().packet_type() }
+}
+
+impl fmt::Debug for OutPacket {
+	#[rustfmt::skip]
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Packet {{ header: {:?}", self.header())?;
+		write!(f, ", content: {:?} }}", HexSlice(self.content()))?;
+		Ok(())
+	}
 }
 
 pub struct OutCommand;
@@ -989,7 +1024,7 @@ impl OutC2SInit0 {
 		res.packet_id(0x65);
 		let content = res.data_mut();
 		content.write_be(version).unwrap();
-		content.write_be(0).unwrap();
+		content.write_be(0u8).unwrap();
 		content.write_be(timestamp).unwrap();
 		content.write_all(&random0).unwrap();
 		// Reserved
@@ -1015,7 +1050,7 @@ impl OutC2SInit2 {
 		res.packet_id(0x65);
 		let content = res.data_mut();
 		content.write_be(version).unwrap();
-		content.write_be(2).unwrap();
+		content.write_be(2u8).unwrap();
 		content.write_all(random1).unwrap();
 		content.write_all(&random0_r).unwrap();
 		res
@@ -1045,7 +1080,7 @@ impl OutC2SInit4 {
 		res.packet_id(0x65);
 		let content = res.data_mut();
 		content.write_be(version).unwrap();
-		content.write_be(4).unwrap();
+		content.write_be(4u8).unwrap();
 		content.write_all(x).unwrap();
 		content.write_all(n).unwrap();
 		content.write_be(level).unwrap();
@@ -1078,7 +1113,7 @@ impl OutS2CInit1 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_be(1).unwrap();
+		content.write_be(1u8).unwrap();
 		content.write_all(random1).unwrap();
 		content.write_all(&random0_r).unwrap();
 		res
@@ -1102,7 +1137,7 @@ impl OutS2CInit3 {
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
-		content.write_be(3).unwrap();
+		content.write_be(3u8).unwrap();
 		content.write_all(x).unwrap();
 		content.write_all(n).unwrap();
 		content.write_be(level).unwrap();

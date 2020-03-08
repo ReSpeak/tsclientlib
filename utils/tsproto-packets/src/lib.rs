@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate rental;
+
 use std::fmt;
 
 use thiserror::Error;

@@ -51,7 +51,7 @@ pub enum Event {
 		/// Where this message was sent to, in the server or channel chat or
 		/// directly to client.
 		///
-		/// This is our own client for messages private messages from others.
+		/// This is our own client for private messages from others.
 		target: MessageTarget,
 		/// The user who wrote the message.
 		invoker: Invoker,
