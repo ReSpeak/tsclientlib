@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::io;
 use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -20,6 +21,13 @@ use crate::{Error, MAX_UDP_PACKET_LENGTH, Result, UDP_SINK_CAPACITY};
 use crate::crypto::EccKeyPubP256;
 use crate::packet_codec::PacketCodec;
 use crate::resend::{DefaultResender, Resender, ResenderState};
+
+/// The needed functions, this can be used to abstract from the underlying
+/// transport and allows simulation.
+pub trait Socket {
+	fn poll_recv_from(&self, cx: &mut Context, buf: &mut [u8]) -> Poll<io::Result<(usize, SocketAddr)>>;
+	fn poll_send_to(&self, cx: &mut Context, buf: &[u8], target: &SocketAddr) -> Poll<io::Result<usize>>;
+}
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -83,7 +91,7 @@ pub struct Connection {
 
 	pub resender: DefaultResender,
 	pub codec: PacketCodec,
-	pub udp_socket: UdpSocket,
+	pub udp_socket: Box<dyn Socket>,
 	udp_buffer: Vec<u8>,
 
 	/// Used in the stream implementation.
@@ -102,6 +110,16 @@ pub struct Connection {
 	acks_to_send: VecDeque<OutUdpPacket>,
 
 	pub event_listeners: Vec<EventListener>,
+}
+
+impl Socket for UdpSocket {
+	fn poll_recv_from(&self, cx: &mut Context, buf: &mut [u8]) -> Poll<io::Result<(usize, SocketAddr)>> {
+		self.poll_recv_from(cx, buf)
+	}
+
+	fn poll_send_to(&self, cx: &mut Context, buf: &[u8], target: &SocketAddr) -> Poll<io::Result<usize>> {
+		self.poll_send_to(cx, buf, target)
+	}
 }
 
 impl Default for CachedKey {
@@ -138,7 +156,7 @@ impl Connection {
 		is_client: bool,
 		logger: Logger,
 		address: SocketAddr,
-		udp_socket: UdpSocket,
+		udp_socket: Box<dyn Socket>,
 	) -> Self
 	{
 		let logger = logger.new(o!("addr" => address.to_string()));
@@ -340,11 +358,11 @@ impl Connection {
 	}
 
 	pub fn poll_send_udp_packet(&self, cx: &mut Context, packet: &OutUdpPacket) -> Poll<Result<()>> {
-		Self::static_poll_send_udp_packet(&self.udp_socket, &self.address, &self.event_listeners, cx, packet)
+		Self::static_poll_send_udp_packet(&*self.udp_socket, &self.address, &self.event_listeners, cx, packet)
 	}
 
 	pub fn static_poll_send_udp_packet(
-		udp_socket: &UdpSocket,
+		udp_socket: &dyn Socket,
 		address: &SocketAddr,
 		event_listeners: &[EventListener],
 		cx: &mut Context,

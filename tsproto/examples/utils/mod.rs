@@ -1,12 +1,10 @@
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use futures::prelude::*;
-use slog::{info, o, warn, Drain, Level, Logger};
+use slog::{info, o, Drain, Level, Logger};
 use tokio::net::UdpSocket;
 use tsproto::algorithms as algs;
 use tsproto::client::Client;
-use tsproto::connection::StreamItem;
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto_packets::packets::*;
 
@@ -32,7 +30,7 @@ pub async fn create_client(
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	let udp_socket = UdpSocket::bind(local_address).await?;
-	let mut con = Client::new(logger, remote_address, udp_socket, private_key);
+	let mut con = Client::new(logger, remote_address, Box::new(udp_socket), private_key);
 
 	if verbose >= 1 {
 		tsproto::log::add_logger(con.logger.clone(), verbose - 1, &mut con)
@@ -118,31 +116,6 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 		})))?.1)
 }
 
-pub async fn wait_disconnect(con: &mut Client) -> Result<()> {
-	loop {
-		let item = con.next().await;
-		match item {
-			None => return Ok(()),
-			Some(Err(e)) => return Err(e),
-			Some(Ok(StreamItem::Error(e))) => {
-				warn!(con.logger, "Got connection error"; "error" => %e);
-			}
-			Some(Ok(StreamItem::S2CInit(packet))) => {
-				con.hand_back_buffer(packet.into_buffer());
-			}
-			Some(Ok(StreamItem::C2SInit(packet))) => {
-				con.hand_back_buffer(packet.into_buffer());
-			}
-			Some(Ok(StreamItem::Audio(packet))) => {
-				con.hand_back_buffer(packet.into_buffer());
-			}
-			Some(Ok(StreamItem::Command(packet))) => {
-				con.hand_back_buffer(packet.into_buffer());
-			}
-		}
-	}
-}
-
 pub async fn disconnect(con: &mut Client) -> Result<()> {
 	let packet =
 		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
@@ -159,6 +132,6 @@ pub async fn disconnect(con: &mut Client) -> Result<()> {
 		);
 
 	let fut = con.send_packet(packet).await;
-	tokio::try_join!(fut, wait_disconnect(con))?;
+	tokio::try_join!(fut, con.wait_disconnect())?;
 	Ok(())
 }

@@ -327,7 +327,7 @@ impl DefaultResender {
 			res
 		} {
 			// Try to send this packet
-			match Connection::static_poll_send_udp_packet(&con.udp_socket, &con.address, &con.event_listeners, cx, &rec.packet) {
+			match Connection::static_poll_send_udp_packet(&*con.udp_socket, &con.address, &con.event_listeners, cx, &rec.packet) {
 				Poll::Pending => break,
 				Poll::Ready(Err(e)) => return Err(e),
 				Poll::Ready(Ok(())) => {

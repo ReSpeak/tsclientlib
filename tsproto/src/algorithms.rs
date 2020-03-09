@@ -352,8 +352,8 @@ mod tests {
 		packet.data_mut().extend_from_slice(&data);
 		encrypt_fake(&mut packet).unwrap();
 		let packet = InPacket::try_new(
-			packet.data_mut().as_slice().into(),
 			Direction::C2S,
+			packet.data_mut().as_slice().into(),
 		)
 		.unwrap();
 		let dec_data = decrypt_fake(&packet).unwrap();

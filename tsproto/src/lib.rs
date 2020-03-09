@@ -114,6 +114,8 @@ pub enum BasicError {
 	UnallowedUnencryptedPacket,
 	#[error("Got unexpected init packet")]
 	UnexpectedInitPacket,
+	#[error("Packet has wrong client id {0}")]
+	WrongClientId(u16),
 	#[error("{p_type:?} Packet {generation_id}:{packet_id} has a wrong mac")]
 	WrongMac {
 		p_type: packets::PacketType,

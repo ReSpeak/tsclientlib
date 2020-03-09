@@ -60,8 +60,16 @@ impl PacketCodec {
 		let (in_recv_win, gen_id, cur_next, limit) =
 			con.in_receive_window(p_type, id);
 
-		if con.params.is_some() && p_type == PacketType::Init {
-			return Err(BasicError::UnexpectedInitPacket.into());
+		if let Some(params) = &con.params {
+			if p_type == PacketType::Init {
+				return Err(BasicError::UnexpectedInitPacket.into());
+			}
+			if !con.is_client {
+				let c_id = packet.header().client_id().unwrap();
+				if c_id != params.c_id {
+					return Err(BasicError::WrongClientId(c_id).into());
+				}
+			}
 		}
 
 		// Ignore range for acks and audio packets

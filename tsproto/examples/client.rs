@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
 	// Wait some time
 	tokio::select! {
 		_ = &mut time::delay_for(Duration::from_secs(2)) => {}
-		_ = wait_disconnect(&mut con) => {
+		_ = con.wait_disconnect() => {
 			bail!("Disconnected");
 		}
 	};
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
 	let mut fut = con.send_packet_with_answer(packet).await;
 	tokio::select! {
 		_ = &mut fut => {}
-		_ = wait_disconnect(&mut con) => {
+		_ = con.wait_disconnect() => {
 			bail!("Disconnected");
 		}
 	};
