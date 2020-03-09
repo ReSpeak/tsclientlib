@@ -112,6 +112,8 @@ macro_rules! create_buf {
 			pub fn raw_data(&self) -> &[u8] { self.0.head() }
 			#[inline]
 			pub fn data(&self) -> &$borrow_name { self.0.suffix() }
+			#[inline]
+			pub fn into_buffer(self) -> Vec<u8> { self.0.into_head() }
 		}
 		)*
 	}
@@ -549,12 +551,31 @@ impl<'a> InHeader<'a> {
 	}
 }
 
+impl C2SInitData<'_> {
+	pub fn get_step(&self) -> u8 {
+		match self {
+			C2SInitData::Init0 { .. } => 0,
+			C2SInitData::Init2 { .. } => 2,
+			C2SInitData::Init4 { .. } => 4,
+		}
+	}
+}
+
 impl<'a> fmt::Debug for C2SInitData<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			C2SInitData::Init0 { .. } => write!(f, "C2SInitData::Init0"),
 			C2SInitData::Init2 { .. } => write!(f, "C2SInitData::Init2"),
 			C2SInitData::Init4 { .. } => write!(f, "C2SInitData::Init4"),
+		}
+	}
+}
+
+impl S2CInitData<'_> {
+	pub fn get_step(&self) -> u8 {
+		match self {
+			S2CInitData::Init1 { .. } => 1,
+			S2CInitData::Init3 { .. } => 3,
 		}
 	}
 }

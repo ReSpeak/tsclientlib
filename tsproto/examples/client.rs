@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use futures::prelude::*;
 use slog::info;
 use structopt::StructOpt;
@@ -47,7 +47,12 @@ async fn main() -> Result<()> {
 	info!(logger, "Connected");
 
 	// Wait some time
-	time::delay_for(Duration::from_secs(2)).await;
+	tokio::select! {
+		_ = &mut time::delay_for(Duration::from_secs(2)) => {}
+		_ = wait_disconnect(&mut con) => {
+			bail!("Disconnected");
+		}
+	};
 	info!(logger, "Waited");
 
 	// Send packet
@@ -66,10 +71,13 @@ async fn main() -> Result<()> {
 		vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
 		std::iter::empty(),
 	);
-	let fut = con.send_packet(packet).await;
-	con.next().await.transpose()?;
-	// TODO
-	//fut.await?;
+	let mut fut = con.send_packet(packet).await;
+	tokio::select! {
+		_ = &mut fut => {}
+		_ = wait_disconnect(&mut con) => {
+			bail!("Disconnected");
+		}
+	};
 
 	// Disconnect
 	disconnect(&mut con).await?;

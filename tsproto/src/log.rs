@@ -72,20 +72,26 @@ pub fn add_logger(logger: Logger, verbosity: u8, con: &mut Connection) {
 			log_udp_packet(&logger, is_client, true, packet);
 		}
 		Event::ReceivePacket(packet) => {
-			if let Ok(s) = str::from_utf8(packet.content()) {
-				log_command(&logger, is_client, true, packet.header().packet_type(), s);
-			}
 			if verbosity > 0 {
 				log_packet(&logger, is_client, true, packet);
 			}
+			let p_type = packet.header().packet_type();
+			if p_type.is_command() {
+				if let Ok(s) = str::from_utf8(packet.content()) {
+					log_command(&logger, is_client, true, p_type, s);
+				}
+			}
 		}
 		Event::SendUdpPacket(packet) => if verbosity > 1 {
-			if let Ok(s) = str::from_utf8(packet.data().content()) {
-				log_command(&logger, is_client, false, packet.packet_type(), s);
-			}
 			log_udp_packet(&logger, is_client, false, packet);
 		}
 		Event::SendPacket(packet) => {
+			let p_type = packet.header().packet_type();
+			if p_type.is_command() {
+				if let Ok(s) = str::from_utf8(packet.content()) {
+					log_command(&logger, is_client, false, p_type, s);
+				}
+			}
 			if verbosity > 0 {
 				log_packet(&logger, is_client, false, packet);
 			}

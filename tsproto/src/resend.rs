@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 
 use anyhow::bail;
 use futures::prelude::*;
-use slog::warn;
+use slog::{info, warn, Logger};
 use tokio::sync::oneshot;
 use tokio::time::{Delay, Duration, Instant};
 use tsproto_packets::packets::*;
@@ -30,12 +30,13 @@ const C: f32 = 0.5;
 /// Events to inform a resender of the current state of a connection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum ResenderState {
-	/// The connection is starting
+	/// The connection is starting, reduce the timeout time
 	Connecting,
 	/// The handshake is completed, this is the normal operation mode
 	Connected,
-	/// The connection is tearing down
+	/// The connection is tearing down, reduce the timeout time
 	Disconnecting,
+	// TODO Disconnected state: Only need to send ack packet
 }
 
 /// For each connection a resender is created, which is responsible for sending
@@ -47,7 +48,7 @@ pub trait Resender {
 	fn ack_packet(&mut self, p_type: PacketType, p_id: u16);
 
 	/// This method informs the resender of state changes of the connection.
-	fn set_state(&mut self, event: ResenderState);
+	fn set_state(&mut self, logger: &Logger, event: ResenderState);
 }
 
 /// A record of a packet that can be resent.
@@ -187,7 +188,9 @@ impl Resender for DefaultResender {
 		}
 	}
 
-	fn set_state(&mut self, state: ResenderState) {
+	fn set_state(&mut self, logger: &Logger, state: ResenderState) {
+		info!(logger, "Resender: Changed state"; "from" => ?self.state,
+			"to" => ?state);
 		self.state = state;
 	}
 }
@@ -247,6 +250,8 @@ impl DefaultResender {
 	/// considered dead or another unrecoverable error occurs.
 	pub fn poll_resend(con: &mut Connection, cx: &mut Context) -> Result<()> {
 		let now = Instant::now();
+
+		// TODO Handle Disconnecting state timeout (even if we don't need to send a packet)
 
 		// Check if there are packets to send.
 		let mut rto: Duration;

@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use slog::{info, o, Drain, Level, Logger};
+use futures::prelude::*;
+use slog::{info, o, warn, Drain, Level, Logger};
 use tokio::net::UdpSocket;
 use tsproto::algorithms as algs;
 use tsproto::client::Client;
@@ -108,14 +109,37 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 	);
 
 	let fut = con.send_packet(packet).await;
-	let res = tokio::try_join!(fut, con.filter_items(|i|
-		if let StreamItem::Command(cmd) = i {
-			cmd.data().data().name == "initserver"
-		} else { false }))?.1;
-	if let StreamItem::Command(cmd) = res {
-		Ok(cmd)
-	} else {
-		unreachable!()
+	Ok(tokio::try_join!(fut, con.filter_commands(|con, cmd|
+		Ok(if cmd.data().data().name == "initserver" {
+			Some(cmd)
+		} else {
+			con.hand_back_buffer(cmd.into_buffer());
+			None
+		})))?.1)
+}
+
+pub async fn wait_disconnect(con: &mut Client) -> Result<()> {
+	loop {
+		let item = con.next().await;
+		match item {
+			None => return Ok(()),
+			Some(Err(e)) => return Err(e),
+			Some(Ok(StreamItem::Error(e))) => {
+				warn!(con.logger, "Got connection error"; "error" => %e);
+			}
+			Some(Ok(StreamItem::S2CInit(packet))) => {
+				con.hand_back_buffer(packet.into_buffer());
+			}
+			Some(Ok(StreamItem::C2SInit(packet))) => {
+				con.hand_back_buffer(packet.into_buffer());
+			}
+			Some(Ok(StreamItem::Audio(packet))) => {
+				con.hand_back_buffer(packet.into_buffer());
+			}
+			Some(Ok(StreamItem::Command(packet))) => {
+				con.hand_back_buffer(packet.into_buffer());
+			}
+		}
 	}
 }
 
@@ -135,7 +159,6 @@ pub async fn disconnect(con: &mut Client) -> Result<()> {
 		);
 
 	let fut = con.send_packet(packet).await;
-	con.wait_disconnect().await?;
-	fut.await?;
+	tokio::try_join!(fut, wait_disconnect(con))?;
 	Ok(())
 }

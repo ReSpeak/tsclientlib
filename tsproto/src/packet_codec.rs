@@ -131,18 +131,24 @@ impl PacketCodec {
 				PacketType::Command | PacketType::CommandLow => {
 					ack = true;
 
-					let event = Event::ReceivePacket(&packet);
-					con.send_event(&event);
 					let commands = Self::handle_command_packet(con, packet_data)?;
 
 					// Be careful with command packets, they are guaranteed to
 					// be in the right order now.
 					for c in commands {
+						// Send again
+						let packet = InPacket::new(dir, &c);
+						let event = Event::ReceivePacket(&packet);
+						con.send_event(&event);
+
 						con.stream_items.push_back(match InCommandBuf::try_new(dir, c) {
 							Ok(c) => {
 								// initivexpand2 is the ack for the last init packet
 								if con.is_client && c.data().data().name == "initivexpand2" {
 									con.resender.ack_packet(PacketType::Init, 4);
+								} else if con.is_client && c.data().data().name == "initserver" {
+									// initserver acks clientinit
+									con.resender.ack_packet(PacketType::Command, 2);
 								}
 								StreamItem::Command(c)
 							}
@@ -273,10 +279,6 @@ impl PacketCodec {
 						}
 
 						Some(frag_queue)
-						/*Some(
-							InPacket::new(dir, frag_queue).into_command()
-								.map_err(|(_, e)| e)?,
-						)*/
 					} else {
 						// Enqueue
 						*frag_queue = Some(packet_data);

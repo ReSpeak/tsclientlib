@@ -240,29 +240,29 @@ impl Connection {
 			return Poll::Ready(Ok(item));
 		}
 
-		// Poll udp_socket
-		if self.udp_buffer.len() != MAX_UDP_PACKET_LENGTH {
-			self.udp_buffer.resize(MAX_UDP_PACKET_LENGTH, 0);
-		}
+		loop {
+			// Poll udp_socket
+			if self.udp_buffer.len() != MAX_UDP_PACKET_LENGTH {
+				self.udp_buffer.resize(MAX_UDP_PACKET_LENGTH, 0);
+			}
 
-		match self.udp_socket.poll_recv_from(cx, &mut self.udp_buffer) {
-			Poll::Ready(Ok((size, addr))) => {
-				let mut udp_buffer = mem::replace(&mut self.udp_buffer, Vec::new());
-				udp_buffer.truncate(size);
-				match self.handle_udp_packet(cx, udp_buffer, addr) {
-					Ok(()) => if let Some(item) = self.stream_items.pop_front() {
-						Poll::Ready(Ok(item))
-					} else {
-						Poll::Pending
-					}
-					Err(e) => {
-						Poll::Ready(Ok(StreamItem::Error(e)))
+			match self.udp_socket.poll_recv_from(cx, &mut self.udp_buffer) {
+				Poll::Ready(Ok((size, addr))) => {
+					let mut udp_buffer = mem::replace(&mut self.udp_buffer, Vec::new());
+					udp_buffer.truncate(size);
+					match self.handle_udp_packet(cx, udp_buffer, addr) {
+						Ok(()) => if let Some(item) = self.stream_items.pop_front() {
+							return Poll::Ready(Ok(item));
+						}
+						Err(e) => {
+							return Poll::Ready(Ok(StreamItem::Error(e)));
+						}
 					}
 				}
+				// Udp socket closed
+				Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+				Poll::Pending => return Poll::Pending,
 			}
-			// Udp socket closed
-			Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
-			Poll::Pending => Poll::Pending,
 		}
 	}
 
@@ -279,7 +279,7 @@ impl Connection {
 
 		let dir = if self.is_client { Direction::S2C } else { Direction::C2S };
 		let packet = InUdpPacket(InPacket::try_new(dir, &udp_buffer)
-			.with_context(|| format!("{:?}", HexSlice(&udp_buffer)))?);
+			.with_context(|| format!("Buffer {:?}", HexSlice(&udp_buffer)))?);
 		let event = Event::ReceiveUdpPacket(&packet);
 		self.send_event(&event);
 
@@ -296,7 +296,6 @@ impl Connection {
 		let mut udp_packets = PacketCodec::encode_packet(self, packet)?;
 		assert_eq!(udp_packets.len(), 1, "Encoding an ack packet should only yield a single packet");
 		let packet = udp_packets.pop().unwrap();
-		self.send_event(&Event::SendUdpPacket(&packet));
 
 		match self.poll_send_udp_packet(cx, &packet) {
 			Poll::Ready(r) => r,
@@ -373,35 +372,6 @@ impl Connection {
 				}
 			}
 		}
-	}
-
-	/// Filter the incoming items and save other items in a queue.
-	pub async fn filter_items<F: Fn(&StreamItem) -> bool>(&mut self, filter: F) -> Result<StreamItem> {
-		let mut queue = VecDeque::new();
-		loop {
-			let item = self.next().await;
-			match item {
-				None => bail!("Connection ended before a matching item was found"),
-				Some(r) => {
-					let item = r?;
-					if filter(&item) {
-						// TODO If this future gets dropped, we loose the queue
-						self.stream_items.append(&mut queue);
-						return Ok(item);
-					} else {
-						queue.push_back(item);
-					}
-				}
-			}
-		}
-	}
-
-	/// This will resolve once the connection finishes.
-	pub async fn wait_disconnect(&mut self) -> Result<()> {
-		while let Some(r) = self.next().await {
-			r?;
-		}
-		Ok(())
 	}
 }
 

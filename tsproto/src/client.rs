@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use anyhow::bail;
+use anyhow::{bail, format_err};
 use futures::prelude::*;
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
@@ -14,7 +14,7 @@ use rand::Rng;
 use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
-use slog::{info, Level, Logger};
+use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
 use tokio::net::UdpSocket;
 use tsproto_packets::packets::*;
@@ -45,24 +45,48 @@ impl Client {
 		}
 	}
 
-	async fn get_init(&mut self, fut: impl Future<Output=Result<()>>) -> Result<InS2CInitBuf> {
-		let (_, res) = tokio::try_join!(fut, self.filter_items(|i|
-			if let StreamItem::S2CInit(_) = i { true } else { false }))?;
-		if let StreamItem::S2CInit(res) = res {
-			Ok(res)
-		} else {
-			unreachable!()
-		}
+	async fn get_init(&mut self, fut: impl Future<Output=Result<()>>, init_step: u8) -> Result<InS2CInitBuf> {
+		let logger = self.logger.clone();
+		Ok(tokio::try_join!(fut, self.filter_items(|con, i| Ok(match i {
+			StreamItem::S2CInit(packet) => {
+				if packet.data().data().get_step() == init_step {
+					Some(packet)
+				} else {
+					// Resent packet
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+			}
+			StreamItem::C2SInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::Error(e) => {
+				warn!(logger, "Got connection error"; "error" => %e);
+				None
+			}
+			i => bail!("Unexpected packet, wanted S2CInit instead of {:?}", i),
+		})))?.1)
 	}
 
 	async fn get_command(&mut self, fut: impl Future<Output=Result<()>>) -> Result<InCommandBuf> {
-		let (_, res) = tokio::try_join!(fut, self.filter_items(|i|
-			if let StreamItem::Command(_) = i { true } else { false }))?;
-		if let StreamItem::Command(res) = res {
-			Ok(res)
-		} else {
-			unreachable!()
-		}
+		let logger = self.logger.clone();
+		Ok(tokio::try_join!(fut, self.filter_items(|con, i| Ok(match i {
+			StreamItem::S2CInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::C2SInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::Command(packet) => Some(packet),
+			StreamItem::Error(e) => {
+				warn!(logger, "Got connection error"; "error" => %e);
+				None
+			}
+			i => bail!("Unexpected packet, wanted Command instead of {:?}", i),
+		})))?.1)
 	}
 
 	pub async fn connect(&mut self) -> Result<()> {
@@ -79,7 +103,7 @@ impl Client {
 		let fut2;
 		{
 			let fut = self.send_packet(OutC2SInit0::new(timestamp, timestamp, random0)).await;
-			let init1 = self.get_init(fut).await?;
+			let init1 = self.get_init(fut, 1).await?;
 			match init1.data().data() {
 				S2CInitData::Init1 { random1, random0_r } => {
 					// Check the response
@@ -104,7 +128,7 @@ impl Client {
 		let alpha;
 		let fut2;
 		{
-			let init3 = self.get_init(fut).await?;
+			let init3 = self.get_init(fut, 3).await?;
 			match init3.data().data() {
 				S2CInitData::Init3 { x, n, level, random2 } => {
 					let level = *level;
@@ -256,6 +280,49 @@ impl Client {
 		Ok(())
 	}
 
+	/// Filter the incoming items.
+	pub async fn filter_items<T, F: Fn(&mut Client, StreamItem) -> Result<Option<T>>>(&mut self, filter: F) -> Result<T> {
+		loop {
+			let item = self.next().await;
+			match item {
+				None => bail!("Connection ended before a matching item was found"),
+				Some(r) => {
+					if let Some(r) = filter(self, r?)? {
+						return Ok(r);
+					}
+				}
+			}
+		}
+	}
+
+	/// Filter the incoming items. Drops audio packets.
+	pub async fn filter_commands<T, F: Fn(&mut Client, InCommandBuf) -> Result<Option<T>>>(&mut self, filter: F) -> Result<T> {
+		loop {
+			let item = self.next().await;
+			match item {
+				None => bail!("Connection ended before a matching item was found"),
+				Some(Err(e)) => return Err(e),
+				Some(Ok(StreamItem::Error(e))) => {
+					warn!(self.logger, "Got connection error"; "error" => %e);
+				}
+				Some(Ok(StreamItem::S2CInit(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::C2SInit(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::Audio(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::Command(packet))) => {
+					if let Some(r) = filter(self, packet)? {
+						return Ok(r);
+					}
+				}
+			}
+		}
+	}
+
 	// TODO Send messages with return_code and get back future
 }
 
@@ -279,24 +346,26 @@ impl Stream for Client {
 					// Handle an initserver
 					let cmd = command.data().iter().next().unwrap();
 					if let Some(params) = &mut self.params {
-						if let Ok(c_id) = cmd.get_parse("aclid") {
-							params.c_id = c_id;
+						match cmd.get_parse("aclid") {
+							Ok(c_id) => params.c_id = c_id,
+							Err(e) => {
+								return Poll::Ready(Some(Err(
+									format_err!("Failed to parse aclid: {:?}", e))));
+							}
 						}
-
-						// initserver is the ack for clientinit
-						// Remove from send queue
-						self.resender.ack_packet(PacketType::Command, 2);
 					}
 
 					// Notify the resender that we are connected
-					self.resender.set_state(ResenderState::Connected);
+					let this = &mut **self;
+					this.resender.set_state(&this.logger, ResenderState::Connected);
 				} else if cmd_name == &"notifyclientleftview" {
 					// Handle disconnect
 					let cmd = command.data().iter().next().unwrap();
 					if let Some(params) = &mut self.params {
 						if cmd.get_parse("clid") == Ok(params.c_id) {
 							// We are disconnecting
-							self.resender.set_state(ResenderState::Disconnecting);
+							let this = &mut **self;
+							this.resender.set_state(&this.logger, ResenderState::Disconnecting);
 						}
 					}
 				} else if cmd_name == &"notifyplugincmd" {
