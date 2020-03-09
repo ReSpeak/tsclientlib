@@ -416,7 +416,6 @@ impl EccKeyPrivP256 {
 
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
 		let key = self.to_ring();
-		// TODO Return ring signature for one less copy
 		Ok(key
 			.sign(&ring::rand::SystemRandom::new(), data)
 			.map_err(|_| format_err!("Failed to create signature"))?

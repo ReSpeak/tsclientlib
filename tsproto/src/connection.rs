@@ -19,7 +19,7 @@ use tsproto_packets::packets::*;
 use crate::{Error, MAX_UDP_PACKET_LENGTH, Result, UDP_SINK_CAPACITY};
 use crate::crypto::EccKeyPubP256;
 use crate::packet_codec::PacketCodec;
-use crate::resend::{DefaultResender, ResenderState};
+use crate::resend::{DefaultResender, Resender, ResenderState};
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
@@ -231,7 +231,7 @@ impl Connection {
 			self.acks_to_send.pop_front();
 		}
 		if self.acks_to_send.len() >= UDP_SINK_CAPACITY
-			|| self.resender.get_state() == ResenderState::Disconnecting {
+			|| self.resender.get_state() == ResenderState::Disconnected {
 			return Poll::Pending;
 		}
 
@@ -266,12 +266,6 @@ impl Connection {
 		}
 	}
 
-	fn poll_resender_ping(&mut self, _cx: &mut Context) -> Poll<Option<Result<StreamItem>>> {
-		// Return None if disconnected
-		// TODO
-		Poll::Pending
-	}
-
 	fn handle_udp_packet(&mut self, cx: &mut Context, udp_buffer: Vec<u8>, addr: SocketAddr) -> Result<()> {
 		if addr != self.address {
 			bail!("Received UDP packet from wrong address");
@@ -283,6 +277,7 @@ impl Connection {
 		let event = Event::ReceiveUdpPacket(&packet);
 		self.send_event(&event);
 
+		self.resender.received_packet();
 		PacketCodec::handle_udp_packet(self, cx, udp_buffer)?;
 
 		Ok(())
@@ -387,7 +382,7 @@ impl Stream for Connection {
 	type Item = Result<StreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		const COUNT: u8 = 3;
-		if self.resender.get_state() == ResenderState::Disconnecting {
+		if self.resender.get_state() == ResenderState::Disconnected {
 			// Send all ack packets and return `None` afterwards
 			let _ = self.poll_incoming_udp_packet(cx);
 			if self.acks_to_send.is_empty() {
@@ -414,9 +409,9 @@ impl Stream for Connection {
 				}
 				2 => {
 					// Use the resender to send pings
-					match self.poll_resender_ping(cx) {
-						Poll::Pending => {}
-						r => return r,
+					match DefaultResender::poll_ping(&mut *self, cx) {
+						Ok(()) => {}
+						Err(e) => return Poll::Ready(Some(Err(e))),
 					}
 				}
 				_ => unreachable!(),

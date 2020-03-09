@@ -30,13 +30,14 @@ const C: f32 = 0.5;
 /// Events to inform a resender of the current state of a connection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum ResenderState {
-	/// The connection is starting, reduce the timeout time
+	/// The connection is starting, reduce the timeout time.
 	Connecting,
-	/// The handshake is completed, this is the normal operation mode
+	/// The handshake is completed, this is the normal operation mode.
 	Connected,
-	/// The connection is tearing down, reduce the timeout time
+	/// The connection is tearing down, reduce the timeout time.
 	Disconnecting,
-	// TODO Disconnected state: Only need to send ack packet
+	/// The connection is gone, we only send ack packets.
+	Disconnected,
 }
 
 /// For each connection a resender is created, which is responsible for sending
@@ -47,8 +48,8 @@ pub trait Resender {
 	/// The packet type must be `Command` or `CommandLow`.
 	fn ack_packet(&mut self, p_type: PacketType, p_id: u16);
 
-	/// This method informs the resender of state changes of the connection.
-	fn set_state(&mut self, logger: &Logger, event: ResenderState);
+	/// Called when a packet is received to signal activity.
+	fn received_packet(&mut self);
 }
 
 /// A record of a packet that can be resent.
@@ -78,8 +79,20 @@ pub struct DefaultResender {
 	/// The amount of packets that were sent since the last loss.
 	packet_count: u16,
 
+	/// When the last packet was added to the send queue or received.
+	/// This is used to decide when to send ping packets.
+	last_receive: Instant,
+	/// When the last packet was added to the send queue.
+	/// This is used to handle timeouts when disconnecting and to decide when to
+	/// send ping packets.
+	last_send: Instant,
+
 	/// The future to wake us up when the next packet should be resent.
 	timeout: Delay,
+	/// The timer used for sending ping packets.
+	ping_timeout: Delay,
+	/// The timer used for disconnecting the connection.
+	state_timeout: Delay,
 }
 
 #[derive(Clone, Debug)]
@@ -152,6 +165,10 @@ impl Default for DefaultResender {
 			packet_count: 0,
 
 			timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
+			last_receive: Instant::now(),
+			last_send: Instant::now(),
+			ping_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
+			state_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
 		}
 	}
 }
@@ -188,10 +205,8 @@ impl Resender for DefaultResender {
 		}
 	}
 
-	fn set_state(&mut self, logger: &Logger, state: ResenderState) {
-		info!(logger, "Resender: Changed state"; "from" => ?self.state,
-			"to" => ?state);
-		self.state = state;
+	fn received_packet(&mut self) {
+		self.last_receive = Instant::now();
 	}
 }
 
@@ -199,8 +214,21 @@ impl DefaultResender {
 	fn get_timeout(&self) -> Duration {
 		match self.state {
 			ResenderState::Connecting => self.config.connecting_timeout,
-			ResenderState::Disconnecting => self.config.disconnect_timeout,
+			ResenderState::Disconnecting
+			| ResenderState::Disconnected => self.config.disconnect_timeout,
 			ResenderState::Connected => self.config.normal_timeout,
+		}
+	}
+
+	/// Inform the resender of state changes of the connection.
+	pub fn set_state(&mut self, logger: &Logger, cx: &mut Context, state: ResenderState) {
+		info!(logger, "Resender: Changed state"; "from" => ?self.state,
+			"to" => ?state);
+		self.state = state;
+
+		self.state_timeout.reset(self.last_send + self.get_timeout());
+		if let Poll::Ready(()) = Pin::new(&mut self.state_timeout).poll(cx) {
+			cx.waker().wake_by_ref();
 		}
 	}
 
@@ -228,6 +256,7 @@ impl DefaultResender {
 	}
 
 	pub async fn send_packet(con: &mut Connection, packet: OutUdpPacket) -> Result<oneshot::Receiver<()>> {
+		con.resender.last_send = Instant::now();
 		let (notify, recv) = oneshot::channel();
 		let mut rec = SendRecord {
 			sent: Instant::now(),
@@ -250,15 +279,13 @@ impl DefaultResender {
 	/// considered dead or another unrecoverable error occurs.
 	pub fn poll_resend(con: &mut Connection, cx: &mut Context) -> Result<()> {
 		let now = Instant::now();
-
-		// TODO Handle Disconnecting state timeout (even if we don't need to send a packet)
+		let timeout = con.resender.get_timeout();
+		let max_rto = timeout / 2;
 
 		// Check if there are packets to send.
 		let mut rto: Duration;
 		let mut last_threshold;
 		let mut packet_loss = false;
-		let timeout = con.resender.get_timeout();
-		let max_rto = timeout / 2;
 		while let Some(mut rec) = {
 			// Handle congestion window when the resender is not borrowed
 			if packet_loss {
@@ -338,6 +365,27 @@ impl DefaultResender {
 			}
 		}
 
+		Ok(())
+	}
+
+	/// Returns an error if the timeout is exceeded and the connection is
+	/// considered dead or another unrecoverable error occurs.
+	pub fn poll_ping(con: &mut Connection, cx: &mut Context) -> Result<()> {
+		let now = Instant::now();
+		let timeout = con.resender.get_timeout();
+
+		if con.resender.state == ResenderState::Disconnecting {
+			if now - con.resender.last_send >= timeout {
+				bail!("Connection timed out");
+			}
+
+			con.resender.state_timeout.reset(con.resender.last_send + timeout);
+			if let Poll::Ready(()) = Pin::new(&mut con.resender.state_timeout).poll(cx) {
+				bail!("Connection timed out");
+			}
+		}
+
+		// TODO Send ping packets if needed
 		Ok(())
 	}
 }

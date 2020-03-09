@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 
 use anyhow::{bail, Result};
-use futures::prelude::*;
 use slog::info;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
@@ -71,7 +70,7 @@ async fn main() -> Result<()> {
 		vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
 		std::iter::empty(),
 	);
-	let mut fut = con.send_packet(packet).await;
+	let mut fut = con.send_packet_with_answer(packet).await;
 	tokio::select! {
 		_ = &mut fut => {}
 		_ = wait_disconnect(&mut con) => {

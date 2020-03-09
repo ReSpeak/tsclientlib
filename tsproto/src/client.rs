@@ -1,9 +1,10 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use anyhow::{bail, format_err};
+use anyhow::bail;
 use futures::prelude::*;
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
@@ -17,18 +18,21 @@ use rug::Integer;
 use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
 use tokio::net::UdpSocket;
+use tokio::sync::oneshot;
 use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
 use crate::connection::{ConnectedParams, Connection, StreamItem};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::license::Licenses;
-use crate::resend::{Resender, ResenderState};
+use crate::resend::ResenderState;
 use crate::Result;
 
 pub struct Client {
 	con: Connection,
 	pub private_key: EccKeyPrivP256,
+	return_codes: HashMap<u16, oneshot::Sender<u32>>,
+	cur_return_code: u16,
 }
 
 impl Client {
@@ -42,6 +46,8 @@ impl Client {
 		Self {
 			con: Connection::new(true, logger, address, udp_socket),
 			private_key,
+			return_codes: Default::default(),
+			cur_return_code: Default::default(),
 		}
 	}
 
@@ -87,6 +93,44 @@ impl Client {
 			}
 			i => bail!("Unexpected packet, wanted Command instead of {:?}", i),
 		})))?.1)
+	}
+
+	/// Send a packet. The `send_packet` function will resolve to a future when
+	/// the packet has been sent.
+	///
+	/// If the packet has an acknowledgement (ack or pong), the returned future
+	/// will resolve when it is received. Otherwise it will resolve instantly.
+	pub async fn send_packet(&mut self, packet: OutPacket) -> impl Future<Output=Result<()>> {
+		if packet.header().packet_type() == PacketType::Command
+			&& packet.content().starts_with(b"clientdisconnect") {
+			let this = &mut **self;
+			future::poll_fn(|cx| {
+				this.resender.set_state(&this.logger, cx, ResenderState::Disconnecting);
+				Poll::Ready(())
+			}).await;
+		}
+		self.con.send_packet(packet).await
+	}
+
+	/// Send a packet. The `send_packet` function will resolve to a future when
+	/// the packet has been sent.
+	///
+	/// A `return_code` will be appended to the command
+	/// If the packet has an acknowledgement (ack or pong), the returned future
+	/// will resolve when it is received. Otherwise it will resolve instantly.
+	///
+	/// Returns the TeamSpeak error id.
+	pub async fn send_packet_with_answer(&mut self, mut packet: OutPacket) -> impl Future<Output=Result<u32>> {
+		assert!(packet.header().packet_type().is_command(),
+			"Can only send commands with `send_packet_with_answer`");
+		packet.data_mut().extend_from_slice(b" return_code=");
+		packet.data_mut().extend_from_slice(self.cur_return_code.to_string().as_bytes());
+
+		let (send, recv) = oneshot::channel();
+		self.return_codes.insert(self.cur_return_code, send);
+		self.cur_return_code += 1;
+
+		self.send_packet(packet).await.and_then(|_| recv.map_err(|e| e.into()))
 	}
 
 	pub async fn connect(&mut self) -> Result<()> {
@@ -323,7 +367,84 @@ impl Client {
 		}
 	}
 
-	// TODO Send messages with return_code and get back future
+	fn handle_command(&mut self, cx: &mut Context, command: InCommandBuf) -> Result<Option<InCommandBuf>> {
+		let cmd_name = &command.data().data().name;
+		if cmd_name == &"initserver" {
+			// Handle an initserver
+			let cmd = command.data().iter().next().unwrap();
+			if let Some(params) = &mut self.params {
+				match cmd.get_parse("aclid") {
+					Ok(c_id) => params.c_id = c_id,
+					Err(e) => bail!("Failed to parse aclid: {:?}", e),
+				}
+			}
+
+			// Notify the resender that we are connected
+			let this = &mut **self;
+			this.resender.set_state(&this.logger, cx, ResenderState::Connected);
+		} else if cmd_name == &"notifyclientleftview" {
+			// Handle disconnect
+			let cmd = command.data().iter().next().unwrap();
+			if let Some(params) = &mut self.params {
+				if cmd.get_parse("clid") == Ok(params.c_id) {
+					// We are disconnected
+					let this = &mut **self;
+					this.resender.set_state(&this.logger, cx, ResenderState::Disconnected);
+				}
+			}
+		} else if cmd_name == &"notifyplugincmd" {
+			let cmd = command.data().iter().next().unwrap();
+			// TODO getversion
+			if cmd.get("name") == Some("getversion") && cmd.has("client") {
+				if let Some(sender) = cmd.get("client") {
+					let mut version = format!(
+						"{} {}",
+						env!("CARGO_PKG_NAME"),
+						git_testament::render_testament!(crate::TESTAMENT),
+					);
+					#[cfg(debug_assertions)]
+					version.push_str(" (Debug)");
+					#[cfg(not(debug_assertions))]
+					version.push_str(" (Release)");
+
+					let _p = Some(OutCommand::new::<
+						_,
+						_,
+						String,
+						String,
+						_,
+						_,
+						std::iter::Empty<_>,
+					>(
+						Direction::C2S,
+						PacketType::Command,
+						"plugincmd",
+						vec![
+							("name", "getversion".into()),
+							("data", version),
+							// PluginTargetMode::Client
+							("targetmode", 2.to_string()),
+							("target", sender.to_string()),
+						]
+						.into_iter(),
+						std::iter::empty(),
+					));
+				}
+			}
+		} else if cmd_name == &"error" {
+			let cmd = command.data().iter().next().unwrap();
+			if let Ok(code) = cmd.get_parse("return_code") {
+				if let Some(send) = self.return_codes.remove(&code) {
+					if let Ok(id) = cmd.get_parse("error_id") {
+						let _ = send.send(id);
+						return Ok(None);
+					}
+				}
+			}
+		}
+
+		Ok(Some(command))
+	}
 }
 
 impl Deref for Client {
@@ -339,79 +460,18 @@ impl DerefMut for Client {
 impl Stream for Client {
 	type Item = Result<StreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-		match Pin::new(&mut **self).poll_next(cx) {
-			Poll::Ready(Some(Ok(StreamItem::Command(command)))) => {
-				let cmd_name = &command.data().data().name;
-				if cmd_name == &"initserver" {
-					// Handle an initserver
-					let cmd = command.data().iter().next().unwrap();
-					if let Some(params) = &mut self.params {
-						match cmd.get_parse("aclid") {
-							Ok(c_id) => params.c_id = c_id,
-							Err(e) => {
-								return Poll::Ready(Some(Err(
-									format_err!("Failed to parse aclid: {:?}", e))));
-							}
-						}
-					}
-
-					// Notify the resender that we are connected
-					let this = &mut **self;
-					this.resender.set_state(&this.logger, ResenderState::Connected);
-				} else if cmd_name == &"notifyclientleftview" {
-					// Handle disconnect
-					let cmd = command.data().iter().next().unwrap();
-					if let Some(params) = &mut self.params {
-						if cmd.get_parse("clid") == Ok(params.c_id) {
-							// We are disconnecting
-							let this = &mut **self;
-							this.resender.set_state(&this.logger, ResenderState::Disconnecting);
-						}
-					}
-				} else if cmd_name == &"notifyplugincmd" {
-					let cmd = command.data().iter().next().unwrap();
-					// TODO getversion
-					if cmd.get("name") == Some("getversion") && cmd.has("client") {
-						if let Ok(sender) = cmd.get("client").unwrap().parse::<u16>() {
-							let mut version = format!(
-								"{} {}",
-								env!("CARGO_PKG_NAME"),
-								git_testament::render_testament!(crate::TESTAMENT),
-							);
-							#[cfg(debug_assertions)]
-							version.push_str(" (Debug)");
-							#[cfg(not(debug_assertions))]
-							version.push_str(" (Release)");
-
-							let _p = Some(OutCommand::new::<
-								_,
-								_,
-								String,
-								String,
-								_,
-								_,
-								std::iter::Empty<_>,
-							>(
-								Direction::C2S,
-								PacketType::Command,
-								"plugincmd",
-								vec![
-									("name", "getversion".into()),
-									("data", version),
-									// PluginTargetMode::Client
-									("targetmode", 2.to_string()),
-									("target", sender.to_string()),
-								]
-								.into_iter(),
-								std::iter::empty(),
-							));
-						}
+		loop {
+			match Pin::new(&mut **self).poll_next(cx) {
+				Poll::Ready(Some(Ok(StreamItem::Command(command)))) => {
+					match self.handle_command(cx, command) {
+						Err(e) => return Poll::Ready(Some(Err(e))),
+						Ok(Some(cmd)) => return Poll::Ready(Some(Ok(
+							StreamItem::Command(cmd)))),
+						Ok(None) => {}
 					}
 				}
-
-				Poll::Ready(Some(Ok(StreamItem::Command(command))))
+				r => return r,
 			}
-			r => r,
 		}
 	}
 }
