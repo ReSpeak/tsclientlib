@@ -1,7 +1,6 @@
+use anyhow::{bail, Error};
 use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
-use futures::{future, Future, Sink};
-use slog::{info, o};
-
+use slog::{info, o, Logger};
 use tsproto_packets::packets::*;
 
 mod utils;
@@ -11,32 +10,21 @@ fn send_messages(b: &mut Bencher) {
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
-	let logger = {
-		let drain = slog::Discard;
-		//use slog::Drain;
-		//let decorator = slog_term::TermDecorator::new().build();
-		//let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		//let drain = slog_async::Async::new(drain).build().fuse();
-		slog::Logger::root(drain, o!())
-	};
+	let logger = Logger::root(slog::Discard, o!());
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
-	let logger2 = logger.clone();
-	let (c, con) = rt
-		.block_on(future::lazy(move || {
-			let c = create_client(
-				local_address,
-				logger2.clone(),
-				SimplePacketHandler,
-				0,
-			);
+	let mut con = rt.block_on(async move {
+		let mut con = create_client(
+			local_address,
+			address,
+			logger.clone(),
+			0,
+		).await?;
 
-			info!(logger2, "Connecting");
-			utils::connect(logger2.clone(), c.clone(), address)
-				.map_err(|e| panic!("Failed to connect ({:?})", e))
-				.map(move |con| (c, con))
-		}))
-		.unwrap();
+		info!(logger, "Connecting");
+		connect(&mut con).await?;
+		Ok::<_, Error>(con)
+	}).unwrap();
 
 	let mut i = 0;
 
@@ -52,22 +40,21 @@ fn send_messages(b: &mut Bencher) {
 			);
 		i += 1;
 
-		let sink = con.as_packet_sink();
-		rt.block_on(future::lazy(move || sink.send(packet))).unwrap();
+		rt.block_on(async {
+			let mut fut = con.send_packet_with_answer(packet).await;
+			tokio::select! {
+				_ = &mut fut => {}
+				_ = con.wait_disconnect() => {
+					bail!("Disconnected");
+				}
+			};
+			Ok(())
+		}).unwrap();
 	});
-	let c2 = c.clone();
-	rt.block_on(future::lazy(move || {
-		disconnect(&c2, con)
-			.map_err(|e| panic!("Failed to disconnect ({:?})", e))
-			.and_then(move |_| {
-				info!(logger, "Disconnected");
-				// Quit client
-				drop(c);
-				Ok(())
-			})
-	}))
-	.unwrap();
-	rt.shutdown_on_idle().wait().unwrap();
+
+	rt.block_on(async move {
+		disconnect(&mut con).await
+	}).unwrap();
 }
 
 fn bench_message(c: &mut Criterion) {
