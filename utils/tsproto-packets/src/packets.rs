@@ -864,8 +864,8 @@ impl OutPacket {
 	}
 	#[inline]
 	pub fn client_id(&mut self, client_id: u16) {
-		// Client id is only valid for client to server packets.
-		assert_eq!(self.dir, Direction::C2S);
+		assert_eq!(self.dir, Direction::C2S,
+			"Client id is only valid for client to server packets");
 		(&mut self.data[10..12]).write_be(client_id).unwrap();
 	}
 	#[inline]

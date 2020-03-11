@@ -586,15 +586,10 @@ mod tests {
 	}
 
 	impl TestConnection {
-		pub async fn new() -> Result<Self> {
+		pub fn new() -> Result<Self> {
 			let logger = {
-				// TODO Write to stdout, somehow does not work
-				//let decorator = slog_term::PlainDecorator::new(std::io::stdout());
-				let decorator =
-					slog_term::TermDecorator::new().stdout().build();
-				let drain =
-					slog_term::FullFormat::new(decorator).build().fuse();
-				let drain = slog_async::Async::new(drain).build().fuse();
+				let decorator = slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
+				let drain = Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
 
 				slog::Logger::root(drain, o!())
 			};
@@ -604,21 +599,23 @@ mod tests {
 			let server_key = EccKeyPrivP256::create()?;
 
 			let (socket0, socket1) = SimulatedSocket::pair(logger.clone(), addr, addr);
-			let mut client = Client::new(logger.clone(), addr, Box::new(socket0), client_key.clone());
-			let mut server = Client::new(logger.clone(), addr, Box::new(socket1), server_key.clone());
+			let mut client = Client::new(logger.clone(), addr, Box::new(socket0), client_key);
+			let mut server = Client::new(logger.clone(), addr, Box::new(socket1), server_key);
 			server.is_client = false;
 
 			crate::log::add_logger(logger.new(o!("is" => "client")), 2, &mut client);
 			crate::log::add_logger(logger.new(o!("is" => "server")), 2, &mut server);
 
-			Self::set_connected(&mut client, server_key.to_pub()).await;
-			Self::set_connected(&mut server, client_key.to_pub()).await;
-
 			Ok(Self { client, server })
 		}
 
+		pub async fn set_connected(&mut self) {
+			Self::set_con_connected(&mut self.client, self.server.private_key.to_pub()).await;
+			Self::set_con_connected(&mut self.server, self.client.private_key.to_pub()).await;
+		}
+
 		/// Set the connection to connected.
-		async fn set_connected(con: &mut Client, other_key: EccKeyPubP256) {
+		async fn set_con_connected(con: &mut Client, other_key: EccKeyPubP256) {
 			future::poll_fn(|cx| {
 				let con = &mut **con;
 				con.resender.set_state(&con.logger, cx, ResenderState::Connected);
@@ -641,53 +638,96 @@ mod tests {
 		}
 	}
 
-	/*struct InitObserver(mpsc::UnboundedSender<()>);
-	impl<T> InPacketObserver<T> for InitObserver {
-		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
-			let header = packet.header();
-			if header.packet_type() == PacketType::Init {
-				tokio::spawn(
-					self.0
-						.clone()
-						.send(())
-						.map(|_| ())
-						.map_err(|e| panic!("Failed to send: {:?}", e)),
-				);
+	/// Check if init packet is sent and connect timeout is working.
+	#[tokio::test]
+	async fn test_connect_timeout() -> Result<()> {
+		let mut state = TestConnection::new()?;
+
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Init {
+					if let Some(s) = send.replace(None) {
+						s.send(()).unwrap();
+					}
+				}
 			}
-		}
+			_ => {}
+		};
+
+		state.server.event_listeners.push(Box::new(listener));
+
+		tokio::select!(
+			(r, err) = future::join(
+				time::timeout(Duration::from_secs(10), recv),
+				state.client.connect(),
+			) => {
+				r??;
+				assert!(err.is_err(), "Connect should timeout");
+				return Ok(());
+			}
+			_ = state.server.wait_disconnect() => {
+				bail!("Server should just run in the background");
+			}
+		);
 	}
 
 	#[tokio::test]
-	async fn test_connect_timeout() -> Result<()> {
-		let (mut runtime, con) = TestConnection::new();
-		let cw = Arc::downgrade(&con.client);
-		// Add observer
-		let (send, recv) = mpsc::unbounded();
-		con.server.lock().unwrap().add_in_packet_observer(
-			"tsproto::test".into(),
-			Box::new(InitObserver(send)),
-		);
+	async fn test_disconnect_timeout() -> Result<()> {
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
 
-		let r = connect(
-			cw,
-			&mut *con.client.lock().unwrap(),
-			"127.0.0.1:1".parse().unwrap(),
-		);
-		r.map(|_| panic!("Should not connect")).then(|_| {
-			// Drop client in the end
-			drop(con);
-			recv.into_future()
-				.map(|_| ())
-				.map_err(|_| panic!("Failed to receive init packet"))
-		});
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Command {
+					send.replace(None).unwrap().send(()).unwrap();
+				}
+			}
+			_ => {}
+		};
 
-		Ok(())
-	}*/
+		state.server.event_listeners.push(Box::new(listener));
+
+		let packet =
+			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+				Direction::C2S,
+				PacketType::Command,
+				"clientdisconnect",
+				vec![
+					// Reason: Disconnect
+					("reasonid", "8"),
+					("reasonmsg", "Bye"),
+				]
+				.into_iter(),
+				std::iter::empty(),
+			);
+		let fut = state.client.send_packet(packet).await;
+
+		tokio::select!(
+			(r, err, r2) = future::join3(
+				time::timeout(Duration::from_secs(10), recv),
+				state.client.wait_disconnect(),
+				fut,
+			) => {
+				r??;
+				r2?;
+				assert!(err.is_err(), "Connect should timeout");
+				return Ok(());
+			}
+			_ = state.server.wait_disconnect() => {
+				bail!("Server should just run in the background");
+			}
+		);
+	}
 
 	/// Send ping and check that a pong is received.
 	#[tokio::test]
 	async fn test_pong() -> Result<()> {
-		let mut state = TestConnection::new().await?;
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
 
 		let packet = OutPacket::new_with_dir(
 			Direction::S2C,
@@ -715,7 +755,6 @@ mod tests {
 
 		state.server.event_listeners.push(Box::new(listener));
 
-		// Add observer
 		tokio::select!(
 			r = time::timeout(Duration::from_secs(5), recv) => {
 				r??;
@@ -727,83 +766,75 @@ mod tests {
 		bail!("Unexpected disconnect");
 	}
 
-	/*struct CounterObserver(mpsc::UnboundedSender<()>, Mutex<usize>);
-	impl<T> InPacketObserver<T> for CounterObserver {
-		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
-			let header = packet.header();
-			if header.packet_type() == PacketType::Command
-				&& *self.1.lock().unwrap() == 0
-			{
-				tokio::spawn(
-					self.0
-						.clone()
-						.send(())
-						.map(|_| ())
-						.map_err(|e| panic!("Failed to send: {:?}", e)),
-				);
-			} else {
-				*self.1.lock().unwrap() -= 1;
-			}
-		}
-	}
+	/// Check that the packet id wraps around.
+	#[tokio::test]
+	async fn test_generation_id() -> Result<()> {
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
 
-	#[test]
-	fn test_generation_id() {
-		let (mut runtime, con) = TestConnection::new();
+		// Sending 70 000 messages takes about 7 minutes in debug mode so we
+		// start at 65 500 and send only 100.
+		let count = 100;
 
 		// Set current id
-		for c in &[&con.client_con, &con.server_con] {
-			let c = c.upgrade().unwrap();
-			let mut c = c.mutex.lock().unwrap();
-			c.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 65_000);
-			c.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 65_000);
-			c.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 65_000);
-			c.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 65_000);
+		for c in &mut [&mut state.client, &mut state.server] {
+			c.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 65_500);
+			c.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 65_500);
+			c.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				(0, 65_500);
+			c.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				(0, 65_500);
 		}
 
-		runtime.spawn(future::lazy(move || {
-			// Sending 70 000 messages takes about 7 minutes (in debug mode) so
-			// we start at 65 000 and send only 5 000
-			let mut msgs = Vec::new();
-			let count = 5_000;
-			let (send, recv) = mpsc::unbounded();
-			con.client.lock().unwrap().add_in_packet_observer(
-				"tsproto::test".into(),
-				Box::new(CounterObserver(send, Mutex::new(count - 1))),
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let counter = Cell::new(0u8);
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Command {
+					counter.set(counter.get() + 1);
+					if counter.get() == count {
+						send.replace(None).unwrap().send(()).unwrap();
+					}
+				}
+			}
+			_ => {}
+		};
+
+		state.client.event_listeners.push(Box::new(listener));
+
+		let mut futs = Vec::new();
+		for i in 0..count {
+			let packet = OutCommand::new::<
+				_,
+				_,
+				String,
+				String,
+				_,
+				_,
+				std::iter::Empty<_>,
+			>(
+				Direction::S2C,
+				PacketType::Command,
+				"notifytextmessage",
+				vec![("msg", format!("message {}", i))].into_iter(),
+				std::iter::empty(),
 			);
 
-			for i in 0..count {
-				let packet = OutCommand::new::<
-					_,
-					_,
-					String,
-					String,
-					_,
-					_,
-					std::iter::Empty<_>,
-				>(
-					Direction::S2C,
-					PacketType::Command,
-					"notifytextmessage",
-					vec![("msg", format!("message {}", i))].into_iter(),
-					std::iter::empty(),
-				);
-				msgs.push(
-					con.send_packet(packet.clone())
-						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
-				);
+			futs.push(state.server.send_packet(packet).await);
+		}
+
+		tokio::select!(
+			(r, r2) = future::join(recv, future::try_join_all(futs)) => {
+				r?;
+				r2?;
+				return Ok(());
 			}
-
-			tokio::spawn(stream::futures_ordered(msgs).for_each(|_| Ok(())));
-
-			recv.into_future()
-				.map(|_| drop(con))
-				.map_err(|_| panic!("Failed to receive all packets"))
-		}));
-		runtime.run().unwrap();
-	}*/
+			_ = state.client.wait_disconnect() => {}
+			_ = state.server.wait_disconnect() => {}
+		);
+		bail!("Unexpected disconnect");
+	}
 }
