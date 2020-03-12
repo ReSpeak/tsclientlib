@@ -10,7 +10,8 @@ fn send_messages(b: &mut Bencher) {
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
-	let logger = Logger::root(slog::Discard, o!());
+	//let logger = Logger::root(slog::Discard, o!());
+	let logger = create_logger();
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
 	let mut con = rt.block_on(async move {
@@ -28,6 +29,7 @@ fn send_messages(b: &mut Bencher) {
 
 	let mut i = 0;
 
+	let mut futs = Vec::new();
 	b.iter(|| {
 		let text = format!("Hello {}", i);
 		let packet =
@@ -41,18 +43,28 @@ fn send_messages(b: &mut Bencher) {
 		i += 1;
 
 		rt.block_on(async {
-			let mut fut = con.send_packet_with_answer(packet).await;
+			let fut = con.send_packet(packet).await;
+			futs.push(fut);
+			/*let mut fut = con.send_packet_with_answer(packet).await;
 			tokio::select! {
 				_ = &mut fut => {}
 				_ = con.wait_disconnect() => {
 					bail!("Disconnected");
 				}
-			};
-			Ok(())
-		}).unwrap();
+			};*/
+		});
 	});
 
 	rt.block_on(async move {
+		tokio::select! {
+			r = futures::future::join_all(futs) => {
+				r.into_iter().collect::<Result<_, _>>()?;
+			}
+			r = con.wait_disconnect() => {
+				r?;
+				bail!("Disconnected");
+			}
+		};
 		disconnect(&mut con).await
 	}).unwrap();
 }

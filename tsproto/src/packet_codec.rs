@@ -49,7 +49,6 @@ impl PacketCodec {
 		mut packet_data: Vec<u8>,
 	) -> Result<()>
 	{
-		let mut res = Ok(());
 		let mut ack = false;
 
 		let dir = if con.is_client { Direction::S2C } else { Direction::C2S };
@@ -62,12 +61,14 @@ impl PacketCodec {
 
 		if let Some(params) = &con.params {
 			if p_type == PacketType::Init {
-				return Err(BasicError::UnexpectedInitPacket.into());
+				con.stream_items.push_back(StreamItem::Error(BasicError::UnexpectedInitPacket.into()));
+				return Ok(());
 			}
 			if !con.is_client {
 				let c_id = packet.header().client_id().unwrap();
 				if c_id != params.c_id {
-					return Err(BasicError::WrongClientId(c_id).into());
+					con.stream_items.push_back(StreamItem::Error(BasicError::WrongClientId(c_id).into()));
+					return Ok(());
 				}
 			}
 		}
@@ -77,8 +78,7 @@ impl PacketCodec {
 			|| in_recv_win
 		{
 			if !packet.header().flags().contains(Flags::UNENCRYPTED) {
-				if p_type == PacketType::Ack && id == 1 && con.is_client
-				{
+				if p_type == PacketType::Ack && id == 1 && con.is_client {
 					// This is the ack packet for the clientinit, we take the
 					// initserver as ack instead.
 					return Ok(());
@@ -90,7 +90,7 @@ impl PacketCodec {
 					&& id <= 1 && con.is_client)
 					|| con.params.is_none()
 				{
-					algs::decrypt_fake(&packet).or_else(|_| {
+					match algs::decrypt_fake(&packet).or_else(|_| {
 						if let Some(params) = &mut con.params {
 							// Decrypt the packet
 							algs::decrypt(
@@ -107,23 +107,36 @@ impl PacketCodec {
 								packet_id: id,
 							})
 						}
-					})?
+					}) {
+						Ok(r) => r,
+						Err(e) => {
+							con.stream_items.push_back(StreamItem::Error(e.into()));
+							return Ok(());
+						}
+					}
 				} else {
 					if let Some(params) = &mut con.params {
 						// Decrypt the packet
-						algs::decrypt(
+						match algs::decrypt(
 							&packet,
 							gen_id,
 							&params.shared_iv,
 							&mut params.key_cache,
-						)?
+						) {
+							Ok(r) => r,
+							Err(e) => {
+								con.stream_items.push_back(StreamItem::Error(e.into()));
+								return Ok(());
+							}
+						}
 					} else {
 						// Failed to fake decrypt the packet
-						return Err(BasicError::WrongMac {
+						con.stream_items.push_back(StreamItem::Error(BasicError::WrongMac {
 							p_type,
 							generation_id: gen_id,
 							packet_id: id,
-						}.into());
+						}.into()));
+						return Ok(());
 					}
 				};
 
@@ -131,7 +144,8 @@ impl PacketCodec {
 				(&mut packet_data[start..]).copy_from_slice(&new_content);
 			} else if algs::must_encrypt(p_type) {
 				// Check if it is ok for the packet to be unencrypted
-				return Err(BasicError::UnallowedUnencryptedPacket.into());
+				con.stream_items.push_back(StreamItem::Error(BasicError::UnallowedUnencryptedPacket.into()));
+				return Ok(());
 			}
 
 			let packet = InPacket::new(dir, &packet_data);
@@ -160,7 +174,7 @@ impl PacketCodec {
 								}
 								StreamItem::Command(c)
 							}
-							Err(e) => StreamItem::Error(e.into()),
+							Err(e) => return Err(e.into()),
 						});
 					}
 				}
@@ -176,16 +190,23 @@ impl PacketCodec {
 							(if next_gen { gen_id + 1 } else { gen_id }, id);
 					}
 
-					if let Some(ack_id) = packet.ack_packet()? {
-						// Remove command packet from send queue if the fitting ack is received.
-						let p_type = if p_type == PacketType::Ack {
-							PacketType::Command
-						} else if p_type == PacketType::AckLow {
-							PacketType::CommandLow
-						} else {
-							p_type
-						};
-						con.resender.ack_packet(p_type, ack_id);
+					match packet.ack_packet() {
+						Ok(Some(ack_id)) => {
+							// Remove command packet from send queue if the fitting ack is received.
+							let p_type = if p_type == PacketType::Ack {
+								PacketType::Command
+							} else if p_type == PacketType::AckLow {
+								PacketType::CommandLow
+							} else {
+								p_type
+							};
+							con.resender.ack_packet(p_type, ack_id);
+						}
+						Ok(None) => {}
+						Err(e) => {
+							con.stream_items.push_back(StreamItem::Error(e.into()));
+							return Ok(());
+						}
 					}
 
 					// Send event after handling acks
@@ -218,12 +239,12 @@ impl PacketCodec {
 			{
 				ack = true;
 			}
-			res = Err(BasicError::NotInReceiveWindow {
+			con.stream_items.push_back(StreamItem::Error(BasicError::NotInReceiveWindow {
 				id,
 				next: cur_next,
 				limit,
 				p_type,
-			}.into());
+			}.into()));
 		}
 
 		// Send ack
@@ -231,7 +252,7 @@ impl PacketCodec {
 			con.send_ack_packet(cx, OutAck::new(dir.reverse(), p_type, id))?;
 		}
 
-		res
+		Ok(())
 	}
 
 	/// Handle `Command` and `CommandLow` packets.
@@ -379,9 +400,7 @@ impl PacketCodec {
 			&& gen == 0 && ((!con.is_client && p_id == 0)
 			|| (con.is_client && p_id == 1 && {
 				// Test if it is a clientek packet
-				let s = b"clientek";
-				packet.content().len() >= s.len()
-					&& packet.content()[..s.len()] == s[..]
+				packet.content().starts_with(b"clientek")
 			}));
 		// Also fake encrypt the first ack of the client, which is the response
 		// for the initivexpand2 packet.
@@ -437,13 +456,11 @@ impl PacketCodec {
 			.into_iter()
 			.map(|mut packet| -> Result<_> {
 				// Get packet id
-				let (gen, mut p_id) = if p_type == PacketType::Init {
+				let (gen, p_id) = if p_type == PacketType::Init {
 					(0, 0)
 				} else {
+					packet.packet_id(con.codec.outgoing_p_ids[type_i].1);
 					con.codec.outgoing_p_ids[type_i]
-				};
-				if p_type != PacketType::Init {
-					packet.packet_id(p_id);
 				};
 
 				// Encrypt if necessary
@@ -461,7 +478,7 @@ impl PacketCodec {
 				}
 
 				// Increment outgoing_p_ids
-				p_id = p_id.wrapping_add(1);
+				let p_id = p_id.wrapping_add(1);
 				let new_gen = if p_id == 0 { gen.wrapping_add(1) } else { gen };
 				if p_type != PacketType::Init {
 					con.codec.outgoing_p_ids[type_i] = (new_gen, p_id);

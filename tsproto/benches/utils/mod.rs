@@ -8,6 +8,7 @@ use tsproto::client::Client;
 use tsproto::crypto::EccKeyPrivP256;
 use tsproto_packets::packets::*;
 
+#[allow(dead_code)]
 pub fn create_logger() -> Logger {
 	let decorator = slog_term::TermDecorator::new().build();
 	let drain = slog_term::CompactFormat::new(decorator).build().fuse();

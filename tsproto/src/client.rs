@@ -51,31 +51,34 @@ impl Client {
 	}
 
 	async fn get_init(&mut self, fut: impl Future<Output=Result<()>>, init_step: u8) -> Result<InS2CInitBuf> {
-		let logger = self.logger.clone();
 		Ok(tokio::try_join!(fut, self.filter_items(|con, i| Ok(match i {
 			StreamItem::S2CInit(packet) => {
 				if packet.data().data().get_step() == init_step {
 					Some(packet)
 				} else {
 					// Resent packet
+					warn!(con.logger, "Got wrong init packet");
 					con.hand_back_buffer(packet.into_buffer());
 					None
 				}
 			}
 			StreamItem::C2SInit(packet) => {
+				warn!(con.logger, "Got init packet from the wrong direction");
 				con.hand_back_buffer(packet.into_buffer());
 				None
 			}
 			StreamItem::Error(e) => {
-				warn!(logger, "Got connection error"; "error" => %e);
+				warn!(con.logger, "Got connection error"; "error" => %e);
 				None
 			}
-			i => bail!("Unexpected packet, wanted S2CInit instead of {:?}", i),
+			i => {
+				warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
+				None
+			}
 		})))?.1)
 	}
 
 	async fn get_command(&mut self, fut: impl Future<Output=Result<()>>) -> Result<InCommandBuf> {
-		let logger = self.logger.clone();
 		Ok(tokio::try_join!(fut, self.filter_items(|con, i| Ok(match i {
 			StreamItem::S2CInit(packet) => {
 				con.hand_back_buffer(packet.into_buffer());
@@ -87,10 +90,13 @@ impl Client {
 			}
 			StreamItem::Command(packet) => Some(packet),
 			StreamItem::Error(e) => {
-				warn!(logger, "Got connection error"; "error" => %e);
+				warn!(con.logger, "Got connection error"; "error" => %e);
 				None
 			}
-			i => bail!("Unexpected packet, wanted Command instead of {:?}", i),
+			i => {
+				warn!(con.logger, "Unexpected packet, wanted Command"; "got" => ?i);
+				None
+			}
 		})))?.1)
 	}
 
@@ -578,6 +584,8 @@ mod tests {
 			}
 			Poll::Ready(Ok(buf.len()))
 		}
+
+		fn local_addr(&self) -> io::Result<SocketAddr> { Ok(self.addr) }
 	}
 
 	pub struct TestConnection {

@@ -226,6 +226,7 @@ impl DefaultResender {
 			"to" => ?state);
 		self.state = state;
 
+		self.last_send = Instant::now();
 		self.state_timeout.reset(self.last_send + self.get_timeout());
 		if let Poll::Ready(()) = Pin::new(&mut self.state_timeout).poll(cx) {
 			cx.waker().wake_by_ref();
@@ -238,14 +239,16 @@ impl DefaultResender {
 	///
 	/// The CUBIC congestion control window.
 	fn get_window(&self) -> u16 {
-	 	let res = C * (self.packet_count as f32
-	 			- (self.w_max as f32 * BETA / C).powf(1.0 / 3.0))
-	 		.powf(3.0) + self.w_max as f32;
-	 	if res > u16::max_value() as f32 {
-	 		u16::max_value()
-	 	} else {
-	 		res as u16
-	 	}
+		let res = C * (self.packet_count as f32
+				- (self.w_max as f32 * BETA / C).powf(1.0 / 3.0))
+			.powf(3.0) + self.w_max as f32;
+		if res > u16::max_value() as f32 {
+			u16::max_value()
+		} else if res < 1.0 {
+			1
+		} else {
+			res as u16
+		}
 	}
 
 	/// Add another duration to the stored smoothed rtt.
@@ -286,6 +289,7 @@ impl DefaultResender {
 		let mut rto: Duration;
 		let mut last_threshold;
 		let mut packet_loss = false;
+		let mut window;
 		while let Some(mut rec) = {
 			// Handle congestion window when the resender is not borrowed
 			if packet_loss {
@@ -294,6 +298,7 @@ impl DefaultResender {
 			} else {
 				con.resender.packet_count += 1;
 			}
+			window = con.resender.get_window();
 
 			// Retransmission timeout
 			rto = con.resender.config.srtt + con.resender.config.srtt_dev * 4;
@@ -359,6 +364,7 @@ impl DefaultResender {
 							"srtt_dev" => ?con.resender.config.srtt_dev,
 							"rto" => ?rto,
 							"threshold" => ?last_threshold,
+							"send_window" => window,
 						);
 					}
 				}
@@ -397,7 +403,7 @@ impl Default for ResendConfig {
 			normal_timeout: Duration::from_secs(30),
 			disconnect_timeout: Duration::from_secs(5),
 
-			srtt: Duration::from_millis(1000),
+			srtt: Duration::from_millis(500),
 			srtt_dev: Duration::from_millis(0),
 		}
 	}

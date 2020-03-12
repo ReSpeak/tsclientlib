@@ -55,7 +55,7 @@ const MAX_FRAGMENTS_LENGTH: usize = 40960;
 
 /// The maximum number of packets which are stored, if they are received
 /// out-of-order.
-const MAX_QUEUE_LEN: u16 = 50;
+const MAX_QUEUE_LEN: u16 = 200;
 
 /// The maximum decompressed size of a packet.
 #[allow(clippy::unreadable_literal)]

@@ -1,9 +1,40 @@
-use anyhow::Error;
+use anyhow::{Error, Result};
 use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
-use slog::{info, o, Logger};
+use slog::{info, o, warn, Logger};
+use tsproto::client::Client;
+use tsproto::connection::StreamItem;
 
 mod utils;
 use crate::utils::*;
+
+async fn wait_channellistfinished(con: &mut Client) -> Result<()> {
+	con.filter_items(|con, i| Ok(match i {
+		StreamItem::S2CInit(packet) => {
+			con.hand_back_buffer(packet.into_buffer());
+			None
+		}
+		StreamItem::C2SInit(packet) => {
+			con.hand_back_buffer(packet.into_buffer());
+			None
+		}
+		StreamItem::Command(packet) => {
+			if packet.data().data().name == "channellistfinished" {
+				Some(())
+			} else {
+				None
+			}
+		}
+		StreamItem::Error(e) => {
+			warn!(con.logger, "Got connection error"; "error" => %e);
+			None
+		}
+		i => {
+			warn!(con.logger, "Unexpected packet, waiting for channellistfinished"; "got" => ?i);
+			None
+		}
+	})).await?;
+	Ok(())
+}
 
 fn one_connect(b: &mut Bencher) {
 	let local_address = "127.0.0.1:0".parse().unwrap();
@@ -25,8 +56,11 @@ fn one_connect(b: &mut Bencher) {
 				0,
 			).await?;
 
-			info!(logger, "Connecting");
 			connect(&mut con).await?;
+			info!(logger, "Connected");
+			// Wait until channellistfinished
+			wait_channellistfinished(&mut con).await?;
+
 			info!(logger, "Disconnecting");
 			disconnect(&mut con).await?;
 			Ok::<_, Error>(())

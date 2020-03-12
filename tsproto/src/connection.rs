@@ -8,7 +8,7 @@ use std::u16;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use anyhow::{bail, format_err, Context as _};
+use anyhow::format_err;
 use futures::prelude::*;
 use futures::stream::FuturesUnordered;
 use num_traits::ToPrimitive;
@@ -27,6 +27,7 @@ use crate::resend::{DefaultResender, Resender, ResenderState};
 pub trait Socket {
 	fn poll_recv_from(&self, cx: &mut Context, buf: &mut [u8]) -> Poll<io::Result<(usize, SocketAddr)>>;
 	fn poll_send_to(&self, cx: &mut Context, buf: &[u8], target: &SocketAddr) -> Poll<io::Result<usize>>;
+	fn local_addr(&self) -> io::Result<SocketAddr>;
 }
 
 /// A cache for the key and nonce for a generation id.
@@ -94,9 +95,6 @@ pub struct Connection {
 	pub udp_socket: Box<dyn Socket>,
 	udp_buffer: Vec<u8>,
 
-	/// Used in the stream implementation.
-	next_poll: u8,
-
 	/// A buffer of packets that should be returned from the stream.
 	///
 	/// If a new udp packet is received and we already received the following
@@ -120,6 +118,8 @@ impl Socket for UdpSocket {
 	fn poll_send_to(&self, cx: &mut Context, buf: &[u8], target: &SocketAddr) -> Poll<io::Result<usize>> {
 		self.poll_send_to(cx, buf, target)
 	}
+
+	fn local_addr(&self) -> io::Result<SocketAddr> { self.local_addr() }
 }
 
 impl Default for CachedKey {
@@ -159,7 +159,8 @@ impl Connection {
 		udp_socket: Box<dyn Socket>,
 	) -> Self
 	{
-		let logger = logger.new(o!("addr" => address.to_string()));
+		let logger = logger.new(o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),
+			"remote_addr" => address.to_string()));
 
 		let mut res = Self {
 			is_client,
@@ -170,7 +171,6 @@ impl Connection {
 			codec: Default::default(),
 			udp_socket,
 			udp_buffer:  Default::default(),
-			next_poll: Default::default(),
 
 			stream_items: Default::default(),
 			acks_to_send: Default::default(),
@@ -273,7 +273,7 @@ impl Connection {
 							return Poll::Ready(Ok(item));
 						}
 						Err(e) => {
-							return Poll::Ready(Ok(StreamItem::Error(e)));
+							return Poll::Ready(Err(e));
 						}
 					}
 				}
@@ -286,12 +286,20 @@ impl Connection {
 
 	fn handle_udp_packet(&mut self, cx: &mut Context, udp_buffer: Vec<u8>, addr: SocketAddr) -> Result<()> {
 		if addr != self.address {
-			bail!("Received UDP packet from wrong address");
+			self.stream_items.push_back(StreamItem::Error(format_err!("Received UDP packet from wrong address")));
+			return Ok(());
 		}
 
 		let dir = if self.is_client { Direction::S2C } else { Direction::C2S };
-		let packet = InUdpPacket(InPacket::try_new(dir, &udp_buffer)
-			.with_context(|| format!("Buffer {:?}", HexSlice(&udp_buffer)))?);
+		let packet = InUdpPacket(match InPacket::try_new(dir, &udp_buffer) {
+			Ok(r) => r,
+			Err(e) => {
+				let e: Error = e.into();
+				self.stream_items.push_back(StreamItem::Error(e
+					.context(format!("Buffer {:?}", HexSlice(&udp_buffer)))));
+				return Ok(());
+			}
+		});
 		let event = Event::ReceiveUdpPacket(&packet);
 		self.send_event(&event);
 
@@ -399,7 +407,6 @@ impl Connection {
 impl Stream for Connection {
 	type Item = Result<StreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-		const COUNT: u8 = 3;
 		if self.resender.get_state() == ResenderState::Disconnected {
 			// Send all ack packets and return `None` afterwards
 			let _ = self.poll_incoming_udp_packet(cx);
@@ -408,32 +415,22 @@ impl Stream for Connection {
 			}
 		}
 
-		for _ in 0..COUNT {
-			self.next_poll = (self.next_poll + 1) % COUNT;
-			match self.next_poll {
-				0 => {
-					// Check for new udp packets
-					match self.poll_incoming_udp_packet(cx) {
-						Poll::Pending => {}
-						Poll::Ready(r) => return Poll::Ready(Some(r)),
-					}
-				}
-				1 => {
-					// Use the resender to resend packes
-					match DefaultResender::poll_resend(&mut *self, cx) {
-						Ok(()) => {}
-						Err(e) => return Poll::Ready(Some(Err(e))),
-					}
-				}
-				2 => {
-					// Use the resender to send pings
-					match DefaultResender::poll_ping(&mut *self, cx) {
-						Ok(()) => {}
-						Err(e) => return Poll::Ready(Some(Err(e))),
-					}
-				}
-				_ => unreachable!(),
-			}
+		// Use the resender to resend packes
+		match DefaultResender::poll_resend(&mut *self, cx) {
+			Ok(()) => {}
+			Err(e) => return Poll::Ready(Some(Err(e))),
+		}
+
+		// Use the resender to send pings
+		match DefaultResender::poll_ping(&mut *self, cx) {
+			Ok(()) => {}
+			Err(e) => return Poll::Ready(Some(Err(e))),
+		}
+
+		// Check for new udp packets
+		match self.poll_incoming_udp_packet(cx) {
+			Poll::Ready(r) => return Poll::Ready(Some(r)),
+			Poll::Pending => {}
 		}
 
 		Poll::Pending
