@@ -1,5 +1,5 @@
 use std::cmp::{Ord, Ordering};
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, BTreeSet};
 use std::convert::From;
 use std::hash::{Hash, Hasher};
 use std::mem;
@@ -9,14 +9,14 @@ use std::task::{Context, Poll};
 use anyhow::bail;
 use futures::prelude::*;
 use slog::{info, warn, Logger};
-use tokio::sync::oneshot;
 use tokio::time::{Delay, Duration, Instant};
 use tsproto_packets::packets::*;
 
 use crate::{Result, UDP_SINK_CAPACITY};
-use crate::connection::Connection;
+use crate::connection::{Connection, StreamItem};
 
 // TODO implement fast retransmit: 2 Acks received but earlier packet not acked -> retransmit
+// TODO implement slow start and redo slow start after x packet losses
 
 // Use cubic for congestion control: https://en.wikipedia.org/wiki/CUBIC_TCP
 // But scaling with number of sent packets instead of time because we might not
@@ -40,16 +40,11 @@ pub enum ResenderState {
 	Disconnected,
 }
 
-/// For each connection a resender is created, which is responsible for sending
-/// command packets and ensure that they are delivered.
-pub trait Resender {
-	/// Called for a received ack packet.
-	///
-	/// The packet type must be `Command` or `CommandLow`.
-	fn ack_packet(&mut self, p_type: PacketType, p_id: u16);
-
-	/// Called when a packet is received to signal activity.
-	fn received_packet(&mut self);
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct PacketId {
+	pub packet_type: PacketType,
+	pub generation_id: u32,
+	pub packet_id: u16,
 }
 
 /// A record of a packet that can be resent.
@@ -61,15 +56,21 @@ struct SendRecord {
 	pub last: Instant,
 	/// How often the packet was already resent.
 	pub tries: usize,
+	pub id: PacketId,
 	pub packet: OutUdpPacket,
-	/// Notify this sender when the packet was acknowledged.
-	pub notify: oneshot::Sender<()>,
 }
 
-/// An implementation of a `Resender` that is provided by this library.
+/// Resend command and init packets until the other side acknowledges them.
 #[derive(Debug)]
-pub struct DefaultResender {
+pub struct Resender {
+	/// Send queue ordered by when a packet has to be sent.
+	///
+	/// The maximum in this queue is the next packet that should be resent.
 	to_send: BinaryHeap<SendRecord>,
+	/// Send queue ordered by packet id.
+	///
+	/// There is one queue per packet type: `Init`, `Command` and `CommandLow`.
+	to_send_ordered: [BTreeSet<PacketId>; 3],
 	config: ResendConfig,
 	state: ResenderState,
 
@@ -80,11 +81,12 @@ pub struct DefaultResender {
 	packet_count: u16,
 
 	/// When the last packet was added to the send queue or received.
+	///
 	/// This is used to decide when to send ping packets.
 	last_receive: Instant,
 	/// When the last packet was added to the send queue.
-	/// This is used to handle timeouts when disconnecting and to decide when to
-	/// send ping packets.
+	///
+	/// This is used to handle timeouts when disconnecting.
 	last_send: Instant,
 
 	/// The future to wake us up when the next packet should be resent.
@@ -108,21 +110,26 @@ pub struct ResendConfig {
 	pub srtt_dev: Duration,
 }
 
-impl PartialEq for SendRecord {
-	fn eq(&self, other: &Self) -> bool { self.cmp(other) == Ordering::Equal }
+impl Ord for PacketId {
+	fn cmp(&self, other: &Self) -> Ordering {
+		self.generation_id.cmp(&other.generation_id).then_with(||
+			self.packet_id.cmp(&other.packet_id))
+	}
 }
-impl Eq for SendRecord {}
 
-impl PartialOrd for SendRecord {
+impl PartialOrd for PacketId {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
 		Some(self.cmp(other))
 	}
 }
 
-impl SendRecord {
-	fn get_id(&self) -> (PacketType, u32, u16) {
-		(self.packet.packet_type(), self.packet.generation_id(),
-			self.packet.packet_id())
+impl From<&OutUdpPacket> for PacketId {
+	fn from(packet: &OutUdpPacket) -> Self {
+		Self {
+			packet_type: packet.packet_type(),
+			generation_id: packet.generation_id(),
+			packet_id: packet.packet_id(),
+		}
 	}
 }
 
@@ -131,10 +138,7 @@ impl Ord for SendRecord {
 		// If the packet was not already sent, it is more important
 		if self.tries == 0 {
 			if other.tries == 0 {
-				self.packet.generation_id()
-					.cmp(&other.packet.generation_id())
-					.reverse()
-					.then_with(|| self.packet.packet_id().cmp(&other.packet.packet_id()).reverse())
+				self.id.cmp(&other.id).reverse()
 			} else {
 				Ordering::Greater
 			}
@@ -144,20 +148,33 @@ impl Ord for SendRecord {
 			// The smallest time is the most important time
 			self.last.cmp(&other.last).reverse().then_with(||
 				// Else, the lower packet id is more important
-				self.packet.generation_id().cmp(&other.packet.generation_id()).reverse().then_with(||
-					self.packet.packet_id().cmp(&other.packet.packet_id()).reverse()))
+				self.id.cmp(&other.id).reverse())
 		}
 	}
 }
 
-impl Hash for SendRecord {
-	fn hash<H: Hasher>(&self, state: &mut H) { self.get_id().hash(state); }
+impl PartialOrd for SendRecord {
+	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+		Some(self.cmp(other))
+	}
 }
 
-impl Default for DefaultResender {
+impl PartialEq for SendRecord {
+	fn eq(&self, other: &Self) -> bool {
+		self.id.eq(&other.id)
+	}
+}
+impl Eq for SendRecord {}
+
+impl Hash for SendRecord {
+	fn hash<H: Hasher>(&self, state: &mut H) { self.id.hash(state); }
+}
+
+impl Default for Resender {
 	fn default() -> Self {
 		Self {
 			to_send: Default::default(),
+			to_send_ordered: Default::default(),
 			config: Default::default(),
 			state: ResenderState::Connecting,
 
@@ -173,20 +190,29 @@ impl Default for DefaultResender {
 	}
 }
 
-impl Resender for DefaultResender {
-	fn ack_packet(&mut self, p_type: PacketType, p_id: u16) {
-		let rec = if let Some(rec) = self.to_send.peek() {
+impl Resender {
+	fn packet_type_to_index(t: PacketType) -> usize {
+		match t {
+			PacketType::Init => 0,
+			PacketType::Command => 1,
+			PacketType::CommandLow => 2,
+			_ => panic!("Resender cannot handle packet type {:?}", t),
+		}
+	}
+
+	pub fn ack_packet(con: &mut Connection, p_type: PacketType, p_id: u16) {
+		let rec = if let Some(rec) = con.resender.to_send.peek() {
 			if rec.packet.packet_type() == p_type && rec.packet.packet_id() == p_id {
 				// Optimized to remove the first element
-				self.to_send.pop()
+				con.resender.to_send.pop()
 			} else {
 				// Convert to vector to remove the element
-				let tmp = mem::replace(&mut self.to_send, BinaryHeap::new());
+				let tmp = mem::replace(&mut con.resender.to_send, BinaryHeap::new());
 				let mut v = tmp.into_vec();
 				let rec = v.iter().position(|rec| {
 					rec.packet.packet_type() == p_type && rec.packet.packet_id() == p_id
 				}).map(|i| v.remove(i));
-				mem::replace(&mut self.to_send, v.into());
+				mem::replace(&mut con.resender.to_send, v.into());
 				rec
 			}
 		} else {
@@ -198,19 +224,23 @@ impl Resender for DefaultResender {
 			// Update srtt if the packet was not resent
 			if rec.tries == 1 {
 				let now = Instant::now();
-				self.update_srtt(now - rec.sent);
+				con.resender.update_srtt(now - rec.sent);
 			}
-			// Ignore if the receiver was dropped
-			let _ = rec.notify.send(());
+
+			// Remove from ordered queue
+			let queue = &mut con.resender.to_send_ordered[Self::packet_type_to_index(rec.id.packet_type)];
+			let is_first = queue.iter().next() == Some(&rec.id);
+			queue.remove(&rec.id);
+			if is_first {
+				con.stream_items.push_back(StreamItem::AckPacket(rec.id));
+			}
 		}
 	}
 
-	fn received_packet(&mut self) {
+	pub fn received_packet(&mut self) {
 		self.last_receive = Instant::now();
 	}
-}
 
-impl DefaultResender {
 	fn get_timeout(&self) -> Duration {
 		match self.state {
 			ResenderState::Connecting => self.config.connecting_timeout,
@@ -221,19 +251,26 @@ impl DefaultResender {
 	}
 
 	/// Inform the resender of state changes of the connection.
-	pub fn set_state(&mut self, logger: &Logger, cx: &mut Context, state: ResenderState) {
+	pub fn set_state(&mut self, logger: &Logger, state: ResenderState) {
 		info!(logger, "Resender: Changed state"; "from" => ?self.state,
 			"to" => ?state);
 		self.state = state;
 
 		self.last_send = Instant::now();
 		self.state_timeout.reset(self.last_send + self.get_timeout());
-		if let Poll::Ready(()) = Pin::new(&mut self.state_timeout).poll(cx) {
-			cx.waker().wake_by_ref();
-		}
 	}
 
 	pub fn get_state(&self) -> ResenderState { self.state }
+
+	/// If the send queue is full.
+	pub fn is_full(&self) -> bool {
+		self.to_send.len() >= self.get_window() as usize
+	}
+
+	/// If the send queue is empty.
+	pub fn is_empty(&self) -> bool {
+		self.to_send.is_empty()
+	}
 
 	/// The amount of packets that can be in-flight currently.
 	///
@@ -242,9 +279,10 @@ impl DefaultResender {
 		let res = C * (self.packet_count as f32
 				- (self.w_max as f32 * BETA / C).powf(1.0 / 3.0))
 			.powf(3.0) + self.w_max as f32;
-		if res > u16::max_value() as f32 {
-			u16::max_value()
-		} else if res < 1.0 {
+		let max = u16::max_value() / 2;
+		if res > max as f32 {
+			max
+		} else if res <= 1.0 {
 			1
 		} else {
 			res as u16
@@ -258,24 +296,19 @@ impl DefaultResender {
 		self.config.srtt = self.config.srtt * 7 / 8 + rtt / 8;
 	}
 
-	pub async fn send_packet(con: &mut Connection, packet: OutUdpPacket) -> Result<oneshot::Receiver<()>> {
+	pub fn send_packet(con: &mut Connection, packet: OutUdpPacket) {
 		con.resender.last_send = Instant::now();
-		let (notify, recv) = oneshot::channel();
-		let mut rec = SendRecord {
+		let rec = SendRecord {
 			sent: Instant::now(),
 			last: Instant::now(),
 			tries: 0,
+			id: (&packet).into(),
 			packet,
-			notify,
 		};
 
-		if con.resender.to_send.len() < usize::from(con.resender.get_window()) {
-			// Send the packet right now
-			future::poll_fn(|cx| con.poll_send_udp_packet(cx, &rec.packet)).await?;
-			rec.tries = 1;
-		}
+		let i = Self::packet_type_to_index(rec.id.packet_type);
+		con.resender.to_send_ordered[i].insert(rec.id.clone());
 		con.resender.to_send.push(rec);
-		Ok(recv)
 	}
 
 	/// Returns an error if the timeout is exceeded and the connection is
@@ -283,27 +316,35 @@ impl DefaultResender {
 	pub fn poll_resend(con: &mut Connection, cx: &mut Context) -> Result<()> {
 		let now = Instant::now();
 		let timeout = con.resender.get_timeout();
-		let max_rto = timeout / 2;
+		let max_send_rto = Duration::from_secs(2);
 
 		// Check if there are packets to send.
 		let mut rto: Duration;
 		let mut last_threshold;
 		let mut packet_loss = false;
 		let mut window;
+		let mut done = 0;
 		while let Some(mut rec) = {
+			done += 1;
 			// Handle congestion window when the resender is not borrowed
 			if packet_loss {
 				con.resender.w_max = con.resender.get_window();
 				con.resender.packet_count = 0;
 			} else {
+				// TODO Depend on time instead
 				con.resender.packet_count += 1;
 			}
 			window = con.resender.get_window();
 
+			// Don't send more packets than our window size
+			if done > window {
+				return Ok(());
+			}
+
 			// Retransmission timeout
 			rto = con.resender.config.srtt + con.resender.config.srtt_dev * 4;
-			if rto > max_rto {
-				rto = max_rto;
+			if rto > max_send_rto {
+				rto = max_send_rto;
 			}
 			last_threshold = now - rto;
 
@@ -341,8 +382,8 @@ impl DefaultResender {
 					// Double srtt on packet loss
 					if rec.tries != 0 {
 						con.resender.config.srtt = con.resender.config.srtt * 2;
-						if con.resender.config.srtt > max_rto {
-							con.resender.config.srtt = max_rto;
+						if con.resender.config.srtt > timeout {
+							con.resender.config.srtt = timeout;
 						}
 						packet_loss = true;
 					} else {
@@ -356,7 +397,7 @@ impl DefaultResender {
 					if rec.tries != 1 {
 						let to_s = if con.is_client { "S" } else { "C" };
 						warn!(con.logger, "Resend";
-							"id" => ?rec.get_id(),
+							"id" => ?rec.id,
 							"tries" => rec.tries,
 							"last" => ?rec.last,
 							"to" => to_s,

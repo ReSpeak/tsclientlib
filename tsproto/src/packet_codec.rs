@@ -163,19 +163,20 @@ impl PacketCodec {
 						let event = Event::ReceivePacket(&packet);
 						con.send_event(&event);
 
-						con.stream_items.push_back(match InCommandBuf::try_new(dir, c) {
+						let item = match InCommandBuf::try_new(dir, c) {
 							Ok(c) => {
 								// initivexpand2 is the ack for the last init packet
 								if con.is_client && c.data().data().name == "initivexpand2" {
-									con.resender.ack_packet(PacketType::Init, 4);
+									Resender::ack_packet(con, PacketType::Init, 4);
 								} else if con.is_client && c.data().data().name == "initserver" {
 									// initserver acks clientinit
-									con.resender.ack_packet(PacketType::Command, 2);
+									Resender::ack_packet(con, PacketType::Command, 2);
 								}
 								StreamItem::Command(c)
 							}
 							Err(e) => return Err(e.into()),
-						});
+						};
+						con.stream_items.push_back(item);
 					}
 				}
 				_ => {
@@ -200,7 +201,7 @@ impl PacketCodec {
 							} else {
 								p_type
 							};
-							con.resender.ack_packet(p_type, ack_id);
+							Resender::ack_packet(con, p_type, ack_id);
 						}
 						Ok(None) => {}
 						Err(e) => {
@@ -392,10 +393,8 @@ impl PacketCodec {
 		} else {
 			con.codec.outgoing_p_ids[type_i]
 		};
-		// We fake encrypt the first command packet of the
-		// server (id 0) and the first command packet of the
-		// client (id 1) if the client uses the new protocol
-		// (the packet is a clientek).
+		// We fake encrypt the first command packet of the server (id 0) and the
+		// first command packet of the client (id 1, clientek).
 		let mut fake_encrypt = p_type == PacketType::Command
 			&& gen == 0 && ((!con.is_client && p_id == 0)
 			|| (con.is_client && p_id == 1 && {

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
@@ -17,21 +16,18 @@ use rug::integer::Order;
 use rug::Integer;
 use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
-use tokio::sync::oneshot;
 use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
 use crate::connection::{ConnectedParams, Connection, Socket, StreamItem};
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::license::Licenses;
-use crate::resend::ResenderState;
+use crate::resend::{PacketId, ResenderState};
 use crate::Result;
 
 pub struct Client {
 	con: Connection,
 	pub private_key: EccKeyPrivP256,
-	return_codes: HashMap<u16, oneshot::Sender<u32>>,
-	cur_return_code: u16,
 }
 
 impl Client {
@@ -45,13 +41,11 @@ impl Client {
 		Self {
 			con: Connection::new(true, logger, address, udp_socket),
 			private_key,
-			return_codes: Default::default(),
-			cur_return_code: Default::default(),
 		}
 	}
 
-	async fn get_init(&mut self, fut: impl Future<Output=Result<()>>, init_step: u8) -> Result<InS2CInitBuf> {
-		Ok(tokio::try_join!(fut, self.filter_items(|con, i| Ok(match i {
+	async fn get_init(&mut self, init_step: u8) -> Result<InS2CInitBuf> {
+		self.filter_items(|con, i| Ok(match i {
 			StreamItem::S2CInit(packet) => {
 				if packet.data().data().get_step() == init_step {
 					Some(packet)
@@ -75,11 +69,11 @@ impl Client {
 				warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
 				None
 			}
-		})))?.1)
+		})).await
 	}
 
-	async fn get_command(&mut self, fut: impl Future<Output=Result<()>>) -> Result<InCommandBuf> {
-		Ok(tokio::try_join!(fut, self.filter_items(|con, i| Ok(match i {
+	async fn get_command(&mut self) -> Result<InCommandBuf> {
+		self.filter_items(|con, i| Ok(match i {
 			StreamItem::S2CInit(packet) => {
 				con.hand_back_buffer(packet.into_buffer());
 				None
@@ -93,11 +87,45 @@ impl Client {
 				warn!(con.logger, "Got connection error"; "error" => %e);
 				None
 			}
+			StreamItem::AckPacket(_) => None,
 			i => {
 				warn!(con.logger, "Unexpected packet, wanted Command"; "got" => ?i);
 				None
 			}
-		})))?.1)
+		})).await
+	}
+
+	async fn wait_for_ack(&mut self, id: PacketId) -> Result<()> {
+		self.filter_items(|con, i| Ok(match i {
+			StreamItem::S2CInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::C2SInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::Command(packet) => {
+				warn!(con.logger, "Dropping unexpected command"; "got" => ?packet);
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::Error(e) => {
+				warn!(con.logger, "Got connection error"; "error" => %e);
+				None
+			}
+			StreamItem::AckPacket(ack) => {
+				if id <= ack {
+					Some(())
+				} else {
+					None
+				}
+			}
+			i => {
+				warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
+				None
+			}
+		})).await
 	}
 
 	/// Send a packet. The `send_packet` function will resolve to a future when
@@ -105,19 +133,17 @@ impl Client {
 	///
 	/// If the packet has an acknowledgement (ack or pong), the returned future
 	/// will resolve when it is received. Otherwise it will resolve instantly.
-	pub async fn send_packet(&mut self, packet: OutPacket) -> impl Future<Output=Result<()>> {
+	pub fn send_packet(&mut self, packet: OutPacket) -> Result<PacketId> {
 		if packet.header().packet_type() == PacketType::Command
 			&& packet.content().starts_with(b"clientdisconnect") {
 			let this = &mut **self;
-			future::poll_fn(|cx| {
-				this.resender.set_state(&this.logger, cx, ResenderState::Disconnecting);
-				Poll::Ready(())
-			}).await;
+			this.resender.set_state(&this.logger, ResenderState::Disconnecting);
 		}
-		self.con.send_packet(packet).await
+		self.con.send_packet(packet)
 	}
 
-	/// Send a packet. The `send_packet` function will resolve to a future when
+	// TODO Remove return codes?
+	/*/// Send a packet. The `send_packet` function will resolve to a future when
 	/// the packet has been sent.
 	///
 	/// A `return_code` will be appended to the command
@@ -136,7 +162,7 @@ impl Client {
 		self.cur_return_code += 1;
 
 		self.send_packet(packet).await.and_then(|_| recv.map_err(|e| e.into()))
-	}
+	}*/
 
 	pub async fn connect(&mut self) -> Result<()> {
 		// Send the first init packet
@@ -149,10 +175,9 @@ impl Client {
 		let random0 = rng.gen::<[u8; 4]>();
 
 		// Wait for Init1
-		let fut2;
 		{
-			let fut = self.send_packet(OutC2SInit0::new(timestamp, timestamp, random0)).await;
-			let init1 = self.get_init(fut, 1).await?;
+			self.send_packet(OutC2SInit0::new(timestamp, timestamp, random0))?;
+			let init1 = self.get_init(1).await?;
 			match init1.data().data() {
 				S2CInitData::Init1 { random1, random0_r } => {
 					// Check the response
@@ -162,22 +187,20 @@ impl Client {
 					// The packet is correct.
 
 					// Send next init packet
-					fut2 = self.send_packet(OutC2SInit2::new(
+					self.send_packet(OutC2SInit2::new(
 						timestamp,
 						random1,
 						**random0_r,
-					));
+					))?;
 				}
 				_ => bail!("Unexpected init packet, needs Init1"),
 			}
 		}
 
 		// Wait for Init3
-		let fut = fut2.await;
 		let alpha;
-		let fut2;
 		{
-			let init3 = self.get_init(fut, 3).await?;
+			let init3 = self.get_init(3).await?;
 			match init3.data().data() {
 				S2CInitData::Init3 { x, n, level, random2 } => {
 					let level = *level;
@@ -245,19 +268,18 @@ impl Client {
 					};
 
 					// Send next init packet
-					fut2 = self.send_packet(OutC2SInit4::new(
+					self.send_packet(OutC2SInit4::new(
 						timestamp, &x, &n, level, &random2,
 						&y, &alpha, &omega, &ip,
-					));
+					))?;
 				}
 				_ => bail!("Unexpected init packet, needs Init3"),
 			}
 		}
 
-		let fut = fut2.await;
-		let fut2;
+		let clientek_id;
 		{
-			let command = self.get_command(fut).await?;
+			let command = self.get_command().await?;
 			let cmd = command.data().iter().next().unwrap();
 			if command.data().data().name != "initivexpand2"
 				|| !cmd.has("l") || !cmd.has("beta")
@@ -306,7 +328,7 @@ impl Client {
 			let proof_s = base64::encode(&proof);
 
 			// Send clientek
-			fut2 = self.send_packet(OutCommand::new::<
+			clientek_id = self.send_packet(OutCommand::new::<
 				_,
 				_,
 				String,
@@ -321,10 +343,9 @@ impl Client {
 				vec![("ek", ek_s), ("proof", proof_s)]
 					.into_iter(),
 				std::iter::empty(),
-			));
+			))?;
 		}
-		// Ignore result
-		let _ = fut2.await;
+		self.wait_for_ack(clientek_id).await?;
 
 		Ok(())
 	}
@@ -354,6 +375,7 @@ impl Client {
 				Some(Ok(StreamItem::Error(e))) => {
 					warn!(self.logger, "Got connection error"; "error" => %e);
 				}
+				Some(Ok(StreamItem::AckPacket(_))) => {}
 				Some(Ok(StreamItem::S2CInit(packet))) => {
 					self.hand_back_buffer(packet.into_buffer());
 				}
@@ -378,6 +400,7 @@ impl Client {
 			match item {
 				None => return Ok(()),
 				Some(Err(e)) => return Err(e),
+				Some(Ok(StreamItem::AckPacket(_))) => {}
 				Some(Ok(StreamItem::Error(e))) => {
 					warn!(self.logger, "Got connection error"; "error" => %e);
 				}
@@ -397,7 +420,7 @@ impl Client {
 		}
 	}
 
-	fn handle_command(&mut self, cx: &mut Context, command: InCommandBuf) -> Result<Option<InCommandBuf>> {
+	fn handle_command(&mut self, command: InCommandBuf) -> Result<Option<InCommandBuf>> {
 		let cmd_name = &command.data().data().name;
 		if cmd_name == &"initserver" {
 			// Handle an initserver
@@ -407,11 +430,13 @@ impl Client {
 					Ok(c_id) => params.c_id = c_id,
 					Err(e) => bail!("Failed to parse aclid: {:?}", e),
 				}
+			} else {
+				bail!("Got initserver, but we have not yet a full connection");
 			}
 
 			// Notify the resender that we are connected
 			let this = &mut **self;
-			this.resender.set_state(&this.logger, cx, ResenderState::Connected);
+			this.resender.set_state(&this.logger, ResenderState::Connected);
 		} else if cmd_name == &"notifyclientleftview" {
 			// Handle disconnect
 			let cmd = command.data().iter().next().unwrap();
@@ -419,7 +444,7 @@ impl Client {
 				if cmd.get_parse("clid") == Ok(params.c_id) {
 					// We are disconnected
 					let this = &mut **self;
-					this.resender.set_state(&this.logger, cx, ResenderState::Disconnected);
+					this.resender.set_state(&this.logger, ResenderState::Disconnected);
 				}
 			}
 		} else if cmd_name == &"notifyplugincmd" {
@@ -437,7 +462,7 @@ impl Client {
 					#[cfg(not(debug_assertions))]
 					version.push_str(" (Release)");
 
-					let _p = Some(OutCommand::new::<
+					self.send_packet(OutCommand::new::<
 						_,
 						_,
 						String,
@@ -458,10 +483,11 @@ impl Client {
 						]
 						.into_iter(),
 						std::iter::empty(),
-					));
+					))?;
 				}
 			}
-		} else if cmd_name == &"error" {
+			// TODO Remove return codes?
+		/*} else if cmd_name == &"error" {
 			let cmd = command.data().iter().next().unwrap();
 			if let Ok(code) = cmd.get_parse("return_code") {
 				if let Some(send) = self.return_codes.remove(&code) {
@@ -470,7 +496,7 @@ impl Client {
 						return Ok(None);
 					}
 				}
-			}
+			}*/
 		}
 
 		Ok(Some(command))
@@ -493,7 +519,7 @@ impl Stream for Client {
 		loop {
 			match Pin::new(&mut **self).poll_next(cx) {
 				Poll::Ready(Some(Ok(StreamItem::Command(command)))) => {
-					match self.handle_command(cx, command) {
+					match self.handle_command(command) {
 						Err(e) => return Poll::Ready(Some(Err(e))),
 						Ok(Some(cmd)) => return Poll::Ready(Some(Ok(
 							StreamItem::Command(cmd)))),
@@ -516,6 +542,7 @@ mod tests {
 
 	use num_traits::ToPrimitive;
 	use slog::{debug, o, Drain};
+	use tokio::sync::oneshot;
 	use tokio::time::{self, Duration};
 
 	use crate::connection::Event;
@@ -579,8 +606,8 @@ mod tests {
 			let mut state = self.state.lock().unwrap();
 			debug!(state.logger, "{} sends packet", self.i);
 			state.buffer[1 - self.i].push_back(buf.to_vec());
-			if let Some(waker) = &state.wakers[1 - self.i] {
-				waker.wake_by_ref();
+			if let Some(waker) = state.wakers[1 - self.i].take() {
+				waker.wake();
 			}
 			Poll::Ready(Ok(buf.len()))
 		}
@@ -624,11 +651,8 @@ mod tests {
 
 		/// Set the connection to connected.
 		async fn set_con_connected(con: &mut Client, other_key: EccKeyPubP256) {
-			future::poll_fn(|cx| {
-				let con = &mut **con;
-				con.resender.set_state(&con.logger, cx, ResenderState::Connected);
-				Poll::Ready(())
-			}).await;
+			let con = &mut **con;
+			con.resender.set_state(&con.logger, ResenderState::Connected);
 
 			con.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
 			con.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
@@ -712,16 +736,14 @@ mod tests {
 				.into_iter(),
 				std::iter::empty(),
 			);
-		let fut = state.client.send_packet(packet).await;
+		state.client.send_packet(packet)?;
 
 		tokio::select!(
-			(r, err, r2) = future::join3(
+			(r, err) = future::join(
 				time::timeout(Duration::from_secs(10), recv),
 				state.client.wait_disconnect(),
-				fut,
 			) => {
 				r??;
-				r2?;
 				assert!(err.is_err(), "Connect should timeout");
 				return Ok(());
 			}
@@ -742,8 +764,8 @@ mod tests {
 			Flags::UNENCRYPTED,
 			PacketType::Ping,
 		);
-		state.server.send_packet(packet.clone()).await.await?;
-		state.server.send_packet(packet.clone()).await.await?;
+		state.server.send_packet(packet.clone())?;
+		state.server.send_packet(packet.clone())?;
 
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
@@ -813,7 +835,6 @@ mod tests {
 
 		state.client.event_listeners.push(Box::new(listener));
 
-		let mut futs = Vec::new();
 		for i in 0..count {
 			let packet = OutCommand::new::<
 				_,
@@ -831,13 +852,12 @@ mod tests {
 				std::iter::empty(),
 			);
 
-			futs.push(state.server.send_packet(packet).await);
+			state.server.send_packet(packet)?;
 		}
 
 		tokio::select!(
-			(r, r2) = future::join(recv, future::try_join_all(futs)) => {
+			r = recv => {
 				r?;
-				r2?;
 				return Ok(());
 			}
 			_ = state.client.wait_disconnect() => {}

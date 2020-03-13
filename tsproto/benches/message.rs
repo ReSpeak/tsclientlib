@@ -56,6 +56,7 @@ fn send_messages(b: &mut Bencher) {
 	});
 
 	rt.block_on(async move {
+		info!(con.logger, "Waiting");
 		tokio::select! {
 			r = futures::future::join_all(futs) => {
 				r.into_iter().collect::<Result<_, _>>()?;
@@ -65,6 +66,7 @@ fn send_messages(b: &mut Bencher) {
 				bail!("Disconnected");
 			}
 		};
+		info!(con.logger, "Disconnecting");
 		disconnect(&mut con).await
 	}).unwrap();
 }
