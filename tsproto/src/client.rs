@@ -273,7 +273,8 @@ impl Client {
 						let n = Integer::from_digits(&n[..], Order::Msf);
 						let x = Integer::from_digits(&x[..], Order::Msf);
 						e.set_bit(level, true);
-						let y = x.pow_mod(&e, &n)?;
+						let y = x.pow_mod(&e, &n).map_err(|_|
+							format_err!("Failed to solve RSA puzzle"))?;
 						let mut yi = [0; 64];
 						y.write_digits(&mut yi, Order::Msf);
 						yi

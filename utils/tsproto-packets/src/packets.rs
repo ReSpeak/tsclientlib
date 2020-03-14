@@ -542,9 +542,9 @@ impl fmt::Debug for InHeader<'_> {
 		if self.mac() != &[0; 8] {
 			write!(f, "mac: {}, ", HexSlice(self.mac()))?;
 		}
-		write!(f, "id: {}, ", self.packet_id())?;
+		write!(f, "id: {:#x}, ", self.packet_id())?;
 		if let Some(c_id) = self.client_id() {
-			write!(f, "c_id: {}, ", c_id)?;
+			write!(f, "c_id: {:#x}, ", c_id)?;
 		}
 		write!(f, "{:?}, ", self.packet_type())?;
 		write!(f, "")?;

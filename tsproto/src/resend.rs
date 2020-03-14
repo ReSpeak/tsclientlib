@@ -3,11 +3,13 @@ use std::collections::{BinaryHeap, BTreeMap};
 use std::convert::From;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::ops::{Add, Sub};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use anyhow::bail;
 use futures::prelude::*;
+use num_traits::ToPrimitive;
 use slog::{info, warn, Logger};
 use tokio::time::{Delay, Duration, Instant};
 use tsproto_packets::packets::*;
@@ -40,13 +42,13 @@ pub enum ResenderState {
 	Disconnected,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct PartialPacketId {
 	pub generation_id: u32,
 	pub packet_id: u16,
 }
 
-#[derive(Clone, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct PacketId {
 	pub packet_type: PacketType,
 	pub part: PartialPacketId,
@@ -82,6 +84,10 @@ pub struct Resender {
 	///
 	/// There is one queue per packet type: `Init`, `Command` and `CommandLow`.
 	full_send_queue: [BTreeMap<PartialPacketId, SendRecord>; 3],
+	/// All packets with an id less than this index id are currently in the
+	/// `send_queue`. Packets with an id greater or equal to this index are not
+	/// in the send queue.
+	send_queue_indices: [PartialPacketId; 3],
 	config: ResendConfig,
 	state: ResenderState,
 
@@ -140,6 +146,36 @@ impl PartialOrd for PartialPacketId {
 	}
 }
 
+impl Add<u16> for PartialPacketId {
+	type Output = Self;
+	fn add(self, rhs: u16) -> Self::Output {
+		let (packet_id, next_gen) = self.packet_id.overflowing_add(rhs);
+		Self {
+			generation_id: if next_gen {
+				self.generation_id.wrapping_add(1)
+			} else {
+				self.generation_id
+			},
+			packet_id,
+		}
+	}
+}
+
+impl Sub<u16> for PartialPacketId {
+	type Output = Self;
+	fn sub(self, rhs: u16) -> Self::Output {
+		let (packet_id, last_gen) = self.packet_id.overflowing_sub(rhs);
+		Self {
+			generation_id: if last_gen {
+				self.generation_id.wrapping_sub(1)
+			} else {
+				self.generation_id
+			},
+			packet_id,
+		}
+	}
+}
+
 impl PartialOrd for PacketId {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
 		if self.packet_type == other.packet_type {
@@ -164,8 +200,14 @@ impl From<&OutUdpPacket> for PacketId {
 
 impl fmt::Debug for PacketId {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{:?}({}:{})", self.packet_type, self.part.generation_id,
-			self.part.packet_id)?;
+		write!(f, "{:?}{:?}", self.packet_type, self.part)?;
+		Ok(())
+	}
+}
+
+impl fmt::Debug for PartialPacketId {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "({:x}:{:x})", self.generation_id, self.packet_id)?;
 		Ok(())
 	}
 }
@@ -174,19 +216,16 @@ impl Ord for SendRecordId {
 	fn cmp(&self, other: &Self) -> Ordering {
 		// If the packet was not already sent, it is more important
 		if self.tries == 0 {
-			if other.tries == 0 {
-				self.id.part.cmp(&other.id.part).reverse()
-			} else {
-				Ordering::Greater
+			if other.tries != 0 {
+				return Ordering::Greater;
 			}
 		} else if other.tries == 0 {
-			Ordering::Less
-		} else {
-			// The smallest time is the most important time
-			self.last.cmp(&other.last).reverse().then_with(||
-				// Else, the lower packet id is more important
-				self.id.part.cmp(&other.id.part).reverse())
+			return Ordering::Less;
 		}
+		// The smallest time is the most important time
+		self.last.cmp(&other.last).reverse().then_with(||
+			// Else, the lower packet id is more important
+			self.id.part.cmp(&other.id.part).reverse())
 	}
 }
 
@@ -213,6 +252,7 @@ impl Default for Resender {
 		Self {
 			send_queue: Default::default(),
 			full_send_queue: Default::default(),
+			send_queue_indices: Default::default(),
 			config: Default::default(),
 			state: ResenderState::Connecting,
 
@@ -242,9 +282,35 @@ impl Resender {
 	pub fn ack_packet(con: &mut Connection, cx: &mut Context, p_type: PacketType, p_id: u16) {
 		// Remove from ordered queue
 		let queue = &mut con.resender.full_send_queue[Self::packet_type_to_index(p_type)];
-		if let Some((first, rec)) = queue.iter().next() {
+		let mut queue_iter = queue.iter();
+		if let Some((first, _)) = queue_iter.next() {
 			let id = if first.packet_id == p_id {
-				con.stream_items.push_back(StreamItem::AckPacket(rec.id.id.clone()));
+				let (gen, p_id) = if let Some((_, rec2)) = queue_iter.next() {
+					// Ack all until the next packet
+					let rec2_id = &rec2.id.id.part;
+					(rec2_id.generation_id, rec2_id.packet_id)
+				} else if p_type == PacketType::Init {
+					// Ack the current packet
+					(0, p_id + 1)
+				} else {
+					// Ack all until the next packet to send
+					con.codec.outgoing_p_ids[p_type.to_usize().unwrap()]
+				};
+
+				let (p_id, last_gen) = p_id.overflowing_sub(1);
+				let id = PacketId {
+					packet_type: p_type,
+					part: PartialPacketId {
+						generation_id: if last_gen {
+							gen.wrapping_sub(1)
+						} else {
+							gen
+						},
+						packet_id: p_id,
+					}
+				};
+				con.stream_items.push_back(StreamItem::AckPacket(id));
+
 				first.clone()
 			} else {
 				PartialPacketId {
@@ -299,8 +365,7 @@ impl Resender {
 	/// If the send queue is full if it reached the congestion window size or
 	/// it contains packets that were not yet sent once.
 	pub fn is_full(&self) -> bool {
-		self.send_queue.len() >= self.get_window() as usize
-			|| self.send_queue.peek().map(|r| r.tries == 0).unwrap_or_default()
+		self.full_send_queue.len() >= self.get_window() as usize
 	}
 
 	/// If the send queue is empty.
@@ -314,17 +379,23 @@ impl Resender {
 	/// This is done on packet loss, when the send queue is rebuilt.
 	fn rebuild_send_queue(&mut self) {
 		self.send_queue.clear();
+		self.send_queue_indices = Default::default();
 		self.fill_up_send_queue();
 	}
 
 	/// Fill up to the send window size.
 	fn fill_up_send_queue(&mut self) {
+		let get_skip_closure = |i: usize| {
+			let start = self.send_queue_indices[i].clone();
+			move |r: &&SendRecord| r.id.id.part < start
+		};
 		let mut iters = [
-			self.full_send_queue[0].values().peekable(),
-			self.full_send_queue[1].values().peekable(),
-			self.full_send_queue[2].values().peekable(),
+			self.full_send_queue[0].values().skip_while(get_skip_closure(0)).peekable(),
+			self.full_send_queue[1].values().skip_while(get_skip_closure(1)).peekable(),
+			self.full_send_queue[2].values().skip_while(get_skip_closure(2)).peekable(),
 		];
-		for i in 0..(self.get_window() as usize) {
+
+		for _ in self.send_queue.len()..(self.get_window() as usize) {
 			let mut max_i = None;
 			let mut min_time = None;
 
@@ -339,11 +410,8 @@ impl Resender {
 
 			if let Some(max_i) = max_i {
 				let max = iters[max_i].next().unwrap().id.clone();
-				debug_assert!(i <= self.send_queue.len(),
-					"Coding error when filling the send queue");
-				if i == self.send_queue.len() {
-					self.send_queue.push(max);
-				}
+				self.send_queue_indices[max_i] = max.id.part + 1;
+				self.send_queue.push(max);
 			} else {
 				if self.no_congestion_since.is_none() {
 					self.no_congestion_since = Some(Instant::now());

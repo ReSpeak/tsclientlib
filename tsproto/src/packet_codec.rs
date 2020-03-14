@@ -22,6 +22,7 @@ pub struct PacketCodec {
 	///
 	/// This list is indexed by the `PacketType`, `PacketType::Init` is an
 	/// invalid index.
+	// TODO Use PartialPacketId
 	pub outgoing_p_ids: [(u32, u16); 8],
 	/// Used for incoming out-of-order packets.
 	///
@@ -36,6 +37,7 @@ pub struct PacketCodec {
 	/// The next packet id that is expected.
 	///
 	/// Works like the `outgoing_p_ids`.
+	// TODO Use PartialPacketId
 	pub incoming_p_ids: [(u32, u16); 8],
 }
 

@@ -1,6 +1,6 @@
 use anyhow::Error;
 use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
-use slog::{info, o, Logger};
+use slog::info;
 use tsproto_packets::packets::*;
 
 mod utils;
@@ -10,8 +10,7 @@ fn send_messages(b: &mut Bencher) {
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
-	//let logger = Logger::root(slog::Discard, o!());
-	let logger = create_logger(true);
+	let logger = create_logger(false);
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
 	let mut con = rt.block_on(async move {
@@ -19,7 +18,7 @@ fn send_messages(b: &mut Bencher) {
 			local_address,
 			address,
 			logger.clone(),
-			3,
+			0,
 		).await?;
 
 		info!(logger, "Connecting");
@@ -54,7 +53,7 @@ fn send_messages(b: &mut Bencher) {
 			con.wait_for_ack(id).await?;
 		}
 		tokio::select! {
-			_ = tokio::time::delay_for(tokio::time::Duration::from_secs(1)) => {
+			_ = tokio::time::delay_for(tokio::time::Duration::from_millis(50)) => {
 			}
 			_ = con.wait_disconnect() => {
 				anyhow::bail!("Disconnected");
