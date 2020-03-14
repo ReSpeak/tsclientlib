@@ -2,7 +2,8 @@ use std::fmt::Debug;
 use std::str;
 
 use slog::{debug, o, Logger};
-use tsproto_packets::packets::PacketType;
+use tsproto_packets::HexSlice;
+use tsproto_packets::packets::{OutUdpPacket, PacketType};
 
 use crate::connection::{Connection, Event};
 
@@ -27,6 +28,21 @@ pub fn log_udp_packet<P: Debug>(
 {
 	let logger = prepare_logger(logger, is_client, incoming);
 	debug!(logger, "UdpPacket"; "content" => ?packet);
+}
+
+pub fn log_out_udp_packet(
+	logger: &Logger,
+	is_client: bool,
+	incoming: bool,
+	packet: &OutUdpPacket,
+)
+{
+	let logger = prepare_logger(logger, is_client, incoming);
+	debug!(logger, "UdpPacket";
+		"generation" => packet.generation_id(),
+		"header" => ?packet.data().header(),
+		//"content" => %HexSlice(packet.data().content()),
+	);
 }
 
 pub fn log_packet<P: Debug>(
@@ -68,32 +84,34 @@ pub fn log_command(
 pub fn add_logger(logger: Logger, verbosity: u8, con: &mut Connection) {
 	let is_client = con.is_client;
 	let listener = Box::new(move |event: &Event| match event {
-		Event::ReceiveUdpPacket(packet) => if verbosity > 1 {
-			log_udp_packet(&logger, is_client, true, packet);
+		Event::ReceiveUdpPacket(packet) => if verbosity > 0 {
+			log_udp_packet(&logger, is_client, true, packet.header());
 		}
 		Event::ReceivePacket(packet) => {
-			if verbosity > 0 {
+			if verbosity > 1 {
 				log_packet(&logger, is_client, true, packet);
-			}
-			let p_type = packet.header().packet_type();
-			if p_type.is_command() {
-				if let Ok(s) = str::from_utf8(packet.content()) {
-					log_command(&logger, is_client, true, p_type, s);
+			} else {
+				let p_type = packet.header().packet_type();
+				if p_type.is_command() {
+					if let Ok(s) = str::from_utf8(packet.content()) {
+						log_command(&logger, is_client, true, p_type, s);
+					}
 				}
 			}
 		}
-		Event::SendUdpPacket(packet) => if verbosity > 1 {
-			log_udp_packet(&logger, is_client, false, packet);
+		Event::SendUdpPacket(packet) => if verbosity > 0 {
+			log_out_udp_packet(&logger, is_client, false, packet);
 		}
 		Event::SendPacket(packet) => {
-			let p_type = packet.header().packet_type();
-			if p_type.is_command() {
-				if let Ok(s) = str::from_utf8(packet.content()) {
-					log_command(&logger, is_client, false, p_type, s);
+			if verbosity > 1 {
+				log_packet(&logger, is_client, false, &packet.packet());
+			} else {
+				let p_type = packet.header().packet_type();
+				if p_type.is_command() {
+					if let Ok(s) = str::from_utf8(packet.content()) {
+						log_command(&logger, is_client, false, p_type, s);
+					}
 				}
-			}
-			if verbosity > 0 {
-				log_packet(&logger, is_client, false, packet);
 			}
 		}
 	});

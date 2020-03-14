@@ -65,6 +65,7 @@ impl Client {
 				warn!(con.logger, "Got connection error"; "error" => %e);
 				None
 			}
+			StreamItem::AckPacket(_) => None,
 			i => {
 				warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
 				None
@@ -95,7 +96,8 @@ impl Client {
 		})).await
 	}
 
-	async fn wait_for_ack(&mut self, id: PacketId) -> Result<()> {
+	/// Drop all packets until the given packet is acknowledged.
+	pub async fn wait_for_ack(&mut self, id: PacketId) -> Result<()> {
 		self.filter_items(|con, i| Ok(match i {
 			StreamItem::S2CInit(packet) => {
 				con.hand_back_buffer(packet.into_buffer());
@@ -106,7 +108,6 @@ impl Client {
 				None
 			}
 			StreamItem::Command(packet) => {
-				warn!(con.logger, "Dropping unexpected command"; "got" => ?packet);
 				con.hand_back_buffer(packet.into_buffer());
 				None
 			}
@@ -116,6 +117,42 @@ impl Client {
 			}
 			StreamItem::AckPacket(ack) => {
 				if id <= ack {
+					Some(())
+				} else {
+					None
+				}
+			}
+			i => {
+				warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
+				None
+			}
+		})).await
+	}
+
+	/// Drop all packets until the send queue is not full anymore.
+	pub async fn wait_until_can_send(&mut self) -> Result<()> {
+		if !self.is_send_queue_full() {
+			return Ok(());
+		}
+		self.filter_items(|con, i| Ok(match i {
+			StreamItem::S2CInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::C2SInit(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::Command(packet) => {
+				con.hand_back_buffer(packet.into_buffer());
+				None
+			}
+			StreamItem::Error(e) => {
+				warn!(con.logger, "Got connection error"; "error" => %e);
+				None
+			}
+			StreamItem::AckPacket(_) => {
+				if !con.is_send_queue_full() {
 					Some(())
 				} else {
 					None

@@ -106,14 +106,14 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 		std::iter::empty(),
 	);
 
-	let fut = con.send_packet(packet).await;
-	Ok(tokio::try_join!(fut, con.filter_commands(|con, cmd|
+	con.send_packet(packet)?;
+	Ok(con.filter_commands(|con, cmd|
 		Ok(if cmd.data().data().name == "initserver" {
 			Some(cmd)
 		} else {
 			con.hand_back_buffer(cmd.into_buffer());
 			None
-		})))?.1)
+		})).await?)
 }
 
 pub async fn disconnect(con: &mut Client) -> Result<()> {
@@ -131,7 +131,7 @@ pub async fn disconnect(con: &mut Client) -> Result<()> {
 			std::iter::empty(),
 		);
 
-	let fut = con.send_packet(packet).await;
-	tokio::try_join!(fut, con.wait_disconnect())?;
+	con.send_packet(packet)?;
+	con.wait_disconnect().await?;
 	Ok(())
 }

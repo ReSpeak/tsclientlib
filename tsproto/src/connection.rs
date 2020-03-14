@@ -296,7 +296,7 @@ impl Connection {
 			Err(e) => {
 				let e: Error = e.into();
 				self.stream_items.push_back(StreamItem::Error(e
-					.context(format!("Buffer {:?}", HexSlice(&udp_buffer)))));
+					.context(format!("Buffer {}", HexSlice(&udp_buffer)))));
 				return Ok(());
 			}
 		});

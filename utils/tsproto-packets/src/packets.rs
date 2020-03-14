@@ -125,7 +125,7 @@ create_buf!(InAudioBuf, InAudio, into_audio;
 	InS2CInitBuf, InS2CInit, into_s2cinit);
 
 /// Used for debugging.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InUdpPacket<'a>(pub InPacket<'a>);
 
 impl<'a> InUdpPacket<'a> {
@@ -138,7 +138,7 @@ pub struct InHeader<'a> {
 	data: &'a [u8],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InPacket<'a> {
 	header: InHeader<'a>,
 	content: &'a [u8],
@@ -156,7 +156,7 @@ pub struct OutUdpPacket {
 	data: OutPacket,
 }
 
-#[derive(Clone, Deserialize, Eq, PartialEq, Hash, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Hash, Serialize)]
 pub struct OutPacket {
 	dir: Direction,
 	data: Vec<u8>,
@@ -256,7 +256,7 @@ pub enum AudioData<'a> {
 	},
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct InAudio<'a> {
 	packet: InPacket<'a>,
 	data: AudioData<'a>,
@@ -480,24 +480,81 @@ impl<'a> InPacket<'a> {
 	}
 }
 
+impl fmt::Debug for InPacket<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Packet({:?}", self.header())?;
+		let mut success = false;
+		match self.header.packet_type() {
+			PacketType::Voice | PacketType::VoiceWhisper => {
+				if let Ok(packet) = self.clone().into_audio() {
+					success = true;
+					write!(f, ", {:?}", packet)?;
+				}
+			}
+			PacketType::Command | PacketType::CommandLow => {
+				if let Ok(packet) = str::from_utf8(self.content()) {
+					success = true;
+					write!(f, ", {:?}", packet)?;
+				}
+			}
+			PacketType::Ping | PacketType::Pong | PacketType::Ack | PacketType::AckLow => {
+				success = true;
+				if !self.content().is_empty() {
+					write!(f, ", 0x")?;
+				}
+				for b in self.content() {
+					write!(f, "{:02x}", b)?;
+				}
+			}
+			PacketType::Init => if self.header.direction == Direction::C2S {
+				if let Ok(packet) = self.clone().into_c2sinit() {
+					success = true;
+					write!(f, ", {:?}", packet.data)?;
+				}
+			} else {
+				if let Ok(packet) = self.clone().into_s2cinit() {
+					success = true;
+					write!(f, ", {:?}", packet.data)?;
+				}
+			}
+		}
+
+		if !success {
+			write!(f, ", failed to parse, content: {})", HexSlice(self.content()))?;
+		}
+
+		write!(f, ")")?;
+		Ok(())
+	}
+}
+
+impl fmt::Debug for InUdpPacket<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "Packet({:?}, content: {})", self.0.header(), HexSlice(self.0.content()))?;
+		Ok(())
+	}
+}
+
 impl fmt::Debug for InHeader<'_> {
 	#[rustfmt::skip]
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Header {{ ")?;
-		write!(f, "mac: {:?}, ", HexSlice(self.mac()))?;
-		write!(f, "p_id: {}, ", self.packet_id())?;
+		write!(f, "Header(")?;
+		if self.mac() != &[0; 8] {
+			write!(f, "mac: {}, ", HexSlice(self.mac()))?;
+		}
+		write!(f, "id: {}, ", self.packet_id())?;
 		if let Some(c_id) = self.client_id() {
 			write!(f, "c_id: {}, ", c_id)?;
 		}
-		write!(f, "type: {:?}, ", self.packet_type())?;
-		write!(f, "flags: ")?;
+		write!(f, "{:?}, ", self.packet_type())?;
+		write!(f, "")?;
 		let flags = self.flags();
 		write!(f, "{}", if flags.contains(Flags::UNENCRYPTED) { "u" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::COMPRESSED) { "c" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::NEWPROTOCOL) { "n" } else { "-" })?;
 		write!(f, "{}", if flags.contains(Flags::FRAGMENTED) { "f" } else { "-" })?;
 
-		write!(f, "}}")?;
+		write!(f, ")")?;
 		Ok(())
 	}
 }
@@ -564,9 +621,11 @@ impl C2SInitData<'_> {
 impl<'a> fmt::Debug for C2SInitData<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			C2SInitData::Init0 { .. } => write!(f, "C2SInitData::Init0"),
-			C2SInitData::Init2 { .. } => write!(f, "C2SInitData::Init2"),
-			C2SInitData::Init4 { .. } => write!(f, "C2SInitData::Init4"),
+			C2SInitData::Init0 { .. } => write!(f, "Init0"),
+			C2SInitData::Init2 { .. } => write!(f, "Init2"),
+			C2SInitData::Init4 { level, .. } => {
+				write!(f, "Init4(level: {})", level)
+			}
 		}
 	}
 }
@@ -583,8 +642,10 @@ impl S2CInitData<'_> {
 impl<'a> fmt::Debug for S2CInitData<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			S2CInitData::Init1 { .. } => write!(f, "S2CInitData::Init1"),
-			S2CInitData::Init3 { .. } => write!(f, "S2CInitData::Init3"),
+			S2CInitData::Init1 { .. } => write!(f, "Init1"),
+			S2CInitData::Init3 { level, .. } => {
+				write!(f, "Init3(level: {})", level)
+			}
 		}
 	}
 }
@@ -778,6 +839,32 @@ impl<'a> InAudio<'a> {
 	pub fn data(&self) -> &AudioData { &self.data }
 }
 
+impl fmt::Debug for InAudio<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match &self.data {
+			AudioData::C2S { id, codec, data } => {
+				write!(f, "Audio(id: {}, {:?}, {})", id, codec, HexSlice(data))?;
+			}
+			AudioData::C2SWhisper { id, codec, channels, clients, data } => {
+				write!(f, "Whisper(id: {}, {:?}, channels: {:?}, clients: {:?}, {})",
+					id, codec, channels, clients, HexSlice(data))?;
+			}
+			AudioData::C2SWhisperNew { id, codec, whisper_type, target, target_id, data } => {
+				write!(f, "WhisperNew(id: {}, {:?}, type: {}, target: {}, target_id: {}, {})",
+					id, codec, whisper_type, target, target_id, HexSlice(data))?;
+			}
+			AudioData::S2C { id, from, codec, data } => {
+				write!(f, "Audio(id: {}, from: {}, {:?}, {})", id, from, codec, HexSlice(data))?;
+			}
+			AudioData::S2CWhisper { id, from, codec, data } => {
+				write!(f, "Whisper(id: {}, from: {}, {:?}, {})", id, from, codec, HexSlice(data))?;
+			}
+		}
+
+		Ok(())
+	}
+}
+
 impl OutPacket {
 	#[inline]
 	pub fn new(
@@ -855,6 +942,8 @@ impl OutPacket {
 	pub fn header(&self) -> InHeader { InHeader { direction: self.dir, data: self.header_bytes() } }
 	#[inline]
 	pub fn header_bytes(&self) -> &[u8] { &self.data[..self.content_offset()] }
+	#[inline]
+	pub fn packet(&self) -> InPacket { InPacket::new(self.dir, &self.data) }
 
 	#[inline]
 	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
@@ -905,15 +994,6 @@ impl OutUdpPacket {
 	}
 	#[inline]
 	pub fn packet_type(&self) -> PacketType { self.data.header().packet_type() }
-}
-
-impl fmt::Debug for OutPacket {
-	#[rustfmt::skip]
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "Packet {{ header: {:?}", self.header())?;
-		write!(f, ", content: {:?} }}", HexSlice(self.content()))?;
-		Ok(())
-	}
 }
 
 pub struct OutCommand;

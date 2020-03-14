@@ -167,10 +167,10 @@ impl PacketCodec {
 							Ok(c) => {
 								// initivexpand2 is the ack for the last init packet
 								if con.is_client && c.data().data().name == "initivexpand2" {
-									Resender::ack_packet(con, PacketType::Init, 4);
+									Resender::ack_packet(con, cx, PacketType::Init, 4);
 								} else if con.is_client && c.data().data().name == "initserver" {
 									// initserver acks clientinit
-									Resender::ack_packet(con, PacketType::Command, 2);
+									Resender::ack_packet(con, cx, PacketType::Command, 2);
 								}
 								StreamItem::Command(c)
 							}
@@ -201,7 +201,7 @@ impl PacketCodec {
 							} else {
 								p_type
 							};
-							Resender::ack_packet(con, p_type, ack_id);
+							Resender::ack_packet(con, cx, p_type, ack_id);
 						}
 						Ok(None) => {}
 						Err(e) => {

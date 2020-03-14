@@ -47,22 +47,14 @@ pub enum Error {
 
 pub struct HexSlice<'a, T: fmt::LowerHex + 'a>(pub &'a [T]);
 
-impl<'a> fmt::Debug for HexSlice<'a, u8> {
+impl<'a> fmt::Display for HexSlice<'a, u8> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "[")?;
+		write!(f, "Hex[")?;
 		if let Some((l, m)) = self.0.split_last() {
 			for b in m {
-				if *b == 0 {
-					write!(f, "0, ")?;
-				} else {
-					write!(f, "{:#02x}, ", b)?;
-				}
+				write!(f, "{:02x} ", b)?;
 			}
-			if *l == 0 {
-				write!(f, "0")?;
-			} else {
-				write!(f, "{:#02x}", l)?;
-			}
+			write!(f, "{:02x}", l)?;
 		}
 		write!(f, "]")
 	}

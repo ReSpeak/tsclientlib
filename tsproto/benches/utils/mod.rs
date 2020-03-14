@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Mutex;
 
 use anyhow::Result;
 use slog::{o, Drain, Logger};
@@ -9,12 +10,27 @@ use tsproto::crypto::EccKeyPrivP256;
 use tsproto_packets::packets::*;
 
 #[allow(dead_code)]
-pub fn create_logger() -> Logger {
+pub fn create_logger(to_file: bool) -> Logger {
 	let decorator = slog_term::TermDecorator::new().build();
 	let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-	let drain = slog_async::Async::new(drain).build().fuse();
 
-	slog::Logger::root(drain, o!())
+	if to_file {
+		let file = std::fs::OpenOptions::new()
+			.create(true)
+			.write(true)
+			.truncate(true)
+			.open("bench.log")
+			.unwrap();
+		let decorator = slog_term::PlainDecorator::new(file);
+		let file_drain = slog_term::CompactFormat::new(decorator).build().fuse();
+
+		let drain = slog::Duplicate(drain, file_drain);
+		let drain = Mutex::new(drain).fuse();
+		slog::Logger::root(drain, o!())
+	} else {
+		let drain = slog_async::Async::new(drain).build().fuse();
+		slog::Logger::root(drain, o!())
+	}
 }
 
 pub async fn create_client(
@@ -95,14 +111,14 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 		std::iter::empty(),
 	);
 
-	let fut = con.send_packet(packet).await;
-	Ok(tokio::try_join!(fut, con.filter_commands(|con, cmd|
+	con.send_packet(packet)?;
+	Ok(con.filter_commands(|con, cmd|
 		Ok(if cmd.data().data().name == "initserver" {
 			Some(cmd)
 		} else {
 			con.hand_back_buffer(cmd.into_buffer());
 			None
-		})))?.1)
+		})).await?)
 }
 
 pub async fn disconnect(con: &mut Client) -> Result<()> {
@@ -120,7 +136,7 @@ pub async fn disconnect(con: &mut Client) -> Result<()> {
 			std::iter::empty(),
 		);
 
-	let fut = con.send_packet(packet).await;
-	tokio::try_join!(fut, con.wait_disconnect())?;
+	con.send_packet(packet)?;
+	con.wait_disconnect().await?;
 	Ok(())
 }

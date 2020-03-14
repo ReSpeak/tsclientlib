@@ -30,6 +30,10 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+	real_main().await
+}
+
+async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 	let logger = create_logger();
@@ -70,13 +74,8 @@ async fn main() -> Result<()> {
 		vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
 		std::iter::empty(),
 	);
-	let mut fut = con.send_packet_with_answer(packet).await;
-	tokio::select! {
-		_ = &mut fut => {}
-		_ = con.wait_disconnect() => {
-			bail!("Disconnected");
-		}
-	};
+	let id = con.send_packet(packet)?;
+	con.wait_for_ack(id).await?;
 
 	// Disconnect
 	disconnect(&mut con).await?;
