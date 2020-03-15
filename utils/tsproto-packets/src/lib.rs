@@ -24,6 +24,8 @@ pub enum Error {
 	ParseInt(#[from] std::num::ParseIntError),
 	#[error(transparent)]
 	Utf8(#[from] std::str::Utf8Error),
+	#[error(transparent)]
+	StringUtf8(#[from] std::string::FromUtf8Error),
 
 	#[error("Invalid init step {0}")]
 	InvalidInitStep(u8),

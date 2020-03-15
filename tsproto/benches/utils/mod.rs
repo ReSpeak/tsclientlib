@@ -113,7 +113,7 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 
 	con.send_packet(packet)?;
 	Ok(con.filter_commands(|con, cmd|
-		Ok(if cmd.data().data().name == "initserver" {
+		Ok(if cmd.data().packet().content().starts_with(b"initserver ") {
 			Some(cmd)
 		} else {
 			con.hand_back_buffer(cmd.into_buffer());

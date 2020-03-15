@@ -1,9 +1,10 @@
 use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
+use std::str;
 use std::task::{Context, Poll};
 
-use anyhow::bail;
+use anyhow::{bail, Error};
 use futures::prelude::*;
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
@@ -16,6 +17,7 @@ use rug::integer::Order;
 use rug::Integer;
 use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
+use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
@@ -318,22 +320,45 @@ impl Client {
 		let clientek_id;
 		{
 			let command = self.get_command().await?;
-			let cmd = command.data().iter().next().unwrap();
-			if command.data().data().name != "initivexpand2"
-				|| !cmd.has("l") || !cmd.has("beta")
-				|| !cmd.has("omega") || cmd.get("ot") != Some("1")
-				|| !cmd.has("time") || !cmd.has("beta")
-			{
-				bail!("initivexpand2 command has wrong arguments");
+
+			let (name, args) = CommandParser::new(command.data().packet().content());
+			if name != b"initivexpand2" {
+				bail!("Expected initivexpand2 but got {:?}", str::from_utf8(name));
 			}
 
-			let server_key = EccKeyPubP256::from_ts(cmd.0["omega"])?;
-			let l = base64::decode(cmd.0["l"])?;
-			let proof = base64::decode(cmd.0["proof"])?;
+			let mut l = None;
+			let mut beta_vec = None;
+			let mut server_key = None;
+			let mut proof = None;
+			let mut ot = false;
+			for item in args {
+				match item {
+					CommandItem::NextCommand => bail!("Got multiple initivexpand2s in one packet"),
+					CommandItem::Argument(arg) => match arg.name() {
+						b"l" => l = Some(base64::decode(&arg.value().get())?),
+						b"beta" => beta_vec = Some(base64::decode(&arg.value().get())?),
+						b"omega" => server_key = Some(EccKeyPubP256::from_ts(&arg.value().get_str()?)?),
+						b"proof" => proof = Some(base64::decode(&arg.value().get())?),
+						b"ot" => ot = arg.value().get_raw() == b"1",
+						_ => {}
+					}
+				}
+			}
+
+			if !ot {
+				bail!("Got no ot=1, probably the server is outdated");
+			}
+			if l.is_none() || beta_vec.is_none() || server_key.is_none() || proof.is_none() {
+				bail!("initivexpand2 command has wrong arguments");
+			}
+			let l = l.unwrap();
+			let beta_vec = beta_vec.unwrap();
+			let server_key = server_key.unwrap();
+			let proof = proof.unwrap();
+
 			// Check signature of l (proof)
 			server_key.clone().verify(&l, &proof)?;
 
-			let beta_vec = base64::decode(cmd.0["beta"])?;
 			if beta_vec.len() != 54 {
 				bail!("Incorrect beta length: {} != 54", beta_vec.len());
 			}
@@ -459,14 +484,25 @@ impl Client {
 	}
 
 	fn handle_command(&mut self, command: InCommandBuf) -> Result<Option<InCommandBuf>> {
-		let cmd_name = &command.data().data().name;
-		if cmd_name == &"initserver" {
+		let (name, args) = CommandParser::new(command.data().packet().content());
+		if name == b"initserver" {
 			// Handle an initserver
-			let cmd = command.data().iter().next().unwrap();
 			if let Some(params) = &mut self.params {
-				match cmd.get_parse("aclid") {
-					Ok(c_id) => params.c_id = c_id,
-					Err(e) => bail!("Failed to parse aclid: {:?}", e),
+				let mut c_id = None;
+				for item in args {
+					match item {
+						CommandItem::NextCommand => bail!("Got multiple initservers in one packet"),
+						CommandItem::Argument(arg) => match arg.name() {
+							b"aclid" => c_id = Some(arg.value().get_parse::<Error, u16>()?),
+							_ => {}
+						}
+					}
+				}
+
+				if let Some(c_id) = c_id {
+					params.c_id = c_id;
+				} else {
+					bail!("Got initserver without aclid");
 				}
 			} else {
 				bail!("Got initserver, but we have not yet a full connection");
@@ -475,53 +511,76 @@ impl Client {
 			// Notify the resender that we are connected
 			let this = &mut **self;
 			this.resender.set_state(&this.logger, ResenderState::Connected);
-		} else if cmd_name == &"notifyclientleftview" {
+		} else if name == b"notifyclientleftview" {
 			// Handle disconnect
-			let cmd = command.data().iter().next().unwrap();
 			if let Some(params) = &mut self.params {
-				if cmd.get_parse("clid") == Ok(params.c_id) {
+				let mut own_client = false;
+				for item in args {
+					match item {
+						CommandItem::NextCommand => {}
+						CommandItem::Argument(arg) => match arg.name() {
+							b"clid" => {
+								let c_id = arg.value().get_parse::<Error, u16>()?;
+								own_client |= c_id == params.c_id;
+							}
+							_ => {}
+						}
+					}
+				}
+
+				if own_client {
 					// We are disconnected
 					let this = &mut **self;
 					this.resender.set_state(&this.logger, ResenderState::Disconnected);
 				}
 			}
-		} else if cmd_name == &"notifyplugincmd" {
-			let cmd = command.data().iter().next().unwrap();
-			// TODO getversion
-			if cmd.get("name") == Some("getversion") && cmd.has("client") {
-				if let Some(sender) = cmd.get("client") {
-					let mut version = format!(
-						"{} {}",
-						env!("CARGO_PKG_NAME"),
-						git_testament::render_testament!(crate::TESTAMENT),
-					);
-					#[cfg(debug_assertions)]
-					version.push_str(" (Debug)");
-					#[cfg(not(debug_assertions))]
-					version.push_str(" (Release)");
+		} else if name == b"notifyplugincmd" {
+			let mut is_getversion = false;
+			let sender = None;
+			for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
+				match item {
+					CommandItem::Argument(arg) => match arg.name() {
+						b"name" => is_getversion = arg.value().get_raw() == b"getversion",
+						_ => {}
+					}
+					CommandItem::NextCommand => {
+						if is_getversion && sender.is_some() {
+							let sender: u16 = sender.unwrap();
+							// TODO getversion
+							let mut version = format!(
+								"{} {}",
+								env!("CARGO_PKG_NAME"),
+								git_testament::render_testament!(crate::TESTAMENT),
+							);
+							#[cfg(debug_assertions)]
+							version.push_str(" (Debug)");
+							#[cfg(not(debug_assertions))]
+							version.push_str(" (Release)");
 
-					self.send_packet(OutCommand::new::<
-						_,
-						_,
-						String,
-						String,
-						_,
-						_,
-						std::iter::Empty<_>,
-					>(
-						Direction::C2S,
-						PacketType::Command,
-						"plugincmd",
-						vec![
-							("name", "getversion".into()),
-							("data", version),
-							// PluginTargetMode::Client
-							("targetmode", 2.to_string()),
-							("target", sender.to_string()),
-						]
-						.into_iter(),
-						std::iter::empty(),
-					))?;
+							self.send_packet(OutCommand::new::<
+								_,
+								_,
+								String,
+								String,
+								_,
+								_,
+								std::iter::Empty<_>,
+							>(
+								Direction::C2S,
+								PacketType::Command,
+								"plugincmd",
+								vec![
+									("name", "getversion".into()),
+									("data", version),
+									// PluginTargetMode::Client
+									("targetmode", 2.to_string()),
+									("target", sender.to_string()),
+								]
+								.into_iter(),
+								std::iter::empty(),
+							))?;
+						}
+					}
 				}
 			}
 			// TODO Remove return codes?

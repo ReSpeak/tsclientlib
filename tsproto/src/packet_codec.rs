@@ -168,9 +168,9 @@ impl PacketCodec {
 						let item = match InCommandBuf::try_new(dir, c) {
 							Ok(c) => {
 								// initivexpand2 is the ack for the last init packet
-								if con.is_client && c.data().data().name == "initivexpand2" {
+								if con.is_client && c.data().packet().content().starts_with(b"initivexpand2 ") {
 									Resender::ack_packet(con, cx, PacketType::Init, 4);
-								} else if con.is_client && c.data().data().name == "initserver" {
+								} else if con.is_client && c.data().packet().content().starts_with(b"initserver ") {
 									// initserver acks clientinit
 									Resender::ack_packet(con, cx, PacketType::Command, 2);
 								}

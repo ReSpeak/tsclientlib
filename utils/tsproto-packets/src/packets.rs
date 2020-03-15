@@ -8,7 +8,6 @@ use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use serde::{Deserialize, Serialize};
 
-use crate::commands::{CommandData, CommandDataIterator};
 use crate::{Error, HexSlice, Result};
 
 #[derive(
@@ -85,10 +84,10 @@ pub enum CodecType {
 macro_rules! create_buf {
 	($($name:ident, $borrow_name:ident, $convert:ident);*) => {
 		rental! {
-			mod rentals {
+			pub mod rentals {
 				$(
 				#[rental(covariant, debug)]
-				pub(crate) struct $name {
+				pub struct $name {
 					data: Vec<u8>,
 					content: super::$borrow_name<'data>,
 				}
@@ -98,7 +97,7 @@ macro_rules! create_buf {
 
 		$(
 		#[derive(Debug)]
-		pub struct $name(rentals::$name);
+		pub struct $name(pub rentals::$name);
 		impl $name {
 			/// `InPacket::try_new` is not checked and must succeed. Otherwise, it
 			/// panics.
@@ -147,7 +146,6 @@ pub struct InPacket<'a> {
 #[derive(Clone, Debug)]
 pub struct InCommand<'a> {
 	packet: InPacket<'a>,
-	data: CommandData<'a>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Hash, Serialize)]
@@ -188,7 +186,7 @@ pub enum C2SInitData<'a> {
 		/// y = x ^ (2 ^ level) % n
 		y: &'a [u8; 64],
 		/// Has to be a `clientinitiv alpha=… omega=…` command.
-		command: CommandData<'a>,
+		command: &'a [u8],
 	},
 }
 
@@ -357,15 +355,9 @@ impl<'a> InPacket<'a> {
 		})
 	}
 
-	/// Parse this packet into a command packet.
+	/// Put this packet into a command packet.
 	pub fn into_command(self) -> Result<InCommand<'a>> {
-		let s = str::from_utf8(self.content)?;
-		let data = crate::commands::parse_command(s)?;
-
-		Ok(InCommand {
-			packet: self,
-			data,
-		})
+		Ok(InCommand { packet: self })
 	}
 
 	pub fn into_s2cinit(self) -> Result<InS2CInit<'a>> {
@@ -457,8 +449,6 @@ impl<'a> InPacket<'a> {
 			if self.content.len() < len + 20 {
 				return Err(Error::PacketContentTooShort(self.content.len()));
 			}
-			let s = str::from_utf8(&self.content[len..])?;
-			let command = crate::commands::parse_command(s)?;
 			data = C2SInitData::Init4 {
 				version,
 				x: array_ref!(self.content, 5, 64),
@@ -467,7 +457,7 @@ impl<'a> InPacket<'a> {
 					.read_be()?,
 				random2: array_ref!(self.content, 128 + 9, 100),
 				y: array_ref!(self.content, 228 + 9, 64),
-				command,
+				command: &self.content[len..],
 			};
 		} else {
 			return Err(Error::InvalidInitStep(self.content[0]));
@@ -623,8 +613,15 @@ impl<'a> fmt::Debug for C2SInitData<'a> {
 		match self {
 			C2SInitData::Init0 { .. } => write!(f, "Init0"),
 			C2SInitData::Init2 { .. } => write!(f, "Init2"),
-			C2SInitData::Init4 { level, .. } => {
-				write!(f, "Init4(level: {})", level)
+			C2SInitData::Init4 { level, command, .. } => {
+				write!(f, "Init4(level: {}, ", level)?;
+				if let Ok(s) = str::from_utf8(command) {
+					write!(f, "{:?}", s)?;
+				} else {
+					write!(f, "{}", HexSlice(command))?;
+				}
+				write!(f, ")")?;
+				Ok(())
 			}
 		}
 	}
@@ -653,18 +650,6 @@ impl<'a> fmt::Debug for S2CInitData<'a> {
 impl<'a> InCommand<'a> {
 	#[inline]
 	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
-
-	#[inline]
-	pub fn data(&self) -> &CommandData { &self.data }
-
-	#[inline]
-	pub fn iter(&self) -> CommandDataIterator { self.into_iter() }
-}
-
-impl<'a> IntoIterator for &'a InCommand<'_> {
-	type Item = crate::commands::CanonicalCommand<'a>;
-	type IntoIter = CommandDataIterator<'a>;
-	fn into_iter(self) -> Self::IntoIter { self.data.iter() }
 }
 
 impl<'a> AudioData<'a> {
@@ -1022,6 +1007,8 @@ impl OutCommand {
 		list_args: I2,
 	) -> OutPacket
 	where
+		// TODO Maybe use Display so we don’t allocate int->String twice?
+		// But how about writing raw [u8]?
 		K1: AsRef<str>,
 		V1: AsRef<str>,
 		K2: AsRef<str>,
@@ -1094,7 +1081,8 @@ impl OutCommand {
 		}
 	}
 
-	fn write_escaped(w: &mut dyn Write, s: &str) -> Result<()> {
+	fn write_escaped(w: &mut Vec<u8>, s: &str) -> Result<()> {
+		w.reserve(s.len());
 		for c in s.chars() {
 			match c {
 				'\u{b}' => write!(w, "\\v"),

@@ -38,6 +38,7 @@ flakebi-ring = "0.16.9"
 rug = { version = "1", optional = true, default-features = false, features = ["integer"] }
 serde = { version = "1", features = ["derive"] }
 simple_asn1 = "0.4"
+slog = "2"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
@@ -49,14 +50,14 @@ tsproto-packets = { path = "../utils/tsproto-packets" }
 untrusted = "0.7"
 quicklz = "0.2"
 
-[dependencies.slog]
-version = "2"
-features = ["max_level_debug", "release_max_level_debug"]
-
 [dev-dependencies]
 criterion = "0.3"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "0.2", features = ["rt-threaded", "signal"] }
+
+[dev-dependencies.slog]
+version = "2"
+features = ["max_level_debug", "release_max_level_debug"]
 
 [[bench]]
 name = "modpow"
