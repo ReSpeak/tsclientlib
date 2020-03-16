@@ -568,6 +568,8 @@ impl<'a> InHeader<'a> {
 	}
 
 	#[inline]
+	pub fn direction(&self) -> Direction { self.direction }
+	#[inline]
 	pub fn data(&self) -> &'a [u8] { self.data }
 	#[inline]
 	pub fn mac(&self) -> &'a [u8; 8] { array_ref![self.data, 0, 8] }

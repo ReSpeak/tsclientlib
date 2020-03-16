@@ -33,6 +33,8 @@ pub enum Error {
 	#[fail(display = "{}", _0)]
 	Utf8(#[cause] std::str::Utf8Error),
 	#[fail(display = "{}", _0)]
+	ParseAddr(#[cause] std::net::AddrParseError),
+	#[fail(display = "{}", _0)]
 	ParseInt(#[cause] std::num::ParseIntError),
 	#[fail(display = "{}", _0)]
 	ParseError(#[cause] messages::ParseError),

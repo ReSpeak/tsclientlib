@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::default::Default;
 
 use itertools::Itertools;
@@ -16,32 +15,12 @@ impl MessageDeclarations<'static> {
 	pub fn s2c() -> messages::MessageDeclarations {
 		let mut res = DATA.clone();
 		res.msg_group.retain(|g| g.default.s2c);
-
-		// All messages that do not occur in M2B declarations
-		let not_needed: HashSet<&str> = tsproto_structs::messages_to_book::DATA
-			.decls
-			.iter()
-			.map(|e| e.msg.name.as_str())
-			.collect();
-		for g in &mut res.msg_group {
-			g.msg.retain(|msg| !not_needed.contains(msg.name.as_str()))
-		}
 		res
 	}
 
 	pub fn c2s() -> messages::MessageDeclarations {
 		let mut res = DATA.clone();
 		res.msg_group.retain(|g| g.default.c2s);
-
-		// All messages that do not occur in B2M declarations
-		let not_needed: HashSet<&str> = tsproto_structs::book_to_messages::DATA
-			.decls
-			.iter()
-			.map(|e| e.msg.name.as_str())
-			.collect();
-		for g in &mut res.msg_group {
-			g.msg.retain(|msg| !not_needed.contains(msg.name.as_str()))
-		}
 		res
 	}
 }
@@ -51,7 +30,7 @@ impl Default for MessageDeclarations<'static> {
 }
 
 pub fn generate_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("", true).replace("UidRef", "Uid");
+	let rust_type = field.get_rust_type("", false);
 	if rust_type.starts_with("Vec<") {
 		vector_value_deserializer(field)
 	} else {
@@ -78,18 +57,20 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			field.pretty
 		),
 		"bool" => format!(
-			"match *val {{ \"0\" => false, \"1\" => true, _ => \
+			"match val {{ \"0\" => false, \"1\" => true, _ => \
 			 Err(ParseError::ParseBool {{
 				arg: \"{}\",
 				value: val.to_string(),
 			}})? }}",
 			field.pretty
 		),
-		"Uid" => format!("Uid(base64::decode(val).map_err(|e| ParseError::ParseUid {{
+		"Uid" => format!("Uid(if val == \"ServerAdmin\" {{ val.as_bytes().to_vec() }} else {{
+			base64::decode(val).map_err(|e| ParseError::ParseUid {{
 				arg: \"{}\",
 				value: val.to_string(),
 				error: e,
-			}})?)", field.pretty),
+			}})?
+		}})", field.pretty),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
 		"IconHash" => format!(
@@ -122,7 +103,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			field.pretty
 		),
 		"ClientType" => {
-			format!("match *val {{
+			format!("match val {{
 				\"0\" => ClientType::Normal,
 				\"1\" => ClientType::Query {{ admin: false }},
 				_ => return Err(ParseError::InvalidValue {{
@@ -256,8 +237,9 @@ pub fn single_value_serializer(
 		}
 		"&str" => format!("Cow::Borrowed({})", name),
 		"String" => format!("Cow::Borrowed(&{})", name),
-		"UidRef" => format!("Cow::Owned(base64::encode({}.0))", name),
-		"Uid" => format!("Cow::Owned(base64::encode(&{}.0))", name),
+		"UidRef" => format!("if {0}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") }}
+			else {{ Cow::Owned(base64::encode({0}.0)) }}", name),
+		"Uid" => single_value_serializer(field, "UidRef", &format!("&{}", name)),
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
 		| "ChannelGroupId" | "IconHash" => {
 			format!("Cow::Owned({}.0.to_string())", name)
@@ -283,6 +265,8 @@ pub fn single_value_serializer(
 		| "TokenType"
 		| "PluginTargetMode"
 		| "Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
+		"ChannelPermissionHint"
+		| "ClientPermissionHint" => format!("Cow::Owned({}.bits().to_string())", name),
 		"Duration" => {
 			if field.type_s == "DurationSeconds" {
 				format!("Cow::Owned({}.whole_seconds().to_string())", name)

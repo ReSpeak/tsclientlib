@@ -13,6 +13,7 @@ failure = "0.1"
 num-traits = "0.2"
 num-derive = "0.3"
 serde = { version = "1", features = ["derive"] }
+slog = "2"
 time = { version = "0.2", features = ["serde"] }
 tsproto-packets = { path = "../tsproto-packets" }
 tsproto-types = { path = "../tsproto-types" }

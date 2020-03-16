@@ -1,10 +1,12 @@
 <#@ template cleanws="true" #>
-use num_traits::{FromPrimitive, ToPrimitive};
-use tsproto_packets::packets::*;
+use std::borrow::Cow;
+use std::marker::PhantomData;
+use std::str;
 
-pub trait InMessageTrait {
-	fn new(cmd: &InCommand) -> Result<Self> where Self: Sized;
-}
+use num_traits::{FromPrimitive, ToPrimitive};
+use slog::{warn, Logger};
+use tsproto_packets::commands::{CommandItem, CommandParser};
+use tsproto_packets::packets::*;
 
 #[derive(Clone, Debug)]
 pub enum InMessage {
@@ -38,26 +40,36 @@ impl InMessage {
 				Ok(InMessage::<#= msg.name #>(r))
 			} else <#
 			} #>{
-				Ok(InMessage::<#= msg.name>(In<#= msg.name #>::new(logger, header, args)?))
+				Ok(InMessage::<#= msg.name #>(In<#= msg.name #>::new(logger, header, args)?))
 			}
 			<# } #>
 			s => Err(ParseError::UnknownCommand(str::from_utf8(s)?.to_string())),
+		}
+	}
+
+	pub fn get_command_name(&self) -> &'static str {
+		match self {
+		<# for msg_group in &self.0.msg_group {
+			for msg in &msg_group.msg { #>
+			InMessage::<#= msg.name #>(_) => "<#= if let Some(s) = &msg.notify { s } else { &msg.name } #>",
+		<# }
+		} #>
 		}
 	}
 }
 
 <# for msg_group in &self.0.msg_group {
 	for msg in &msg_group.msg { #>
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct In<#= msg.name #> {
 <# if msg_group.default.response { #>
 	pub return_code: Option<String>,
 <# } #>
-	list: Vec<<#= msg.name #>Part>,
+	list: Vec<In<#= msg.name #>Part>,
 }
 
-#[derive(Debug)]
-pub struct <#= msg.name #>Part {
+#[derive(Clone, Debug)]
+pub struct In<#= msg.name #>Part {
 <# for a in &msg.attributes {
 	let field = self.0.get_field(a);
 	if field.get_rust_name() != field.ts { #>
@@ -70,7 +82,8 @@ pub struct <#= msg.name #>Part {
 
 impl InMessageTrait for In<#= msg.name #> {
 	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self> {
-		if <#= if msg_group.default.np { "!" } else { "" } #>header.newprotocol() { return Err(ParseError::WrongNewprotocol(header.newprotocol())); }
+		// TODO newprotocol
+		if <#= if msg_group.default.np { "!" } else { "" } #>header.flags().contains(Flags::NEWPROTOCOL) { return Err(ParseError::WrongNewprotocol(<#= if msg_group.default.np { "false" } else { "true" } #>)); }
 		if header.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> { return Err(ParseError::WrongPacketType(header.packet_type())); }
 		<# if !msg_group.default.s2c { #>
 		if header.direction() == Direction::S2C { return Err(ParseError::WrongDirection(header.direction())); }
@@ -86,19 +99,21 @@ impl InMessageTrait for In<#= msg.name #> {
 		let mut <#= self.0.get_field(a).get_rust_name() #> = None;
 	<# } #>
 
-		let mut list = Vec::new();
+		let mut list = Vec::<In<#= msg.name #>Part>::new();
 		for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
 			match item {
 				CommandItem::NextCommand => {
 					// Build command
-					let new = <#= msg.name #>Part {
+					let new = In<#= msg.name #>Part {
 					<# for a in &msg.attributes {
 						let field = self.0.get_field(a); #>
 						<#= field.get_rust_name() #>: <#= field.get_rust_name() #>
 						<# if !a.ends_with('?') { /* is not optional */ #>
+							.take()
 							.or_else(|| list.first().map(|p| p.<#= field.get_rust_name() #>.clone()))
 							.ok_or(ParseError::ParameterNotFound { arg: "<#= field.pretty #>", name: "<#= msg.name #>", })?,
 						<# } else { #>
+							.take()
 							.or_else(|| list.first().and_then(|p| p.<#= field.get_rust_name() #>.clone())),
 						<# } #>
 					<# } #>
@@ -109,24 +124,27 @@ impl InMessageTrait for In<#= msg.name #> {
 					match arg.name() {
 					<# for a in &msg.attributes {
 						let field = self.0.get_field(a); #>
-						b"<#= field.get_rust_name() #>": {
+						b"<#= field.get_rust_name() #>" => {
 							let val = arg.value().get_str()?;
-							<#= field.get_rust_name #> = Some(<#= generate_deserializer(field) #>);
+							let val = val.as_ref();
+							<#= field.get_rust_name() #> = Some({
+								<# #><#= generate_deserializer(field) #>
+							});
 						}
 					<# } #>
 					<# if msg_group.default.response { #>
 						b"return_code" => {
 							if return_code.is_some() {
 								warn!(logger, "Got multiple return codes";
-									"command" => <#= msg.name #>);
+									"command" => "<#= msg.name #>");
 							}
 							return_code = Some(arg.value().get_str()?.into_owned());
 						}
 					<# } #>
 						s => warn!(logger, "Unknown argument";
-							"command" => <#= msg.name #>,
+							"command" => "<#= msg.name #>",
 							"argument" => ?str::from_utf8(s),
-						);
+						),
 					}
 				}
 			}
@@ -138,14 +156,56 @@ impl InMessageTrait for In<#= msg.name #> {
 
 impl In<#= msg.name #> {
 	#[inline]
-	pub fn iter(&self) -> InMessageIterator<<#= msg.name #>Part> { self.into_iter() }
+	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { self.into_iter() }
 }
 
 impl<'a> IntoIterator for &'a In<#= msg.name #> {
-	type Item = &'a <#= msg.name #>Part;
-	type IntoIter = InMessageIterator<'a, <#= msg.name #>Part>;
+	type Item = &'a In<#= msg.name #>Part;
+	type IntoIter = InMessageIterator<'a, In<#= msg.name #>Part>;
 	#[inline]
 	fn into_iter(self) -> Self::IntoIter { InMessageIterator(&self.list, 0) }
+}
+
+impl In<#= msg.name #>Part {
+	pub fn get_invoker(&self) -> Option<Invoker> {
+	<#
+	let mut has_invoker_id = false;
+	let mut has_invoker_name = false;
+	let mut has_invoker_uid = false;
+	let mut invoker_optional = true;
+
+	for a in &msg.attributes {
+		let field = self.0.get_field(a);
+		match field.ts.as_str() {
+			"invokerid" => {
+				has_invoker_id = true;
+				invoker_optional = a.ends_with('?');
+			}
+			"invokername" => has_invoker_name = true,
+			"invokeruid" => has_invoker_uid = true,
+			_ => {}
+		}
+	}
+
+	if has_invoker_id && has_invoker_name && has_invoker_uid { #>
+	<# if invoker_optional { #>
+		let id = self.invoker_id?;
+		let name = self.invoker_name.clone()?;
+		let uid = self.invoker_uid.clone();
+	<# } else { #>
+		let id = self.invoker_id;
+		let name = self.invoker_name.clone();
+		let uid = self.invoker_uid.clone();
+	<# } #>
+		Some(Invoker {
+			id,
+			name,
+			uid,
+		})
+	<# } else { #>
+		None
+	<# } #>
+	}
 }
 
 <# }
@@ -165,11 +225,32 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 <# for msg_group in &self.0.msg_group {
 	let defs = &msg_group.default;
 	for msg in &msg_group.msg { #>
+#[derive(Debug)]
+pub struct Out<#= msg.name #>Part<'a> {
+<#
+let mut uses_lifetime = false;
+for a in &msg.attributes {
+	let field = self.0.get_field(a);
+	if field.get_rust_name() != field.ts { #>
+	/// `<#= field.ts #>` in TeamSpeak
+	<# } #>
+	pub <#= field.get_rust_name() #>: <#= {
+		let res = field.get_rust_type(a, true).replace("&", "&'a ").replace("UidRef", "UidRef<'a>");
+		uses_lifetime |= res.contains("'a");
+		res
+	} #>,
+<# }
+if !uses_lifetime {
+#>
+	/// Use the lifetime
+	pub phantom: PhantomData<&'a ()>,
+<# } #>
+}
 
 #[derive(Deserialize, Serialize)]
 pub struct Out<#= msg.name #>Message;
 impl Out<#= msg.name #>Message {
-	pub fn new<I: Iterator<Item=<#= msg.name #>Part>>(list: I<#=
+	pub fn new<'a, I: Iterator<Item=Out<#= msg.name #>Part<'a>>>(list: I<#=
 			if msg_group.default.response { ", return_code: Option<&str>" } else { "" } #>) -> OutPacket {
 		let mut packet = OutPacket::new_with_dir(Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
 			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" }

@@ -1,11 +1,13 @@
 use std::net::{AddrParseError, IpAddr};
 use std::num::ParseFloatError;
 use std::num::ParseIntError;
+use std::str::Utf8Error;
 
 use failure::Fail;
 use time::{Duration, OffsetDateTime};
-use tsproto_packets::commands::CanonicalCommand;
-use tsproto_packets::packets::{Direction, PacketType};
+use slog::Logger;
+use tsproto_packets::commands::CommandParser;
+use tsproto_packets::packets::{Direction, InHeader, PacketType};
 use tsproto_types::errors::Error;
 
 use crate::*;
@@ -21,6 +23,10 @@ pub enum ParseError {
 	ParameterNotFound2 { arg: String, name: String },
 	#[fail(display = "Command {} is unknown", _0)]
 	UnknownCommand(String),
+	#[fail(display = "{}", _0)]
+	StringParse(Utf8Error),
+	#[fail(display = "{}", _0)]
+	TsProto(tsproto_packets::Error),
 	/// Gets thrown when parsing a specific command with the wrong input.
 	#[fail(display = "Command {} is wrong", _0)]
 	WrongCommand(String),
@@ -79,45 +85,15 @@ pub enum ParseError {
 	InvalidValue { arg: &'static str, value: String },
 }
 
-pub trait CommandExt {
-	fn get_invoker(&self) -> Result<Option<Invoker>>;
-	fn get_arg(&self, name: &str) -> Result<&str>;
+impl From<Utf8Error> for ParseError {
+	fn from(e: Utf8Error) -> Self { ParseError::StringParse(e) }
+}
+impl From<tsproto_packets::Error> for ParseError {
+	fn from(e: tsproto_packets::Error) -> Self { ParseError::TsProto(e) }
 }
 
-impl CommandExt for CanonicalCommand<'_> {
-	fn get_invoker(&self) -> Result<Option<Invoker>> {
-		if let Some(id) = self.get("invokerid") {
-			if let Some(name) = self.get("invokername") {
-				Ok(Some(Invoker {
-					id: ClientId(id.parse().map_err(|e| {
-						ParseError::ParseInt {
-							arg: "invokerid",
-							value: id.into(),
-							error: e,
-						}
-					})?),
-					name: name.to_string(),
-					uid: self.get("invokeruid").map(|i| Ok(Uid(
-						base64::decode(i).map_err(|e| ParseError::ParseUid {
-							arg: "invokeruid",
-							value: i.into(),
-							error: e,
-						})?))).transpose()?,
-				}))
-			} else {
-				Ok(None)
-			}
-		} else {
-			Ok(None)
-		}
-	}
-
-	fn get_arg(&self, name: &str) -> Result<&str> {
-		self.get(name).ok_or_else(|| ParseError::ParameterNotFound2 {
-			arg: name.into(),
-			name: "unknown".into(),
-		})
-	}
+pub trait InMessageTrait {
+	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self> where Self: Sized;
 }
 
 pub mod s2c {

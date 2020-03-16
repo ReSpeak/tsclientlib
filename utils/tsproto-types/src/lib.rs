@@ -37,6 +37,8 @@ impl Uid {
 	/// The raw data (base64-decoded) is encoded in hex, but instead of using
 	/// [0-9a-f] with [a-p].
 	pub fn as_avatar(&self) -> String { self.as_ref().as_avatar() }
+
+	pub fn is_server_admin(&self) -> bool { self.as_ref().is_server_admin() }
 }
 
 impl UidRef<'_> {
@@ -52,6 +54,8 @@ impl UidRef<'_> {
 		}
 		res
 	}
+
+	pub fn is_server_admin(&self) -> bool { self.0 == b"ServerAdmin" }
 }
 
 /// The database id of a client.
