@@ -5,10 +5,10 @@ use std::mem;
 use std::net::{IpAddr, SocketAddr};
 use std::u16;
 
-use time::{Duration, OffsetDateTime};
-use failure::format_err;
+use anyhow::format_err;
 use serde::{Deserialize, Serialize};
 use slog::{debug, Logger};
+use time::{Duration, OffsetDateTime};
 use tsproto_packets::packets::{Direction, OutCommand, OutPacket, PacketType};
 use tsproto_types::*;
 

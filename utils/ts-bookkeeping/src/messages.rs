@@ -1,11 +1,8 @@
-use std::net::{AddrParseError, IpAddr};
-use std::num::ParseFloatError;
-use std::num::ParseIntError;
-use std::str::Utf8Error;
+use std::net::IpAddr;
 
-use failure::Fail;
 use time::{Duration, OffsetDateTime};
 use slog::Logger;
+use thiserror::Error;
 use tsproto_packets::commands::CommandParser;
 use tsproto_packets::packets::{Direction, InHeader, PacketType};
 use tsproto_types::errors::Error;
@@ -14,82 +11,63 @@ use crate::*;
 
 type Result<T> = std::result::Result<T, ParseError>;
 
-#[derive(Fail, Debug)]
+#[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ParseError {
-	#[fail(display = "Parameter {} not found in {}", arg, name)]
+	#[error(transparent)]
+	Base64(#[from] base64::DecodeError),
+
+	#[error("Parameter {arg} not found in {name}")]
 	ParameterNotFound { arg: &'static str, name: &'static str },
-	#[fail(display = "Parameter {} not found in {}", arg, name)]
+	#[error("Parameter {arg} not found in {name}")]
 	ParameterNotFound2 { arg: String, name: String },
-	#[fail(display = "Command {} is unknown", _0)]
+	#[error("Command {0} is unknown")]
 	UnknownCommand(String),
-	#[fail(display = "{}", _0)]
-	StringParse(Utf8Error),
-	#[fail(display = "{}", _0)]
-	TsProto(tsproto_packets::Error),
+	#[error(transparent)]
+	StringParse(#[from] std::str::Utf8Error),
+	#[error(transparent)]
+	TsProto(#[from] tsproto_packets::Error),
 	/// Gets thrown when parsing a specific command with the wrong input.
-	#[fail(display = "Command {} is wrong", _0)]
+	#[error("Command {0} is wrong")]
 	WrongCommand(String),
-	#[fail(display = "Wrong newprotocol flag ({})", _0)]
+	#[error("Wrong newprotocol flag ({0})")]
 	WrongNewprotocol(bool),
-	#[fail(display = "Wrong packet type {:?}", _0)]
+	#[error("Wrong packet type {0:?}")]
 	WrongPacketType(PacketType),
-	#[fail(display = "Wrong direction {:?}", _0)]
+	#[error("Wrong direction {0:?}")]
 	WrongDirection(Direction),
-	#[fail(
-		display = "Cannot parse \"{}\" as int for parameter {} ({})",
-		value, arg, error
-	)]
+	#[error("Cannot parse \"{value}\" as int for parameter {arg} ({source})")]
 	ParseInt {
 		arg: &'static str,
 		value: String,
-		#[cause]
-		error: ParseIntError,
+		source: std::num::ParseIntError,
 	},
-	#[fail(
-		display = "Cannot parse \"{}\" as SocketAddr for parameter {} ({})",
-		value, arg, error
+	#[error(
+		"Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})"
 	)]
 	ParseAddr {
 		arg: &'static str,
 		value: String,
-		#[cause]
-		error: AddrParseError,
+		source: std::net::AddrParseError,
 	},
-	#[fail(
-		display = "Cannot parse \"{}\" as float for parameter {} ({})",
-		value, arg, error
-	)]
+	#[error("Cannot parse \"{value}\" as float for parameter {arg} ({source})")]
 	ParseFloat {
 		arg: &'static str,
 		value: String,
-		#[cause]
-		error: ParseFloatError,
+		source: std::num::ParseFloatError,
 	},
-	#[fail(
-		display = "Cannot parse \"{}\" as bool for parameter {}",
-		value, arg
-	)]
+	#[error("Cannot parse \"{value}\" as bool for parameter {arg}")]
 	ParseBool { arg: &'static str, value: String },
-	#[fail(
-		display = "Cannot parse \"{}\" as SocketAddr for parameter {} ({})",
-		value, arg, error
+	#[error(
+		"Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})"
 	)]
 	ParseUid {
 		arg: &'static str,
 		value: String,
-		#[cause]
-		error: base64::DecodeError,
+		source: base64::DecodeError,
 	},
-	#[fail(display = "Invalid value \"{}\" for parameter {}", value, arg)]
+	#[error("Invalid value \"{value}\" for parameter {arg}")]
 	InvalidValue { arg: &'static str, value: String },
-}
-
-impl From<Utf8Error> for ParseError {
-	fn from(e: Utf8Error) -> Self { ParseError::StringParse(e) }
-}
-impl From<tsproto_packets::Error> for ParseError {
-	fn from(e: tsproto_packets::Error) -> Self { ParseError::TsProto(e) }
 }
 
 pub trait InMessageTrait {

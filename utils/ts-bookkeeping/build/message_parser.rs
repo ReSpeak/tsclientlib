@@ -44,7 +44,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			"val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?",
 			field.pretty
 		),
@@ -52,7 +52,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			"val.parse().map_err(|e| ParseError::ParseFloat {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?",
 			field.pretty
 		),
@@ -68,7 +68,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			base64::decode(val).map_err(|e| ParseError::ParseUid {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?
 		}})", field.pretty),
 		"&str" => "val".into(),
@@ -81,7 +81,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 		}}.map_err(|e| ParseError::ParseInt {{
 			arg: \"{}\",
 			value: val.to_string(),
-			error: e,
+			source: e,
 		}})?)",
 			field.pretty
 		),
@@ -90,7 +90,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			"{}(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?)",
 			rust_type, field.pretty
 		),
@@ -98,7 +98,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			"val.parse().map_err(|e| ParseError::ParseAddr {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?",
 			field.pretty
 		),
@@ -130,7 +130,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			"{}::from_u32(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?).ok_or(ParseError::InvalidValue {{
 				arg: \"{1}\",
 				value: val.to_string(),
@@ -141,7 +141,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			"{}::from_bits(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
-				error: e,
+				source: e,
 			}})?).ok_or(ParseError::InvalidValue {{
 				arg: \"{1}\",
 				value: val.to_string(),
@@ -155,7 +155,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 					 ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
-					error: e,
+					source: e,
 				}})?;
 				if let Some(_) = val.checked_mul(1000) {{ Duration::seconds(val) }}
 				else {{ Err(ParseError::InvalidValue {{
@@ -170,7 +170,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 					 ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
-					error: e,
+					source: e,
 				}})?)",
 					field.pretty
 				)
@@ -183,7 +183,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				val.parse().map_err(|e| ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
-					error: e,
+					source: e,
 				}})?)",
 			field.pretty
 		),
