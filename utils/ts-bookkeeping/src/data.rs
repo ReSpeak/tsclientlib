@@ -48,14 +48,9 @@ macro_rules! copy_attrs {
 }
 
 impl Connection {
-	pub fn new(server_uid: Uid, msg: &s2c::InMessage) -> Self {
+	pub fn new(server_uid: Uid, msg: &s2c::InInitServer) -> Self {
 		// TODO Use server public key instead of uid
-		let packet = if let InMessage::InitServer(p) = msg {
-			p
-		} else {
-			panic!("Got no initserver packet in Connection::new");
-		};
-		let packet = packet.iter().next().unwrap();
+		let packet = msg.iter().next().unwrap();
 		Self {
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;

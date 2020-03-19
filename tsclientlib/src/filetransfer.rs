@@ -1,12 +1,10 @@
+use std::collections::HashMap;
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::Arc;
 
-use chashmap::CHashMap;
-use failure::format_err;
-use futures::sync::mpsc;
+use anyhow::format_err;
+use tokio::sync::mpsc;
 use ts_bookkeeping::messages::s2c::{
-	InFileDownload, InFileTransferStatus, InFileUpload, InMessageTrait,
+	InFileDownload, InFileTransferStatus, InFileUpload,
 };
 use tsproto_packets::packets::InCommand;
 
@@ -18,22 +16,22 @@ pub(crate) enum FileTransferStatus {
 }
 
 pub(crate) struct FileTransferIdHandle {
-	handler: Arc<FileTransferHandler>,
+	handler: FileTransferHandler,
 	pub id: u16,
 }
 
 pub(crate) struct FileTransferHandler {
-	ids: CHashMap<u16, mpsc::UnboundedSender<FileTransferStatus>>,
-	cur_id: AtomicU16,
+	ids: HashMap<u16, mpsc::UnboundedSender<FileTransferStatus>>,
+	cur_id: u16,
 }
 
 impl Drop for FileTransferIdHandle {
 	fn drop(&mut self) { self.handler.ids.remove(&self.id); }
 }
 
-impl FileTransferHandler {
+/*impl FileTransferHandler {
 	pub(crate) fn new() -> Self {
-		Self { ids: CHashMap::new(), cur_id: AtomicU16::new(0) }
+		Self { ids: HashMap::new(), cur_id: 0 }
 	}
 
 	/// Get a return code and a receiver which gets notified when an answer is
@@ -41,7 +39,8 @@ impl FileTransferHandler {
 	pub(crate) fn get_file_transfer_id(
 		handler: Arc<Self>,
 	) -> (FileTransferIdHandle, mpsc::UnboundedReceiver<FileTransferStatus>) {
-		let code = handler.cur_id.fetch_add(1, Ordering::Relaxed);
+		let code = handler.cur_id;
+		handler.cur_id += 1;
 		let (send, recv) = mpsc::unbounded();
 		// The receiver should fail when the sender is dropped, but usize should
 		// be enough for every platform.
@@ -125,4 +124,4 @@ impl FileTransferHandler {
 			Ok(false)
 		}
 	}
-}
+}*/

@@ -93,7 +93,7 @@ pub struct Connection {
 
 	pub resender: Resender,
 	pub codec: PacketCodec,
-	pub udp_socket: Box<dyn Socket>,
+	pub udp_socket: Box<dyn Socket + Send>,
 	udp_buffer: Vec<u8>,
 
 	/// A buffer of packets that should be returned from the stream.
@@ -158,7 +158,7 @@ impl Connection {
 		is_client: bool,
 		logger: Logger,
 		address: SocketAddr,
-		udp_socket: Box<dyn Socket>,
+		udp_socket: Box<dyn Socket + Send>,
 	) -> Self
 	{
 		let logger = logger.new(o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),

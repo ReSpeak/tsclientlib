@@ -1,44 +1,27 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::collections::HashMap;
 
-use chashmap::CHashMap;
-use failure::format_err;
-use futures::sync::oneshot;
-use futures::{task, try_ready, Async, Future, Poll, Stream};
+use anyhow::format_err;
+use futures::prelude::*;
 use slog::{error, warn, Logger};
-use ts_bookkeeping::messages::s2c::{InCommandError, InMessageTrait};
-use tsproto::handler_data::ConnectionValue;
+use tokio::sync::oneshot;
+use ts_bookkeeping::messages::s2c::InCommandError;
 use tsproto_packets::packets::InCommand;
-use tsproto_packets::packets::*;
 
 use crate::filetransfer::FileTransferHandler;
-use crate::{Connection, PHBox, TsError};
+use crate::{Connection, TsError};
 
 pub(crate) struct ReturnCodeHandler {
-	return_codes: CHashMap<usize, oneshot::Sender<TsError>>,
-	cur_return_code: AtomicUsize,
+	return_codes: HashMap<usize, oneshot::Sender<TsError>>,
+	cur_return_code: u16,
 }
 
-#[cfg(feature = "unstable")]
-pub struct SimplePacketHandler {
-	logger: Logger,
-	handle_packets: Option<PHBox>,
-	initserver_sender: Option<oneshot::Sender<InCommand>>,
-	connection_recv: Option<oneshot::Receiver<Connection>>,
-	pub(crate) return_codes: Arc<ReturnCodeHandler>,
-	pub(crate) ft_ids: Arc<FileTransferHandler>,
-}
-#[cfg(not(feature = "unstable"))]
 pub(crate) struct SimplePacketHandler {
 	logger: Logger,
-	handle_packets: Option<PHBox>,
-	initserver_sender: Option<oneshot::Sender<InCommand>>,
-	connection_recv: Option<oneshot::Receiver<Connection>>,
-	pub(crate) return_codes: Arc<ReturnCodeHandler>,
-	pub(crate) ft_ids: Arc<FileTransferHandler>,
+	pub(crate) return_codes: ReturnCodeHandler,
+	pub(crate) ft_ids: FileTransferHandler,
 }
 
-struct SimplePacketStreamHandler<
+/*struct SimplePacketStreamHandler<
 	Inner: Stream<Item = InCommand, Error = tsproto::Error>,
 > {
 	inner: Inner,
@@ -48,28 +31,6 @@ struct SimplePacketStreamHandler<
 	connection: Option<Connection>,
 	return_codes: Arc<ReturnCodeHandler>,
 	ft_ids: Arc<FileTransferHandler>,
-}
-
-impl SimplePacketHandler {
-	pub(crate) fn new(
-		logger: Logger,
-		handle_packets: Option<PHBox>,
-		initserver_sender: oneshot::Sender<InCommand>,
-		connection_recv: oneshot::Receiver<Connection>,
-	) -> Self
-	{
-		Self {
-			logger,
-			handle_packets,
-			initserver_sender: Some(initserver_sender),
-			connection_recv: Some(connection_recv),
-			return_codes: Arc::new(ReturnCodeHandler {
-				return_codes: CHashMap::new(),
-				cur_return_code: AtomicUsize::new(0),
-			}),
-			ft_ids: Arc::new(FileTransferHandler::new()),
-		}
-	}
 }
 
 impl ReturnCodeHandler {
@@ -84,54 +45,6 @@ impl ReturnCodeHandler {
 		// be enough for every platform.
 		self.return_codes.insert(code, send);
 		(code, recv)
-	}
-}
-
-impl<T: 'static> tsproto::handler_data::PacketHandler<T>
-	for SimplePacketHandler
-{
-	fn new_connection<S1, S2, S3, S4>(
-		&mut self,
-		_: &ConnectionValue<T>,
-		s2c_init_stream: S1,
-		_c2s_init_stream: S2,
-		command_stream: S3,
-		audio_stream: S4,
-	) where
-		S1: Stream<Item = InS2CInit, Error = tsproto::Error> + Send + 'static,
-		S2: Stream<Item = InC2SInit, Error = tsproto::Error> + Send + 'static,
-		S3: Stream<Item = InCommand, Error = tsproto::Error> + Send + 'static,
-		S4: Stream<Item = InAudio, Error = tsproto::Error> + Send + 'static,
-	{
-		// Ignore c2s init stream and start s2c init stream
-		tokio::spawn(
-			s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
-				println!("Init stream exited with error ({:?})", e)
-			}),
-		);
-
-		let handler = SimplePacketStreamHandler {
-			inner: command_stream,
-			logger: self.logger.clone(),
-			initserver_sender: self.initserver_sender.take(),
-			connection_recv: self.connection_recv.take(),
-			connection: None,
-			return_codes: self.return_codes.clone(),
-			ft_ids: self.ft_ids.clone(),
-		};
-
-		if let Some(h) = &mut self.handle_packets {
-			h.new_connection(Box::new(handler), Box::new(audio_stream));
-		} else {
-			let logger = self.logger.clone();
-			tokio::spawn(handler.for_each(|_| Ok(())).map_err(move |e| {
-				error!(logger, "Command stream exited with error ({:?})", e)
-			}));
-			let logger = self.logger.clone();
-			tokio::spawn(audio_stream.for_each(|_| Ok(())).map_err(move |e| {
-				error!(logger, "Audio stream exited with error ({:?})", e)
-			}));
-		}
 	}
 }
 
@@ -266,4 +179,4 @@ impl<Inner: Stream<Item = InCommand, Error = tsproto::Error>> Stream
 		task::current().notify();
 		return Ok(Async::NotReady);
 	}
-}
+}*/

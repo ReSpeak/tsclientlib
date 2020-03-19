@@ -36,7 +36,7 @@ impl Client {
 	pub fn new(
 		logger: Logger,
 		address: SocketAddr,
-		udp_socket: Box<dyn Socket>,
+		udp_socket: Box<dyn Socket + Send>,
 		private_key: EccKeyPrivP256,
 	) -> Self
 	{
@@ -181,37 +181,14 @@ impl Client {
 		self.con.send_packet(packet)
 	}
 
-	// TODO Remove return codes?
-	/*/// Send a packet. The `send_packet` function will resolve to a future when
-	/// the packet has been sent.
-	///
-	/// A `return_code` will be appended to the command
-	/// If the packet has an acknowledgement (ack or pong), the returned future
-	/// will resolve when it is received. Otherwise it will resolve instantly.
-	///
-	/// Returns the TeamSpeak error id.
-	pub async fn send_packet_with_answer(&mut self, mut packet: OutPacket) -> impl Future<Output=Result<u32>> {
-		assert!(packet.header().packet_type().is_command(),
-			"Can only send commands with `send_packet_with_answer`");
-		packet.data_mut().extend_from_slice(b" return_code=");
-		packet.data_mut().extend_from_slice(self.cur_return_code.to_string().as_bytes());
-
-		let (send, recv) = oneshot::channel();
-		self.return_codes.insert(self.cur_return_code, send);
-		self.cur_return_code += 1;
-
-		self.send_packet(packet).await.and_then(|_| recv.map_err(|e| e.into()))
-	}*/
-
 	pub async fn connect(&mut self) -> Result<()> {
 		// Send the first init packet
 		// Get the current timestamp
 		let now = OffsetDateTime::now();
 		let timestamp = now.timestamp() as u32;
-		let mut rng = rand::thread_rng();
 
 		// Random bytes
-		let random0 = rng.gen::<[u8; 4]>();
+		let random0 = rand::rngs::OsRng.gen::<[u8; 4]>();
 
 		// Wait for Init1
 		{
@@ -251,8 +228,7 @@ impl Client {
 					}
 
 					// Create clientinitiv
-					let mut rng = rand::thread_rng();
-					alpha = rng.gen::<[u8; 10]>();
+					alpha = rand::rngs::OsRng.gen::<[u8; 10]>();
 					// omega is an ASN.1-DER encoded public key from
 					// the ECDH parameters.
 
@@ -583,17 +559,6 @@ impl Client {
 					}
 				}
 			}
-			// TODO Remove return codes?
-		/*} else if cmd_name == &"error" {
-			let cmd = command.data().iter().next().unwrap();
-			if let Ok(code) = cmd.get_parse("return_code") {
-				if let Some(send) = self.return_codes.remove(&code) {
-					if let Ok(id) = cmd.get_parse("error_id") {
-						let _ = send.send(id);
-						return Ok(None);
-					}
-				}
-			}*/
 		}
 
 		Ok(Some(command))

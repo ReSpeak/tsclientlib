@@ -2,7 +2,7 @@
 <# for struc in &self.0.structs { #>
 <#= doc_comment(&struc.doc) #>
 pub struct <#= struc.name #>Mut<'a> {
-	pub(crate) connection: crate::Connection,
+	pub(crate) connection: &'a mut ConnectedConnection,
 	pub(crate) inner: &'a <#= struc.name #>,
 }
 
@@ -31,27 +31,36 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 			&attr_name[..attr_name.len() - 1]
 		} else { &attr_name };
 		#>
-	pub fn get_<#= attr_name #>(&self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= p_struct.name #>Mut<'a>> {
-		self.inner.<#= pid.get_attr_name(&struc) #>.get(key).map(|i| <#= p_struct.name #>Mut {
-			connection: self.connection.clone(),
-			inner: i,
-		})
+	pub fn get_<#= attr_name #>(&'a mut self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= p_struct.name #>Mut<'a>> {
+		if let Some(inner) = self.inner.<#= pid.get_attr_name(&struc) #>.get(key) {
+			Some(<#= p_struct.name #>Mut {
+				connection: self.connection,
+				inner,
+			})
+		} else {
+			None
+		}
 	}
 	<# } else if p.modifier.is_none() {
 
 		if !p.opt { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> <#= p_struct.name #>Mut<'a> {
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> <#= p_struct.name #>Mut<'a> {
 		<#= p_struct.name #>Mut {
-			connection: self.connection.clone(),
+			connection: self.connection,
 			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
 		}
 	}
 		<# } else { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> Option<<#= p_struct.name #>Mut<'a>> {
-		self.inner.<#= pid.get_attr_name(&struc) #>.as_ref().map(|i| <#= p_struct.name #>Mut {
-			connection: self.connection.clone(),
-			inner: i,
-		})
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> Option<<#= p_struct.name #>Mut<'a>> {
+		let con: &'a mut ConnectedConnection = self.connection;
+		if let Some(inner) = &self.inner.<#= pid.get_attr_name(&struc) #> {
+			Some(<#= p_struct.name #>Mut {
+				connection: con,
+				inner,
+			})
+		} else {
+			None
+		}
 	}
 		<# } #>
 	<# } #>
@@ -75,38 +84,50 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 	} else { &attr_name };
 
 	if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) { #>
-	pub fn get_<#= attr_name #>(&self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= name #>Mut<'a>> {
-		self.inner.<#= pid.get_attr_name(&struc) #>.get(key).map(|i| <#= name #>Mut {
-			connection: self.connection.clone(),
-			inner: i,
-			parent: self.inner,
-		})
+	pub fn get_<#= attr_name #>(&'a mut self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= name #>Mut<'a>> {
+		if let Some(inner) = self.inner.<#= pid.get_attr_name(&struc) #>.get(key) {
+			Some(<#= name #>Mut {
+				connection: self.connection,
+				inner,
+				parent: self.inner,
+			})
+		} else {
+			None
+		}
 	}
 	<# } else if p.modifier.as_ref().map(|s| s == "array").unwrap_or(false) { #>
-	pub fn get_<#= attr_name #>(&self, index: usize) -> Option<<#= name #>Mut<'a>> {
-		self.inner.<#= pid.get_attr_name(&struc) #>.get(index).map(|i| <#= name #>Mut {
-			connection: self.connection.clone(),
-			inner: i,
-			parent: self.inner,
-		})
+	pub fn get_<#= attr_name #>(&'a mut self, index: usize) -> Option<<#= name #>Mut<'a>> {
+		if let Some(inner) = self.inner.<#= pid.get_attr_name(&struc) #>.get(index) {
+			Some(<#= name #>Mut {
+				connection: self.connection,
+				inner,
+				parent: self.inner,
+			})
+		} else {
+			None
+		}
 	}
 	<# } else if p.modifier.is_none() {
 
 		if !p.opt { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> <#= name #>Mut<'a> {
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> <#= name #>Mut<'a> {
 		<#= name #>Mut {
-			connection: self.connection.clone(),
+			connection: self.connection,
 			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
 			parent: self.inner,
 		}
 	}
 		<# } else { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&self) -> Option<<#= name #>Mut<'a>> {
-		self.inner.<#= pid.get_attr_name(&struc) #>.as_ref().map(|i| <#= name #>Mut {
-			connection: self.connection.clone(),
-			inner: i,
-			parent: self.inner,
-		})
+	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> Option<<#= name #>Mut<'a>> {
+		if let Some(inner) = &self.inner.<#= pid.get_attr_name(&struc) #> {
+			Some(<#= name #>Mut {
+				connection: self.connection,
+				inner,
+				parent: self.inner,
+			})
+		} else {
+			None
+		}
 	}
 		<# } #>
 	<# } #>
@@ -138,7 +159,7 @@ for (struc, p) in &props {
 #>
 
 pub struct <#= name #>Mut<'a> {
-	pub(crate) connection: crate::Connection,
+	pub(crate) connection: &'a mut ConnectedConnection,
 	pub(crate) inner: &'a <#= p.type_s #>,
 	pub(crate) parent: &'a <#= struc.name #>,
 }
