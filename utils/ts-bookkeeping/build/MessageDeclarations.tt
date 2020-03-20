@@ -124,7 +124,7 @@ impl InMessageTrait for In<#= msg.name #> {
 					match arg.name() {
 					<# for a in &msg.attributes {
 						let field = self.0.get_field(a); #>
-						b"<#= field.get_rust_name() #>" => {
+						b"<#= field.ts #>" => {
 							let val = arg.value().get_str()?;
 							let val = val.as_ref();
 							<#= field.get_rust_name() #> = Some({

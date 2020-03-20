@@ -228,7 +228,10 @@ impl Connection {
 		let mut resolved: Pin<_> = resolved;
 
 		while let Some(addr) = resolved.next().await {
-			let addr = addr?;
+			let addr = match addr {
+				Ok(r) => r,
+				Err(_) => continue,
+			};
 			match Self::connect_to(&logger, &options, addr).await {
 				Ok(res) => return Ok(res),
 				Err(ConnectError::IdentityLevelIncrease(level)) => {
@@ -440,6 +443,25 @@ impl Connection {
 	pub fn send_packet(&self, packet: OutPacket) -> Result<MessageHandle> {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.send_packet(packet)
+		} else {
+			bail!("Currently not connected");
+		}
+	}
+
+	pub fn get_state(&self) -> Result<&data::Connection> {
+		if let ConnectionState::Connected { book, .. } = &self.state {
+			Ok(book)
+		} else {
+			bail!("Currently not connected");
+		}
+	}
+
+	pub fn get_state_mut(&mut self) -> Result<facades::ConnectionMut> {
+		if let ConnectionState::Connected { con, book } = &mut self.state {
+			Ok(facades::ConnectionMut {
+				connection: con,
+				inner: book,
+			})
 		} else {
 			bail!("Currently not connected");
 		}
@@ -708,6 +730,7 @@ impl ConnectedConnection {
 				let key = msg.file_transfer_key.clone();
 				let size = msg.size;
 
+				// TODO filetransfer
 				//let stream = TcpStream::connect(&addr).await?.write_all(key).await?.flush().await;
 				//return (size, stream);
 			}
@@ -748,7 +771,7 @@ impl ConnectedConnection {
 		path: &str,
 		channel_password: Option<&str>,
 		seek_position: Option<u64>,
-	) -> Result<FileTransferHandle> //BoxFuture<(u64, TcpStream)> TODO
+	) -> Result<FileTransferHandle>
 	{
 		let ft_id = self.cur_file_transfer_id;
 		self.cur_file_transfer_id += 1;
@@ -777,7 +800,7 @@ impl ConnectedConnection {
 		size: u64,
 		overwrite: bool,
 		resume: bool,
-	) -> Result<FileTransferHandle> //BoxFuture<(u64, TcpStream)> TODO
+	) -> Result<FileTransferHandle>
 	{
 		let ft_id = self.cur_file_transfer_id;
 		self.cur_file_transfer_id += 1;

@@ -1,11 +1,9 @@
-use std::time::{Duration, Instant};
-
-use failure::format_err;
-use futures::Future;
+use anyhow::{bail, Result};
+use futures::prelude::*;
 use structopt::StructOpt;
-use tokio::timer::Delay;
+use tokio::time::{self, Duration};
 
-use tsclientlib::{ConnectOptions, Connection, Identity};
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -23,48 +21,55 @@ struct Args {
 	verbose: u8,
 }
 
-fn main() -> Result<(), failure::Error> {
+#[tokio::main]
+async fn main() -> Result<()> {
+	real_main().await
+}
+
+async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
-	tokio::run(
-		futures::lazy(|| {
-			let con_config = ConnectOptions::new(args.address)
-				.log_commands(args.verbose >= 1)
-				.log_packets(args.verbose >= 2)
-				.log_udp_packets(args.verbose >= 3);
+	let con_config = ConnectOptions::new(args.address)
+		.log_commands(args.verbose >= 1)
+		.log_packets(args.verbose >= 2)
+		.log_udp_packets(args.verbose >= 3);
 
-			// Optionally set the key of this client, otherwise a new key is generated.
-			let id = Identity::new_from_str(
-				"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-				k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
-				C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
-			let con_config = con_config.identity(id);
+	// Optionally set the key of this client, otherwise a new key is generated.
+	let id = Identity::new_from_str(
+		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
+		C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+	let con_config = con_config.identity(id);
 
-			// Connect
-			Connection::new(con_config)
-		})
-		.and_then(|con| {
-			{
-				let con = con.lock();
-				println!(
-					"Server welcome message: {}",
-					sanitize(&con.server.welcome_message)
-				);
-			}
+	// Connect
+	let mut con = Connection::new(con_config)?;
 
-			// Wait some time
-			Delay::new(Instant::now() + Duration::from_secs(1))
-				.map(move |_| con)
-				.map_err(|e| format_err!("Failed to wait ({:?})", e).into())
-		})
-		.and_then(|con| {
-			// Disconnect
-			drop(con);
-			Ok(())
-		})
-		.map_err(|e| panic!("An error occurred {:?}", e)),
+	let r = con.events()
+		.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+		.next()
+		.await;
+	if let Some(r) = r {
+		r?;
+	}
+
+	println!(
+		"Server welcome message: {}",
+		sanitize(&con.get_state()?.server.welcome_message)
 	);
+
+	// Wait some time
+	let mut events = con.events().try_filter(|_| future::ready(false));
+	tokio::select! {
+		_ = &mut time::delay_for(Duration::from_secs(1)) => {}
+		_ = events.next() => {
+			bail!("Disconnected");
+		}
+	};
+	drop(events);
+
+	// Disconnect
+	con.disconnect(DisconnectOptions::new()).await;
 
 	Ok(())
 }
