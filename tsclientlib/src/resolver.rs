@@ -139,9 +139,9 @@ pub fn resolve(
 	}).try_flatten());
 
 	tokio::stream::StreamExt::timeout(res, Duration::from_secs(TIMEOUT_SECONDS))
-		.map(|r: std::result::Result<Result<SocketAddr>, _>| Ok(r??))
+		.filter_map(|r: std::result::Result<Result<SocketAddr>, _>|
+			future::ready(if let Ok(Ok(r)) = r { Some(Ok(r)) } else { None }))
 		.right_stream()
-
 }
 
 async fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
@@ -364,23 +364,8 @@ fn resolve_srv(
 
 #[cfg(test)]
 mod test {
-	use slog::Drain;
-	use tokio::runtime::Runtime;
-
 	use super::*;
-
-	fn setup() -> (Logger, Runtime) {
-		let rt = Runtime::new().unwrap();
-		let logger = {
-			let decorator =
-				slog_term::PlainSyncDecorator::new(std::io::stdout());
-			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-			let drain = slog_async::Async::new(drain).build().fuse();
-
-			slog::Logger::root(drain, o!())
-		};
-		(logger, rt)
-	}
+	use crate::tests::get_logger;
 
 	#[test]
 	fn parse_ip_without_port() {
@@ -459,49 +444,42 @@ mod test {
 		assert!(parse_ip("127.0.0.1:").is_err());
 	}
 
-	#[test]
-	fn resolve_localhost() {
-		let (logger, mut rt) = setup();
-		let res = rt.block_on(future::lazy(move || {
-			resolve(&logger, "127.0.0.1").collect()
-		}));
+	#[tokio::test]
+	async fn resolve_localhost() {
+		let logger = get_logger();
+		let res: Vec<_> = resolve(logger, "127.0.0.1".into()).map(|r| r.unwrap()).collect().await;
 		assert_eq!(
-			res.unwrap().as_slice(),
+			res.as_slice(),
 			&[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]
 		);
 	}
 
-	#[test]
-	fn resolve_localhost2() {
-		let (logger, mut rt) = setup();
-		let res = rt.block_on(future::lazy(move || {
-			resolve(&logger, "localhost").collect()
-		}));
+	#[tokio::test]
+	async fn resolve_localhost2() {
+		let logger = get_logger();
+		let res: Vec<_> = resolve(logger, "localhost".into()).map(|r| r.unwrap()).collect().await;
 		assert!(
-			res.unwrap().contains(
+			res.contains(
 				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
 			)
 		);
 	}
 
-	#[test]
-	fn resolve_example() {
-		let (logger, mut rt) = setup();
-		let res = rt.block_on(future::lazy(move || {
-			resolve(&logger, "example.com").collect()
-		}));
-		assert!(res.unwrap().contains(
+	#[tokio::test]
+	async fn resolve_example() {
+		let logger = get_logger();
+		let res: Vec<_> = resolve(logger, "example.com".into()).map(|r| r.unwrap()).collect().await;
+		assert!(res.contains(
 			&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()
 		));
 	}
 
-	#[test]
-	fn resolve_loc() {
-		let (logger, mut rt) = setup();
-		let res = rt
-			.block_on(future::lazy(move || resolve(&logger, "loc").collect()));
+	#[tokio::test]
+	async fn resolve_loc() {
+		let logger = get_logger();
+		let res: Vec<_> = resolve(logger, "loc".into()).map(|r| r.unwrap()).collect().await;
 		assert!(
-			res.unwrap().contains(
+			res.contains(
 				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
 			)
 		);

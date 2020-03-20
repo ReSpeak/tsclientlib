@@ -228,10 +228,7 @@ impl Connection {
 		let mut resolved: Pin<_> = resolved;
 
 		while let Some(addr) = resolved.next().await {
-			let addr = match addr {
-				Ok(r) => r,
-				Err(_) => continue,
-			};
+			let addr = addr?;
 			match Self::connect_to(&logger, &options, addr).await {
 				Ok(res) => return Ok(res),
 				Err(ConnectError::IdentityLevelIncrease(level)) => {
