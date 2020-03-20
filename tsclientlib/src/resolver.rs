@@ -13,7 +13,6 @@ use rand::rngs::OsRng;
 use slog::{debug, o, warn, Logger};
 use tokio::net::{self, TcpStream};
 use tokio::prelude::*;
-use tokio::sync::oneshot;
 use tokio::time::Duration;
 use trust_dns_resolver::config::ResolverConfig;
 use trust_dns_resolver::{TokioAsyncResolver, Name};

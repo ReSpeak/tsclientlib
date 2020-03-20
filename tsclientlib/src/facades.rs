@@ -3,10 +3,8 @@ use std::net::IpAddr;
 use std::ops::Deref;
 
 use anyhow::Result;
-use futures::prelude::*;
 use ts_bookkeeping::data::*;
 use ts_bookkeeping::*;
-use tsproto::client;
 
 use crate::{ConnectedConnection, MessageHandle, MessageTarget};
 
@@ -34,7 +32,7 @@ impl ServerMut<'_> {
 	/// ```
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
-	pub fn add_channel(&self, options: ChannelOptions) -> Result<MessageHandle> {
+	pub fn add_channel(&mut self, options: ChannelOptions) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.add_channel(options))
 	}
 
@@ -50,12 +48,12 @@ impl ServerMut<'_> {
 	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
 	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
 	/// ```
-	pub fn send_textmessage(&self, message: &str) -> Result<MessageHandle> {
+	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.send_textmessage(message))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
-	pub fn set_subscribed(&self, subscribed: bool) -> Result<MessageHandle> {
+	pub fn set_subscribed(&mut self, subscribed: bool) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.set_subscribed(subscribed))
 	}
 }
@@ -74,13 +72,13 @@ impl ConnectionMut<'_> {
 	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
 	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
-	pub fn send_message(&self, target: MessageTarget, message: &str) -> Result<MessageHandle> {
+	pub fn send_message(&mut self, target: MessageTarget, message: &str) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.send_message(target, message))
 	}
 }
 
 impl ClientMut<'_> {
-	// TODO
+	// TODO clientmove
 	/*/// Move this client to another channel.
 	/// This function takes a password so it is possible to join protected
 	/// channels.
@@ -113,7 +111,7 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.send_textmessage("Hi me!")
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
 	/// ```
-	pub fn send_textmessage(&self, message: &str) -> Result<MessageHandle> {
+	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.send_textmessage(message))
 	}
 
@@ -131,7 +129,7 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.poke("Hihihi")
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
 	/// ```
-	pub fn poke(&self, message: &str) -> Result<MessageHandle> {
+	pub fn poke(&mut self, message: &str) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.poke(message))
 	}
 }
