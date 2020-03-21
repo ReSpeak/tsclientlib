@@ -8,7 +8,7 @@ use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
 use crate::connection::{Connection, Event, StreamItem};
-use crate::resend::Resender;
+use crate::resend::{PartialPacketId, Resender};
 use crate::{BasicError, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
 
 /// Encodes outgoing packets.
@@ -20,8 +20,7 @@ pub struct PacketCodec {
 	///
 	/// This list is indexed by the `PacketType`, `PacketType::Init` is an
 	/// invalid index.
-	// TODO Use PartialPacketId
-	pub outgoing_p_ids: [(u32, u16); 8],
+	pub outgoing_p_ids: [PartialPacketId; 8],
 	/// Used for incoming out-of-order packets.
 	///
 	/// Only used for `Command` and `CommandLow` packets.
@@ -35,8 +34,7 @@ pub struct PacketCodec {
 	/// The next packet id that is expected.
 	///
 	/// Works like the `outgoing_p_ids`.
-	// TODO Use PartialPacketId
-	pub incoming_p_ids: [(u32, u16); 8],
+	pub incoming_p_ids: [PartialPacketId; 8],
 }
 
 impl PacketCodec {
@@ -220,10 +218,13 @@ impl PacketCodec {
 					}
 					// Update packet ids
 					let in_ids = &mut con.codec.incoming_p_ids;
-					let (id, next_gen) = id.overflowing_add(1);
 					if p_type != PacketType::Init {
-						in_ids[type_i] =
-							(if next_gen { gen_id + 1 } else { gen_id }, id);
+						let (id, next_gen) = id.overflowing_add(1);
+						let generation_id = if next_gen { gen_id + 1 } else { gen_id };
+						in_ids[type_i] = PartialPacketId {
+							generation_id,
+							packet_id: id,
+						};
 					}
 
 					match packet.ack_packet() {
@@ -313,18 +314,13 @@ impl PacketCodec {
 		let r_queue = &mut con.codec.receive_queue[cmd_i];
 		let frag_queue = &mut con.codec.fragmented_queue[cmd_i];
 		let in_ids = &mut con.codec.incoming_p_ids[type_i];
-		let cur_next = in_ids.1;
+		let cur_next = in_ids.packet_id;
 		if cur_next == id {
 			// In order
 			let mut packets = Vec::new();
 			loop {
 				// Update next packet id
-				let (next_id, next_gen) = id.overflowing_add(1);
-				if next_gen {
-					// Next packet generation
-					in_ids.0 = in_ids.0.wrapping_add(1);
-				}
-				in_ids.1 = next_id;
+				*in_ids = *in_ids + 1;
 
 				let flags = packet.header().flags();
 				let res_packet = if flags.contains(Flags::FRAGMENTED) {
@@ -428,23 +424,23 @@ impl PacketCodec {
 			packet.flags(packet.header().flags() | Flags::NEWPROTOCOL);
 		}
 
-		let (gen, p_id) = if p_type == PacketType::Init {
-			(0, 0)
+		let p_id = if p_type == PacketType::Init {
+			PartialPacketId { generation_id: 0, packet_id: 0 }
 		} else {
 			con.codec.outgoing_p_ids[type_i]
 		};
 		// We fake encrypt the first command packet of the server (id 0) and the
 		// first command packet of the client (id 1, clientek).
 		let mut fake_encrypt = p_type == PacketType::Command
-			&& gen == 0 && ((!con.is_client && p_id == 0)
-			|| (con.is_client && p_id == 1 && {
+			&& p_id.generation_id == 0 && ((!con.is_client && p_id.packet_id == 0)
+			|| (con.is_client && p_id.packet_id == 1 && {
 				// Test if it is a clientek packet
 				packet.content().starts_with(b"clientek")
 			}));
 		// Also fake encrypt the first ack of the client, which is the response
 		// for the initivexpand2 packet.
 		fake_encrypt |=
-			con.is_client && p_type == PacketType::Ack && gen == 0 && p_id == 0;
+			con.is_client && p_type == PacketType::Ack && p_id.generation_id == 0 && p_id.packet_id == 0;
 
 		// Get values from parameters
 		let should_encrypt;
@@ -483,7 +479,7 @@ impl PacketCodec {
 			if p_type == PacketType::Voice || p_type == PacketType::VoiceWhisper
 			{
 				(&mut packet.content_mut()[..2])
-					.write_be(con.codec.outgoing_p_ids[type_i].1)
+					.write_be(con.codec.outgoing_p_ids[type_i].packet_id)
 					.unwrap();
 			}
 
@@ -494,10 +490,13 @@ impl PacketCodec {
 			.into_iter()
 			.map(|mut packet| -> Result<_> {
 				// Get packet id
-				let (gen, p_id) = if p_type == PacketType::Init {
-					(0, 0)
+				let p_id = if p_type == PacketType::Init {
+					PartialPacketId {
+						generation_id: 0,
+						packet_id: 0,
+					}
 				} else {
-					packet.packet_id(con.codec.outgoing_p_ids[type_i].1);
+					packet.packet_id(con.codec.outgoing_p_ids[type_i].packet_id);
 					con.codec.outgoing_p_ids[type_i]
 				};
 
@@ -509,19 +508,18 @@ impl PacketCodec {
 					let params = con.params.as_mut().unwrap();
 					algs::encrypt(
 						&mut packet,
-						gen,
+						p_id.generation_id,
 						&params.shared_iv,
 						&mut params.key_cache,
 					)?;
 				}
 
 				// Increment outgoing_p_ids
-				let p_id = p_id.wrapping_add(1);
-				let new_gen = if p_id == 0 { gen.wrapping_add(1) } else { gen };
+				let p_id = p_id + 1;
 				if p_type != PacketType::Init {
-					con.codec.outgoing_p_ids[type_i] = (new_gen, p_id);
+					con.codec.outgoing_p_ids[type_i] = p_id;
 				}
-				Ok(OutUdpPacket::new(gen, packet))
+				Ok(OutUdpPacket::new(p_id.generation_id, packet))
 			})
 			.collect::<Result<Vec<_>>>()?;
 		Ok(packets)

@@ -371,8 +371,7 @@ impl Connection {
 			},
 		));
 
-		// TODO Error::from?
-		client.send_packet(packet.into_packet()).map_err(Error::from)?;
+		client.send_packet(packet.into_packet())?;
 
 		// Wait until we received the initserver packet.
 

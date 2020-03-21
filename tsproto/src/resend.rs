@@ -291,29 +291,20 @@ impl Resender {
 		let mut queue_iter = queue.iter();
 		if let Some((first, _)) = queue_iter.next() {
 			let id = if first.packet_id == p_id {
-				let (gen, p_id) = if let Some((_, rec2)) = queue_iter.next() {
+				let p_id = if let Some((_, rec2)) = queue_iter.next() {
 					// Ack all until the next packet
-					let rec2_id = &rec2.id.id.part;
-					(rec2_id.generation_id, rec2_id.packet_id)
+					rec2.id.id.part
 				} else if p_type == PacketType::Init {
 					// Ack the current packet
-					(0, p_id + 1)
+					PartialPacketId { generation_id: 0, packet_id: p_id + 1 }
 				} else {
 					// Ack all until the next packet to send
 					con.codec.outgoing_p_ids[p_type.to_usize().unwrap()]
 				};
 
-				let (p_id, last_gen) = p_id.overflowing_sub(1);
 				let id = PacketId {
 					packet_type: p_type,
-					part: PartialPacketId {
-						generation_id: if last_gen {
-							gen.wrapping_sub(1)
-						} else {
-							gen
-						},
-						packet_id: p_id,
-					},
+					part: p_id - 1,
 				};
 				con.stream_items.push_back(StreamItem::AckPacket(id));
 

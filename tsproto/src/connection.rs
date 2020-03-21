@@ -18,7 +18,7 @@ use tsproto_packets::HexSlice;
 
 use crate::crypto::EccKeyPubP256;
 use crate::packet_codec::PacketCodec;
-use crate::resend::{PacketId, Resender, ResenderState};
+use crate::resend::{PacketId, PartialPacketId, Resender, ResenderState};
 use crate::{Error, Result, MAX_UDP_PACKET_LENGTH, UDP_SINK_CAPACITY};
 
 /// The needed functions, this can be used to abstract from the underlying
@@ -187,10 +187,10 @@ impl Connection {
 			// The first command is sent as part of the C2SInit::Init4 packet
 			// so it does not get registered automatically.
 			res.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 		} else {
 			res.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 		}
 		res
 	}
@@ -210,9 +210,9 @@ impl Connection {
 		}
 		let type_i = p_type.to_usize().unwrap();
 		// Receive window is the next half of ids
-		let cur_next = self.codec.incoming_p_ids[type_i].1;
+		let cur_next = self.codec.incoming_p_ids[type_i].packet_id;
 		let (limit, next_gen) = cur_next.overflowing_add(u16::MAX / 2);
-		let gen = self.codec.incoming_p_ids[type_i].0;
+		let gen = self.codec.incoming_p_ids[type_i].generation_id;
 		let in_recv_win = (!next_gen && p_id >= cur_next && p_id < limit)
 			|| (next_gen && (p_id >= cur_next || p_id < limit));
 		let gen_id = if in_recv_win {
