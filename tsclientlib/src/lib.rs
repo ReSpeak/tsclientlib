@@ -532,7 +532,7 @@ impl Connection {
 		}
 	}
 
-	pub fn get_state_mut(&mut self) -> Result<facades::ConnectionMut> {
+	pub fn get_mut_state(&mut self) -> Result<facades::ConnectionMut> {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			Ok(facades::ConnectionMut { connection: con, inner: book })
 		} else {
@@ -787,10 +787,6 @@ impl Drop for Connection {
 				if let Ok(mut state) = state.lock() {
 					*state = IdentityIncreaseLevelState::Canceled;
 				}
-			}
-			ConnectionState::Connected { .. } => {
-				// TODO Move connection out of current state if not yet disconnected?
-				//tokio::spawn(self.disconnect(Default::default()));
 			}
 			_ => {}
 		}

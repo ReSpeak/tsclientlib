@@ -637,7 +637,11 @@ impl Connection {
 	fn channel_order_cc_fun(
 		&mut self, msg: &s2c::InChannelCreatedPart,
 	) -> Result<ChannelId> {
-		// TODO Why does this function exist?
+		self.channel_order_insert(
+			msg.channel_id,
+			msg.order,
+			msg.parent_id,
+		);
 		Ok(msg.order)
 	}
 
@@ -698,23 +702,17 @@ impl Connection {
 	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (bool, &'a str) {
 		if let Some(msg) = msg { (true, msg) } else { (false, "") }
 	}
-
-	// TODO Why??
-	fn name_b2m<'a>(&self, name: &'a str) -> &'a str { name }
-	fn input_muted_b2m(&self, muted: bool) -> bool { muted }
-	fn output_muted_b2m(&self, muted: bool) -> bool { muted }
 }
 
 impl Client {
 	// Book to messages
 	fn get_empty_string(&self) -> &str { "" }
 
-	// TODO Why??
 	fn password_b2m<'a>(&self, password: &'a str) -> &'a str { password }
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
-// TODO?
+// TODO ClientServerGroup?
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ClientServerGroup {
 	database_id: ClientDbId,
@@ -978,7 +976,7 @@ impl Connection {
 }
 
 impl Client {
-	// TODO
+	// TODO Move other clients
 	/*/// Move this client to another channel.
 	/// This function takes a password so it is possible to join protected
 	/// channels.
