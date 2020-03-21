@@ -221,43 +221,43 @@ pub fn vector_value_deserializer(field: &Field) -> String {
 	))
 }
 
-pub fn generate_serializer(field: &Field, name: &str) -> String {
-	let rust_type = field.get_rust_type("", true).replace("UidRef", "Uid");
+pub fn generate_serializer(field: &Field, name: &str, is_ref: bool) -> String {
+	let rust_type = field.get_rust_type("", false);
 	if rust_type.starts_with("Vec<") {
 		let inner_type = &rust_type[4..rust_type.len() - 1];
-		vector_value_serializer(field, inner_type, name)
+		vector_value_serializer(field, inner_type, name, is_ref)
 	} else {
-		single_value_serializer(field, &rust_type, name)
+		single_value_serializer(field, &rust_type, name, is_ref)
 	}
 }
 
 pub fn single_value_serializer(
-	field: &Field, rust_type: &str, name: &str,
+	field: &Field, rust_type: &str, name: &str, is_ref: bool,
 ) -> String {
+	let ref_amp = if is_ref { "" } else { "&" };
+	let ref_star = if is_ref { "*" } else { "" };
 	match rust_type {
 		"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32"
-		| "f64" => format!("Cow::Owned({}.to_string())", name),
+		| "f64" | "String" | "IpAddr" | "SocketAddr" => {
+			format!("{}{}", ref_amp, name)
+		}
 		"bool" => {
-			format!("Cow::Borrowed(if {} {{ \"1\" }} else {{ \"0\" }})", name)
+			format!("if {}{} {{ &\"1\" }} else {{ &\"0\" }}", ref_star, name)
 		}
-		"&str" => format!("Cow::Borrowed({})", name),
-		"String" => format!("Cow::Borrowed(&{})", name),
-		"UidRef" => format!(
-			"if {0}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") }}
-			else {{ Cow::Owned(base64::encode({0}.0)) }}",
-			name
+		"&str" => name.to_string(),
+		"UidRef" | "Uid" => format!(
+			"&if {1}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") \
+			 }}
+			else {{ Cow::<str>::Owned(base64::encode({0}{1}.0)) }}",
+			if rust_type == "Uid" { "&" } else { "" },
+			name,
 		),
-		"Uid" => {
-			single_value_serializer(field, "UidRef", &format!("&{}", name))
-		}
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
-		| "ChannelGroupId" | "IconHash" => {
-			format!("Cow::Owned({}.0.to_string())", name)
-		}
+		| "ChannelGroupId" | "IconHash" => format!("&{}.0", name),
 		"ClientType" => format!(
 			"match {} {{
-				ClientType::Normal => Cow::Borrowed(\"0\"),
-				ClientType::Query {{ .. }} => Cow::Borrowed(\"1\"),
+				ClientType::Normal => &\"0\",
+				ClientType::Query {{ .. }} => &\"1\",
 			}}",
 			name
 		),
@@ -275,38 +275,38 @@ pub fn single_value_serializer(
 		| "PermissionType"
 		| "TokenType"
 		| "PluginTargetMode"
-		| "Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
+		| "Error" => format!("&{}.to_u32().unwrap()", name),
 		"ChannelPermissionHint" | "ClientPermissionHint" => {
-			format!("Cow::Owned({}.bits().to_string())", name)
+			format!("&{}.bits()", name)
 		}
 		"Duration" => {
 			if field.type_s == "DurationSeconds" {
-				format!("Cow::Owned({}.whole_seconds().to_string())", name)
+				format!("&{}.whole_seconds()", name)
 			} else if field.type_s == "DurationMilliseconds" {
-				format!("Cow::Owned({}.whole_milliseconds().to_string())", name)
+				format!("&{}.whole_milliseconds()", name)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
 			}
 		}
-		"OffsetDateTime" => {
-			format!("Cow::Owned({}.timestamp().to_string())", name)
-		}
-		"IpAddr" | "SocketAddr" => format!("Cow::Owned({}.to_string())", name),
+		"OffsetDateTime" => format!("&{}.timestamp()", name),
 		_ => panic!("Unknown type '{}'", rust_type),
 	}
 }
 
 pub fn vector_value_serializer(
-	field: &Field, inner_type: &str, name: &str,
+	field: &Field, inner_type: &str, name: &str, is_ref: bool,
 ) -> String {
+	// TODO Vector serialization creates an intermediate string which is not necessary
 	format!(
-		"{{ let mut s = String::new();
-				for val in {} {{
+		"&{{ let mut s = String::new();
+				for val in {}{} {{
 					if !s.is_empty() {{ s += \",\" }}
-					let t: Cow<str> = {}; s += t.as_ref();
+					write!(&mut s, \"{{}}\", {}).unwrap();
 				}}
-				Cow::Owned(s) }}",
+				s
+			}}",
+		if is_ref { "" } else { "&" },
 		name,
-		single_value_serializer(field, inner_type, "val")
+		single_value_serializer(field, inner_type, "val", true)
 	)
 }

@@ -106,7 +106,7 @@ impl Field {
 	pub fn get_rust_type(&self, a: &str, is_ref: bool) -> String {
 		let mut res = convert_type(&self.type_s, is_ref);
 
-		if self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
+		if self.is_array() {
 			res = format!("Vec<{}>", res);
 		}
 		if a.ends_with('?') {
@@ -118,5 +118,29 @@ impl Field {
 	/// Returns if this field is optional in the message.
 	pub fn is_opt(&self, msg: &Message) -> bool {
 		!msg.attributes.iter().any(|a| *a == self.map)
+	}
+
+	pub fn is_array(&self) -> bool {
+		self.modifier.as_ref().map(|s| s == "array").unwrap_or(false)
+	}
+
+	pub fn get_as_ref(&self, a: &str) -> String {
+		let res = self.get_rust_type(a, true);
+
+		let append;
+		if res.contains("&") || res.contains("Uid") {
+			if a.ends_with('?') {
+				append = ".as_ref().map(|f| f.as_ref())";
+			} else if self.is_array() {
+				append = ".clone()";
+			} else {
+				append = ".as_ref()";
+			}
+		} else if self.is_array() {
+			append = ".clone()";
+		} else {
+			append = "";
+		}
+		append.into()
 	}
 }

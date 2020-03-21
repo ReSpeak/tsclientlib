@@ -101,9 +101,9 @@ impl Property {
 	pub fn get_rust_type(&self) -> String {
 		let mut res = convert_type(&self.type_s, false);
 
-		if self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
+		if self.is_array() {
 			res = format!("Vec<{}>", res);
-		} else if self.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
+		} else if self.is_map() {
 			let key = self.key.as_ref().expect("Specified map without key");
 			res = format!("HashMap<{}, {}>", key, res);
 		}
@@ -111,6 +111,33 @@ impl Property {
 			res = format!("Option<{}>", res);
 		}
 		res
+	}
+
+	pub fn is_array(&self) -> bool {
+		self.modifier.as_ref().map(|s| s == "array").unwrap_or(false)
+	}
+	pub fn is_map(&self) -> bool {
+		self.modifier.as_ref().map(|s| s == "map").unwrap_or(false)
+	}
+
+	pub fn get_as_ref(&self) -> String {
+		let res = self.get_rust_type();
+
+		let append;
+		if res.contains("&") || res.contains("Uid") {
+			if self.opt {
+				append = ".as_ref().map(|f| f.as_ref())";
+			} else if self.is_array() {
+				append = ".clone()";
+			} else {
+				append = ".as_ref()";
+			}
+		} else if self.is_array() {
+			append = ".clone()";
+		} else {
+			append = "";
+		}
+		append.into()
 	}
 }
 

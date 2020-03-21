@@ -1,5 +1,5 @@
 use std::io::prelude::*;
-use std::{fmt, str};
+use std::{fmt, io, str};
 
 use arrayref::{array_mut_ref, array_ref};
 use bitflags::bitflags;
@@ -259,6 +259,18 @@ pub struct InAudio<'a> {
 	packet: InPacket<'a>,
 	data: AudioData<'a>,
 }
+
+pub struct OutCommand(pub OutPacket);
+pub struct OutC2SInit0;
+pub struct OutC2SInit2;
+pub struct OutC2SInit4;
+pub struct OutS2CInit1;
+pub struct OutS2CInit3;
+pub struct OutAck;
+pub struct OutAudio;
+
+/// A helper to escape data while writing into a buffer.
+struct EscapedWriter<'a>(&'a mut Vec<u8>);
 
 impl Direction {
 	#[inline]
@@ -1029,121 +1041,74 @@ impl OutUdpPacket {
 	pub fn packet_type(&self) -> PacketType { self.data.header().packet_type() }
 }
 
-pub struct OutCommand;
+impl io::Write for EscapedWriter<'_> {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		self.0.reserve(buf.len());
+		for c in buf {
+			match c {
+				b'\x0b' => self.0.extend_from_slice(b"\\v"),
+				b'\x0c' => self.0.extend_from_slice(b"\\f"),
+				b'\\' => self.0.extend_from_slice(b"\\\\"),
+				b'\t' => self.0.extend_from_slice(b"\\t"),
+				b'\r' => self.0.extend_from_slice(b"\\r"),
+				b'\n' => self.0.extend_from_slice(b"\\n"),
+				b'|' => self.0.extend_from_slice(b"\\p"),
+				b' ' => self.0.extend_from_slice(b"\\s"),
+				b'/' => self.0.extend_from_slice(b"\\/"),
+				c => self.0.push(*c),
+			}
+		}
+		Ok(buf.len())
+	}
+
+	#[inline]
+	fn flush(&mut self) -> io::Result<()> { Ok(()) }
+}
+
 impl OutCommand {
-	/// Write a command.
-	///
-	/// # Examples
-	/// Write a command from existing `CommandData`.
-	/// ```
-	/// let command = tsproto_packets::commands::parse_command("").unwrap();
-	/// tsproto_packets::packets::OutCommand::new(
-	///     tsproto_packets::packets::Direction::S2C,
-	///     tsproto_packets::packets::PacketType::Command,
-	///     command.name,
-	///     command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
-	///     command.list_args.iter().map(|i| {
-	///         i.iter().map(|(k, v)| (*k, v.as_ref()))
-	///     }),
-	/// );
-	/// ```
-	pub fn new<K1, V1, K2, V2, I1, I2, I3>(
-		dir: Direction, p_type: PacketType, name: &str, static_args: I1,
-		list_args: I2,
-	) -> OutPacket
-	where
-		// TODO Maybe use Display so we don’t allocate int->String twice?
-		// But how about writing raw [u8]?
-		K1: AsRef<str>,
-		V1: AsRef<str>,
-		K2: AsRef<str>,
-		V2: AsRef<str>,
-		I1: Iterator<Item = (K1, V1)>,
-		I2: Iterator<Item = I3>,
-		I3: Iterator<Item = (K2, V2)>,
-	{
-		let mut res = OutPacket::new_with_dir(dir, Flags::empty(), p_type);
-		let content = res.data_mut();
-		Self::new_into(name, static_args, list_args, content);
+	#[inline]
+	pub fn new(
+		dir: Direction, flags: Flags, p_type: PacketType, name: &str,
+	) -> Self {
+		let mut res =
+			Self(OutPacket::new_with_dir(dir, Flags::empty(), p_type));
+		res.0.flags(flags);
+		res.0.data.extend_from_slice(name.as_bytes());
 		res
 	}
 
-	/// Write a command into a given `Vec<u8>`.
-	pub fn new_into<K1, V1, K2, V2, I1, I2, I3>(
-		name: &str, static_args: I1, list_args: I2, res: &mut Vec<u8>,
-	) where
-		K1: AsRef<str>,
-		V1: AsRef<str>,
-		K2: AsRef<str>,
-		V2: AsRef<str>,
-		I1: Iterator<Item = (K1, V1)>,
-		I2: Iterator<Item = I3>,
-		I3: Iterator<Item = (K2, V2)>,
-	{
-		res.extend_from_slice(name.as_bytes());
-		for (k, v) in static_args {
-			let k = k.as_ref();
-			let v = v.as_ref();
-			if !res.is_empty() {
-				res.push(b' ');
-			}
-			res.extend_from_slice(k.as_bytes());
-			if !v.is_empty() {
-				res.push(b'=');
-			}
-			Self::write_escaped(res, v).unwrap();
-		}
-
-		let mut first_list = true;
-		for i in list_args {
-			if first_list {
-				if !name.is_empty() {
-					res.push(b' ');
-				}
-				first_list = false;
-			} else {
-				res.push(b'|');
-			}
-
-			let mut first = true;
-			for (k, v) in i {
-				if first {
-					first = false;
-				} else {
-					res.push(b' ');
-				}
-				let k = k.as_ref();
-				let v = v.as_ref();
-				res.extend_from_slice(k.as_bytes());
-				if !v.is_empty() {
-					res.push(b'=');
-				}
-				Self::write_escaped(res, v).unwrap();
-			}
+	/// For binary arguments. The value will still be escaped.
+	#[inline]
+	pub fn write_bin_arg(&mut self, name: &str, value: &[u8]) {
+		self.0.data.push(b' ');
+		self.0.data.extend_from_slice(name.as_bytes());
+		if !value.is_empty() {
+			self.0.data.push(b'=');
+			EscapedWriter(&mut self.0.data).write_all(value).unwrap();
 		}
 	}
 
-	fn write_escaped(w: &mut Vec<u8>, s: &str) -> Result<()> {
-		w.reserve(s.len());
-		for c in s.chars() {
-			match c {
-				'\u{b}' => write!(w, "\\v"),
-				'\u{c}' => write!(w, "\\f"),
-				'\\' => write!(w, "\\\\"),
-				'\t' => write!(w, "\\t"),
-				'\r' => write!(w, "\\r"),
-				'\n' => write!(w, "\\n"),
-				'|' => write!(w, "\\p"),
-				' ' => write!(w, "\\s"),
-				'/' => write!(w, "\\/"),
-				c => write!(w, "{}", c),
-			}?;
+	/// The value will be formatted and escaped.
+	#[inline]
+	pub fn write_arg(&mut self, name: &str, value: &dyn fmt::Display) {
+		self.0.data.push(b' ');
+		self.0.data.extend_from_slice(name.as_bytes());
+		self.0.data.push(b'=');
+		let len = self.0.data.len();
+		write!(EscapedWriter(&mut self.0.data), "{}", value).unwrap();
+		if self.0.data.len() == len {
+			// Nothing was written, remove =
+			self.0.data.pop();
 		}
-		Ok(())
 	}
+
+	/// Adds a pipe symbol `|` to the command.
+	#[inline]
+	pub fn start_new_part(&mut self) { self.0.data.push(b'|'); }
+	#[inline]
+	pub fn into_packet(self) -> OutPacket { self.0 }
 }
 
-pub struct OutC2SInit0;
 impl OutC2SInit0 {
 	pub fn new(version: u32, timestamp: u32, random0: [u8; 4]) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(
@@ -1164,7 +1129,6 @@ impl OutC2SInit0 {
 	}
 }
 
-pub struct OutC2SInit2;
 impl OutC2SInit2 {
 	pub fn new(
 		version: u32, random1: &[u8; 16], random0_r: [u8; 4],
@@ -1185,7 +1149,6 @@ impl OutC2SInit2 {
 	}
 }
 
-pub struct OutC2SInit4;
 impl OutC2SInit4 {
 	pub fn new(
 		version: u32, x: &[u8; 64], n: &[u8; 64], level: u32,
@@ -1224,7 +1187,6 @@ impl OutC2SInit4 {
 	}
 }
 
-pub struct OutS2CInit1;
 impl OutS2CInit1 {
 	pub fn new(random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(
@@ -1242,7 +1204,6 @@ impl OutS2CInit1 {
 	}
 }
 
-pub struct OutS2CInit3;
 impl OutS2CInit3 {
 	pub fn new(
 		x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100],
@@ -1264,7 +1225,6 @@ impl OutS2CInit3 {
 	}
 }
 
-pub struct OutAck;
 impl OutAck {
 	/// `for_type` is the packet type which gets acknowledged, so e.g. `Command`.
 	pub fn new(
@@ -1287,7 +1247,6 @@ impl OutAck {
 	}
 }
 
-pub struct OutAudio;
 impl OutAudio {
 	pub fn new(data: &AudioData) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(

@@ -1,6 +1,8 @@
 <#@ template cleanws="true" #>
 use std::borrow::Cow;
-use std::marker::PhantomData;
+// Needed for vector serialization
+#[allow(unused_imports)]
+use std::fmt::Write as _;
 use std::str;
 
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -154,6 +156,7 @@ impl InMessageTrait for In<#= msg.name #> {
 	}
 }
 
+<# if msg_group.default.response || !msg.attributes.is_empty() { #>
 impl In<#= msg.name #> {
 	#[inline]
 	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { self.into_iter() }
@@ -206,7 +209,19 @@ impl In<#= msg.name #>Part {
 		None
 	<# } #>
 	}
+
+	pub fn as_out(&self) -> Out<#= msg.name #>Part {
+		Out<#= msg.name #>Part {
+		<#
+		let mut uses_lifetime = false;
+		for a in &msg.attributes {
+			let field = self.0.get_field(a); #>
+			<#= field.get_rust_name() #>: self.<#= field.get_rust_name() #><#= field.get_as_ref(a) #>,
+		<# } #>
+		}
+	}
 }
+<# } #>
 
 <# }
 } #>
@@ -224,11 +239,22 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 
 <# for msg_group in &self.0.msg_group {
 	let defs = &msg_group.default;
-	for msg in &msg_group.msg { #>
-#[derive(Debug)]
-pub struct Out<#= msg.name #>Part<'a> {
+	for msg in &msg_group.msg {
+		let mut uses_lifetime = false;
+		for a in &msg.attributes {
+			let field = self.0.get_field(a);
+			let res = field.get_rust_type(a, true);
+			if res.contains("&") || res.contains("UidRef") {
+				uses_lifetime = true;
+				break;
+			}
+		}
+		let has_attributes = msg_group.default.response || !msg.attributes.is_empty(); #>
+
+<# if has_attributes { #>
+#[derive(Clone, Debug)]
+pub struct Out<#= msg.name #>Part<# if uses_lifetime { #><'a><# } #> {
 <#
-let mut uses_lifetime = false;
 for a in &msg.attributes {
 	let field = self.0.get_field(a);
 	if field.get_rust_name() != field.ts { #>
@@ -236,50 +262,46 @@ for a in &msg.attributes {
 	<# } #>
 	pub <#= field.get_rust_name() #>: <#= {
 		let res = field.get_rust_type(a, true).replace("&", "&'a ").replace("UidRef", "UidRef<'a>");
-		uses_lifetime |= res.contains("'a");
 		res
 	} #>,
-<# }
-if !uses_lifetime {
-#>
-	/// Use the lifetime
-	pub phantom: PhantomData<&'a ()>,
 <# } #>
 }
 
-#[derive(Deserialize, Serialize)]
+<# } #>
 pub struct Out<#= msg.name #>Message;
 impl Out<#= msg.name #>Message {
-	pub fn new<'a, I: Iterator<Item=Out<#= msg.name #>Part<'a>>>(list: I<#=
-			if msg_group.default.response { ", return_code: Option<&str>" } else { "" } #>) -> OutPacket {
-		let mut packet = OutPacket::new_with_dir(Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
-			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" }
-			#>, PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #>);
+	pub fn new(<# if has_attributes { #>parts: &mut dyn Iterator<Item=Out<#= msg.name #>Part><#
+			if msg_group.default.response { #>, return_code: Option<&str><# } } #>) -> OutCommand {
+		let<# if has_attributes { #> mut<# } #> packet = OutCommand::new(
+			Direction::<#= if msg_group.default.s2c { "S2C" } else { "C2S" } #>,
+			Flags::<#= if msg_group.default.np { "NEWPROTOCOL" } else { "empty()" } #>,
+			PacketType::Command<# if msg_group.default.low { #>Low<# } #>,
+			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>",
+		);
 	<# if msg_group.default.response { #>
-		let static_args = return_code.iter().map(|s| ("return_code", Cow::Borrowed(*s)));
-	<# } else { #>
-		let static_args = std::iter::empty();
-	<# }
-
-	if msg.attributes.is_empty() { #>
-		let list_args = list.map(|_| { std::iter::empty() });
-	<# } else { #>
-		let list_args = list.map(|p| {
-			let mut res = Vec::new();
+		if let Some(r) = return_code {
+			packet.write_arg("return_code", &r);
+		}
+	<# } #>
+	<# if !msg.attributes.is_empty() { #>
+		let mut first = true;
+		for p in parts {
+			if first {
+				first = false;
+			} else {
+				packet.start_new_part();
+			}
 		<# for a in &msg.attributes {
 			let field = self.0.get_field(a);
-			let val = format!("p.{}", field.get_rust_name());
 			if a.ends_with('?') { #>
-			if let Some(val) = <#= val #> { res.push(("<#= field.ts #>", <#= generate_serializer(field, "val") #>)); }
+			if let Some(val) = &p.<#= field.get_rust_name() #> { packet.write_arg("<#= field.ts #>", <#= generate_serializer(field, "val", true) #>); }
 			<# } else { #>
-			res.push(("<#= field.ts #>", <#= generate_serializer(field, &val) #>));
+			packet.write_arg("<#= field.ts #>", <#= generate_serializer(field, &format!("p.{}", field.get_rust_name()), false) #>);
 			<# } #>
 		<# } #>
-			res.into_iter()
-		});
+		}
 	<# } #>
-		OutCommand::new_into::<&'static str, Cow<str>, &'static str, Cow<str>, _, _, _>(
-			"<#= msg.notify.as_ref().map(|s| s.as_str()).unwrap_or("") #>", static_args, list_args, packet.data_mut());
+
 		packet
 	}
 }

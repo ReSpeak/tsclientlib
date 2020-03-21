@@ -1,15 +1,12 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::mem;
 use std::net::{IpAddr, SocketAddr};
-use std::u16;
+use std::{iter, mem, u16};
 
 use anyhow::format_err;
 use serde::{Deserialize, Serialize};
 use slog::{debug, Logger};
 use time::{Duration, OffsetDateTime};
-use tsproto_packets::packets::{Direction, OutCommand, OutPacket, PacketType};
+use tsproto_packets::packets::OutCommand;
 use tsproto_types::*;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
@@ -698,54 +695,23 @@ impl Connection {
 	}
 
 	// Book to messages
-	fn away_fun_b2m<'a>(
-		&self, args: &mut Vec<(&'static str, Cow<'a, str>)>,
-		msg: Option<&'a str>,
-	)
-	{
-		args.push(("client_away", "1".into()));
-		if let Some(msg) = msg {
-			args.push(("client_away_message", msg.into()));
-		}
+	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (bool, &'a str) {
+		if let Some(msg) = msg { (true, msg) } else { (false, "") }
 	}
 
-	fn name_b2m<'a>(
-		&self, args: &mut Vec<(&'static str, Cow<'a, str>)>, name: &'a str,
-	) {
-		args.push(("client_nickname", name.into()));
-	}
-
-	fn input_muted_b2m(
-		&self, args: &mut Vec<(&'static str, Cow<str>)>, muted: bool,
-	) {
-		args.push(("client_input_muted", if muted { "1" } else { "0" }.into()));
-	}
-
-	fn output_muted_b2m(
-		&self, args: &mut Vec<(&'static str, Cow<str>)>, muted: bool,
-	) {
-		args.push((
-			"client_output_muted",
-			if muted { "1" } else { "0" }.into(),
-		));
-	}
+	// TODO Why??
+	fn name_b2m<'a>(&self, name: &'a str) -> &'a str { name }
+	fn input_muted_b2m(&self, muted: bool) -> bool { muted }
+	fn output_muted_b2m(&self, muted: bool) -> bool { muted }
 }
 
 impl Client {
 	// Book to messages
-	fn get_empty_string(&self, _: &mut Vec<(&'static str, Cow<str>)>) {}
+	fn get_empty_string(&self) -> &str { "" }
 
-	fn password_b2m<'a>(
-		&self, args: &mut Vec<(&'static str, Cow<'a, str>)>, password: &'a str,
-	) {
-		args.push(("cpw", password.into()));
-	}
-
-	fn channel_id_b2m(
-		&self, args: &mut Vec<(&'static str, Cow<str>)>, channel: ChannelId,
-	) {
-		args.push(("cid", channel.0.to_string().into()));
-	}
+	// TODO Why??
+	fn password_b2m<'a>(&self, password: &'a str) -> &'a str { password }
+	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
 // TODO?
@@ -755,9 +721,7 @@ pub struct ClientServerGroup {
 	inner: ServerGroupId,
 }
 impl ClientServerGroup {
-	fn get_id(&self, args: &mut Vec<(&'static str, Cow<str>)>) {
-		args.push(("sgid", self.inner.0.to_string().into()));
-	}
+	fn get_id(&self) -> ServerGroupId { self.inner }
 }
 
 /// The `ChannelOptions` are used to set initial properties of a new channel.
@@ -887,7 +851,7 @@ impl<'a> ChannelOptions<'a> {
 }
 
 impl Server {
-	pub fn add_channel(&self, options: ChannelOptions) -> OutPacket {
+	pub fn add_channel(&self, options: ChannelOptions) -> OutCommand {
 		let inherits_max_family_clients =
 			options.max_family_clients.as_ref().and_then(|m| {
 				if let MaxClients::Inherited = m { Some(true) } else { None }
@@ -919,8 +883,8 @@ impl Server {
 			if *t == ChannelType::SemiPermanent { Some(true) } else { None }
 		});
 
-		c2s::OutChannelCreateMessage::new(
-			vec![c2s::OutChannelCreatePart {
+		c2s::OutChannelCreateMessage::new(&mut iter::once(
+			c2s::OutChannelCreatePart {
 				name: options.name,
 				description: options.description,
 				parent_id: options.parent_id,
@@ -945,36 +909,26 @@ impl Server {
 				password: options.password,
 				phonetic_name: options.phonetic_name,
 				topic: options.topic,
-			}]
-			.into_iter(),
-		)
+			},
+		))
 	}
 
-	pub fn send_textmessage(&self, message: &str) -> OutPacket {
-		c2s::OutSendTextMessageMessage::new(
-			vec![c2s::OutSendTextMessagePart {
+	pub fn send_textmessage(&self, message: &str) -> OutCommand {
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(
+			c2s::OutSendTextMessagePart {
 				target: TextMessageTargetMode::Server,
 				target_client_id: None,
 				message,
-			}]
-			.into_iter(),
-		)
+			},
+		))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
-	pub fn set_subscribed(&self, subscribed: bool) -> OutPacket {
+	pub fn set_subscribed(&self, subscribed: bool) -> OutCommand {
 		if subscribed {
-			c2s::OutChannelSubscribeAllMessage::new(
-				vec![c2s::OutChannelSubscribeAllPart { phantom: PhantomData }]
-					.into_iter(),
-			)
+			c2s::OutChannelSubscribeAllMessage::new()
 		} else {
-			c2s::OutChannelUnsubscribeAllMessage::new(
-				vec![c2s::OutChannelUnsubscribeAllPart {
-					phantom: PhantomData,
-				}]
-				.into_iter(),
-			)
+			c2s::OutChannelUnsubscribeAllMessage::new()
 		}
 	}
 }
@@ -982,59 +936,44 @@ impl Server {
 impl Connection {
 	pub fn send_message(
 		&self, target: MessageTarget, message: &str,
-	) -> OutPacket {
+	) -> OutCommand {
 		match target {
 			MessageTarget::Server => c2s::OutSendTextMessageMessage::new(
-				vec![c2s::OutSendTextMessagePart {
+				&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Server,
 					target_client_id: None,
 					message,
-				}]
-				.into_iter(),
+				}),
 			),
 			MessageTarget::Channel => c2s::OutSendTextMessageMessage::new(
-				vec![c2s::OutSendTextMessagePart {
+				&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Channel,
 					target_client_id: None,
 					message,
-				}]
-				.into_iter(),
+				}),
 			),
 			MessageTarget::Client(id) => c2s::OutSendTextMessageMessage::new(
-				vec![c2s::OutSendTextMessagePart {
+				&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Client,
 					target_client_id: Some(id),
 					message,
-				}]
-				.into_iter(),
+				}),
 			),
-			MessageTarget::Poke(id) => c2s::OutClientPokeRequestMessage::new(
-				vec![c2s::OutClientPokeRequestPart { client_id: id, message }]
-					.into_iter(),
-			),
+			MessageTarget::Poke(id) => {
+				c2s::OutClientPokeRequestMessage::new(&mut iter::once(
+					c2s::OutClientPokeRequestPart { client_id: id, message },
+				))
+			}
 		}
 	}
 
-	pub fn disconnect<O: Into<Option<crate::DisconnectOptions>>>(
-		&self, options: O,
-	) -> OutPacket {
-		let options = options.into().unwrap_or_default();
-
-		let mut args = Vec::new();
-		if let Some(reason) = options.reason {
-			args.push(("reasonid", (reason as u8).to_string()));
-		}
-		if let Some(msg) = options.message {
-			args.push(("reasonmsg", msg));
-		}
-
-		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientdisconnect",
-			args.into_iter(),
-			std::iter::empty(),
-		)
+	pub fn disconnect(&self, options: crate::DisconnectOptions) -> OutCommand {
+		c2s::OutDisconnectMessage::new(&mut iter::once(
+			c2s::OutDisconnectPart {
+				reason: options.reason,
+				reason_message: options.message.as_ref().map(|m| m.as_str()),
+			},
+		))
 	}
 }
 
@@ -1057,21 +996,19 @@ impl Client {
 	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
 	/// ```*/
 
-	pub fn send_textmessage(&self, message: &str) -> OutPacket {
-		c2s::OutSendTextMessageMessage::new(
-			vec![c2s::OutSendTextMessagePart {
+	pub fn send_textmessage(&self, message: &str) -> OutCommand {
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(
+			c2s::OutSendTextMessagePart {
 				target: TextMessageTargetMode::Client,
 				target_client_id: Some(self.id),
 				message,
-			}]
-			.into_iter(),
-		)
+			},
+		))
 	}
 
-	pub fn poke(&self, message: &str) -> OutPacket {
-		c2s::OutClientPokeRequestMessage::new(
-			vec![c2s::OutClientPokeRequestPart { client_id: self.id, message }]
-				.into_iter(),
-		)
+	pub fn poke(&self, message: &str) -> OutCommand {
+		c2s::OutClientPokeRequestMessage::new(&mut iter::once(
+			c2s::OutClientPokeRequestPart { client_id: self.id, message },
+		))
 	}
 }

@@ -7,8 +7,6 @@ use tsproto_structs::book_to_messages::*;
 use tsproto_structs::messages::Field;
 use tsproto_structs::*;
 
-use crate::message_parser::{single_value_serializer, vector_value_serializer};
-
 #[derive(Template)]
 #[TemplatePath = "build/BookToMessages.tt"]
 #[derive(Debug)]
@@ -29,34 +27,54 @@ fn to_ref_type(s: &str) -> String {
 	if s == "String" { "&str".into() } else { s.into() }
 }
 
+fn get_to_list(to: &[&Field]) -> String {
+	let mut res = String::new();
+	if to.len() > 1 {
+		res.push('(');
+	}
+
+	let mut first = true;
+	for t in to {
+		if !first {
+			res.push_str(", ");
+		} else {
+			first = false;
+		}
+		res.push_str(&t.get_rust_name());
+	}
+
+	if to.len() > 1 {
+		res.push(')');
+	}
+	res
+}
+
 /// The prefix is written before from, if from is a mapped argument
-fn arg_to_value(r: &RuleKind, prefix: &str) -> String {
+fn rule_has_to(r: &RuleKind, field: &Field) -> bool {
 	match r {
 		RuleKind::Map { to, .. } | RuleKind::ArgumentMap { to, .. } => {
-			let fr = r.from_name().to_snake_case();
-			if let RuleKind::Map { .. } = r {
-				format!(
-					"args.push((\"{}\", {{ {} }}));",
-					to.ts,
-					generate_serializer(to, &format!("{}{}", prefix, fr))
-				)
-			} else {
-				format!(
-					"args.push((\"{}\", {{ {} }}));",
-					to.ts,
-					generate_serializer(to, &fr)
-				)
-			}
+			to == &field
 		}
-		RuleKind::Function { name, .. } => {
-			format!("self.{}(&mut args);", name.to_snake_case())
-		}
-		RuleKind::ArgumentFunction { from, name, .. } => format!(
-			"self.{}(&mut args, {});",
-			name.to_snake_case(),
-			from.to_snake_case()
-		),
+		RuleKind::ArgumentFunction { to, .. }
+		| RuleKind::Function { to, .. } => to.contains(&field),
 	}
+}
+
+/// Finds a matching rule in either the event ids or the given rule.
+fn find_rule<'a>(
+	e: &'a Event, r: Option<&'a RuleKind>, field: &Field,
+) -> (bool, Option<&'a RuleKind<'a>>) {
+	if let Some(r) = r {
+		if rule_has_to(r, field) {
+			return (true, Some(r));
+		}
+	}
+	for r in &e.ids {
+		if rule_has_to(r, field) {
+			return (false, Some(r));
+		}
+	}
+	(false, None)
 }
 
 fn get_arguments(r: &RuleKind) -> String {
@@ -74,15 +92,5 @@ fn get_arguments(r: &RuleKind) -> String {
 		RuleKind::ArgumentFunction { from, type_s, .. } => {
 			format!("{}: {}", from.to_snake_case(), convert_type(type_s, true))
 		}
-	}
-}
-
-pub fn generate_serializer(field: &Field, name: &str) -> String {
-	let rust_type = field.get_rust_type("", false);
-	if rust_type.starts_with("Vec<") {
-		let inner_type = &rust_type[4..rust_type.len() - 1];
-		vector_value_serializer(field, inner_type, name)
-	} else {
-		single_value_serializer(field, &rust_type, name)
 	}
 }
