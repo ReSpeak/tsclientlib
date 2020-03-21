@@ -1,9 +1,16 @@
 version = "Two"
+edition = "2018"
 max_width = 80
+newline_style = "Unix"
 
-fn_single_line = true
-format_strings = true
 hard_tabs = true
 use_small_heuristics = "Max"
 use_try_shorthand = true
+
+# Unstable
+
 where_single_line = true
+fn_args_layout = "Compressed"
+fn_single_line = true
+format_strings = true
+overflow_delimited_expr = true
