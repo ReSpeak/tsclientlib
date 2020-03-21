@@ -402,21 +402,10 @@ impl Client {
 			let proof_s = base64::encode(&proof);
 
 			// Send clientek
-			clientek_id = self.send_packet(OutCommand::new::<
-				_,
-				_,
-				String,
-				String,
-				_,
-				_,
-				std::iter::Empty<_>,
-			>(
-				Direction::C2S,
-				PacketType::Command,
-				"clientek",
-				vec![("ek", ek_s), ("proof", proof_s)].into_iter(),
-				std::iter::empty(),
-			))?;
+			let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "clientek");
+			cmd.write_arg("ek", &ek_s);
+			cmd.write_arg("proof", &proof_s);
+			clientek_id = self.send_packet(cmd.into_packet())?;
 		}
 		self.wait_for_ack(clientek_id).await?;
 
@@ -597,28 +586,12 @@ impl Client {
 							#[cfg(not(debug_assertions))]
 							version.push_str(" (Release)");
 
-							self.send_packet(OutCommand::new::<
-								_,
-								_,
-								String,
-								String,
-								_,
-								_,
-								std::iter::Empty<_>,
-							>(
-								Direction::C2S,
-								PacketType::Command,
-								"plugincmd",
-								vec![
-									("name", "getversion".into()),
-									("data", version),
-									// PluginTargetMode::Client
-									("targetmode", 2.to_string()),
-									("target", sender.to_string()),
-								]
-								.into_iter(),
-								std::iter::empty(),
-							))?;
+							let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "plugincmd");
+							cmd.write_arg("name", &"getversion");
+							cmd.write_arg("data", &version);
+							cmd.write_arg("targetmode", &2);
+							cmd.write_arg("target", &sender);
+							self.send_packet(cmd.into_packet())?;
 						}
 					}
 				}

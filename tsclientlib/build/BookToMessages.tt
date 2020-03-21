@@ -7,7 +7,7 @@ impl <#= e.book_struct.name #>Mut<'_> {
 <# for r in &e.rules { #>
 	pub fn set_<#= r.from_name().to_snake_case() #>(&mut self<#=
 		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.set_<#= r.from_name().to_snake_case() #>(<#=
+		self.connection.send_command(self.inner.set_<#= r.from_name().to_snake_case() #>(<#=
 			get_all_arguments_use(e, None) #><#= get_arguments_use(r) #>))
 	}
 <# } #>
@@ -24,7 +24,7 @@ impl <#= e.book_struct.name #>Mut<'_> {
 		}; #>
 impl <#= e.book_struct.name #>Mut<'_> {
 	pub fn remove<#= name_add #>(&mut self<#= args #>) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.remove<#= name_add #>(<#=
+		self.connection.send_command(self.inner.remove<#= name_add #>(<#=
 			get_all_arguments_use(e, None) #>))
 	}
 }
@@ -55,7 +55,7 @@ impl <#= e.book_struct.name #>Mut<'_> {
 
 impl <#= name #>Mut<'_> {
 	pub fn remove<#= name_add #>(&mut self<#= args #>) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.remove<#= name_add #>(<#=
+		self.connection.send_command(self.inner.remove<#= name_add #>(<#=
 			get_all_arguments_use(e, Some(r)) #>))
 	}
 }
@@ -74,7 +74,7 @@ impl <#= name #>Mut<'_> {
 impl <#= e.book_struct.name #>Mut<'_> {
 	pub fn add_<#= name.to_snake_case() #>(&mut self
 		<#= get_all_arguments(e, Some(r)) #>) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.add_<#= name.to_snake_case() #>(<#=
+		self.connection.send_command(self.inner.add_<#= name.to_snake_case() #>(<#=
 			get_all_arguments_use(e, Some(r)) #>))
 	}
 }

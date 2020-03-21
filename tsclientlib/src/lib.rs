@@ -13,9 +13,9 @@
 #![recursion_limit = "128"]
 
 use std::collections::VecDeque;
+use std::{iter, result};
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::result;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -30,9 +30,7 @@ use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
-use tsproto_packets::packets::{
-	Direction, InCommandBuf, OutCommand, OutPacket, PacketType,
-};
+use tsproto_packets::packets::{InCommandBuf, OutCommand};
 
 mod facades;
 pub mod resolver;
@@ -300,7 +298,7 @@ impl Connection {
 	async fn connect_to(
 		logger: &Logger, options: &ConnectOptions, addr: SocketAddr,
 	) -> result::Result<(client::Client, data::Connection), ConnectError> {
-		let counter = options.identity.as_ref().unwrap().counter().to_string();
+		let counter = options.identity.as_ref().unwrap().counter();
 		let socket = Box::new(
 			UdpSocket::bind(options.local_address.unwrap_or_else(|| {
 				if addr.is_ipv4() {
@@ -338,52 +336,37 @@ impl Connection {
 		client.connect().await.map_err(Error::from)?;
 
 		// Create clientinit packet
-		let version_string = options.version.get_version_string();
-		let version_platform = options.version.get_platform();
-		let version_sign = base64::encode(options.version.get_signature());
+		let client_version = options.version.get_version_string();
+		let client_platform = options.version.get_platform();
+		let client_version_sign = base64::encode(options.version.get_signature());
+		let default_channel = options.channel.as_ref().map(|s| s.as_str())
+			.unwrap_or_default();
+		let default_channel_password = options.channel_password.as_ref()
+			.map(|s| s.as_str()).unwrap_or_default();
+		let password = options.password.as_ref().map(|s| s.as_str())
+			.unwrap_or_default();
 
-		let mut args = vec![
-			("client_nickname", options.name.as_str()),
-			("client_version", &version_string),
-			("client_platform", &version_platform),
-			("client_input_hardware", "1"),
-			("client_output_hardware", "1"),
-			("client_default_channel_password", ""),
-			("client_server_password", ""),
-			("client_meta_data", ""),
-			("client_version_sign", &version_sign),
-			("client_nickname_phonetic", ""),
-			("client_key_offset", &counter),
-			("client_default_token", ""),
-			(
-				"hwid",
-				"923f136fb1e22ae6ce95e60255529c00,\
-				 d13231b1bc33edfecfb9169cc7a63bcc",
-			),
-		];
+		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
+			name: &options.name,
+			client_version: &client_version,
+			client_platform: &client_platform,
+			input_hardware_enabled: true,
+			output_hardware_enabled: true,
+			default_channel: &default_channel,
+			default_channel_password: &default_channel_password,
+			password: &password,
+			metadata: "",
+			client_version_sign: &client_version_sign,
+			client_key_offset: counter,
+			phonetic_name: "",
+			default_token: "",
+			hardware_id: "923f136fb1e22ae6ce95e60255529c00,\
+				d13231b1bc33edfecfb9169cc7a63bcc",
+			badges: None,
+		}));
 
-		if let Some(channel) = &options.channel {
-			args.push(("client_default_channel", channel));
-		}
-
-		if let Some(pw) = &options.channel_password {
-			args.push(("client_default_channel_password", pw));
-		}
-
-		if let Some(pw) = &options.password {
-			args.push(("client_server_password", pw));
-		}
-
-		let packet =
-			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-				Direction::C2S,
-				PacketType::Command,
-				"clientinit",
-				args.into_iter(),
-				std::iter::empty(),
-			);
-
-		client.send_packet(packet).map_err(Error::from)?;
+		// TODO Error::from?
+		client.send_packet(packet.into_packet()).map_err(Error::from)?;
 
 		// Wait until we received the initserver packet.
 
@@ -528,9 +511,9 @@ impl Connection {
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
 	#[cfg(feature = "unstable")]
-	pub fn send_packet(&self, packet: OutPacket) -> Result<MessageHandle> {
+	pub fn send_command(&self, packet: OutCommand) -> Result<MessageHandle> {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
-			con.send_packet(packet)
+			con.send_command(packet)
 		} else {
 			bail!("Currently not connected");
 		}
@@ -605,7 +588,7 @@ impl Connection {
 	pub async fn disconnect(&mut self, options: DisconnectOptions) {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			let packet = book.disconnect(options);
-			if let Err(e) = con.client.send_packet(packet) {
+			if let Err(e) = con.client.send_packet(packet.into_packet()) {
 				warn!(self.logger, "Failed to send disconnect packet";
 					"error" => ?e);
 				return;
@@ -926,12 +909,11 @@ impl ConnectedConnection {
 	}
 
 	// TODO Move return_code handling into tsproto::client
-	fn send_packet(&mut self, mut packet: OutPacket) -> Result<MessageHandle> {
+	fn send_command(&mut self, mut packet: OutCommand) -> Result<MessageHandle> {
 		let code = self.cur_return_code;
 		self.cur_return_code += 1;
-		packet.data_mut().extend_from_slice(" return_code=".as_bytes());
-		packet.data_mut().extend_from_slice(code.to_string().as_bytes());
-		self.client.send_packet(packet).map(|_| MessageHandle(code))
+		packet.write_arg("return_code", &code);
+		self.client.send_packet(packet.into_packet()).map(|_| MessageHandle(code))
 	}
 
 	/// Return the size of the file and a tcp stream of the requested file.
@@ -942,19 +924,17 @@ impl ConnectedConnection {
 	{
 		let ft_id = self.cur_file_transfer_id;
 		self.cur_file_transfer_id += 1;
-		let packet = c2s::OutFtInitDownloadMessage::new(
-			vec![c2s::OutFtInitDownloadPart {
+		let packet = c2s::OutFtInitDownloadMessage::new(&mut iter::once(
+			c2s::OutFtInitDownloadPart {
 				client_file_transfer_id: ft_id,
 				name: path,
 				channel_id,
 				channel_password: channel_password.unwrap_or(""),
 				seek_position: seek_position.unwrap_or_default(),
 				protocol: 1,
-			}]
-			.into_iter(),
-		);
+			}));
 
-		self.send_packet(packet).map(|_| FileTransferHandle(ft_id))
+		self.send_command(packet).map(|_| FileTransferHandle(ft_id))
 	}
 
 	/// Return the size of the part which is already uploaded (when resume is
@@ -968,8 +948,8 @@ impl ConnectedConnection {
 		let ft_id = self.cur_file_transfer_id;
 		self.cur_file_transfer_id += 1;
 
-		let packet = c2s::OutFtInitUploadMessage::new(
-			vec![c2s::OutFtInitUploadPart {
+		let packet = c2s::OutFtInitUploadMessage::new(&mut iter::once(
+			c2s::OutFtInitUploadPart {
 				client_file_transfer_id: ft_id,
 				name: path,
 				channel_id,
@@ -978,11 +958,9 @@ impl ConnectedConnection {
 				resume,
 				size,
 				protocol: 1,
-			}]
-			.into_iter(),
-		);
+			}));
 
-		self.send_packet(packet).map(|_| FileTransferHandle(ft_id))
+		self.send_command(packet).map(|_| FileTransferHandle(ft_id))
 	}
 }
 

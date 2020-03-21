@@ -35,7 +35,7 @@ impl ServerMut<'_> {
 	pub fn add_channel(
 		&mut self, options: ChannelOptions,
 	) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.add_channel(options))
+		self.connection.send_command(self.inner.add_channel(options))
 	}
 
 	/// Send a text message in the server chat.
@@ -51,14 +51,14 @@ impl ServerMut<'_> {
 	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
 	/// ```
 	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.send_textmessage(message))
+		self.connection.send_command(self.inner.send_textmessage(message))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
 	pub fn set_subscribed(
 		&mut self, subscribed: bool,
 	) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.set_subscribed(subscribed))
+		self.connection.send_command(self.inner.set_subscribed(subscribed))
 	}
 }
 
@@ -79,7 +79,7 @@ impl ConnectionMut<'_> {
 	pub fn send_message(
 		&mut self, target: MessageTarget, message: &str,
 	) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.send_message(target, message))
+		self.connection.send_command(self.inner.send_message(target, message))
 	}
 }
 
@@ -118,7 +118,7 @@ impl ClientMut<'_> {
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
 	/// ```
 	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.send_textmessage(message))
+		self.connection.send_command(self.inner.send_textmessage(message))
 	}
 
 	/// Poke this client with a message.
@@ -136,6 +136,6 @@ impl ClientMut<'_> {
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
 	/// ```
 	pub fn poke(&mut self, message: &str) -> Result<MessageHandle> {
-		self.connection.send_packet(self.inner.poke(message))
+		self.connection.send_command(self.inner.poke(message))
 	}
 }
