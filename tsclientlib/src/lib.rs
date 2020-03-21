@@ -23,7 +23,8 @@ use anyhow::{bail, format_err, Error, Result};
 use futures::prelude::*;
 use slog::{debug, info, o, warn, Drain, Logger};
 use thiserror::Error;
-use tokio::net::UdpSocket;
+use tokio::net::{TcpStream, UdpSocket};
+use tokio::io::AsyncWriteExt as _;
 use tokio::sync::oneshot;
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
@@ -49,7 +50,34 @@ pub struct MessageHandle(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FileTransferHandle(pub u16);
 
-#[derive(Clone)]
+#[derive(Debug)]
+pub struct FileDownloadResult {
+	/// The size of the requested file.
+	// TODO The rest of the size when a seek_position is specified?
+	pub size: u64,
+	/// The stream where the file can be downloaded.
+	pub stream: TcpStream,
+}
+
+#[derive(Debug)]
+pub struct FileUploadResult {
+	/// The size of the already uploaded part when `resume` was set to `true`
+	/// in [`download_file`].
+	///
+	/// [`download_file`]: struct.Connection.html#method.download_file
+	// TODO Link works?
+	pub seek_position: u64,
+	/// The stream where the file can be uploaded.
+	pub stream: TcpStream,
+}
+
+/// An event that gets returned by the connection.
+///
+/// A stream of these events is returned by [`Connection::events`].
+///
+/// [`Connection::events`]: struct.Connection.html#method.events
+// TODO Link works?
+#[derive(Debug)]
 pub enum StreamItem {
 	/// All the incoming events.
 	///
@@ -66,6 +94,9 @@ pub enum StreamItem {
 	DisconnectedTemporarily,
 	/// The result of sending a message.
 	MessageResult(MessageHandle, result::Result<(), TsError>),
+	FileDownload(FileTransferHandle, FileDownloadResult),
+	FileUpload(FileTransferHandle, FileUploadResult),
+	FileTransferFailed(FileTransferHandle, Error),
 }
 
 pub struct Connection {
@@ -79,6 +110,11 @@ struct ConnectedConnection {
 	client: client::Client,
 	cur_return_code: u16,
 	cur_file_transfer_id: u16,
+	/// If a file stream can be opened, it gets put in here until the tcp
+	/// connection is ready and the key is sent.
+	///
+	/// Afterwards we can directly return a `TcpStream` in the event stream.
+	file_transfers: Vec<future::BoxFuture<'static, StreamItem>>,
 }
 
 enum ConnectionState {
@@ -108,6 +144,8 @@ enum IdentityIncreaseLevelState {
 enum ConnectError {
 	#[error("Need to increase the identity level to {0}")]
 	IdentityLevelIncrease(u8),
+	#[error("Got error {0}")]
+	TsError(TsError),
 	#[error(transparent)]
 	Other(#[from] anyhow::Error),
 }
@@ -231,16 +269,17 @@ impl Connection {
 			let addr = addr?;
 			match Self::connect_to(&logger, &options, addr).await {
 				Ok(res) => return Ok(res),
-				Err(ConnectError::IdentityLevelIncrease(level)) => {
-					return Err(ConnectError::IdentityLevelIncrease(level));
+				Err(ConnectError::Other(e)) => {
+					info!(logger, "Connecting failed, trying next address";
+						"error" => %e);
 				}
 				Err(e) => {
-					debug!(logger, "Connecting failed, trying next address";
-						"error" => ?e);
+					// Either increase identity level or the server refused us
+					return Err(e);
 				}
 			}
 		}
-		Err(format_err!("Failed to connect to server").into())
+		Err(format_err!("Failed to connect to server, address {:?} did not work", options.address).into())
 	}
 
 	async fn connect_to(
@@ -339,7 +378,7 @@ impl Connection {
 						return Err(ConnectError::IdentityLevelIncrease(needed));
 					}
 				}
-				return Err(format_err!("Got no initserver but {:?}", e).into());
+				return Err(ConnectError::TsError(e.id));
 			}
 			InMessage::InitServer(initserver) => {
 				// Get uid of server
@@ -589,6 +628,9 @@ impl Connection {
 				Poll::Ready(Err(ConnectError::Other(e))) => {
 					Poll::Ready(Some(Err(e)))
 				}
+				Poll::Ready(Err(ConnectError::TsError(e))) => {
+					Poll::Ready(Some(Err(ConnectError::TsError(e).into())))
+				}
 				Poll::Ready(Err(ConnectError::IdentityLevelIncrease(level))) => {
 					if let Err(e) = self.increase_identity_level(level) {
 						return Poll::Ready(Some(Err(e)));
@@ -602,6 +644,7 @@ impl Connection {
 						client,
 						cur_return_code: 0,
 						cur_file_transfer_id: 0,
+						file_transfers: Default::default(),
 					};
 					self.state = ConnectionState::Connected { con, book };
 					Poll::Ready(Some(Ok(StreamItem::ConEvents(vec![events::Event::PropertyAdded {
@@ -627,7 +670,7 @@ impl Connection {
 					}
 				}
 			}
-			ConnectionState::Connected { con, book } => loop {
+			ConnectionState::Connected { con, book } => match loop {
 				match con.client.poll_next_unpin(cx) {
 					Poll::Pending => break Poll::Pending,
 					Poll::Ready(None) => break Poll::Ready(None),
@@ -638,7 +681,7 @@ impl Connection {
 						// TODO Depending on reason
 						let fut = Self::connect(self.logger.clone(), self.options.clone());
 						self.state = ConnectionState::Connecting(Box::pin(fut));
-						break Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily)));
+						return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily)));
 					}
 					Poll::Ready(Some(Ok(item))) => {
 						match item {
@@ -656,6 +699,23 @@ impl Connection {
 							}
 							_ => {}
 						}
+					}
+				}
+			} {
+				Poll::Ready(r) => Poll::Ready(r),
+				Poll::Pending => {
+					// Check file transfers
+					let ft = con.file_transfers.iter_mut().enumerate().find_map(|(i, ft)| {
+						match ft.poll_unpin(cx) {
+							Poll::Pending => None,
+							Poll::Ready(r) => Some((i, r)),
+						}
+					});
+					if let Some((i, res)) = ft {
+						con.file_transfers.remove(i);
+						Poll::Ready(Some(Ok(res)))
+					} else {
+						Poll::Pending
 					}
 				}
 			}
@@ -721,19 +781,55 @@ impl ConnectedConnection {
 			}
 		} else if let InMessage::FileDownload(msg) = &msg {
 			for msg in msg.iter() {
-				let ft_id = msg.client_file_transfer_id;
+				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
 				let ip = msg.ip.unwrap_or_else(|| self.client.address.ip());
 				let addr = SocketAddr::new(ip, msg.port);
 				let key = msg.file_transfer_key.clone();
 				let size = msg.size;
 
+				let fut = Box::new(async move {
+					let addr = addr;
+					let key = key;
+					let mut stream = TcpStream::connect(&addr).await?;
+					stream.write_all(key.as_bytes()).await?;
+					stream.flush().await?;
+					Ok(stream)
+				}).map(move |res| match res {
+					Ok(stream) => StreamItem::FileDownload(ft_id, FileDownloadResult {
+						size,
+						stream,
+					}),
+					Err(e) => StreamItem::FileTransferFailed(ft_id, e),
+				});
+
+				self.file_transfers.push(Box::pin(fut));
+
 				// TODO filetransfer
-				//let stream = TcpStream::connect(&addr).await?.write_all(key).await?.flush().await;
-				//return (size, stream);
 			}
 		} else if let InMessage::FileUpload(msg) = &msg {
-			for _msg in msg.iter() {
-				//return (msg.seek_position, stream)
+			for msg in msg.iter() {
+				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
+				let ip = msg.ip.unwrap_or_else(|| self.client.address.ip());
+				let addr = SocketAddr::new(ip, msg.port);
+				let key = msg.file_transfer_key.clone();
+				let seek_position = msg.seek_position;
+
+				let fut = Box::new(async move {
+					let addr = addr;
+					let key = key;
+					let mut stream = TcpStream::connect(&addr).await?;
+					stream.write_all(key.as_bytes()).await?;
+					stream.flush().await?;
+					Ok(stream)
+				}).map(move |res| match res {
+					Ok(stream) => StreamItem::FileUpload(ft_id, FileUploadResult {
+						seek_position,
+						stream,
+					}),
+					Err(e) => StreamItem::FileTransferFailed(ft_id, e),
+				});
+
+				self.file_transfers.push(Box::pin(fut));
 			}
 		} else if let InMessage::FileTransferStatus(msg) = &msg {
 			for _msg in msg.iter() {
