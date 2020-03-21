@@ -58,15 +58,11 @@ async fn real_main() -> Result<()> {
 	info!(logger, "Waited");
 
 	// Send packet
-	let packet =
-		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"sendtextmessage",
-			vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
-			std::iter::empty(),
-		);
-	let id = con.send_packet(packet)?;
+	let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
+		PacketType::Command, "sendtextmessage");
+	cmd.write_arg("targetmode", &3);
+	cmd.write_arg("msg", &"Hello");
+	let id = con.send_packet(cmd.into_packet())?;
 	con.wait_for_ack(id).await?;
 
 	// Disconnect

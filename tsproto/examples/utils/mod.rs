@@ -65,47 +65,27 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 
 	// Create clientinit packet
 	let offset = offset.to_string();
-	let packet = OutCommand::new::<
-		_,
-		_,
-		String,
-		String,
-		_,
-		_,
-		std::iter::Empty<_>,
-	>(
-		Direction::C2S,
-		PacketType::Command,
-		"clientinit",
-		vec![
-			("client_nickname", "Bot"),
-			("client_version", "3.?.? [Build: 5680278000]"),
-			("client_platform", "Linux"),
-			("client_input_hardware", "1"),
-			("client_output_hardware", "1"),
-			("client_default_channel", ""),
-			("client_default_channel_password", ""),
-			("client_server_password", ""),
-			("client_meta_data", ""),
-			(
-				"client_version_sign",
-				"Hjd+N58Gv3ENhoKmGYy2bNRBsNNgm5kpiaQWxOj5HN2DXttG6REjymSwJtpJ8muC2gSwRuZi0R+8Laan5ts5CQ==",
-			),
-			("client_nickname_phonetic", ""),
-			("client_key_offset", &offset),
-			("client_default_token", ""),
-			("client_badges", "Overwolf=0"),
-			(
-				"hwid",
-				"923f136fb1e22ae6ce95e60255529c00,\
-				 d13231b1bc33edfecfb9169cc7a63bcc",
-			),
-		]
-		.into_iter(),
-		std::iter::empty(),
-	);
+	let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
+		PacketType::Command, "clientinit");
+	cmd.write_arg("client_nickname", &"Bot");
+	cmd.write_arg("client_version", &"3.?.? [Build: 5680278000]");
+	cmd.write_arg("client_platform", &"Linux");
 
-	con.send_packet(packet)?;
+	cmd.write_arg("client_input_hardware", &"1");
+	cmd.write_arg("client_output_hardware", &"1");
+	cmd.write_arg("client_default_channel", &"");
+	cmd.write_arg("client_default_channel_password", &"");
+	cmd.write_arg("client_server_password", &"");
+	cmd.write_arg("client_meta_data", &"");
+	cmd.write_arg("client_version_sign",
+		&"Hjd+N58Gv3ENhoKmGYy2bNRBsNNgm5kpiaQWxOj5HN2DXttG6REjymSwJtpJ8muC2gSwRuZi0R+8Laan5ts5CQ==");
+	cmd.write_arg("client_nickname_phonetic", &"");
+	cmd.write_arg("client_key_offset", &offset);
+	cmd.write_arg("client_default_token", &"");
+	cmd.write_arg("client_badges", &"Overwolf=0");
+	cmd.write_arg("hwid", &"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
+
+	con.send_packet(cmd.into_packet())?;
 	Ok(con
 		.filter_commands(|con, cmd| {
 			Ok(if cmd.data().packet().content().starts_with(b"initserver ") {
@@ -119,21 +99,12 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 }
 
 pub async fn disconnect(con: &mut Client) -> Result<()> {
-	let packet =
-		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientdisconnect",
-			vec![
-				// Reason: Disconnect
-				("reasonid", "8"),
-				("reasonmsg", "Bye"),
-			]
-			.into_iter(),
-			std::iter::empty(),
-		);
+	let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
+		PacketType::Command, "clientdisconnect");
+	cmd.write_arg("reasonid", &8);
+	cmd.write_arg("reasonmsg", &"Bye");
 
-	con.send_packet(packet)?;
+	con.send_packet(cmd.into_packet())?;
 	con.wait_disconnect().await?;
 	Ok(())
 }

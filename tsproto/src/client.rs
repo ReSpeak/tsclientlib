@@ -876,20 +876,12 @@ mod tests {
 
 		state.server.event_listeners.push(Box::new(listener));
 
-		let packet =
-			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-				Direction::C2S,
-				PacketType::Command,
-				"clientdisconnect",
-				vec![
-					// Reason: Disconnect
-					("reasonid", "8"),
-					("reasonmsg", "Bye"),
-				]
-				.into_iter(),
-				std::iter::empty(),
-			);
-		state.client.send_packet(packet)?;
+		let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
+			PacketType::Command, "clientdisconnect");
+		cmd.write_arg("reasonid", &8);
+		cmd.write_arg("reasonmsg", &"Bye");
+
+		state.client.send_packet(cmd.into_packet())?;
 
 		tokio::select!(
 			(r, err) = future::join(
@@ -989,23 +981,10 @@ mod tests {
 		state.client.event_listeners.push(Box::new(listener));
 
 		for i in 0..count {
-			let packet = OutCommand::new::<
-				_,
-				_,
-				String,
-				String,
-				_,
-				_,
-				std::iter::Empty<_>,
-			>(
-				Direction::S2C,
-				PacketType::Command,
-				"notifytextmessage",
-				vec![("msg", format!("message {}", i))].into_iter(),
-				std::iter::empty(),
-			);
-
-			state.server.send_packet(packet)?;
+			let mut cmd = OutCommand::new(Direction::S2C, Flags::empty(),
+				PacketType::Command, "notifytextmessage");
+			cmd.write_arg("msg", &format!("message {}", i));
+			state.server.send_packet(cmd.into_packet())?;
 		}
 
 		tokio::select!(
