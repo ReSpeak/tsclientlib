@@ -402,7 +402,12 @@ impl Client {
 			let proof_s = base64::encode(&proof);
 
 			// Send clientek
-			let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "clientek");
+			let mut cmd = OutCommand::new(
+				Direction::C2S,
+				Flags::empty(),
+				PacketType::Command,
+				"clientek",
+			);
 			cmd.write_arg("ek", &ek_s);
 			cmd.write_arg("proof", &proof_s);
 			clientek_id = self.send_packet(cmd.into_packet())?;
@@ -586,7 +591,12 @@ impl Client {
 							#[cfg(not(debug_assertions))]
 							version.push_str(" (Release)");
 
-							let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "plugincmd");
+							let mut cmd = OutCommand::new(
+								Direction::C2S,
+								Flags::empty(),
+								PacketType::Command,
+								"plugincmd",
+							);
 							cmd.write_arg("name", &"getversion");
 							cmd.write_arg("data", &version);
 							cmd.write_arg("targetmode", &2);

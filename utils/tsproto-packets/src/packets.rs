@@ -1080,7 +1080,11 @@ impl OutCommand {
 	/// For binary arguments. The value will still be escaped.
 	#[inline]
 	pub fn write_bin_arg(&mut self, name: &str, value: &[u8]) {
-		self.0.data.push(b' ');
+		if self.0.content().last() != Some(&b'|')
+			&& !self.0.content().is_empty()
+		{
+			self.0.data.push(b' ');
+		}
 		self.0.data.extend_from_slice(name.as_bytes());
 		if !value.is_empty() {
 			self.0.data.push(b'=');
@@ -1091,7 +1095,11 @@ impl OutCommand {
 	/// The value will be formatted and escaped.
 	#[inline]
 	pub fn write_arg(&mut self, name: &str, value: &dyn fmt::Display) {
-		self.0.data.push(b' ');
+		if self.0.content().last() != Some(&b'|')
+			&& !self.0.content().is_empty()
+		{
+			self.0.data.push(b' ');
+		}
 		self.0.data.extend_from_slice(name.as_bytes());
 		self.0.data.push(b'=');
 		let len = self.0.data.len();
