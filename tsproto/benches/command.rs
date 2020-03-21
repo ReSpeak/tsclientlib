@@ -147,10 +147,13 @@ fn parse_message(b: &mut Bencher, cmd: &[u8]) {
 									} else {
 										Some(val)
 									}
-								}).map(|val| {
+								})
+								.map(|val| {
 									let val = val.trim();
 									Ok(val.into())
-								}).collect::<Result<Vec<_>, ()>>().unwrap()
+								})
+								.collect::<Result<Vec<_>, ()>>()
+								.unwrap()
 						},
 						phantom: PhantomData,
 					});
@@ -168,90 +171,157 @@ fn parse_message(b: &mut Bencher, cmd: &[u8]) {
 				for ccmd in data.iter() {
 					list.push(ChannelListPart {
 						channel_id: {
-							let val = ccmd.0.get("cid")
-								.unwrap();
-									val.parse().unwrap()
+							let val = ccmd.0.get("cid").unwrap();
+							val.parse().unwrap()
 						},
 						parent_channel_id: {
-							let val = ccmd.0.get("cpid")
-								.unwrap();
-									val.parse().unwrap()
+							let val = ccmd.0.get("cpid").unwrap();
+							val.parse().unwrap()
 						},
 						order: {
-							let val = ccmd.0.get("channel_order")
-								.unwrap();
-									val.parse().unwrap()
+							let val = ccmd.0.get("channel_order").unwrap();
+							val.parse().unwrap()
 						},
 						name: {
-							let val = Cow::Borrowed(*ccmd.0.get("channel_name")
-								.unwrap());
-							val				},
+							let val = Cow::Borrowed(
+								*ccmd.0.get("channel_name").unwrap(),
+							);
+							val
+						},
 						total_clients: 0,
 						needed_subscribe_power: 0,
 						topic: {
 							if let Some(val) = ccmd.0.get("channel_topic") {
 								Some({ Cow::Borrowed(val) })
-							} else { None } },
+							} else {
+								None
+							}
+						},
 						is_default: {
-							if let Some(val) = ccmd.0.get("channel_flag_default") {
-								Some({ 		match *val { "0" => false, "1" => true, _ => panic!() }
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_flag_default")
+							{
+								Some({
+									match *val {
+										"0" => false,
+										"1" => true,
+										_ => panic!(),
+									}
+								})
+							} else {
+								None
+							}
+						},
 						has_password: {
-							if let Some(val) = ccmd.0.get("channel_flag_password") {
-								Some({ 		match *val { "0" => false, "1" => true, _ => panic!() }
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_flag_password")
+							{
+								Some({
+									match *val {
+										"0" => false,
+										"1" => true,
+										_ => panic!(),
+									}
+								})
+							} else {
+								None
+							}
+						},
 						is_permanent: {
-							if let Some(val) = ccmd.0.get("channel_flag_permanent") {
-								Some({ 		match *val { "0" => false, "1" => true, _ => panic!() }
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_flag_permanent")
+							{
+								Some({
+									match *val {
+										"0" => false,
+										"1" => true,
+										_ => panic!(),
+									}
+								})
+							} else {
+								None
+							}
+						},
 						is_semi_permanent: {
-							if let Some(val) = ccmd.0.get("channel_flag_semi_permanent") {
-								Some({ 		match *val { "0" => false, "1" => true, _ => panic!() }
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_flag_semi_permanent")
+							{
+								Some({
+									match *val {
+										"0" => false,
+										"1" => true,
+										_ => panic!(),
+									}
+								})
+							} else {
+								None
+							}
+						},
 						codec: {
 							if let Some(val) = ccmd.0.get("channel_codec") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						codec_quality: {
-							if let Some(val) = ccmd.0.get("channel_codec_quality") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_codec_quality")
+							{
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						needed_talk_power: {
-							if let Some(val) = ccmd.0.get("channel_needed_talk_power") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_needed_talk_power")
+							{
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						total_family_clients: {
-							if let Some(val) = ccmd.0.get("total_clients_family") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("total_clients_family")
+							{
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						max_clients: {
-							if let Some(val) = ccmd.0.get("channel_maxclients") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+							if let Some(val) = ccmd.0.get("channel_maxclients")
+							{
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						max_family_clients: {
-							if let Some(val) = ccmd.0.get("channel_maxfamilyclients") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+							if let Some(val) =
+								ccmd.0.get("channel_maxfamilyclients")
+							{
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						icon_id: {
 							if let Some(val) = ccmd.0.get("channel_icon_id") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						duration_empty: {
 							if let Some(val) = ccmd.0.get("seconds_empty") {
-								Some({ 		val.parse().unwrap()
-							})
-							} else { None } },
+								Some({ val.parse().unwrap() })
+							} else {
+								None
+							}
+						},
 						phantom: PhantomData,
 					});
 				}
@@ -291,28 +361,37 @@ fn parse_message_new(b: &mut Bencher, cmd: &[u8]) {
 						CommandItem::Argument(arg) => {
 							match arg.name() {
 								b"alpha" => {
-									alpha = Some(arg.value().get_str().unwrap());
+									alpha =
+										Some(arg.value().get_str().unwrap());
 								}
 								b"omega" => {
-									omega = Some(arg.value().get_str().unwrap());
+									omega =
+										Some(arg.value().get_str().unwrap());
 								}
 								b"ip" => {
 									let val = arg.value().get_str().unwrap();
-									ip = Some(val.split(',')
-										.filter_map(|val| {
-											let val = val.trim();
-											if val.is_empty() {
-												None
-											} else {
-												Some(val)
-											}
-										}).map(|val| {
-											let val = val.trim();
-											// Could be optimized more
-											Ok(val.to_string().into())
-										}).collect::<Result<Vec<_>, ()>>().unwrap());
+									ip = Some(
+										val.split(',')
+											.filter_map(|val| {
+												let val = val.trim();
+												if val.is_empty() {
+													None
+												} else {
+													Some(val)
+												}
+											})
+											.map(|val| {
+												let val = val.trim();
+												// Could be optimized more
+												Ok(val.to_string().into())
+											})
+											.collect::<Result<Vec<_>, ()>>()
+											.unwrap(),
+									);
 								}
-								s => panic!("Unexpected {:?}", str::from_utf8(s)),
+								s => {
+									panic!("Unexpected {:?}", str::from_utf8(s))
+								}
 							}
 						}
 					}
@@ -359,11 +438,15 @@ fn parse_message_new(b: &mut Bencher, cmd: &[u8]) {
 							// Build command
 							list.push(ChannelListPart {
 								channel_id: channel_id.clone().unwrap(),
-								parent_channel_id: parent_channel_id.clone().unwrap(),
+								parent_channel_id: parent_channel_id
+									.clone()
+									.unwrap(),
 								order: order.clone().unwrap(),
 								name: name.clone().unwrap(),
 								total_clients: total_clients.clone().unwrap(),
-								needed_subscribe_power: needed_subscribe_power.clone().unwrap(),
+								needed_subscribe_power: needed_subscribe_power
+									.clone()
+									.unwrap(),
 								topic: topic.clone(),
 								is_default: is_default.clone(),
 								has_password: has_password.clone(),
@@ -372,7 +455,8 @@ fn parse_message_new(b: &mut Bencher, cmd: &[u8]) {
 								codec: codec.clone(),
 								codec_quality: codec_quality.clone(),
 								needed_talk_power: needed_talk_power.clone(),
-								total_family_clients: total_family_clients.clone(),
+								total_family_clients: total_family_clients
+									.clone(),
 								max_clients: max_clients.clone(),
 								max_family_clients: max_family_clients.clone(),
 								icon_id: icon_id.clone(),
@@ -383,71 +467,142 @@ fn parse_message_new(b: &mut Bencher, cmd: &[u8]) {
 						CommandItem::Argument(arg) => {
 							match arg.name() {
 								b"cid" => {
-									channel_id = Some(arg.value().get_str().unwrap().parse().unwrap());
+									channel_id = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"cpid" => {
-									parent_channel_id = Some(arg.value().get_str().unwrap().parse().unwrap());
+									parent_channel_id = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_order" => {
-									order = Some(arg.value().get_str().unwrap().parse().unwrap());
+									order = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_name" => {
 									name = Some(arg.value().get_str().unwrap());
 								}
 								b"channel_topic" => {
-									topic = Some(arg.value().get_str().unwrap());
+									topic =
+										Some(arg.value().get_str().unwrap());
 								}
 								b"channel_flag_default" => {
-									is_default = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									is_default =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_flag_password" => {
-									has_password = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									has_password =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_flag_permanent" => {
-									is_permanent = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									is_permanent =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_flag_semi_permanent" => {
-									is_semi_permanent = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									is_semi_permanent =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_codec" => {
-									codec = Some(arg.value().get_str().unwrap().parse().unwrap());
+									codec = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_codec_quality" => {
-									codec_quality = Some(arg.value().get_str().unwrap().parse().unwrap());
+									codec_quality = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_needed_talk_power" => {
-									needed_talk_power = Some(arg.value().get_str().unwrap().parse().unwrap());
+									needed_talk_power = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"total_family_clients" => {
-									total_family_clients = Some(arg.value().get_str().unwrap().parse().unwrap());
+									total_family_clients = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_maxclients" => {
-									max_clients = Some(arg.value().get_str().unwrap().parse().unwrap());
+									max_clients = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_maxfamilyclients" => {
-									max_family_clients = Some(arg.value().get_str().unwrap().parse().unwrap());
+									max_family_clients = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_icon_id" => {
-									icon_id = Some(arg.value().get_str().unwrap().parse().unwrap());
+									icon_id = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"seconds_empty" => {
-									duration_empty = Some(arg.value().get_str().unwrap().parse().unwrap());
+									duration_empty = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								s => {
 									//panic!("Unexpected {:?}", str::from_utf8(s));
@@ -514,28 +669,45 @@ fn parse_message_new2(b: &mut Bencher, cmd: &[u8]) {
 						CommandItem::Argument(arg) => {
 							match arg.name() {
 								b"alpha" => {
-									alpha = Some(arg.value().get_str().unwrap().into_owned());
+									alpha = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.into_owned(),
+									);
 								}
 								b"omega" => {
-									omega = Some(arg.value().get_str().unwrap().into_owned());
+									omega = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.into_owned(),
+									);
 								}
 								b"ip" => {
 									let val = arg.value().get_str().unwrap();
-									ip = Some(val.split(',')
-										.filter_map(|val| {
-											let val = val.trim();
-											if val.is_empty() {
-												None
-											} else {
-												Some(val)
-											}
-										}).map(|val| {
-											let val = val.trim();
-											// Could be optimized more
-											Ok(val.to_string().into())
-										}).collect::<Result<Vec<_>, ()>>().unwrap());
+									ip = Some(
+										val.split(',')
+											.filter_map(|val| {
+												let val = val.trim();
+												if val.is_empty() {
+													None
+												} else {
+													Some(val)
+												}
+											})
+											.map(|val| {
+												let val = val.trim();
+												// Could be optimized more
+												Ok(val.to_string().into())
+											})
+											.collect::<Result<Vec<_>, ()>>()
+											.unwrap(),
+									);
 								}
-								s => panic!("Unexpected {:?}", str::from_utf8(s)),
+								s => {
+									panic!("Unexpected {:?}", str::from_utf8(s))
+								}
 							}
 						}
 					}
@@ -581,11 +753,15 @@ fn parse_message_new2(b: &mut Bencher, cmd: &[u8]) {
 							// Build command
 							list.push(ChannelListPart2 {
 								channel_id: channel_id.clone().unwrap(),
-								parent_channel_id: parent_channel_id.clone().unwrap(),
+								parent_channel_id: parent_channel_id
+									.clone()
+									.unwrap(),
 								order: order.clone().unwrap(),
 								name: name.clone().unwrap(),
 								total_clients: total_clients.clone().unwrap(),
-								needed_subscribe_power: needed_subscribe_power.clone().unwrap(),
+								needed_subscribe_power: needed_subscribe_power
+									.clone()
+									.unwrap(),
 								topic: topic.clone(),
 								is_default: is_default.clone(),
 								has_password: has_password.clone(),
@@ -594,7 +770,8 @@ fn parse_message_new2(b: &mut Bencher, cmd: &[u8]) {
 								codec: codec.clone(),
 								codec_quality: codec_quality.clone(),
 								needed_talk_power: needed_talk_power.clone(),
-								total_family_clients: total_family_clients.clone(),
+								total_family_clients: total_family_clients
+									.clone(),
 								max_clients: max_clients.clone(),
 								max_family_clients: max_family_clients.clone(),
 								icon_id: icon_id.clone(),
@@ -604,71 +781,151 @@ fn parse_message_new2(b: &mut Bencher, cmd: &[u8]) {
 						CommandItem::Argument(arg) => {
 							match arg.name() {
 								b"cid" => {
-									channel_id = Some(arg.value().get_str().unwrap().parse().unwrap());
+									channel_id = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"cpid" => {
-									parent_channel_id = Some(arg.value().get_str().unwrap().parse().unwrap());
+									parent_channel_id = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_order" => {
-									order = Some(arg.value().get_str().unwrap().parse().unwrap());
+									order = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_name" => {
-									name = Some(arg.value().get_str().unwrap().into_owned());
+									name = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.into_owned(),
+									);
 								}
 								b"channel_topic" => {
-									topic = Some(arg.value().get_str().unwrap().into_owned());
+									topic = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.into_owned(),
+									);
 								}
 								b"channel_flag_default" => {
-									is_default = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									is_default =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_flag_password" => {
-									has_password = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									has_password =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_flag_permanent" => {
-									is_permanent = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									is_permanent =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_flag_semi_permanent" => {
-									is_semi_permanent = Some(match arg.value().get_raw() {
-										b"0" => false,
-										b"1" => true,
-										_ => panic!(),
-									});
+									is_semi_permanent =
+										Some(match arg.value().get_raw() {
+											b"0" => false,
+											b"1" => true,
+											_ => panic!(),
+										});
 								}
 								b"channel_codec" => {
-									codec = Some(arg.value().get_str().unwrap().parse().unwrap());
+									codec = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_codec_quality" => {
-									codec_quality = Some(arg.value().get_str().unwrap().parse().unwrap());
+									codec_quality = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_needed_talk_power" => {
-									needed_talk_power = Some(arg.value().get_str().unwrap().parse().unwrap());
+									needed_talk_power = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"total_family_clients" => {
-									total_family_clients = Some(arg.value().get_str().unwrap().parse().unwrap());
+									total_family_clients = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_maxclients" => {
-									max_clients = Some(arg.value().get_str().unwrap().parse().unwrap());
+									max_clients = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_maxfamilyclients" => {
-									max_family_clients = Some(arg.value().get_str().unwrap().parse().unwrap());
+									max_family_clients = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"channel_icon_id" => {
-									icon_id = Some(arg.value().get_str().unwrap().parse().unwrap());
+									icon_id = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								b"seconds_empty" => {
-									duration_empty = Some(arg.value().get_str().unwrap().parse().unwrap());
+									duration_empty = Some(
+										arg.value()
+											.get_str()
+											.unwrap()
+											.parse()
+											.unwrap(),
+									);
 								}
 								s => {
 									//panic!("Unexpected {:?}", str::from_utf8(s));

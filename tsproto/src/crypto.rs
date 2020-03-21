@@ -136,15 +136,12 @@ impl EccKeyPubP256 {
 		let pubkey_y =
 			BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
 
-		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
-			0,
-			vec![
-				ASN1Block::BitString(0, 1, vec![0]),
-				ASN1Block::Integer(0, 32.into()),
-				ASN1Block::Integer(0, pubkey_x),
-				ASN1Block::Integer(0, pubkey_y),
-			],
-		))?)
+		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+			ASN1Block::BitString(0, 1, vec![0]),
+			ASN1Block::Integer(0, 32.into()),
+			ASN1Block::Integer(0, pubkey_x),
+			ASN1Block::Integer(0, pubkey_y),
+		]))?)
 	}
 
 	/// The shortest format of a public key.
@@ -380,16 +377,13 @@ impl EccKeyPrivP256 {
 
 		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0);
 
-		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
-			0,
-			vec![
-				ASN1Block::BitString(0, 1, vec![0x80]),
-				ASN1Block::Integer(0, 32.into()),
-				ASN1Block::Integer(0, pubkey_x),
-				ASN1Block::Integer(0, pubkey_y),
-				ASN1Block::Integer(0, privkey),
-			],
-		))?)
+		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+			ASN1Block::BitString(0, 1, vec![0x80]),
+			ASN1Block::Integer(0, 32.into()),
+			ASN1Block::Integer(0, pubkey_x),
+			ASN1Block::Integer(0, pubkey_y),
+			ASN1Block::Integer(0, privkey),
+		]))?)
 	}
 
 	/// Create a `ring` key from the stored private key.
@@ -473,10 +467,8 @@ impl EccKeyPrivEd25519 {
 
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(
-		&self,
-		pub_key: &EdwardsPoint,
-	) -> Result<[u8; 32]>
-	{
+		&self, pub_key: &EdwardsPoint,
+	) -> Result<[u8; 32]> {
 		let res = pub_key * self.0;
 		Ok(res.compress().0)
 	}

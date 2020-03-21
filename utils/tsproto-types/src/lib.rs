@@ -93,7 +93,9 @@ impl Permission {
 pub enum ClientType {
 	Normal,
 	/// Server query client
-	Query { admin: bool }
+	Query {
+		admin: bool,
+	},
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

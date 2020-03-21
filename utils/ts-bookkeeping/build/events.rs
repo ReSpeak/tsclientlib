@@ -56,10 +56,8 @@ pub fn get_property_name(p: &Property) -> &str {
 }
 
 pub fn get_properties<'a>(
-	structs: &'a [Struct],
-	s: &'a Struct,
-) -> Vec<&'a Property>
-{
+	structs: &'a [Struct], s: &'a Struct,
+) -> Vec<&'a Property> {
 	s.properties
 		.iter()
 		.filter(|p| !structs.iter().any(|s| s.name == p.type_s))

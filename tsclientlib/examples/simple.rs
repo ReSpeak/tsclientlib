@@ -3,7 +3,9 @@ use futures::prelude::*;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
+use tsclientlib::{
+	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
+};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -22,9 +24,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-	real_main().await
-}
+async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
 	// Parse command line options
@@ -45,7 +45,8 @@ async fn real_main() -> Result<()> {
 	// Connect
 	let mut con = Connection::new(con_config)?;
 
-	let r = con.events()
+	let r = con
+		.events()
 		.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
 		.next()
 		.await;

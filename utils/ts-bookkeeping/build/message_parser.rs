@@ -64,13 +64,17 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}})? }}",
 			field.pretty
 		),
-		"Uid" => format!("Uid(if val == \"ServerAdmin\" {{ val.as_bytes().to_vec() }} else {{
+		"Uid" => format!(
+			"Uid(if val == \"ServerAdmin\" {{ val.as_bytes().to_vec() }} else \
+			 {{
 			base64::decode(val).map_err(|e| ParseError::ParseUid {{
 				arg: \"{}\",
 				value: val.to_string(),
 				source: e,
 			}})?
-		}})", field.pretty),
+		}})",
+			field.pretty
+		),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
 		"IconHash" => format!(
@@ -102,16 +106,17 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}})?",
 			field.pretty
 		),
-		"ClientType" => {
-			format!("match val {{
+		"ClientType" => format!(
+			"match val {{
 				\"0\" => ClientType::Normal,
 				\"1\" => ClientType::Query {{ admin: false }},
 				_ => return Err(ParseError::InvalidValue {{
 					arg: \"{}\",
 					value: val.to_string(),
 				}}),
-			}}", field.pretty)
-		}
+			}}",
+			field.pretty
+		),
 		"TextMessageTargetMode"
 		| "HostMessageMode"
 		| "HostBannerMode"
@@ -187,7 +192,10 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				}})?)",
 			field.pretty
 		),
-		_ => panic!("Unknown type '{}' when trying to deserialize {:?}", rust_type, field),
+		_ => panic!(
+			"Unknown type '{}' when trying to deserialize {:?}",
+			rust_type, field
+		),
 	};
 	if res.contains('\n') { indent(&res, 2) } else { res }
 }
@@ -224,11 +232,8 @@ pub fn generate_serializer(field: &Field, name: &str) -> String {
 }
 
 pub fn single_value_serializer(
-	field: &Field,
-	rust_type: &str,
-	name: &str,
-) -> String
-{
+	field: &Field, rust_type: &str, name: &str,
+) -> String {
 	match rust_type {
 		"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32"
 		| "f64" => format!("Cow::Owned({}.to_string())", name),
@@ -237,19 +242,25 @@ pub fn single_value_serializer(
 		}
 		"&str" => format!("Cow::Borrowed({})", name),
 		"String" => format!("Cow::Borrowed(&{})", name),
-		"UidRef" => format!("if {0}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") }}
-			else {{ Cow::Owned(base64::encode({0}.0)) }}", name),
-		"Uid" => single_value_serializer(field, "UidRef", &format!("&{}", name)),
+		"UidRef" => format!(
+			"if {0}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") }}
+			else {{ Cow::Owned(base64::encode({0}.0)) }}",
+			name
+		),
+		"Uid" => {
+			single_value_serializer(field, "UidRef", &format!("&{}", name))
+		}
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
 		| "ChannelGroupId" | "IconHash" => {
 			format!("Cow::Owned({}.0.to_string())", name)
 		}
-		"ClientType" => {
-			format!("match {} {{
+		"ClientType" => format!(
+			"match {} {{
 				ClientType::Normal => Cow::Borrowed(\"0\"),
 				ClientType::Query {{ .. }} => Cow::Borrowed(\"1\"),
-			}}", name)
-		}
+			}}",
+			name
+		),
 		"TextMessageTargetMode"
 		| "HostMessageMode"
 		| "HostBannerMode"
@@ -265,8 +276,9 @@ pub fn single_value_serializer(
 		| "TokenType"
 		| "PluginTargetMode"
 		| "Error" => format!("Cow::Owned({}.to_u32().unwrap().to_string())", name),
-		"ChannelPermissionHint"
-		| "ClientPermissionHint" => format!("Cow::Owned({}.bits().to_string())", name),
+		"ChannelPermissionHint" | "ClientPermissionHint" => {
+			format!("Cow::Owned({}.bits().to_string())", name)
+		}
 		"Duration" => {
 			if field.type_s == "DurationSeconds" {
 				format!("Cow::Owned({}.whole_seconds().to_string())", name)
@@ -285,11 +297,8 @@ pub fn single_value_serializer(
 }
 
 pub fn vector_value_serializer(
-	field: &Field,
-	inner_type: &str,
-	name: &str,
-) -> String
-{
+	field: &Field, inner_type: &str, name: &str,
+) -> String {
 	format!(
 		"{{ let mut s = String::new();
 				for val in {} {{

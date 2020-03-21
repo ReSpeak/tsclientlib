@@ -45,10 +45,8 @@ fn get_arguments(r: &RuleKind) -> String {
 }
 
 fn get_all_arguments<'a>(
-	e: &'a Event<'a>,
-	r: Option<&'a RuleKind<'a>>,
-) -> String
-{
+	e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>,
+) -> String {
 	let mut args = String::new();
 	for r in e.ids.iter().chain(r.iter().cloned()) {
 		match r {
@@ -81,10 +79,8 @@ fn get_arguments_use(r: &RuleKind) -> String {
 }
 
 fn get_all_arguments_use<'a>(
-	e: &'a Event<'a>,
-	r: Option<&'a RuleKind<'a>>,
-) -> String
-{
+	e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>,
+) -> String {
 	let mut args = String::new();
 	for r in e.ids.iter().chain(r.iter().cloned()) {
 		match r {

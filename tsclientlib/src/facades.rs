@@ -32,7 +32,9 @@ impl ServerMut<'_> {
 	/// ```
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
-	pub fn add_channel(&mut self, options: ChannelOptions) -> Result<MessageHandle> {
+	pub fn add_channel(
+		&mut self, options: ChannelOptions,
+	) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.add_channel(options))
 	}
 
@@ -53,7 +55,9 @@ impl ServerMut<'_> {
 	}
 
 	/// Subscribe or unsubscribe from all channels.
-	pub fn set_subscribed(&mut self, subscribed: bool) -> Result<MessageHandle> {
+	pub fn set_subscribed(
+		&mut self, subscribed: bool,
+	) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.set_subscribed(subscribed))
 	}
 }
@@ -72,7 +76,9 @@ impl ConnectionMut<'_> {
 	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
 	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
-	pub fn send_message(&mut self, target: MessageTarget, message: &str) -> Result<MessageHandle> {
+	pub fn send_message(
+		&mut self, target: MessageTarget, message: &str,
+	) -> Result<MessageHandle> {
 		self.connection.send_packet(self.inner.send_message(target, message))
 	}
 }

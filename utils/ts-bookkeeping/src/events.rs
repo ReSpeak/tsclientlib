@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use time::{OffsetDateTime, Duration};
 use serde::{Deserialize, Serialize};
+use time::{Duration, OffsetDateTime};
 
 use crate::data::{
 	Channel, ChatEntry, Client, Connection, ConnectionClientData,

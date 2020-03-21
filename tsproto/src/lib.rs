@@ -103,7 +103,10 @@ pub enum BasicError {
 	#[error(transparent)]
 	Utf8(#[from] std::str::Utf8Error),
 
-	#[error("Packet {id} not in receive window [{next};{limit}) for type {p_type:?}")]
+	#[error(
+		"Packet {id} not in receive window [{next};{limit}) for type \
+		 {p_type:?}"
+	)]
 	NotInReceiveWindow {
 		id: u16,
 		next: u16,
@@ -117,19 +120,11 @@ pub enum BasicError {
 	#[error("Packet has wrong client id {0}")]
 	WrongClientId(u16),
 	#[error("{p_type:?} Packet {generation_id}:{packet_id} has a wrong mac")]
-	WrongMac {
-		p_type: packets::PacketType,
-		generation_id: u32,
-		packet_id: u16,
-	},
+	WrongMac { p_type: packets::PacketType, generation_id: u32, packet_id: u16 },
 	#[error("Maximum length exceeded for {0}")]
 	MaxLengthExceeded(String),
 	#[error("Wrong signature")]
-	WrongSignature {
-		key: EccKeyPubP256,
-		data: Vec<u8>,
-		signature: Vec<u8>,
-	},
+	WrongSignature { key: EccKeyPubP256, data: Vec<u8>, signature: Vec<u8> },
 	#[error(transparent)]
 	Other(#[from] Error),
 }
@@ -157,10 +152,8 @@ impl<'de> Visitor<'de> for IdKeyVisitor {
 	}
 
 	fn visit_str<E: serde::de::Error>(
-		self,
-		s: &str,
-	) -> std::result::Result<Self::Value, E>
-	{
+		self, s: &str,
+	) -> std::result::Result<Self::Value, E> {
 		EccKeyPrivP256::import_str(s).map_err(|_| {
 			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
 		})
@@ -168,10 +161,8 @@ impl<'de> Visitor<'de> for IdKeyVisitor {
 }
 
 fn serialize_id_key<S: Serializer>(
-	key: &EccKeyPrivP256,
-	s: S,
-) -> std::result::Result<S::Ok, S::Error>
-{
+	key: &EccKeyPrivP256, s: S,
+) -> std::result::Result<S::Ok, S::Error> {
 	s.serialize_str(&base64::encode(&key.to_short()))
 }
 
@@ -196,11 +187,8 @@ impl Identity {
 
 	#[inline]
 	pub fn new_with_max_counter(
-		key: EccKeyPrivP256,
-		counter: u64,
-		max_counter: u64,
-	) -> Self
-	{
+		key: EccKeyPrivP256, counter: u64, max_counter: u64,
+	) -> Self {
 		Self { key, counter, max_counter }
 	}
 

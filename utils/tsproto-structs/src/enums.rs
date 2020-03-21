@@ -44,7 +44,8 @@ impl Enum {
 		let mut value: u64 = 0;
 		for v in &self.variants {
 			if let Some(v) = v.value {
-				leading_zeros = std::cmp::min(leading_zeros, value.leading_zeros());
+				leading_zeros =
+					std::cmp::min(leading_zeros, value.leading_zeros());
 				value = v;
 			} else {
 				value += 1;

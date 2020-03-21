@@ -3,14 +3,14 @@ use std::io::prelude::*;
 use std::str;
 
 use anyhow::format_err;
-use omnom::{ReadExt, WriteExt};
-use time::OffsetDateTime;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
+use omnom::{ReadExt, WriteExt};
 use ring::digest;
+use time::OffsetDateTime;
 
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 use crate::Result;
@@ -209,11 +209,8 @@ impl Licenses {
 	///
 	/// Panics if `starting_block` is not a valid license block index.
 	pub fn derive_private_key(
-		&self,
-		starting_block: usize,
-		first_key: EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519>
-	{
+		&self, starting_block: usize, first_key: EccKeyPrivEd25519,
+	) -> Result<EccKeyPrivEd25519> {
 		let mut res = first_key;
 		for l in &self.blocks[starting_block..] {
 			res = l.derive_private_key(&res)?;
@@ -331,9 +328,11 @@ impl License {
 			License {
 				key: LicenseKey::Public(EccKeyPubEd25519::from_bytes(key_data)),
 				not_valid_before: OffsetDateTime::from_unix_timestamp(
-					i64::from(before_ts) + TIMESTAMP_OFFSET),
+					i64::from(before_ts) + TIMESTAMP_OFFSET,
+				),
 				not_valid_after: OffsetDateTime::from_unix_timestamp(
-					i64::from(after_ts) + TIMESTAMP_OFFSET),
+					i64::from(after_ts) + TIMESTAMP_OFFSET,
+				),
 				hash,
 				inner,
 			},
@@ -392,10 +391,8 @@ impl License {
 	}
 
 	pub fn derive_public_key(
-		&self,
-		parent_key: &EdwardsPoint,
-	) -> Result<EdwardsPoint>
-	{
+		&self, parent_key: &EdwardsPoint,
+	) -> Result<EdwardsPoint> {
 		let hash_key = self.get_hash_key();
 		let pub_key = self.key.get_pub()?;
 		Ok(pub_key * hash_key + parent_key)
@@ -409,10 +406,8 @@ impl License {
 	///
 	/// `parent_key`: The resulting private key of the previous block.
 	pub fn derive_private_key(
-		&self,
-		parent_key: &EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519>
-	{
+		&self, parent_key: &EccKeyPrivEd25519,
+	) -> Result<EccKeyPrivEd25519> {
 		let priv_key = if let LicenseKey::Private(ref k) = self.key {
 			&k.0
 		} else {

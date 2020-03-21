@@ -19,23 +19,15 @@ fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {
 }
 
 pub fn log_udp_packet<P: Debug>(
-	logger: &Logger,
-	is_client: bool,
-	incoming: bool,
-	packet: &P,
-)
-{
+	logger: &Logger, is_client: bool, incoming: bool, packet: &P,
+) {
 	let logger = prepare_logger(logger, is_client, incoming);
 	debug!(logger, "UdpPacket"; "header" => ?packet);
 }
 
 pub fn log_out_udp_packet(
-	logger: &Logger,
-	is_client: bool,
-	incoming: bool,
-	packet: &OutUdpPacket,
-)
-{
+	logger: &Logger, is_client: bool, incoming: bool, packet: &OutUdpPacket,
+) {
 	let logger = prepare_logger(logger, is_client, incoming);
 	debug!(logger, "UdpPacket";
 		"generation" => packet.generation_id(),
@@ -44,12 +36,8 @@ pub fn log_out_udp_packet(
 }
 
 pub fn log_packet<P: Debug>(
-	logger: &Logger,
-	is_client: bool,
-	incoming: bool,
-	packet: &P,
-)
-{
+	logger: &Logger, is_client: bool, incoming: bool, packet: &P,
+) {
 	// packet.header.c_id is not set for newly created packets so we cannot
 	// detect if a packet is incoming or not.
 	let logger = prepare_logger(logger, is_client, incoming);
@@ -57,10 +45,7 @@ pub fn log_packet<P: Debug>(
 }
 
 pub fn log_command(
-	logger: &Logger,
-	is_client: bool,
-	incoming: bool,
-	p_type: PacketType,
+	logger: &Logger, is_client: bool, incoming: bool, p_type: PacketType,
 	cmd: &str,
 )
 {
@@ -82,8 +67,10 @@ pub fn log_command(
 pub fn add_logger(logger: Logger, verbosity: u8, con: &mut Connection) {
 	let is_client = con.is_client;
 	let listener = Box::new(move |event: &Event| match event {
-		Event::ReceiveUdpPacket(packet) => if verbosity > 0 {
-			log_udp_packet(&logger, is_client, true, packet.0.header());
+		Event::ReceiveUdpPacket(packet) => {
+			if verbosity > 0 {
+				log_udp_packet(&logger, is_client, true, packet.0.header());
+			}
 		}
 		Event::ReceivePacket(packet) => {
 			if verbosity > 1 {
@@ -97,8 +84,10 @@ pub fn add_logger(logger: Logger, verbosity: u8, con: &mut Connection) {
 				}
 			}
 		}
-		Event::SendUdpPacket(packet) => if verbosity > 0 {
-			log_out_udp_packet(&logger, is_client, false, packet);
+		Event::SendUdpPacket(packet) => {
+			if verbosity > 0 {
+				log_out_udp_packet(&logger, is_client, false, packet);
+			}
 		}
 		Event::SendPacket(packet) => {
 			if verbosity > 1 {

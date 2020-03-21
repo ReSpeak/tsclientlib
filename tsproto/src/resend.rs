@@ -1,5 +1,5 @@
 use std::cmp::{Ord, Ordering};
-use std::collections::{BinaryHeap, BTreeMap};
+use std::collections::{BTreeMap, BinaryHeap};
 use std::convert::From;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -14,8 +14,8 @@ use slog::{info, warn, Logger};
 use tokio::time::{Delay, Duration, Instant};
 use tsproto_packets::packets::*;
 
-use crate::{Result, UDP_SINK_CAPACITY};
 use crate::connection::{Connection, StreamItem};
+use crate::{Result, UDP_SINK_CAPACITY};
 
 // TODO implement fast retransmit: 2 Acks received but earlier packet not acked -> retransmit
 // TODO implement slow start and redo slow start when send window reaches 1, also reset all tries then
@@ -135,8 +135,9 @@ pub struct ResendConfig {
 
 impl Ord for PartialPacketId {
 	fn cmp(&self, other: &Self) -> Ordering {
-		self.generation_id.cmp(&other.generation_id).then_with(||
-			self.packet_id.cmp(&other.packet_id))
+		self.generation_id
+			.cmp(&other.generation_id)
+			.then_with(|| self.packet_id.cmp(&other.packet_id))
 	}
 }
 
@@ -236,9 +237,7 @@ impl PartialOrd for SendRecordId {
 }
 
 impl PartialEq for SendRecordId {
-	fn eq(&self, other: &Self) -> bool {
-		self.id.eq(&other.id)
-	}
+	fn eq(&self, other: &Self) -> bool { self.id.eq(&other.id) }
 }
 impl Eq for SendRecordId {}
 
@@ -263,8 +262,12 @@ impl Default for Resender {
 			timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
 			last_receive: now,
 			last_send: now,
-			ping_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
-			state_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
+			ping_timeout: tokio::time::delay_for(
+				std::time::Duration::from_secs(1),
+			),
+			state_timeout: tokio::time::delay_for(
+				std::time::Duration::from_secs(1),
+			),
 		}
 	}
 }
@@ -279,9 +282,12 @@ impl Resender {
 		}
 	}
 
-	pub fn ack_packet(con: &mut Connection, cx: &mut Context, p_type: PacketType, p_id: u16) {
+	pub fn ack_packet(
+		con: &mut Connection, cx: &mut Context, p_type: PacketType, p_id: u16,
+	) {
 		// Remove from ordered queue
-		let queue = &mut con.resender.full_send_queue[Self::packet_type_to_index(p_type)];
+		let queue = &mut con.resender.full_send_queue
+			[Self::packet_type_to_index(p_type)];
 		let mut queue_iter = queue.iter();
 		if let Some((first, _)) = queue_iter.next() {
 			let id = if first.packet_id == p_id {
@@ -307,7 +313,7 @@ impl Resender {
 							gen
 						},
 						packet_id: p_id,
-					}
+					},
 				};
 				con.stream_items.push_back(StreamItem::AckPacket(id));
 
@@ -337,15 +343,14 @@ impl Resender {
 		}
 	}
 
-	pub fn received_packet(&mut self) {
-		self.last_receive = Instant::now();
-	}
+	pub fn received_packet(&mut self) { self.last_receive = Instant::now(); }
 
 	fn get_timeout(&self) -> Duration {
 		match self.state {
 			ResenderState::Connecting => self.config.connecting_timeout,
-			ResenderState::Disconnecting
-			| ResenderState::Disconnected => self.config.disconnect_timeout,
+			ResenderState::Disconnecting | ResenderState::Disconnected => {
+				self.config.disconnect_timeout
+			}
 			ResenderState::Connected => self.config.normal_timeout,
 		}
 	}
@@ -369,9 +374,7 @@ impl Resender {
 	}
 
 	/// If the send queue is empty.
-	pub fn is_empty(&self) -> bool {
-		self.send_queue.is_empty()
-	}
+	pub fn is_empty(&self) -> bool { self.send_queue.is_empty() }
 
 	/// Take the first packets from `to_send_ordered` and put them into
 	/// `to_send`.
@@ -390,9 +393,18 @@ impl Resender {
 			move |r: &&SendRecord| r.id.id.part < start
 		};
 		let mut iters = [
-			self.full_send_queue[0].values().skip_while(get_skip_closure(0)).peekable(),
-			self.full_send_queue[1].values().skip_while(get_skip_closure(1)).peekable(),
-			self.full_send_queue[2].values().skip_while(get_skip_closure(2)).peekable(),
+			self.full_send_queue[0]
+				.values()
+				.skip_while(get_skip_closure(0))
+				.peekable(),
+			self.full_send_queue[1]
+				.values()
+				.skip_while(get_skip_closure(1))
+				.peekable(),
+			self.full_send_queue[2]
+				.values()
+				.skip_while(get_skip_closure(2))
+				.peekable(),
 		];
 
 		for _ in self.send_queue.len()..(self.get_window() as usize) {
@@ -431,7 +443,8 @@ impl Resender {
 	fn get_window(&self) -> u16 {
 		let time = self.no_congestion_since.unwrap_or_else(|| Instant::now())
 			- self.last_loss;
-		let res = C * (time.as_secs_f32()
+		let res = C
+			* (time.as_secs_f32()
 				- (self.w_max as f32 * BETA / C).powf(1.0 / 3.0))
 			.powf(3.0) + self.w_max as f32;
 		let max = u16::max_value() / 2;
@@ -446,7 +459,11 @@ impl Resender {
 
 	/// Add another duration to the stored smoothed rtt.
 	fn update_srtt(&mut self, rtt: Duration) {
-		let diff = if rtt > self.config.srtt { rtt - self.config.srtt } else { self.config.srtt - rtt };
+		let diff = if rtt > self.config.srtt {
+			rtt - self.config.srtt
+		} else {
+			self.config.srtt - rtt
+		};
 		self.config.srtt_dev = self.config.srtt_dev * 3 / 4 + diff / 4;
 		self.config.srtt = self.config.srtt * 7 / 8 + rtt / 8;
 	}
@@ -481,21 +498,24 @@ impl Resender {
 			let window = con.resender.get_window();
 
 			// Retransmission timeout
-			let mut rto: Duration = con.resender.config.srtt + con.resender.config.srtt_dev * 4;
+			let mut rto: Duration =
+				con.resender.config.srtt + con.resender.config.srtt_dev * 4;
 			if rto > max_send_rto {
 				rto = max_send_rto;
 			}
 			let last_threshold = now - rto;
 
-			let mut rec = if let Some(rec) = con.resender.send_queue.peek_mut() {
+			let mut rec = if let Some(rec) = con.resender.send_queue.peek_mut()
+			{
 				rec
 			} else {
-				break
+				break;
 			};
 
 			// Skip if not contained in full_send_queue. This happens when the
 			// packet was acknowledged.
-			let full_queue = &mut con.resender.full_send_queue[Self::packet_type_to_index(rec.id.packet_type)];
+			let full_queue = &mut con.resender.full_send_queue
+				[Self::packet_type_to_index(rec.id.packet_type)];
 			let full_rec = if let Some(r) = full_queue.get_mut(&rec.id.part) {
 				r
 			} else {
@@ -583,7 +603,9 @@ impl Resender {
 			}
 
 			con.resender.state_timeout.reset(con.resender.last_send + timeout);
-			if let Poll::Ready(()) = Pin::new(&mut con.resender.state_timeout).poll(cx) {
+			if let Poll::Ready(()) =
+				Pin::new(&mut con.resender.state_timeout).poll(cx)
+			{
 				bail!("Connection timed out");
 			}
 		}

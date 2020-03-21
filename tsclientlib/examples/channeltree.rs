@@ -29,12 +29,8 @@ struct Args {
 
 /// `channels` have to be ordered.
 fn print_channels(
-	clients: &[&Client],
-	channels: &[&Channel],
-	parent: ChannelId,
-	depth: usize,
-)
-{
+	clients: &[&Client], channels: &[&Channel], parent: ChannelId, depth: usize,
+) {
 	let indention = "  ".repeat(depth);
 	for channel in channels {
 		if channel.parent == parent {

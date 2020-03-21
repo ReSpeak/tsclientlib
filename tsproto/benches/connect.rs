@@ -1,5 +1,7 @@
 use anyhow::{Error, Result};
-use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
+use criterion::{
+	criterion_group, criterion_main, Bencher, Benchmark, Criterion,
+};
 use slog::{info, o, warn, Logger};
 use tsproto::client::Client;
 use tsproto::connection::StreamItem;
@@ -49,12 +51,9 @@ fn one_connect(b: &mut Bencher) {
 		rt.block_on(async move {
 			// The TS server does not accept the 3rd reconnect from the same port
 			// so we create a new client for every connection.
-			let mut con = create_client(
-				local_address,
-				address,
-				logger.clone(),
-				0,
-			).await?;
+			let mut con =
+				create_client(local_address, address, logger.clone(), 0)
+					.await?;
 
 			connect(&mut con).await?;
 			info!(logger, "Connected");

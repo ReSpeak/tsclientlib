@@ -8,14 +8,14 @@ use std::str::{self, FromStr};
 use anyhow::{bail, format_err, Result};
 use futures::prelude::*;
 use itertools::Itertools;
-use rand::Rng;
 use rand::rngs::OsRng;
+use rand::Rng;
 use slog::{debug, o, warn, Logger};
 use tokio::net::{self, TcpStream};
 use tokio::prelude::*;
 use tokio::time::Duration;
 use trust_dns_resolver::config::ResolverConfig;
-use trust_dns_resolver::{TokioAsyncResolver, Name};
+use trust_dns_resolver::{Name, TokioAsyncResolver};
 
 const DEFAULT_PORT: u16 = 9987;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
@@ -45,10 +45,8 @@ enum ParseIpResult<'a> {
 /// port. IPv6 addresses are put in square brackets when a port is present:
 /// `[::1]:9987`
 pub fn resolve(
-	logger: Logger,
-	address: String,
-) -> impl Stream<Item=Result<SocketAddr>>
-{
+	logger: Logger, address: String,
+) -> impl Stream<Item = Result<SocketAddr>> {
 	let logger = logger.new(o!("module" => "resolver"));
 	debug!(logger, "Starting resolve"; "address" => &address);
 	let addr;
@@ -71,12 +69,14 @@ pub fn resolve(
 	let res = if !address.contains('.') && address != "localhost" {
 		debug!(logger, "Resolving nickname"; "address" => &address);
 		// Could be a server nickname
-		resolve_nickname(address.clone()).map_ok(move |mut addr| {
-			if let Some(port) = port {
-				addr.set_port(port);
-			}
-			addr
-		}).left_stream()
+		resolve_nickname(address.clone())
+			.map_ok(move |mut addr| {
+				if let Some(port) = port {
+					addr.set_port(port);
+				}
+				addr
+			})
+			.left_stream()
 	} else {
 		stream::once(future::err(format_err!("Not a valid nickname")))
 			.right_stream()
@@ -86,61 +86,81 @@ pub fn resolve(
 	// https://github.com/bluejekyll/trust-dns/issues/652
 	let addr2 = addr.clone();
 	let logger2 = logger.clone();
-	let res = res.chain(stream::once(async move {
-		let resolver = create_resolver(&logger2).await?;
+	let res = res.chain(
+		stream::once(async move {
+			let resolver = create_resolver(&logger2).await?;
 
-		// Try to get the address by an SRV record
-		let prefix = Name::from_str(DNS_PREFIX_UDP).map_err(|e| {
-			format_err!("Canot parse udp domain prefix ({:?})", e)
-		})?;
-		let mut name = Name::from_str(&addr2)
-			.map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
-		name.set_fqdn(true);
+			// Try to get the address by an SRV record
+			let prefix = Name::from_str(DNS_PREFIX_UDP).map_err(|e| {
+				format_err!("Canot parse udp domain prefix ({:?})", e)
+			})?;
+			let mut name = Name::from_str(&addr2)
+				.map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
+			name.set_fqdn(true);
 
-		Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)))
-	}).try_flatten());
+			Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)))
+		})
+		.try_flatten(),
+	);
 
 	// Try to get the address of a tsdns server by an SRV record
 	let addr2 = addr.clone();
 	let address2 = address.clone();
 	let logger2 = logger.clone();
 	let port2 = port.clone();
-	let res = res.chain(stream::once(async move {
-		let resolver = create_resolver(&logger2).await?;
-		let prefix = Name::from_str(DNS_PREFIX_TCP)?;
-		let mut name = Name::from_str(&addr2)?;
-		name.set_fqdn(true);
+	let res = res.chain(
+		stream::once(async move {
+			let resolver = create_resolver(&logger2).await?;
+			let prefix = Name::from_str(DNS_PREFIX_TCP)?;
+			let mut name = Name::from_str(&addr2)?;
+			name.set_fqdn(true);
 
-		let name = name.trim_to(2);
-		// Pick the first srv record of the first server that answers
-		// TODO Which clones are needed?
-		let address2 = address2.clone();
-		Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)).and_then(move |srv| {
+			let name = name.trim_to(2);
+			// Pick the first srv record of the first server that answers
+			// TODO Which clones are needed?
 			let address2 = address2.clone();
-			async move {
-			let address2 = address2.clone();
-			// Got tsdns server
-			let mut addr = resolve_tsdns(srv, &address2).await?;
-			if let Some(port) = port2 {
-				// Overwrite port if it was specified
-				addr.set_port(port);
-			}
-			Ok(addr)
-		}}))
-	}).try_flatten());
+			Result::<_>::Ok(
+				resolve_srv(resolver, prefix.append_name(&name)).and_then(
+					move |srv| {
+						let address2 = address2.clone();
+						async move {
+							let address2 = address2.clone();
+							// Got tsdns server
+							let mut addr =
+								resolve_tsdns(srv, &address2).await?;
+							if let Some(port) = port2 {
+								// Overwrite port if it was specified
+								addr.set_port(port);
+							}
+							Ok(addr)
+						}
+					},
+				),
+			)
+		})
+		.try_flatten(),
+	);
 
 	// Interpret as normal address and resolve with system resolver
 	let addr2 = addr.clone();
-	let res = res.chain(stream::once(async move {
-		let res = net::lookup_host((addr2.as_str(), port.unwrap_or(DEFAULT_PORT))).await?
+	let res = res.chain(
+		stream::once(async move {
+			let res = net::lookup_host((
+				addr2.as_str(),
+				port.unwrap_or(DEFAULT_PORT),
+			))
+			.await?
 			.map(Ok)
 			.collect::<Vec<_>>();
-		Result::<_>::Ok(stream::iter(res))
-	}).try_flatten());
+			Result::<_>::Ok(stream::iter(res))
+		})
+		.try_flatten(),
+	);
 
 	tokio::stream::StreamExt::timeout(res, Duration::from_secs(TIMEOUT_SECONDS))
-		.filter_map(|r: std::result::Result<Result<SocketAddr>, _>|
-			future::ready(if let Ok(Ok(r)) = r { Some(Ok(r)) } else { None }))
+		.filter_map(|r: std::result::Result<Result<SocketAddr>, _>| {
+			future::ready(if let Ok(Ok(r)) = r { Some(Ok(r)) } else { None })
+		})
 		.right_stream()
 }
 
@@ -154,7 +174,8 @@ async fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
 			Ok(TokioAsyncResolver::tokio(
 				ResolverConfig::cloudflare(),
 				Default::default(),
-			).await?)
+			)
+			.await?)
 		}
 	}
 }
@@ -172,9 +193,8 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 				// IPv4 address
 				return Ok(ParseIpResult::Addr(
 					std::net::ToSocketAddrs::to_socket_addrs(address)?
-						.next().ok_or_else(|| {
-							format_err!("Cannot parse IPv4 address")
-						})?,
+						.next()
+						.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?,
 				));
 			}
 		} else if let Some(pos_bracket) = address.rfind(']') {
@@ -182,20 +202,20 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 				// IPv6 address and port
 				return Ok(ParseIpResult::Addr(
 					std::net::ToSocketAddrs::to_socket_addrs(address)?
-						.next().ok_or_else(|| {
-							format_err!("Cannot parse IPv6 address")
-						})?,
+						.next()
+						.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
 				));
 			} else if pos_bracket == address.len() - 1
 				&& address.chars().next() == Some('[')
 			{
 				// IPv6 address
 				return Ok(ParseIpResult::Addr(
-					std::net::ToSocketAddrs::to_socket_addrs(&(&address[1..pos_bracket], DEFAULT_PORT))?
-						.next()
-						.ok_or_else(|| {
-							format_err!("Cannot parse IPv6 address")
-						})?,
+					std::net::ToSocketAddrs::to_socket_addrs(&(
+						&address[1..pos_bracket],
+						DEFAULT_PORT,
+					))?
+					.next()
+					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
 				));
 			} else {
 				return Err(format_err!("Invalid ip address").into());
@@ -203,9 +223,12 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 		} else {
 			// IPv6 address
 			return Ok(ParseIpResult::Addr(
-				std::net::ToSocketAddrs::to_socket_addrs(&(address, DEFAULT_PORT))?
-					.next()
-					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
+				std::net::ToSocketAddrs::to_socket_addrs(&(
+					address,
+					DEFAULT_PORT,
+				))?
+				.next()
+				.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
 			));
 		}
 	} else if address.chars().all(|c| c.is_digit(10) || c == '.') {
@@ -228,42 +251,49 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 
 pub fn resolve_nickname(
 	nickname: String,
-) -> impl Stream<Item=Result<SocketAddr>> {
+) -> impl Stream<Item = Result<SocketAddr>> {
 	stream::once(async {
 		let nickname = nickname;
 		let url = reqwest::Url::parse_with_params(
 			NICKNAME_LOOKUP_ADDRESS,
 			Some(("name", &nickname)),
 		)?;
-		let body = reqwest::get(url).await?
-			.error_for_status()?
-			.text().await?;
-		let addrs = body.split(&['\r', '\n'][..])
+		let body = reqwest::get(url).await?.error_for_status()?.text().await?;
+		let addrs = body
+			.split(&['\r', '\n'][..])
 			.filter(|s| !s.is_empty())
 			.map(|s| Result::<_>::Ok(s.to_string()))
 			.collect::<Vec<_>>();
 
-		Result::<_>::Ok(stream::iter(addrs.into_iter())
-			.and_then(|addr| async move {
-				match parse_ip(&addr)? {
-					ParseIpResult::Addr(a) => {
-						Ok(stream::once(future::ok(a)).left_stream())
-					}
-					ParseIpResult::Other(a, p) => {
-						let addrs = net::lookup_host((a, p.unwrap_or(DEFAULT_PORT))).await?
+		Result::<_>::Ok(
+			stream::iter(addrs.into_iter())
+				.and_then(|addr| async move {
+					match parse_ip(&addr)? {
+						ParseIpResult::Addr(a) => {
+							Ok(stream::once(future::ok(a)).left_stream())
+						}
+						ParseIpResult::Other(a, p) => {
+							let addrs = net::lookup_host((
+								a,
+								p.unwrap_or(DEFAULT_PORT),
+							))
+							.await?
 							.collect::<Vec<_>>();
-						Ok(stream::iter(addrs).map(Result::<_>::Ok).right_stream())
+							Ok(stream::iter(addrs)
+								.map(Result::<_>::Ok)
+								.right_stream())
+						}
 					}
-				}
-			}).try_flatten())
-	}).try_flatten()
+				})
+				.try_flatten(),
+		)
+	})
+	.try_flatten()
 }
 
 pub async fn resolve_tsdns<A: net::ToSocketAddrs>(
-	server: A,
-	addr: &str,
-) -> Result<SocketAddr>
-{
+	server: A, addr: &str,
+) -> Result<SocketAddr> {
 	let mut stream = TcpStream::connect(server).await?;
 	stream.write_all(addr.as_bytes()).await?;
 	let mut data = Vec::new();
@@ -280,10 +310,8 @@ pub async fn resolve_tsdns<A: net::ToSocketAddrs>(
 }
 
 fn resolve_srv(
-	resolver: TokioAsyncResolver,
-	addr: Name,
-) -> impl Stream<Item=Result<SocketAddr>>
-{
+	resolver: TokioAsyncResolver, addr: Name,
+) -> impl Stream<Item = Result<SocketAddr>> {
 	stream::once(async {
 		let lookup = resolver.srv_lookup(addr).await?;
 		let mut entries = Vec::new();
@@ -348,18 +376,22 @@ fn resolve_srv(
 			}
 		}
 
-		let res = sorted_entries.into_iter()
+		let res = sorted_entries
+			.into_iter()
 			.map(|e| Ok((e.target().to_ascii(), e.port())))
 			.collect::<Vec<Result<(String, u16)>>>();
 		drop(resolver);
-		Ok(stream::iter(res).and_then(|(e, port)| async move {
-			let res = net::lookup_host((e.as_str(), port))
-				.await?
-				.map(Ok)
-				.collect::<Vec<_>>();
-			Ok(stream::iter(res))
-		}).try_flatten())
-	}).try_flatten()
+		Ok(stream::iter(res)
+			.and_then(|(e, port)| async move {
+				let res = net::lookup_host((e.as_str(), port))
+					.await?
+					.map(Ok)
+					.collect::<Vec<_>>();
+				Ok(stream::iter(res))
+			})
+			.try_flatten())
+	})
+	.try_flatten()
 }
 
 #[cfg(test)]
@@ -447,17 +479,22 @@ mod test {
 	#[tokio::test]
 	async fn resolve_localhost() {
 		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "127.0.0.1".into()).map(|r| r.unwrap()).collect().await;
-		assert_eq!(
-			res.as_slice(),
-			&[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]
-		);
+		let res: Vec<_> = resolve(logger, "127.0.0.1".into())
+			.map(|r| r.unwrap())
+			.collect()
+			.await;
+		assert_eq!(res.as_slice(), &[format!("127.0.0.1:{}", DEFAULT_PORT)
+			.parse()
+			.unwrap()]);
 	}
 
 	#[tokio::test]
 	async fn resolve_localhost2() {
 		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "localhost".into()).map(|r| r.unwrap()).collect().await;
+		let res: Vec<_> = resolve(logger, "localhost".into())
+			.map(|r| r.unwrap())
+			.collect()
+			.await;
 		assert!(
 			res.contains(
 				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()
@@ -468,7 +505,10 @@ mod test {
 	#[tokio::test]
 	async fn resolve_example() {
 		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "example.com".into()).map(|r| r.unwrap()).collect().await;
+		let res: Vec<_> = resolve(logger, "example.com".into())
+			.map(|r| r.unwrap())
+			.collect()
+			.await;
 		assert!(res.contains(
 			&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()
 		));
@@ -477,7 +517,8 @@ mod test {
 	#[tokio::test]
 	async fn resolve_loc() {
 		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "loc".into()).map(|r| r.unwrap()).collect().await;
+		let res: Vec<_> =
+			resolve(logger, "loc".into()).map(|r| r.unwrap()).collect().await;
 		assert!(
 			res.contains(
 				&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()

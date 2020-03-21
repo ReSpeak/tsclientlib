@@ -3,10 +3,10 @@ use std::u64;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use omnom::WriteExt;
 use curve25519_dalek::edwards::EdwardsPoint;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
+use omnom::WriteExt;
 use quicklz::CompressionLevel;
 use ring::digest;
 
@@ -46,10 +46,8 @@ pub fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
 /// Returns an error if the packet is too large but cannot be splitted.
 /// Only `Command` and `CommandLow` packets can be compressed and splitted.
 pub fn compress_and_split(
-	is_client: bool,
-	packet: OutPacket,
-) -> Vec<OutPacket>
-{
+	is_client: bool, packet: OutPacket,
+) -> Vec<OutPacket> {
 	// Everything except whisper packets has to be less than 500 bytes
 	let header_size = if is_client {
 		tsproto_packets::C2S_HEADER_LEN
@@ -124,12 +122,8 @@ pub fn compress_and_split(
 }
 
 fn create_key_nonce(
-	p_type: PacketType,
-	c_id: Option<u16>,
-	p_id: u16,
-	generation_id: u32,
-	iv: &[u8; 64],
-	cache: &mut [[CachedKey; 2]; 8],
+	p_type: PacketType, c_id: Option<u16>, p_id: u16, generation_id: u32,
+	iv: &[u8; 64], cache: &mut [[CachedKey; 2]; 8],
 ) -> (GenericArray<u8, U16>, GenericArray<u8, U16>)
 {
 	// Check if this generation is cached
@@ -163,8 +157,7 @@ fn create_key_nonce(
 }
 
 pub fn encrypt_key_nonce(
-	packet: &mut OutPacket,
-	key: &GenericArray<u8, U16>,
+	packet: &mut OutPacket, key: &GenericArray<u8, U16>,
 	nonce: &GenericArray<u8, U16>,
 ) -> Result<()>
 {
@@ -188,9 +181,7 @@ pub fn encrypt_fake(packet: &mut OutPacket) -> Result<()> {
 }
 
 pub fn encrypt(
-	packet: &mut OutPacket,
-	generation_id: u32,
-	iv: &[u8; 64],
+	packet: &mut OutPacket, generation_id: u32, iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<()>
 {
@@ -207,8 +198,7 @@ pub fn encrypt(
 }
 
 pub fn decrypt_key_nonce(
-	packet: &InPacket,
-	key: &GenericArray<u8, U16>,
+	packet: &InPacket, key: &GenericArray<u8, U16>,
 	nonce: &GenericArray<u8, U16>,
 ) -> Result<Vec<u8>>
 {
@@ -240,9 +230,7 @@ pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
 }
 
 pub fn decrypt(
-	packet: &InPacket,
-	generation_id: u32,
-	iv: &[u8; 64],
+	packet: &InPacket, generation_id: u32, iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<Vec<u8>>
 {
@@ -266,9 +254,7 @@ pub fn decrypt(
 
 /// Compute shared iv and shared mac.
 pub fn compute_iv_mac(
-	alpha: &[u8; 10],
-	beta: &[u8; 54],
-	our_key: &EccKeyPrivEd25519,
+	alpha: &[u8; 10], beta: &[u8; 54], our_key: &EccKeyPrivEd25519,
 	other_key: &EdwardsPoint,
 ) -> Result<([u8; 64], [u8; 8])>
 {

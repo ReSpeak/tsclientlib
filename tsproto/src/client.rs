@@ -34,10 +34,8 @@ pub struct Client {
 
 impl Client {
 	pub fn new(
-		logger: Logger,
-		address: SocketAddr,
-		udp_socket: Box<dyn Socket + Send>,
-		private_key: EccKeyPrivP256,
+		logger: Logger, address: SocketAddr,
+		udp_socket: Box<dyn Socket + Send>, private_key: EccKeyPrivP256,
 	) -> Self
 	{
 		Self {
@@ -47,88 +45,100 @@ impl Client {
 	}
 
 	async fn get_init(&mut self, init_step: u8) -> Result<InS2CInitBuf> {
-		self.filter_items(|con, i| Ok(match i {
-			StreamItem::S2CInit(packet) => {
-				if packet.data().data().get_step() == init_step {
-					Some(packet)
-				} else {
-					// Resent packet
-					warn!(con.logger, "Got wrong init packet");
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					if packet.data().data().get_step() == init_step {
+						Some(packet)
+					} else {
+						// Resent packet
+						warn!(con.logger, "Got wrong init packet");
+						con.hand_back_buffer(packet.into_buffer());
+						None
+					}
+				}
+				StreamItem::C2SInit(packet) => {
+					warn!(
+						con.logger,
+						"Got init packet from the wrong direction"
+					);
 					con.hand_back_buffer(packet.into_buffer());
 					None
 				}
-			}
-			StreamItem::C2SInit(packet) => {
-				warn!(con.logger, "Got init packet from the wrong direction");
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::Error(e) => {
-				warn!(con.logger, "Got connection error"; "error" => %e);
-				None
-			}
-			StreamItem::AckPacket(_) => None,
-			i => {
-				warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
-				None
-			}
-		})).await
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(_) => None,
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
 	}
 
 	async fn get_command(&mut self) -> Result<InCommandBuf> {
-		self.filter_items(|con, i| Ok(match i {
-			StreamItem::S2CInit(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::C2SInit(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::Command(packet) => Some(packet),
-			StreamItem::Error(e) => {
-				warn!(con.logger, "Got connection error"; "error" => %e);
-				None
-			}
-			StreamItem::AckPacket(_) => None,
-			i => {
-				warn!(con.logger, "Unexpected packet, wanted Command"; "got" => ?i);
-				None
-			}
-		})).await
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::C2SInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Command(packet) => Some(packet),
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(_) => None,
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted Command"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
 	}
 
 	/// Drop all packets until the given packet is acknowledged.
 	pub async fn wait_for_ack(&mut self, id: PacketId) -> Result<()> {
-		self.filter_items(|con, i| Ok(match i {
-			StreamItem::S2CInit(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::C2SInit(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::Command(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::Error(e) => {
-				warn!(con.logger, "Got connection error"; "error" => %e);
-				None
-			}
-			StreamItem::AckPacket(ack) => {
-				if id <= ack {
-					Some(())
-				} else {
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
 					None
 				}
-			}
-			i => {
-				warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
-				None
-			}
-		})).await
+				StreamItem::C2SInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Command(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(ack) => {
+					if id <= ack {
+						Some(())
+					} else {
+						None
+					}
+				}
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
 	}
 
 	/// Drop all packets until the send queue is not full anymore.
@@ -136,35 +146,38 @@ impl Client {
 		if !self.is_send_queue_full() {
 			return Ok(());
 		}
-		self.filter_items(|con, i| Ok(match i {
-			StreamItem::S2CInit(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::C2SInit(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::Command(packet) => {
-				con.hand_back_buffer(packet.into_buffer());
-				None
-			}
-			StreamItem::Error(e) => {
-				warn!(con.logger, "Got connection error"; "error" => %e);
-				None
-			}
-			StreamItem::AckPacket(_) => {
-				if !con.is_send_queue_full() {
-					Some(())
-				} else {
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
 					None
 				}
-			}
-			i => {
-				warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
-				None
-			}
-		})).await
+				StreamItem::C2SInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Command(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(_) => {
+					if !con.is_send_queue_full() {
+						Some(())
+					} else {
+						None
+					}
+				}
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
 	}
 
 	/// Send a packet. The `send_packet` function will resolve to a future when
@@ -174,7 +187,8 @@ impl Client {
 	/// will resolve when it is received. Otherwise it will resolve instantly.
 	pub fn send_packet(&mut self, packet: OutPacket) -> Result<PacketId> {
 		if packet.header().packet_type() == PacketType::Command
-			&& packet.content().starts_with(b"clientdisconnect") {
+			&& packet.content().starts_with(b"clientdisconnect")
+		{
 			let this = &mut **self;
 			this.resender.set_state(&this.logger, ResenderState::Disconnecting);
 		}
@@ -238,9 +252,12 @@ impl Client {
 					let n = **n;
 					let random2 = **random2;
 
-					let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-						"Solve RSA puzzle", self.con.logger.clone(),
-						Level::Info);
+					let mut time_reporter =
+						slog_perf::TimeReporter::new_with_level(
+							"Solve RSA puzzle",
+							self.con.logger.clone(),
+							Level::Info,
+						);
 					time_reporter.start("");
 
 					// Use gmp for faster computations if it is
@@ -251,8 +268,9 @@ impl Client {
 						let n = Integer::from_digits(&n[..], Order::Msf);
 						let x = Integer::from_digits(&x[..], Order::Msf);
 						e.set_bit(level, true);
-						let y = x.pow_mod(&e, &n).map_err(|_|
-							format_err!("Failed to solve RSA puzzle"))?;
+						let y = x.pow_mod(&e, &n).map_err(|_| {
+							format_err!("Failed to solve RSA puzzle")
+						})?;
 						let mut yi = [0; 64];
 						y.write_digits(&mut yi, Order::Msf);
 						yi
@@ -285,8 +303,8 @@ impl Client {
 
 					// Send next init packet
 					self.send_packet(OutC2SInit4::new(
-						timestamp, &x, &n, level, &random2,
-						&y, &alpha, &omega, &ip,
+						timestamp, &x, &n, level, &random2, &y, &alpha, &omega,
+						&ip,
 					))?;
 				}
 				_ => bail!("Unexpected init packet, needs Init3"),
@@ -297,9 +315,13 @@ impl Client {
 		{
 			let command = self.get_command().await?;
 
-			let (name, args) = CommandParser::new(command.data().packet().content());
+			let (name, args) =
+				CommandParser::new(command.data().packet().content());
 			if name != b"initivexpand2" {
-				bail!("Expected initivexpand2 but got {:?}", str::from_utf8(name));
+				bail!(
+					"Expected initivexpand2 but got {:?}",
+					str::from_utf8(name)
+				);
 			}
 
 			let mut l = None;
@@ -309,22 +331,36 @@ impl Client {
 			let mut ot = false;
 			for item in args {
 				match item {
-					CommandItem::NextCommand => bail!("Got multiple initivexpand2s in one packet"),
+					CommandItem::NextCommand => {
+						bail!("Got multiple initivexpand2s in one packet")
+					}
 					CommandItem::Argument(arg) => match arg.name() {
 						b"l" => l = Some(base64::decode(&arg.value().get())?),
-						b"beta" => beta_vec = Some(base64::decode(&arg.value().get())?),
-						b"omega" => server_key = Some(EccKeyPubP256::from_ts(&arg.value().get_str()?)?),
-						b"proof" => proof = Some(base64::decode(&arg.value().get())?),
+						b"beta" => {
+							beta_vec = Some(base64::decode(&arg.value().get())?)
+						}
+						b"omega" => {
+							server_key = Some(EccKeyPubP256::from_ts(
+								&arg.value().get_str()?,
+							)?)
+						}
+						b"proof" => {
+							proof = Some(base64::decode(&arg.value().get())?)
+						}
 						b"ot" => ot = arg.value().get_raw() == b"1",
 						_ => {}
-					}
+					},
 				}
 			}
 
 			if !ot {
 				bail!("Got no ot=1, probably the server is outdated");
 			}
-			if l.is_none() || beta_vec.is_none() || server_key.is_none() || proof.is_none() {
+			if l.is_none()
+				|| beta_vec.is_none()
+				|| server_key.is_none()
+				|| proof.is_none()
+			{
 				bail!("initivexpand2 command has wrong arguments");
 			}
 			let l = l.unwrap();
@@ -350,9 +386,8 @@ impl Client {
 			// Create own ephemeral key
 			let ek = EccKeyPrivEd25519::create()?;
 
-			let (iv, mac) = algs::compute_iv_mac(
-				&alpha, &beta, &ek, &server_ek,
-			)?;
+			let (iv, mac) =
+				algs::compute_iv_mac(&alpha, &beta, &ek, &server_ek)?;
 			self.con.params = Some(ConnectedParams::new(server_key, iv, mac));
 
 			// Send clientek
@@ -379,8 +414,7 @@ impl Client {
 				Direction::C2S,
 				PacketType::Command,
 				"clientek",
-				vec![("ek", ek_s), ("proof", proof_s)]
-					.into_iter(),
+				vec![("ek", ek_s), ("proof", proof_s)].into_iter(),
 				std::iter::empty(),
 			))?;
 		}
@@ -390,11 +424,18 @@ impl Client {
 	}
 
 	/// Filter the incoming items.
-	pub async fn filter_items<T, F: Fn(&mut Client, StreamItem) -> Result<Option<T>>>(&mut self, filter: F) -> Result<T> {
+	pub async fn filter_items<
+		T,
+		F: Fn(&mut Client, StreamItem) -> Result<Option<T>>,
+	>(
+		&mut self, filter: F,
+	) -> Result<T> {
 		loop {
 			let item = self.next().await;
 			match item {
-				None => bail!("Connection ended before a matching item was found"),
+				None => {
+					bail!("Connection ended before a matching item was found")
+				}
 				Some(r) => {
 					if let Some(r) = filter(self, r?)? {
 						return Ok(r);
@@ -405,11 +446,18 @@ impl Client {
 	}
 
 	/// Filter the incoming items. Drops audio packets.
-	pub async fn filter_commands<T, F: Fn(&mut Client, InCommandBuf) -> Result<Option<T>>>(&mut self, filter: F) -> Result<T> {
+	pub async fn filter_commands<
+		T,
+		F: Fn(&mut Client, InCommandBuf) -> Result<Option<T>>,
+	>(
+		&mut self, filter: F,
+	) -> Result<T> {
 		loop {
 			let item = self.next().await;
 			match item {
-				None => bail!("Connection ended before a matching item was found"),
+				None => {
+					bail!("Connection ended before a matching item was found")
+				}
 				Some(Err(e)) => return Err(e),
 				Some(Ok(StreamItem::Error(e))) => {
 					warn!(self.logger, "Got connection error"; "error" => %e);
@@ -459,19 +507,28 @@ impl Client {
 		}
 	}
 
-	fn handle_command(&mut self, command: InCommandBuf) -> Result<Option<InCommandBuf>> {
-		let (name, args) = CommandParser::new(command.data().packet().content());
+	fn handle_command(
+		&mut self, command: InCommandBuf,
+	) -> Result<Option<InCommandBuf>> {
+		let (name, args) =
+			CommandParser::new(command.data().packet().content());
 		if name == b"initserver" {
 			// Handle an initserver
 			if let Some(params) = &mut self.params {
 				let mut c_id = None;
 				for item in args {
 					match item {
-						CommandItem::NextCommand => bail!("Got multiple initservers in one packet"),
-						CommandItem::Argument(arg) => match arg.name() {
-							b"aclid" => c_id = Some(arg.value().get_parse::<Error, u16>()?),
-							_ => {}
+						CommandItem::NextCommand => {
+							bail!("Got multiple initservers in one packet")
 						}
+						CommandItem::Argument(arg) => match arg.name() {
+							b"aclid" => {
+								c_id = Some(
+									arg.value().get_parse::<Error, u16>()?,
+								)
+							}
+							_ => {}
+						},
 					}
 				}
 
@@ -496,18 +553,20 @@ impl Client {
 						CommandItem::NextCommand => {}
 						CommandItem::Argument(arg) => match arg.name() {
 							b"clid" => {
-								let c_id = arg.value().get_parse::<Error, u16>()?;
+								let c_id =
+									arg.value().get_parse::<Error, u16>()?;
 								own_client |= c_id == params.c_id;
 							}
 							_ => {}
-						}
+						},
 					}
 				}
 
 				if own_client {
 					// We are disconnected
 					let this = &mut **self;
-					this.resender.set_state(&this.logger, ResenderState::Disconnected);
+					this.resender
+						.set_state(&this.logger, ResenderState::Disconnected);
 				}
 			}
 		} else if name == b"notifyplugincmd" {
@@ -516,9 +575,12 @@ impl Client {
 			for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
 				match item {
 					CommandItem::Argument(arg) => match arg.name() {
-						b"name" => is_getversion = arg.value().get_raw() == b"getversion",
+						b"name" => {
+							is_getversion =
+								arg.value().get_raw() == b"getversion"
+						}
 						_ => {}
-					}
+					},
 					CommandItem::NextCommand => {
 						if is_getversion && sender.is_some() {
 							let sender: u16 = sender.unwrap();
@@ -526,7 +588,9 @@ impl Client {
 							let mut version = format!(
 								"{} {}",
 								env!("CARGO_PKG_NAME"),
-								git_testament::render_testament!(crate::TESTAMENT),
+								git_testament::render_testament!(
+									crate::TESTAMENT
+								),
 							);
 							#[cfg(debug_assertions)]
 							version.push_str(" (Debug)");
@@ -577,14 +641,19 @@ impl DerefMut for Client {
 /// Return queued errors and inspect packets.
 impl Stream for Client {
 	type Item = Result<StreamItem>;
-	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+	fn poll_next(
+		mut self: Pin<&mut Self>, cx: &mut Context,
+	) -> Poll<Option<Self::Item>> {
 		loop {
 			match Pin::new(&mut **self).poll_next(cx) {
 				Poll::Ready(Some(Ok(StreamItem::Command(command)))) => {
 					match self.handle_command(command) {
 						Err(e) => return Poll::Ready(Some(Err(e))),
-						Ok(Some(cmd)) => return Poll::Ready(Some(Ok(
-							StreamItem::Command(cmd)))),
+						Ok(Some(cmd)) => {
+							return Poll::Ready(Some(Ok(StreamItem::Command(
+								cmd,
+							))));
+						}
 						Ok(None) => {}
 					}
 				}
@@ -607,8 +676,8 @@ mod tests {
 	use tokio::sync::oneshot;
 	use tokio::time::{self, Duration};
 
-	use crate::connection::Event;
 	use super::*;
+	use crate::connection::Event;
 
 	#[derive(Clone, Debug)]
 	struct SimulatedSocketState {
@@ -637,13 +706,17 @@ mod tests {
 	}
 
 	impl SimulatedSocket {
-		fn new(state: Arc<Mutex<SimulatedSocketState>>, i: usize, addr: SocketAddr) -> Self {
+		fn new(
+			state: Arc<Mutex<SimulatedSocketState>>, i: usize, addr: SocketAddr,
+		) -> Self {
 			Self { state, i, addr }
 		}
 
 		/// Create a pair of simulated sockets which are connected with each
 		/// other.
-		fn pair(logger: Logger, addr0: SocketAddr, addr1: SocketAddr) -> (SimulatedSocket, SimulatedSocket) {
+		fn pair(
+			logger: Logger, addr0: SocketAddr, addr1: SocketAddr,
+		) -> (SimulatedSocket, SimulatedSocket) {
 			let state = Arc::new(Mutex::new(SimulatedSocketState::new(logger)));
 			// Switch addresses as we use them as address from receiving packets
 			(Self::new(state.clone(), 0, addr1), Self::new(state, 1, addr0))
@@ -651,7 +724,9 @@ mod tests {
 	}
 
 	impl Socket for SimulatedSocket {
-		fn poll_recv_from(&self, cx: &mut Context, buf: &mut [u8]) -> Poll<io::Result<(usize, SocketAddr)>> {
+		fn poll_recv_from(
+			&self, cx: &mut Context, buf: &mut [u8],
+		) -> Poll<io::Result<(usize, SocketAddr)>> {
 			let mut state = self.state.lock().unwrap();
 			if let Some(packet) = state.buffer[self.i].pop_front() {
 				let len = std::cmp::min(buf.len(), packet.len());
@@ -664,7 +739,9 @@ mod tests {
 			}
 		}
 
-		fn poll_send_to(&self, _: &mut Context, buf: &[u8], _: &SocketAddr) -> Poll<io::Result<usize>> {
+		fn poll_send_to(
+			&self, _: &mut Context, buf: &[u8], _: &SocketAddr,
+		) -> Poll<io::Result<usize>> {
 			let mut state = self.state.lock().unwrap();
 			debug!(state.logger, "{} sends packet", self.i);
 			state.buffer[1 - self.i].push_back(buf.to_vec());
@@ -685,8 +762,11 @@ mod tests {
 	impl TestConnection {
 		pub fn new() -> Result<Self> {
 			let logger = {
-				let decorator = slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
-				let drain = Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
+				let decorator =
+					slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
+				let drain =
+					Mutex::new(slog_term::FullFormat::new(decorator).build())
+						.fuse();
 
 				slog::Logger::root(drain, o!())
 			};
@@ -695,20 +775,47 @@ mod tests {
 			let client_key = EccKeyPrivP256::create()?;
 			let server_key = EccKeyPrivP256::create()?;
 
-			let (socket0, socket1) = SimulatedSocket::pair(logger.clone(), addr, addr);
-			let mut client = Client::new(logger.clone(), addr, Box::new(socket0), client_key);
-			let mut server = Client::new(logger.clone(), addr, Box::new(socket1), server_key);
+			let (socket0, socket1) =
+				SimulatedSocket::pair(logger.clone(), addr, addr);
+			let mut client = Client::new(
+				logger.clone(),
+				addr,
+				Box::new(socket0),
+				client_key,
+			);
+			let mut server = Client::new(
+				logger.clone(),
+				addr,
+				Box::new(socket1),
+				server_key,
+			);
 			server.is_client = false;
 
-			crate::log::add_logger(logger.new(o!("is" => "client")), 2, &mut client);
-			crate::log::add_logger(logger.new(o!("is" => "server")), 2, &mut server);
+			crate::log::add_logger(
+				logger.new(o!("is" => "client")),
+				2,
+				&mut client,
+			);
+			crate::log::add_logger(
+				logger.new(o!("is" => "server")),
+				2,
+				&mut server,
+			);
 
 			Ok(Self { client, server })
 		}
 
 		pub async fn set_connected(&mut self) {
-			Self::set_con_connected(&mut self.client, self.server.private_key.to_pub()).await;
-			Self::set_con_connected(&mut self.server, self.client.private_key.to_pub()).await;
+			Self::set_con_connected(
+				&mut self.client,
+				self.server.private_key.to_pub(),
+			)
+			.await;
+			Self::set_con_connected(
+				&mut self.server,
+				self.client.private_key.to_pub(),
+			)
+			.await;
 		}
 
 		/// Set the connection to connected.
@@ -716,17 +823,18 @@ mod tests {
 			let con = &mut **con;
 			con.resender.set_state(&con.logger, ResenderState::Connected);
 
-			con.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
-			con.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] = (0, 1);
-			con.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
-			con.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
+			con.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 1);
+			con.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				(0, 1);
+			con.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				(0, 1);
+			con.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				(0, 1);
 
 			// Set params
-			con.params = Some(ConnectedParams::new(
-				other_key,
-				[0; 64],
-				[0x42; 8],
-			));
+			con.params =
+				Some(ConnectedParams::new(other_key, [0; 64], [0x42; 8]));
 			let params = con.params.as_mut().unwrap();
 			params.c_id = 1;
 		}

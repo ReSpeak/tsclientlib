@@ -4,7 +4,9 @@ use slog::{error, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
+use tsclientlib::{
+	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
+};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -26,9 +28,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-	real_main().await
-}
+async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
 	// Parse command line options
@@ -55,37 +55,44 @@ async fn real_main() -> Result<()> {
 		C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 	let con_config = con_config.identity(id);
 
-	stream::iter(0..args.count).for_each_concurrent(None, |_| {
-		let con_config = con_config.clone();
-		let logger = logger.clone();
-		tokio::spawn(async move {
-			// Connect
-			let mut con = Connection::new(con_config).unwrap();
+	stream::iter(0..args.count)
+		.for_each_concurrent(None, |_| {
+			let con_config = con_config.clone();
+			let logger = logger.clone();
+			tokio::spawn(async move {
+				// Connect
+				let mut con = Connection::new(con_config).unwrap();
 
-			let r = con.events()
-				.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
-				.next()
-				.await;
-			if let Some(Err(e)) = r {
-				error!(logger, "Connection failed"; "error" => %e);
-				return;
-			}
-
-			// Wait some time
-			let mut events = con.events().try_filter(|_| future::ready(false));
-			tokio::select! {
-				_ = &mut time::delay_for(Duration::from_secs(15)) => {}
-				_ = events.next() => {
-					error!(logger, "Disconnected unexpectedly");
+				let r = con
+					.events()
+					.try_filter(|e| {
+						future::ready(matches!(e, StreamItem::ConEvents(_)))
+					})
+					.next()
+					.await;
+				if let Some(Err(e)) = r {
+					error!(logger, "Connection failed"; "error" => %e);
 					return;
 				}
-			};
-			drop(events);
 
-			// Disconnect
-			con.disconnect(DisconnectOptions::new()).await;
-		}).map(|_| ())
-	}).await;
+				// Wait some time
+				let mut events =
+					con.events().try_filter(|_| future::ready(false));
+				tokio::select! {
+					_ = &mut time::delay_for(Duration::from_secs(15)) => {}
+					_ = events.next() => {
+						error!(logger, "Disconnected unexpectedly");
+						return;
+					}
+				};
+				drop(events);
+
+				// Disconnect
+				con.disconnect(DisconnectOptions::new()).await;
+			})
+			.map(|_| ())
+		})
+		.await;
 
 	Ok(())
 }

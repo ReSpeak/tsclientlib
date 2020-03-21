@@ -17,9 +17,7 @@ pub fn create_logger() -> Logger {
 }
 
 pub async fn create_client(
-	local_address: SocketAddr,
-	remote_address: SocketAddr,
-	logger: Logger,
+	local_address: SocketAddr, remote_address: SocketAddr, logger: Logger,
 	verbose: u8,
 ) -> Result<Client>
 {
@@ -30,7 +28,8 @@ pub async fn create_client(
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	let udp_socket = UdpSocket::bind(local_address).await?;
-	let mut con = Client::new(logger, remote_address, Box::new(udp_socket), private_key);
+	let mut con =
+		Client::new(logger, remote_address, Box::new(udp_socket), private_key);
 
 	if verbose >= 1 {
 		tsproto::log::add_logger(con.logger.clone(), verbose - 1, &mut con)
@@ -107,13 +106,16 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 	);
 
 	con.send_packet(packet)?;
-	Ok(con.filter_commands(|con, cmd|
-		Ok(if cmd.data().packet().content().starts_with(b"initserver ") {
-			Some(cmd)
-		} else {
-			con.hand_back_buffer(cmd.into_buffer());
-			None
-		})).await?)
+	Ok(con
+		.filter_commands(|con, cmd| {
+			Ok(if cmd.data().packet().content().starts_with(b"initserver ") {
+				Some(cmd)
+			} else {
+				con.hand_back_buffer(cmd.into_buffer());
+				None
+			})
+		})
+		.await?)
 }
 
 pub async fn disconnect(con: &mut Client) -> Result<()> {

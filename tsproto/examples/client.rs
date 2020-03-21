@@ -29,9 +29,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
-	real_main().await
-}
+async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
 	// Parse command line options
@@ -43,7 +41,8 @@ async fn real_main() -> Result<()> {
 		args.address,
 		logger.clone(),
 		args.verbose,
-	).await?;
+	)
+	.await?;
 
 	// Connect
 	connect(&mut con).await?;
@@ -59,21 +58,14 @@ async fn real_main() -> Result<()> {
 	info!(logger, "Waited");
 
 	// Send packet
-	let packet = OutCommand::new::<
-		_,
-		_,
-		String,
-		String,
-		_,
-		_,
-		std::iter::Empty<_>,
-	>(
-		Direction::C2S,
-		PacketType::Command,
-		"sendtextmessage",
-		vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
-		std::iter::empty(),
-	);
+	let packet =
+		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"sendtextmessage",
+			vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
+			std::iter::empty(),
+		);
 	let id = con.send_packet(packet)?;
 	con.wait_for_ack(id).await?;
 

@@ -26,16 +26,17 @@ macro_rules! max_clients {
 	($msg:ident) => {{
 		if $msg.is_max_clients_unlimited.unwrap_or_default() {
 			Some(MaxClients::Unlimited)
-		} else if $msg.max_clients
+		} else if $msg
+			.max_clients
 			.map(|i| i >= 0 && i <= u16::MAX as i32)
 			.unwrap_or_default()
-		{
+			{
 			Some(MaxClients::Limited($msg.max_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
-		}
-	}};
+			}
+		}};
 }
 
 macro_rules! copy_attrs {
@@ -95,7 +96,9 @@ impl Connection {
 		}
 	}
 
-	pub fn handle_command(&mut self, logger: &Logger, msg: &s2c::InMessage) -> Result<Vec<Event>> {
+	pub fn handle_command(
+		&mut self, logger: &Logger, msg: &s2c::InMessage,
+	) -> Result<Vec<Event>> {
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
 		let (mut handled, mut events) = self.handle_command_generated(msg)?;
@@ -193,11 +196,8 @@ impl Connection {
 		})
 	}
 	fn add_server_group(
-		&mut self,
-		group: ServerGroupId,
-		r: ServerGroup,
-	) -> Result<Option<ServerGroup>>
-	{
+		&mut self, group: ServerGroupId, r: ServerGroup,
+	) -> Result<Option<ServerGroup>> {
 		Ok(self.groups.insert(group, r))
 	}
 
@@ -228,11 +228,8 @@ impl Connection {
 			.ok_or_else(|| format_err!("Client {} not found", client).into())
 	}
 	fn add_client(
-		&mut self,
-		client: ClientId,
-		r: Client,
-	) -> Result<Option<Client>>
-	{
+		&mut self, client: ClientId, r: Client,
+	) -> Result<Option<Client>> {
 		Ok(self.clients.insert(client, r))
 	}
 	fn remove_client(&mut self, client: ClientId) -> Result<Option<Client>> {
@@ -240,10 +237,8 @@ impl Connection {
 	}
 
 	fn get_connection_client_data(
-		&self,
-		client: ClientId,
-	) -> Result<&ConnectionClientData>
-	{
+		&self, client: ClientId,
+	) -> Result<&ConnectionClientData> {
 		if let Some(c) = self.clients.get(&client) {
 			c.connection_data.as_ref().ok_or_else(|| {
 				format_err!("Client {} has no connection data", client).into()
@@ -253,11 +248,8 @@ impl Connection {
 		}
 	}
 	fn add_connection_client_data(
-		&mut self,
-		client: ClientId,
-		r: ConnectionClientData,
-	) -> Result<Option<ConnectionClientData>>
-	{
+		&mut self, client: ClientId, r: ConnectionClientData,
+	) -> Result<Option<ConnectionClientData>> {
 		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
@@ -266,10 +258,8 @@ impl Connection {
 	}
 
 	fn get_optional_client_data(
-		&self,
-		client: ClientId,
-	) -> Result<&OptionalClientData>
-	{
+		&self, client: ClientId,
+	) -> Result<&OptionalClientData> {
 		if let Some(c) = self.clients.get(&client) {
 			c.optional_data.as_ref().ok_or_else(|| {
 				format_err!("Client {} has no optional data", client).into()
@@ -290,19 +280,14 @@ impl Connection {
 			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
 	}
 	fn add_channel(
-		&mut self,
-		channel: ChannelId,
-		r: Channel,
-	) -> Result<Option<Channel>>
-	{
+		&mut self, channel: ChannelId, r: Channel,
+	) -> Result<Option<Channel>> {
 		self.channel_order_insert(r.id, r.order, r.parent);
 		Ok(self.channels.insert(channel, r))
 	}
 	fn remove_channel(
-		&mut self,
-		channel: ChannelId,
-	) -> Result<Option<Channel>>
-	{
+		&mut self, channel: ChannelId,
+	) -> Result<Option<Channel>> {
 		let old = self.channels.remove(&channel);
 		if let Some(ch) = &old {
 			self.channel_order_remove(ch.id, ch.order);
@@ -311,10 +296,8 @@ impl Connection {
 	}
 
 	fn get_optional_channel_data(
-		&self,
-		channel: ChannelId,
-	) -> Result<&OptionalChannelData>
-	{
+		&self, channel: ChannelId,
+	) -> Result<&OptionalChannelData> {
 		if let Some(c) = self.channels.get(&channel) {
 			c.optional_data.as_ref().ok_or_else(|| {
 				format_err!("Channel {} has no optional data", channel).into()
@@ -339,16 +322,15 @@ impl Connection {
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
-		&self,
-		msg: &s2c::InChannelCreatedPart,
-	) -> Result<(Option<MaxClients>, Option<MaxClients>)>
-	{
+		&self, msg: &s2c::InChannelCreatedPart,
+	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
 		let ch = max_clients!(msg);
 		let ch_fam = if msg.is_max_family_clients_unlimited {
 			Some(MaxClients::Unlimited)
 		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
-		} else if msg.max_family_clients
+		} else if msg
+			.max_family_clients
 			.map(|i| i >= 0 && i <= u16::MAX as i32)
 			.unwrap_or_default()
 		{
@@ -360,9 +342,7 @@ impl Connection {
 		Ok((ch, ch_fam))
 	}
 	fn max_clients_ce_fun(
-		&mut self,
-		channel_id: ChannelId,
-		msg: &s2c::InChannelEditedPart,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -379,11 +359,13 @@ impl Connection {
 			});
 			channel.max_clients = Some(ch);
 		}
-		let ch_fam = if msg.is_max_family_clients_unlimited.unwrap_or_default() {
+		let ch_fam = if msg.is_max_family_clients_unlimited.unwrap_or_default()
+		{
 			Some(MaxClients::Unlimited)
 		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
-		} else if msg.max_family_clients
+		} else if msg
+			.max_family_clients
 			.map(|i| i >= 0 && i <= u16::MAX as i32)
 			.unwrap_or_default()
 		{
@@ -405,10 +387,8 @@ impl Connection {
 		Ok(())
 	}
 	fn max_clients_cl_fun(
-		&self,
-		msg: &s2c::InChannelListPart,
-	) -> Result<(Option<MaxClients>, Option<MaxClients>)>
-	{
+		&self, msg: &s2c::InChannelListPart,
+	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
 		let max_clients: i32 = msg.max_clients;
 		let ch = if msg.is_max_clients_unlimited {
 			Some(MaxClients::Unlimited)
@@ -420,25 +400,22 @@ impl Connection {
 		};
 
 		let max_clients: i32 = msg.max_family_clients;
-		let ch_fam =
-			if msg.is_max_family_clients_unlimited {
-				Some(MaxClients::Unlimited)
-			} else if msg.inherits_max_family_clients {
-				Some(MaxClients::Inherited)
-			} else if max_clients >= 0 && max_clients <= u16::MAX as i32 {
-				Some(MaxClients::Limited(max_clients as u16))
-			} else {
-				// Max clients is less than zero or too high so ignore it
-				Some(MaxClients::Unlimited)
-			};
+		let ch_fam = if msg.is_max_family_clients_unlimited {
+			Some(MaxClients::Unlimited)
+		} else if msg.inherits_max_family_clients {
+			Some(MaxClients::Inherited)
+		} else if max_clients >= 0 && max_clients <= u16::MAX as i32 {
+			Some(MaxClients::Limited(max_clients as u16))
+		} else {
+			// Max clients is less than zero or too high so ignore it
+			Some(MaxClients::Unlimited)
+		};
 		Ok((ch, ch_fam))
 	}
 
 	fn channel_type_cc_fun(
-		&self,
-		msg: &s2c::InChannelCreatedPart,
-	) -> Result<ChannelType>
-	{
+		&self, msg: &s2c::InChannelCreatedPart,
+	) -> Result<ChannelType> {
 		if msg.is_permanent.unwrap_or_default() {
 			Ok(ChannelType::Permanent)
 		} else if msg.is_semi_permanent.unwrap_or_default() {
@@ -449,20 +426,14 @@ impl Connection {
 	}
 
 	fn channel_type_ce_fun(
-		&mut self,
-		channel_id: ChannelId,
-		msg: &s2c::InChannelEditedPart,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
 		let channel = self.get_mut_channel(channel_id)?;
 
 		let typ = if let Some(perm) = msg.is_permanent {
-			if perm {
-				ChannelType::Permanent
-			} else {
-				ChannelType::Temporary
-			}
+			if perm { ChannelType::Permanent } else { ChannelType::Temporary }
 		} else if msg.is_semi_permanent.unwrap_or_default() {
 			ChannelType::SemiPermanent
 		} else {
@@ -478,10 +449,8 @@ impl Connection {
 	}
 
 	fn channel_type_cl_fun(
-		&self,
-		msg: &s2c::InChannelListPart,
-	) -> Result<ChannelType>
-	{
+		&self, msg: &s2c::InChannelListPart,
+	) -> Result<ChannelType> {
 		if msg.is_permanent {
 			Ok(ChannelType::Permanent)
 		} else if msg.is_semi_permanent {
@@ -491,15 +460,15 @@ impl Connection {
 		}
 	}
 
-	fn away_cev_fun(&self, msg: &s2c::InClientEnterViewPart) -> Result<Option<String>> {
-		if msg.is_away {
-			Ok(Some(msg.away_message.clone()))
-		} else {
-			Ok(None)
-		}
+	fn away_cev_fun(
+		&self, msg: &s2c::InClientEnterViewPart,
+	) -> Result<Option<String>> {
+		if msg.is_away { Ok(Some(msg.away_message.clone())) } else { Ok(None) }
 	}
 
-	fn client_type_cev_fun(&self, msg: &s2c::InClientEnterViewPart) -> Result<ClientType> {
+	fn client_type_cev_fun(
+		&self, msg: &s2c::InClientEnterViewPart,
+	) -> Result<ClientType> {
 		if msg.uid.is_server_admin() {
 			if let ClientType::Query { .. } = msg.client_type {
 				return Ok(ClientType::Query { admin: true });
@@ -509,9 +478,7 @@ impl Connection {
 	}
 
 	fn away_cu_fun(
-		&mut self,
-		client_id: ClientId,
-		msg: &s2c::InClientUpdatedPart,
+		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -532,10 +499,8 @@ impl Connection {
 	}
 
 	fn talk_power_cev_fun(
-		&self,
-		msg: &s2c::InClientEnterViewPart,
-	) -> Result<Option<TalkPowerRequest>>
-	{
+		&self, msg: &s2c::InClientEnterViewPart,
+	) -> Result<Option<TalkPowerRequest>> {
 		if msg.talk_power_request_time.timestamp() > 0 {
 			Ok(Some(TalkPowerRequest {
 				time: msg.talk_power_request_time,
@@ -547,9 +512,7 @@ impl Connection {
 	}
 
 	fn talk_power_cu_fun(
-		&mut self,
-		client_id: ClientId,
-		msg: &s2c::InClientUpdatedPart,
+		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -559,7 +522,10 @@ impl Connection {
 			let talk_request = if talk_request.timestamp() > 0 {
 				Some(TalkPowerRequest {
 					time: talk_request,
-					message: msg.talk_power_request_message.clone().unwrap_or_else(String::new),
+					message: msg
+						.talk_power_request_message
+						.clone()
+						.unwrap_or_else(String::new),
 				})
 			} else {
 				None
@@ -577,10 +543,8 @@ impl Connection {
 	}
 
 	fn address_fun(
-		&self,
-		msg: &s2c::InClientConnectionInfoPart,
-	) -> Result<Option<SocketAddr>>
-	{
+		&self, msg: &s2c::InClientConnectionInfoPart,
+	) -> Result<Option<SocketAddr>> {
 		if !msg.ip.is_empty() {
 			Ok(Some(SocketAddr::new(msg.ip.parse()?, msg.port)))
 		} else {
@@ -589,9 +553,7 @@ impl Connection {
 	}
 
 	fn channel_subscribe_fun(
-		&mut self,
-		channel_id: ChannelId,
-		_: &s2c::InChannelSubscribedPart,
+		&mut self, channel_id: ChannelId, _: &s2c::InChannelSubscribedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -606,9 +568,7 @@ impl Connection {
 	}
 
 	fn channel_unsubscribe_fun(
-		&mut self,
-		channel_id: ChannelId,
-		_: &s2c::InChannelUnsubscribedPart,
+		&mut self, channel_id: ChannelId, _: &s2c::InChannelUnsubscribedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -639,11 +599,8 @@ impl Connection {
 	}
 
 	fn channel_order_remove(
-		&mut self,
-		channel_id: ChannelId,
-		channel_order: ChannelId,
-	)
-	{
+		&mut self, channel_id: ChannelId, channel_order: ChannelId,
+	) {
 		// [ C:7 | O:_ ]
 		// [ C:5 | O:7 ] ─>X
 		// [ C:_ | O:5 ]     (Upd: O -> 7)
@@ -658,9 +615,7 @@ impl Connection {
 	}
 
 	fn channel_order_insert(
-		&mut self,
-		channel_id: ChannelId,
-		channel_order: ChannelId,
+		&mut self, channel_id: ChannelId, channel_order: ChannelId,
 		channel_parent: ChannelId,
 	)
 	{
@@ -683,40 +638,41 @@ impl Connection {
 	}
 
 	fn channel_order_cc_fun(
-		&mut self,
-		msg: &s2c::InChannelCreatedPart,
-	) -> Result<ChannelId>
-	{
+		&mut self, msg: &s2c::InChannelCreatedPart,
+	) -> Result<ChannelId> {
 		// TODO Why does this function exist?
 		Ok(msg.order)
 	}
 
 	fn channel_order_ce_fun(
-		&mut self,
-		channel_id: ChannelId,
-		msg: &s2c::InChannelEditedPart,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		self.channel_order_move_fun(channel_id, msg.order, msg.parent_id, events)
+		self.channel_order_move_fun(
+			channel_id,
+			msg.order,
+			msg.parent_id,
+			events,
+		)
 	}
 
 	fn channel_order_cm_fun(
-		&mut self,
-		channel_id: ChannelId,
-		msg: &s2c::InChannelMovedPart,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelMovedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		self.channel_order_move_fun(channel_id, Some(msg.order), Some(msg.parent_id), events)
+		self.channel_order_move_fun(
+			channel_id,
+			Some(msg.order),
+			Some(msg.parent_id),
+			events,
+		)
 	}
 
 	fn channel_order_move_fun(
-		&mut self,
-		channel_id: ChannelId,
-		new_order: Option<ChannelId>,
-		parent: Option<ChannelId>,
-		events: &mut Vec<Event>,
+		&mut self, channel_id: ChannelId, new_order: Option<ChannelId>,
+		parent: Option<ChannelId>, events: &mut Vec<Event>,
 	) -> Result<()>
 	{
 		let old_order;
@@ -743,8 +699,7 @@ impl Connection {
 
 	// Book to messages
 	fn away_fun_b2m<'a>(
-		&self,
-		args: &mut Vec<(&'static str, Cow<'a, str>)>,
+		&self, args: &mut Vec<(&'static str, Cow<'a, str>)>,
 		msg: Option<&'a str>,
 	)
 	{
@@ -755,29 +710,20 @@ impl Connection {
 	}
 
 	fn name_b2m<'a>(
-		&self,
-		args: &mut Vec<(&'static str, Cow<'a, str>)>,
-		name: &'a str,
-	)
-	{
+		&self, args: &mut Vec<(&'static str, Cow<'a, str>)>, name: &'a str,
+	) {
 		args.push(("client_nickname", name.into()));
 	}
 
 	fn input_muted_b2m(
-		&self,
-		args: &mut Vec<(&'static str, Cow<str>)>,
-		muted: bool,
-	)
-	{
+		&self, args: &mut Vec<(&'static str, Cow<str>)>, muted: bool,
+	) {
 		args.push(("client_input_muted", if muted { "1" } else { "0" }.into()));
 	}
 
 	fn output_muted_b2m(
-		&self,
-		args: &mut Vec<(&'static str, Cow<str>)>,
-		muted: bool,
-	)
-	{
+		&self, args: &mut Vec<(&'static str, Cow<str>)>, muted: bool,
+	) {
 		args.push((
 			"client_output_muted",
 			if muted { "1" } else { "0" }.into(),
@@ -790,20 +736,14 @@ impl Client {
 	fn get_empty_string(&self, _: &mut Vec<(&'static str, Cow<str>)>) {}
 
 	fn password_b2m<'a>(
-		&self,
-		args: &mut Vec<(&'static str, Cow<'a, str>)>,
-		password: &'a str,
-	)
-	{
+		&self, args: &mut Vec<(&'static str, Cow<'a, str>)>, password: &'a str,
+	) {
 		args.push(("cpw", password.into()));
 	}
 
 	fn channel_id_b2m(
-		&self,
-		args: &mut Vec<(&'static str, Cow<str>)>,
-		channel: ChannelId,
-	)
-	{
+		&self, args: &mut Vec<(&'static str, Cow<str>)>, channel: ChannelId,
+	) {
 		args.push(("cid", channel.0.to_string().into()));
 	}
 }
@@ -913,10 +853,8 @@ impl<'a> ChannelOptions<'a> {
 	}
 
 	pub fn max_family_clients(
-		mut self,
-		max_family_clients: MaxClients,
-	) -> Self
-	{
+		mut self, max_family_clients: MaxClients,
+	) -> Self {
 		self.max_family_clients = Some(max_family_clients);
 		self
 	}
@@ -1032,8 +970,10 @@ impl Server {
 			)
 		} else {
 			c2s::OutChannelUnsubscribeAllMessage::new(
-				vec![c2s::OutChannelUnsubscribeAllPart { phantom: PhantomData }]
-					.into_iter(),
+				vec![c2s::OutChannelUnsubscribeAllPart {
+					phantom: PhantomData,
+				}]
+				.into_iter(),
 			)
 		}
 	}
@@ -1041,11 +981,8 @@ impl Server {
 
 impl Connection {
 	pub fn send_message(
-		&self,
-		target: MessageTarget,
-		message: &str,
-	) -> OutPacket
-	{
+		&self, target: MessageTarget, message: &str,
+	) -> OutPacket {
 		match target {
 			MessageTarget::Server => c2s::OutSendTextMessageMessage::new(
 				vec![c2s::OutSendTextMessagePart {
@@ -1072,20 +1009,15 @@ impl Connection {
 				.into_iter(),
 			),
 			MessageTarget::Poke(id) => c2s::OutClientPokeRequestMessage::new(
-				vec![c2s::OutClientPokeRequestPart {
-					client_id: id,
-					message,
-				}]
-				.into_iter(),
+				vec![c2s::OutClientPokeRequestPart { client_id: id, message }]
+					.into_iter(),
 			),
 		}
 	}
 
 	pub fn disconnect<O: Into<Option<crate::DisconnectOptions>>>(
-		&self,
-		options: O,
-	) -> OutPacket
-	{
+		&self, options: O,
+	) -> OutPacket {
 		let options = options.into().unwrap_or_default();
 
 		let mut args = Vec::new();
@@ -1138,11 +1070,8 @@ impl Client {
 
 	pub fn poke(&self, message: &str) -> OutPacket {
 		c2s::OutClientPokeRequestMessage::new(
-			vec![c2s::OutClientPokeRequestPart {
-				client_id: self.id,
-				message,
-			}]
-			.into_iter(),
+			vec![c2s::OutClientPokeRequestPart { client_id: self.id, message }]
+				.into_iter(),
 		)
 	}
 }

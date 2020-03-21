@@ -41,10 +41,8 @@ pub struct AudioData {
 }
 
 pub(crate) fn start(
-	logger: Logger,
-	executor: Handle,
-) -> Result<AudioData, Error>
-{
+	logger: Logger, executor: Handle,
+) -> Result<AudioData, Error> {
 	let sdl_context = sdl2::init().unwrap();
 
 	let audio_subsystem = sdl_context.audio().unwrap();

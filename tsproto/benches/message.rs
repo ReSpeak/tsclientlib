@@ -1,5 +1,7 @@
 use anyhow::Error;
-use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
+use criterion::{
+	criterion_group, criterion_main, Bencher, Benchmark, Criterion,
+};
 use slog::info;
 use tsproto_packets::packets::*;
 
@@ -13,18 +15,17 @@ fn send_messages(b: &mut Bencher) {
 	let logger = create_logger(false);
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
-	let mut con = rt.block_on(async move {
-		let mut con = create_client(
-			local_address,
-			address,
-			logger.clone(),
-			0,
-		).await?;
+	let mut con = rt
+		.block_on(async move {
+			let mut con =
+				create_client(local_address, address, logger.clone(), 0)
+					.await?;
 
-		info!(logger, "Connecting");
-		connect(&mut con).await?;
-		Ok::<_, Error>(con)
-	}).unwrap();
+			info!(logger, "Connecting");
+			connect(&mut con).await?;
+			Ok::<_, Error>(con)
+		})
+		.unwrap();
 
 	let mut i = 0;
 
@@ -62,7 +63,8 @@ fn send_messages(b: &mut Bencher) {
 
 		info!(con.logger, "Disconnecting");
 		disconnect(&mut con).await
-	}).unwrap();
+	})
+	.unwrap();
 }
 
 fn bench_message(c: &mut Criterion) {

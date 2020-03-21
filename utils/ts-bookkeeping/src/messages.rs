@@ -1,8 +1,8 @@
 use std::net::IpAddr;
 
-use time::{Duration, OffsetDateTime};
 use slog::Logger;
 use thiserror::Error;
+use time::{Duration, OffsetDateTime};
 use tsproto_packets::commands::CommandParser;
 use tsproto_packets::packets::{Direction, InHeader, PacketType};
 use tsproto_types::errors::Error;
@@ -50,7 +50,9 @@ pub enum ParseError {
 		value: String,
 		source: std::net::AddrParseError,
 	},
-	#[error("Cannot parse \"{value}\" as float for parameter {arg} ({source})")]
+	#[error(
+		"Cannot parse \"{value}\" as float for parameter {arg} ({source})"
+	)]
 	ParseFloat {
 		arg: &'static str,
 		value: String,
@@ -61,17 +63,16 @@ pub enum ParseError {
 	#[error(
 		"Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})"
 	)]
-	ParseUid {
-		arg: &'static str,
-		value: String,
-		source: base64::DecodeError,
-	},
+	ParseUid { arg: &'static str, value: String, source: base64::DecodeError },
 	#[error("Invalid value \"{value}\" for parameter {arg}")]
 	InvalidValue { arg: &'static str, value: String },
 }
 
 pub trait InMessageTrait {
-	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self> where Self: Sized;
+	fn new(
+		logger: &Logger, header: &InHeader, args: CommandParser,
+	) -> Result<Self>
+	where Self: Sized;
 }
 
 pub mod s2c {

@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use std::mem;
 use std::str::{self, FromStr};
 
-use nom::IResult;
 use nom::branch::alt;
 use nom::bytes::complete::{is_not, tag};
 use nom::character::complete::{alphanumeric1, multispace0, multispace1};
 use nom::combinator::{map, opt};
 use nom::multi::{many0, many1};
+use nom::IResult;
 
 use crate::{Error, Result};
 
@@ -45,15 +45,14 @@ fn command_arg(i: &str) -> IResult<&str, (&str, Cow<str>)> {
 }
 
 fn inner_parse_command<'a>(i: &'a str) -> IResult<&'a str, CommandData> {
-	let (i, name) = alt((|i: &'a str| {
-		let (i, res) = alphanumeric1(i)?;
-		let i = if i.is_empty() {
-			i
-		} else {
-			multispace1(i)?.0
-		};
-		Ok((i, res))
-	}, tag("")))(i)?;
+	let (i, name) = alt((
+		|i: &'a str| {
+			let (i, res) = alphanumeric1(i)?;
+			let i = if i.is_empty() { i } else { multispace1(i)?.0 };
+			Ok((i, res))
+		},
+		tag(""),
+	))(i)?;
 
 	let (i, static_args) = many0(command_arg)(i)?;
 	let (i, list_args) = many0(|i| {
@@ -112,10 +111,8 @@ impl<'a> CanonicalCommand<'a> {
 	pub fn get(&self, arg: &str) -> Option<&str> { self.0.get(arg).map(|s| *s) }
 
 	pub fn get_parse<F: FromStr>(
-		&self,
-		arg: &str,
-	) -> std::result::Result<F, Option<<F as FromStr>::Err>>
-	{
+		&self, arg: &str,
+	) -> std::result::Result<F, Option<<F as FromStr>::Err>> {
 		if let Some(s) = self.0.get(arg) {
 			s.parse::<F>().map_err(Some)
 		} else {
@@ -214,10 +211,7 @@ impl<'a> Iterator for CommandParser<'a> {
 		if self.at_end() || self.cur() != b'=' {
 			return Some(CommandItem::Argument(CommandArgument {
 				name: &self.data[name_start..name_end],
-				value: CommandArgumentValue {
-					raw: &[],
-					escapes: 0,
-				},
+				value: CommandArgumentValue { raw: &[], escapes: 0 },
 			}));
 		}
 
@@ -299,7 +293,9 @@ impl<'a> CommandArgumentValue<'a> {
 	}
 
 	pub fn get_parse<E, T: FromStr>(&self) -> std::result::Result<T, E>
-		where E: From<<T as FromStr>::Err>, E: From<Error>
+	where
+		E: From<<T as FromStr>::Err>,
+		E: From<Error>,
 	{
 		Ok(self.get_str()?.as_ref().parse()?)
 	}
@@ -381,10 +377,11 @@ mod tests {
 	fn simple() {
 		let cmd = test_loop("cmd a=1 b=2 c=3");
 		assert_eq!(cmd.name, "cmd");
-		assert_eq!(
-			cmd.static_args,
-			vec![("a", "1".into()), ("b", "2".into()), ("c", "3".into()),]
-		);
+		assert_eq!(cmd.static_args, vec![
+			("a", "1".into()),
+			("b", "2".into()),
+			("c", "3".into()),
+		]);
 		assert!(cmd.list_args.is_empty());
 	}
 
@@ -392,14 +389,11 @@ mod tests {
 	fn escape() {
 		let cmd = test_loop("cmd a=\\s\\\\ b=\\p c=abc\\tdef");
 		assert_eq!(cmd.name, "cmd");
-		assert_eq!(
-			cmd.static_args,
-			vec![
-				("a", " \\".into()),
-				("b", "|".into()),
-				("c", "abc\tdef".into()),
-			]
-		);
+		assert_eq!(cmd.static_args, vec![
+			("a", " \\".into()),
+			("b", "|".into()),
+			("c", "abc\tdef".into()),
+		]);
 		assert!(cmd.list_args.is_empty());
 	}
 
@@ -411,14 +405,11 @@ mod tests {
 			cmd.static_args,
 			vec![("a", "1".into()), ("c", "3".into()),]
 		);
-		assert_eq!(
-			cmd.list_args,
-			vec![
-				vec![("b", "2".into())],
-				vec![("b", "4".into())],
-				vec![("b", "5".into())],
-			]
-		);
+		assert_eq!(cmd.list_args, vec![
+			vec![("b", "2".into())],
+			vec![("b", "4".into())],
+			vec![("b", "5".into())],
+		]);
 	}
 
 	#[test]
@@ -541,10 +532,10 @@ mod tests {
 		let s = "cmd=1 cid=2";
 		let cmd = test_loop(s);
 		assert_eq!(cmd.name, "");
-		assert_eq!(
-			cmd.static_args,
-			vec![("cmd", "1".into()), ("cid", "2".into()),]
-		);
+		assert_eq!(cmd.static_args, vec![
+			("cmd", "1".into()),
+			("cid", "2".into()),
+		]);
 		assert!(cmd.list_args.is_empty());
 	}
 

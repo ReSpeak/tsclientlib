@@ -23,14 +23,16 @@ use anyhow::{bail, format_err, Error, Result};
 use futures::prelude::*;
 use slog::{debug, info, o, warn, Drain, Logger};
 use thiserror::Error;
-use tokio::net::{TcpStream, UdpSocket};
 use tokio::io::AsyncWriteExt as _;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
-use tsproto::connection::StreamItem as ProtoStreamItem;
 use tsproto::client;
-use tsproto_packets::packets::{Direction, InCommandBuf, OutCommand, OutPacket, PacketType};
+use tsproto::connection::StreamItem as ProtoStreamItem;
+use tsproto_packets::packets::{
+	Direction, InCommandBuf, OutCommand, OutPacket, PacketType,
+};
 
 mod facades;
 pub mod resolver;
@@ -118,7 +120,12 @@ struct ConnectedConnection {
 }
 
 enum ConnectionState {
-	Connecting(future::BoxFuture<'static, result::Result<(client::Client, data::Connection), ConnectError>>),
+	Connecting(
+		future::BoxFuture<
+			'static,
+			result::Result<(client::Client, data::Connection), ConnectError>,
+		>,
+	),
 	IdentityLevelIncreasing {
 		/// The wanted level
 		level: u8,
@@ -217,15 +224,17 @@ impl Connection {
 		let logger = logger.new(o!("addr" => options.address.to_string()));
 
 		let mut stream_items = VecDeque::new();
-		options.identity = Some(options.identity.take().map(Ok).unwrap_or_else(|| {
-			// Create new ECDH key
-			let id = Identity::create();
-			if id.is_ok() {
-				// Send event
-				stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
-			}
-			id
-		})?);
+		options.identity =
+			Some(options.identity.take().map(Ok).unwrap_or_else(|| {
+				// Create new ECDH key
+				let id = Identity::create();
+				if id.is_ok() {
+					// Send event
+					stream_items
+						.push_back(Ok(StreamItem::IdentityLevelIncreased));
+				}
+				id
+			})?);
 
 		// Try all addresses
 		let fut = Self::connect(logger.clone(), options.clone());
@@ -242,25 +251,27 @@ impl Connection {
 	///
 	/// The identity of the options can be updated while connecting when the
 	/// identity level needs to be improved.
-	pub fn get_options(&self) -> &ConnectOptions {
-		&self.options
-	}
+	pub fn get_options(&self) -> &ConnectOptions { &self.options }
 
 	/// Get a stream of events. This is the main interaction point with a
 	/// connection. You need to poll the event stream, otherwise nothing will
 	/// happen in a connection.
-	pub fn events<'a>(&'a mut self) -> impl Stream<Item=Result<StreamItem>> + 'a {
+	pub fn events<'a>(
+		&'a mut self,
+	) -> impl Stream<Item = Result<StreamItem>> + 'a {
 		EventStream(self)
 	}
 
 	async fn connect(
-		logger: Logger,
-		options: ConnectOptions,
-	) -> result::Result<(client::Client, data::Connection), ConnectError>
-	{
+		logger: Logger, options: ConnectOptions,
+	) -> result::Result<(client::Client, data::Connection), ConnectError> {
 		let resolved = match &options.address {
-			ServerAddress::SocketAddr(a) => stream::once(future::ok(*a)).left_stream(),
-			ServerAddress::Other(s) => resolver::resolve(logger.clone(), s.into()).right_stream(),
+			ServerAddress::SocketAddr(a) => {
+				stream::once(future::ok(*a)).left_stream()
+			}
+			ServerAddress::Other(s) => {
+				resolver::resolve(logger.clone(), s.into()).right_stream()
+			}
 		};
 		pin_utils::pin_mut!(resolved);
 		let mut resolved: Pin<_> = resolved;
@@ -279,23 +290,28 @@ impl Connection {
 				}
 			}
 		}
-		Err(format_err!("Failed to connect to server, address {:?} did not work", options.address).into())
+		Err(format_err!(
+			"Failed to connect to server, address {:?} did not work",
+			options.address
+		)
+		.into())
 	}
 
 	async fn connect_to(
-		logger: &Logger,
-		options: &ConnectOptions,
-		addr: SocketAddr,
-	) -> result::Result<(client::Client, data::Connection), ConnectError>
-	{
+		logger: &Logger, options: &ConnectOptions, addr: SocketAddr,
+	) -> result::Result<(client::Client, data::Connection), ConnectError> {
 		let counter = options.identity.as_ref().unwrap().counter().to_string();
-		let socket = Box::new(UdpSocket::bind(options.local_address.unwrap_or_else(|| {
-			if addr.is_ipv4() {
-				"0.0.0.0:0".parse().unwrap()
-			} else {
-				"[::]:0".parse().unwrap()
-			}
-		})).await.map_err(Error::from)?);
+		let socket = Box::new(
+			UdpSocket::bind(options.local_address.unwrap_or_else(|| {
+				if addr.is_ipv4() {
+					"0.0.0.0:0".parse().unwrap()
+				} else {
+					"[::]:0".parse().unwrap()
+				}
+			}))
+			.await
+			.map_err(Error::from)?,
+		);
 		let mut client = client::Client::new(
 			logger.clone(),
 			addr,
@@ -339,7 +355,11 @@ impl Connection {
 			("client_nickname_phonetic", ""),
 			("client_key_offset", &counter),
 			("client_default_token", ""),
-			("hwid", "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc"),
+			(
+				"hwid",
+				"923f136fb1e22ae6ce95e60255529c00,\
+				 d13231b1bc33edfecfb9169cc7a63bcc",
+			),
 		];
 
 		if let Some(channel) = &options.channel {
@@ -354,28 +374,43 @@ impl Connection {
 			args.push(("client_server_password", pw));
 		}
 
-		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientinit",
-			args.into_iter(),
-			std::iter::empty(),
-		);
+		let packet =
+			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+				Direction::C2S,
+				PacketType::Command,
+				"clientinit",
+				args.into_iter(),
+				std::iter::empty(),
+			);
 
 		client.send_packet(packet).map_err(Error::from)?;
 
 		// Wait until we received the initserver packet.
 
-		let cmd = client.filter_commands(|_, cmd| Ok(Some(cmd)))
-			.await.map_err(Error::from)?;
-		let msg = InMessage::new(logger, cmd.data().packet().header(), cmd.data().packet().content()).map_err(Error::from)?;
+		let cmd = client
+			.filter_commands(|_, cmd| Ok(Some(cmd)))
+			.await
+			.map_err(Error::from)?;
+		let msg = InMessage::new(
+			logger,
+			cmd.data().packet().header(),
+			cmd.data().packet().content(),
+		)
+		.map_err(Error::from)?;
 		match msg {
 			InMessage::CommandError(e) => {
 				let e = e.iter().next().unwrap();
-				if e.id == ts_bookkeeping::TsError::ClientCouldNotValidateIdentity {
-					if let Some(needed) =
-						e.extra_message.as_ref().and_then(|m| m.parse::<u8>().ok()) {
-						return Err(ConnectError::IdentityLevelIncrease(needed));
+				if e.id
+					== ts_bookkeeping::TsError::ClientCouldNotValidateIdentity
+				{
+					if let Some(needed) = e
+						.extra_message
+						.as_ref()
+						.and_then(|m| m.parse::<u8>().ok())
+					{
+						return Err(ConnectError::IdentityLevelIncrease(
+							needed,
+						));
 					}
 				}
 				return Err(ConnectError::TsError(e.id));
@@ -386,11 +421,17 @@ impl Connection {
 					let params = if let Some(r) = &client.params {
 						r
 					} else {
-						return Err(format_err!("We should be connected but the \
-							connection params do not exist").into());
+						return Err(format_err!(
+							"We should be connected but the connection params \
+							 do not exist"
+						)
+						.into());
 					};
 
-					params.public_key.get_uid_no_base64().map_err(Error::from)?
+					params
+						.public_key
+						.get_uid_no_base64()
+						.map_err(Error::from)?
 				};
 
 				// Create connection
@@ -406,15 +447,22 @@ impl Connection {
 	/// connecting again.
 	fn increase_identity_level(&mut self, needed: u8) -> Result<()> {
 		if needed > 20 {
-			bail!("The server needs an identity of level {}, please increase \
-				your identity level", needed);
+			bail!(
+				"The server needs an identity of level {}, please increase \
+				 your identity level",
+				needed
+			);
 		}
 
 		let identity = self.options.identity.as_ref().unwrap().clone();
 		let level = identity.level()?;
 		if level >= needed {
-			bail!("The server requested an identity of level {}, but we \
-				already have level {}", needed, level);
+			bail!(
+				"The server requested an identity of level {}, but we already \
+				 have level {}",
+				needed,
+				level
+			);
 		}
 
 		// Increase identity level
@@ -437,7 +485,9 @@ impl Connection {
 	}
 
 	pub fn cancel_identity_level_increase(&mut self) -> Result<()> {
-		if let ConnectionState::IdentityLevelIncreasing { state, .. } = &mut self.state {
+		if let ConnectionState::IdentityLevelIncreasing { state, .. } =
+			&mut self.state
+		{
 			*state.lock().unwrap() = IdentityIncreaseLevelState::Canceled;
 		}
 		Ok(())
@@ -466,10 +516,12 @@ impl Connection {
 	/// Returns the public key of the server, fails if disconnected.
 	#[cfg(feature = "unstable")]
 	pub fn get_server_key(&self) -> Result<tsproto::crypto::EccKeyPubP256> {
-		self.get_tsproto_client().and_then(|c| if let Some(params) = &c.params {
-			Ok(params.public_key.clone())
-		} else {
-			bail!("Connection is not connected")
+		self.get_tsproto_client().and_then(|c| {
+			if let Some(params) = &c.params {
+				Ok(params.public_key.clone())
+			} else {
+				bail!("Connection is not connected")
+			}
 		})
 	}
 
@@ -494,10 +546,7 @@ impl Connection {
 
 	pub fn get_state_mut(&mut self) -> Result<facades::ConnectionMut> {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
-			Ok(facades::ConnectionMut {
-				connection: con,
-				inner: book,
-			})
+			Ok(facades::ConnectionMut { connection: con, inner: book })
 		} else {
 			bail!("Currently not connected");
 		}
@@ -570,11 +619,8 @@ impl Connection {
 
 	/// Return the size of the file and a tcp stream of the requested file.
 	pub fn download_file(
-		&mut self,
-		channel_id: ChannelId,
-		path: &str,
-		channel_password: Option<&str>,
-		seek_position: Option<u64>,
+		&mut self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, seek_position: Option<u64>,
 	) -> Result<FileTransferHandle>
 	{
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
@@ -587,17 +633,20 @@ impl Connection {
 	/// Return the size of the part which is already uploaded (when resume is
 	/// specified) and a tcp stream where the requested file should be uploaded.
 	pub fn upload_file(
-		&mut self,
-		channel_id: ChannelId,
-		path: &str,
-		channel_password: Option<&str>,
-		size: u64,
-		overwrite: bool,
+		&mut self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, size: u64, overwrite: bool,
 		resume: bool,
 	) -> Result<FileTransferHandle>
 	{
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
-			con.upload_file(channel_id, path, channel_password, size, overwrite, resume)
+			con.upload_file(
+				channel_id,
+				path,
+				channel_password,
+				size,
+				overwrite,
+				resume,
+			)
 		} else {
 			bail!("Currently not connected");
 		}
@@ -609,16 +658,15 @@ impl Connection {
 	/// immediately change the value.
 	pub fn to_mut<'a>(&'a mut self) -> Result<facades::ConnectionMut<'a>> {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
-			Ok(facades::ConnectionMut {
-				connection: con,
-				inner: book,
-			})
+			Ok(facades::ConnectionMut { connection: con, inner: book })
 		} else {
 			bail!("Not connected");
 		}
 	}
 
-	fn poll_next(&mut self, cx: &mut Context) -> Poll<Option<Result<StreamItem>>> {
+	fn poll_next(
+		&mut self, cx: &mut Context,
+	) -> Poll<Option<Result<StreamItem>>> {
 		if let Some(item) = self.stream_items.pop_front() {
 			return Poll::Ready(Some(item));
 		}
@@ -631,7 +679,9 @@ impl Connection {
 				Poll::Ready(Err(ConnectError::TsError(e))) => {
 					Poll::Ready(Some(Err(ConnectError::TsError(e).into())))
 				}
-				Poll::Ready(Err(ConnectError::IdentityLevelIncrease(level))) => {
+				Poll::Ready(Err(ConnectError::IdentityLevelIncrease(
+					level,
+				))) => {
 					if let Err(e) = self.increase_identity_level(level) {
 						return Poll::Ready(Some(Err(e)));
 					}
@@ -647,29 +697,36 @@ impl Connection {
 						file_transfers: Default::default(),
 					};
 					self.state = ConnectionState::Connected { con, book };
-					Poll::Ready(Some(Ok(StreamItem::ConEvents(vec![events::Event::PropertyAdded {
-						id: events::PropertyId::Server,
-						invoker: None,
-					}]))))
+					Poll::Ready(Some(Ok(StreamItem::ConEvents(vec![
+						events::Event::PropertyAdded {
+							id: events::PropertyId::Server,
+							invoker: None,
+						},
+					]))))
 				}
-			}
-			ConnectionState::IdentityLevelIncreasing { recv, .. } => {
-				match recv.poll_unpin(cx) {
-					Poll::Pending => Poll::Pending,
-					Poll::Ready(Err(e)) => {
-						Poll::Ready(Some(Err(format_err!("Failed to receive increased identity level ({:?})", e))))
-					}
-					Poll::Ready(Ok(Err(e))) => {
-						Poll::Ready(Some(Err(format_err!("Failed to increase identity level ({:?})", e))))
-					}
-					Poll::Ready(Ok(Ok(identity))) => {
-						self.options.identity = Some(identity);
-						let fut = Self::connect(self.logger.clone(), self.options.clone());
-						self.state = ConnectionState::Connecting(Box::pin(fut));
-						Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreased)))
-					}
+			},
+			ConnectionState::IdentityLevelIncreasing { recv, .. } => match recv
+				.poll_unpin(cx)
+			{
+				Poll::Pending => Poll::Pending,
+				Poll::Ready(Err(e)) => Poll::Ready(Some(Err(format_err!(
+					"Failed to receive increased identity level ({:?})",
+					e
+				)))),
+				Poll::Ready(Ok(Err(e))) => Poll::Ready(Some(Err(format_err!(
+					"Failed to increase identity level ({:?})",
+					e
+				)))),
+				Poll::Ready(Ok(Ok(identity))) => {
+					self.options.identity = Some(identity);
+					let fut = Self::connect(
+						self.logger.clone(),
+						self.options.clone(),
+					);
+					self.state = ConnectionState::Connecting(Box::pin(fut));
+					Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreased)))
 				}
-			}
+			},
 			ConnectionState::Connected { con, book } => match loop {
 				match con.client.poll_next_unpin(cx) {
 					Poll::Pending => break Poll::Pending,
@@ -679,9 +736,14 @@ impl Connection {
 							"error" => ?e);
 						// Reconnect
 						// TODO Depending on reason
-						let fut = Self::connect(self.logger.clone(), self.options.clone());
+						let fut = Self::connect(
+							self.logger.clone(),
+							self.options.clone(),
+						);
 						self.state = ConnectionState::Connecting(Box::pin(fut));
-						return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily)));
+						return Poll::Ready(Some(Ok(
+							StreamItem::DisconnectedTemporarily,
+						)));
 					}
 					Poll::Ready(Some(Ok(item))) => {
 						match item {
@@ -691,9 +753,15 @@ impl Connection {
 							}
 							ProtoStreamItem::Audio(_audio) => {} // TODO
 							ProtoStreamItem::Command(cmd) => {
-								con.handle_command(&self.logger, book,
-									&mut self.stream_items, cmd);
-								if let Some(item) = self.stream_items.pop_front() {
+								con.handle_command(
+									&self.logger,
+									book,
+									&mut self.stream_items,
+									cmd,
+								);
+								if let Some(item) =
+									self.stream_items.pop_front()
+								{
 									break Poll::Ready(Some(item));
 								}
 							}
@@ -705,12 +773,13 @@ impl Connection {
 				Poll::Ready(r) => Poll::Ready(r),
 				Poll::Pending => {
 					// Check file transfers
-					let ft = con.file_transfers.iter_mut().enumerate().find_map(|(i, ft)| {
-						match ft.poll_unpin(cx) {
-							Poll::Pending => None,
-							Poll::Ready(r) => Some((i, r)),
-						}
-					});
+					let ft =
+						con.file_transfers.iter_mut().enumerate().find_map(
+							|(i, ft)| match ft.poll_unpin(cx) {
+								Poll::Pending => None,
+								Poll::Ready(r) => Some((i, r)),
+							},
+						);
 					if let Some((i, res)) = ft {
 						con.file_transfers.remove(i);
 						Poll::Ready(Some(Ok(res)))
@@ -718,7 +787,7 @@ impl Connection {
 						Poll::Pending
 					}
 				}
-			}
+			},
 		}
 	}
 }
@@ -742,23 +811,24 @@ impl Drop for Connection {
 
 impl<'a> Stream for EventStream<'a> {
 	type Item = Result<StreamItem>;
-	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+	fn poll_next(
+		mut self: Pin<&mut Self>, cx: &mut Context,
+	) -> Poll<Option<Self::Item>> {
 		self.0.poll_next(cx)
 	}
 }
 
 impl ConnectedConnection {
 	fn handle_command(
-		&mut self,
-		logger: &Logger,
-		book: &mut data::Connection,
-		stream_items: &mut VecDeque<Result<StreamItem>>,
-		cmd: InCommandBuf,
+		&mut self, logger: &Logger, book: &mut data::Connection,
+		stream_items: &mut VecDeque<Result<StreamItem>>, cmd: InCommandBuf,
 	)
 	{
-		let msg = match InMessage::new(logger,
+		let msg = match InMessage::new(
+			logger,
 			&cmd.data().packet().header(),
-			&cmd.data().packet().content()) {
+			&cmd.data().packet().content(),
+		) {
 			Ok(r) => r,
 			Err(e) => {
 				warn!(logger, "Failed to parse message";
@@ -770,13 +840,15 @@ impl ConnectedConnection {
 		// Handle error messages
 		if let InMessage::CommandError(e) = &msg {
 			for e in e.iter() {
-				if let Some(ret_code) = e.return_code.as_ref().and_then(|r| r.parse().ok()) {
-					let res = if e.id == TsError::Ok {
-						Ok(())
-					} else {
-						Err(e.id)
-					};
-					stream_items.push_back(Ok(StreamItem::MessageResult(MessageHandle(ret_code), res)));
+				if let Some(ret_code) =
+					e.return_code.as_ref().and_then(|r| r.parse().ok())
+				{
+					let res =
+						if e.id == TsError::Ok { Ok(()) } else { Err(e.id) };
+					stream_items.push_back(Ok(StreamItem::MessageResult(
+						MessageHandle(ret_code),
+						res,
+					)));
 				}
 			}
 		} else if let InMessage::FileDownload(msg) = &msg {
@@ -787,20 +859,22 @@ impl ConnectedConnection {
 				let key = msg.file_transfer_key.clone();
 				let size = msg.size;
 
-				let fut = Box::new(async move {
-					let addr = addr;
-					let key = key;
-					let mut stream = TcpStream::connect(&addr).await?;
-					stream.write_all(key.as_bytes()).await?;
-					stream.flush().await?;
-					Ok(stream)
-				}).map(move |res| match res {
-					Ok(stream) => StreamItem::FileDownload(ft_id, FileDownloadResult {
-						size,
-						stream,
-					}),
-					Err(e) => StreamItem::FileTransferFailed(ft_id, e),
-				});
+				let fut =
+					Box::new(async move {
+						let addr = addr;
+						let key = key;
+						let mut stream = TcpStream::connect(&addr).await?;
+						stream.write_all(key.as_bytes()).await?;
+						stream.flush().await?;
+						Ok(stream)
+					})
+					.map(move |res| match res {
+						Ok(stream) => StreamItem::FileDownload(
+							ft_id,
+							FileDownloadResult { size, stream },
+						),
+						Err(e) => StreamItem::FileTransferFailed(ft_id, e),
+					});
 
 				self.file_transfers.push(Box::pin(fut));
 
@@ -821,11 +895,14 @@ impl ConnectedConnection {
 					stream.write_all(key.as_bytes()).await?;
 					stream.flush().await?;
 					Ok(stream)
-				}).map(move |res| match res {
-					Ok(stream) => StreamItem::FileUpload(ft_id, FileUploadResult {
-						seek_position,
-						stream,
-					}),
+				})
+				.map(move |res| match res {
+					Ok(stream) => {
+						StreamItem::FileUpload(ft_id, FileUploadResult {
+							seek_position,
+							stream,
+						})
+					}
 					Err(e) => StreamItem::FileTransferFailed(ft_id, e),
 				});
 
@@ -859,11 +936,8 @@ impl ConnectedConnection {
 
 	/// Return the size of the file and a tcp stream of the requested file.
 	pub fn download_file(
-		&mut self,
-		channel_id: ChannelId,
-		path: &str,
-		channel_password: Option<&str>,
-		seek_position: Option<u64>,
+		&mut self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, seek_position: Option<u64>,
 	) -> Result<FileTransferHandle>
 	{
 		let ft_id = self.cur_file_transfer_id;
@@ -886,12 +960,8 @@ impl ConnectedConnection {
 	/// Return the size of the part which is already uploaded (when resume is
 	/// specified) and a tcp stream where the requested file should be uploaded.
 	pub fn upload_file(
-		&mut self,
-		channel_id: ChannelId,
-		path: &str,
-		channel_password: Option<&str>,
-		size: u64,
-		overwrite: bool,
+		&mut self, channel_id: ChannelId, path: &str,
+		channel_password: Option<&str>, size: u64, overwrite: bool,
 		resume: bool,
 	) -> Result<FileTransferHandle>
 	{
