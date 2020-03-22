@@ -55,10 +55,8 @@ impl fmt::Display for Id {
 
 impl TsToAudio {
 	pub fn new(
-		logger: Logger,
-		audio_subsystem: AudioSubsystem,
-	) -> Result<Arc<Mutex<Self>>, Error>
-	{
+		logger: Logger, audio_subsystem: AudioSubsystem,
+	) -> Result<Arc<Mutex<Self>>, Error> {
 		let logger = logger.new(o!("pipeline" => "ts-to-audio"));
 		let data = Arc::new(Mutex::new(Default::default()));
 
@@ -84,8 +82,7 @@ impl TsToAudio {
 	}
 
 	fn open_playback(
-		logger: Logger,
-		audio_subsystem: &AudioSubsystem,
+		logger: Logger, audio_subsystem: &AudioSubsystem,
 		data: Arc<Mutex<HashMap<Id, VecDeque<f32>>>>,
 	) -> Result<AudioDevice<SdlCallback>, Error>
 	{
@@ -163,11 +160,8 @@ impl TsToAudio {
 	}
 
 	pub(crate) fn play_packet(
-		&mut self,
-		con: ConnectionId,
-		packet: &InAudio,
-	) -> Result<(), Error>
-	{
+		&mut self, con: ConnectionId, packet: &InAudio,
+	) -> Result<(), Error> {
 		if let AudioData::S2C { id: _, from, codec, data }
 		| AudioData::S2CWhisper { id: _, from, codec, data } = packet.data()
 		{

@@ -1,55 +1,25 @@
 use std::net::SocketAddr;
-use std::sync::Arc;
 
-use futures::{future, Future, Sink, Stream};
-use slog::{info, Level, Logger};
-use tokio;
+use anyhow::Result;
+use slog::{info, o, Drain, Level, Logger};
+use tokio::net::UdpSocket;
 use tsproto::algorithms as algs;
-use tsproto::client::ServerConnectionData;
+use tsproto::client::Client;
 use tsproto::crypto::EccKeyPrivP256;
-use tsproto::handler_data::PacketHandler;
-use tsproto::*;
 use tsproto_packets::packets::*;
 
-pub struct SimplePacketHandler;
+pub fn create_logger() -> Logger {
+	let decorator = slog_term::TermDecorator::new().build();
+	let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+	let drain = slog_async::Async::new(drain).build().fuse();
 
-impl<T: 'static> PacketHandler<T> for SimplePacketHandler {
-	fn new_connection<S1, S2, S3, S4>(
-		&mut self,
-		_: &handler_data::ConnectionValue<T>,
-		s2c_init_stream: S1,
-		_c2s_init_stream: S2,
-		command_stream: S3,
-		audio_stream: S4,
-	) where
-		S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
-		S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
-		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
-		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
-	{
-		// Ignore c2s init stream and start s2c init stream
-		tokio::spawn(
-			s2c_init_stream.for_each(|_| Ok(())).map_err(|e| {
-				println!("Init stream exited with error ({:?})", e)
-			}),
-		);
-		tokio::spawn(command_stream.for_each(|_| Ok(())).map_err(|e| {
-			println!("Command stream exited with error ({:?})", e)
-		}));
-		tokio::spawn(
-			audio_stream.for_each(|_| Ok(())).map_err(|e| {
-				println!("Audio stream exited with error ({:?})", e)
-			}),
-		);
-	}
+	slog::Logger::root(drain, o!())
 }
 
-pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
-	local_address: SocketAddr,
-	logger: Logger,
-	packet_handler: PH,
+pub async fn create_client(
+	local_address: SocketAddr, remote_address: SocketAddr, logger: Logger,
 	verbose: u8,
-) -> client::ClientDataM<PH>
+) -> Result<Client>
 {
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::import_str(
@@ -57,131 +27,95 @@ pub fn create_client<PH: PacketHandler<ServerConnectionData>>(
 		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-	let c = client::new(local_address, private_key, packet_handler, logger)
-		.unwrap();
+	let udp_socket = UdpSocket::bind(local_address).await?;
+	let mut con =
+		Client::new(logger, remote_address, Box::new(udp_socket), private_key);
 
-	{
-		let mut c = c.lock().unwrap();
-		let c = &mut *c;
-		// Logging
-		if verbose > 0 {
-			log::add_command_logger(c);
-		}
-		if verbose > 1 {
-			log::add_packet_logger(c);
-		}
-		if verbose > 2 {
-			log::add_udp_packet_logger(c);
-		}
+	if verbose >= 1 {
+		tsproto::log::add_logger(con.logger.clone(), verbose - 1, &mut con)
 	}
 
-	c
+	Ok(con)
 }
 
-pub fn connect<PH: PacketHandler<ServerConnectionData>>(
-	logger: Logger,
-	client: client::ClientDataM<PH>,
-	server_addr: SocketAddr,
-) -> impl Future<Item = client::ClientConVal, Error = Error>
-{
-	client::connect(Arc::downgrade(&client), &mut *client.lock().unwrap(), server_addr)
-		.and_then(move |con| {
-			let private_key = EccKeyPrivP256::import_str(
-			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
-			DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+/// Returns the `initserver` command.
+pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
+	con.connect().await?;
 
-			// Compute hash cash
-			let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-				"Compute public key hash cash level",
-				logger.clone(),
-				Level::Info,
-			);
-			time_reporter.start("Compute public key hash cash level");
-			let private_key_as_pub = private_key.to_pub();
-			let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
-			let omega = private_key_as_pub.to_ts().unwrap();
-			time_reporter.finish();
-			info!(logger, "Computed hash cash level";
-			"level" => algs::get_hash_cash_level(&omega, offset),
-			"offset" => offset);
+	// Send clientinit
+	let private_key = EccKeyPrivP256::import_str(
+		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITsC/50CIA8M5nm\
+		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
-			// Create clientinit packet
-			let offset = offset.to_string();
-			let packet = OutCommand::new::<
-				_,
-				_,
-				String,
-				String,
-				_,
-				_,
-				std::iter::Empty<_>,
-			>(
-				Direction::C2S,
-				PacketType::Command,
-				"clientinit",
-				vec![
-					("client_nickname", "Bot"),
-					("client_version", "3.1.8 [Build: 1516614607]"),
-					("client_platform", "Linux"),
-					("client_input_hardware", "1"),
-					("client_output_hardware", "1"),
-					("client_default_channel", ""),
-					("client_default_channel_password", ""),
-					("client_server_password", ""),
-					("client_meta_data", ""),
-					(
-						"client_version_sign",
-						"LJ5q+KWT4KwBX7oR\\/\
-						 9j9A12hBrq5ds5ony99f9kepNmqFskhT7gfB51bAJNgAMOzXVCeaItNmc10F2wUNktqCw==",
-					),
-					("client_nickname_phonetic", ""),
-					("client_key_offset", &offset),
-					("client_default_token", ""),
-					("client_badges", "Overwolf=0"),
-					(
-						"hwid",
-						"923f136fb1e22ae6ce95e60255529c00,\
-						 d13231b1bc33edfecfb9169cc7a63bcc",
-					),
-				]
-				.into_iter(),
-				std::iter::empty(),
-			);
+	// Compute hash cash
+	let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+		"Compute public key hash cash level",
+		con.logger.clone(),
+		Level::Info,
+	);
+	time_reporter.start("Compute public key hash cash level");
+	let private_key_as_pub = private_key.to_pub();
+	let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
+	let omega = private_key_as_pub.to_ts().unwrap();
+	time_reporter.finish();
+	info!(con.logger, "Computed hash cash level";
+		"level" => algs::get_hash_cash_level(&omega, offset),
+		"offset" => offset);
 
-			let con2 = con.clone();
-			con.as_packet_sink()
-				.send(packet)
-				.and_then(move |_| client::wait_until_connected(&con))
-				.map(move |_| con2)
+	// Create clientinit packet
+	let offset = offset.to_string();
+	let mut cmd = OutCommand::new(
+		Direction::C2S,
+		Flags::empty(),
+		PacketType::Command,
+		"clientinit",
+	);
+	cmd.write_arg("client_nickname", &"Bot");
+	cmd.write_arg("client_version", &"3.?.? [Build: 5680278000]");
+	cmd.write_arg("client_platform", &"Linux");
+
+	cmd.write_arg("client_input_hardware", &"1");
+	cmd.write_arg("client_output_hardware", &"1");
+	cmd.write_arg("client_default_channel", &"");
+	cmd.write_arg("client_default_channel_password", &"");
+	cmd.write_arg("client_server_password", &"");
+	cmd.write_arg("client_meta_data", &"");
+	cmd.write_arg("client_version_sign",
+		&"Hjd+N58Gv3ENhoKmGYy2bNRBsNNgm5kpiaQWxOj5HN2DXttG6REjymSwJtpJ8muC2gSwRuZi0R+8Laan5ts5CQ==");
+	cmd.write_arg("client_nickname_phonetic", &"");
+	cmd.write_arg("client_key_offset", &offset);
+	cmd.write_arg("client_default_token", &"");
+	cmd.write_arg("client_badges", &"Overwolf=0");
+	cmd.write_arg(
+		"hwid",
+		&"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc",
+	);
+
+	con.send_packet(cmd.into_packet())?;
+	Ok(con
+		.filter_commands(|con, cmd| {
+			Ok(if cmd.data().packet().content().starts_with(b"initserver ") {
+				Some(cmd)
+			} else {
+				con.hand_back_buffer(cmd.into_buffer());
+				None
+			})
 		})
+		.await?)
 }
 
-pub fn disconnect<PH: PacketHandler<ServerConnectionData>>(
-	client: &client::ClientDataM<PH>,
-	con: client::ClientConVal,
-) -> Box<dyn Future<Item = (), Error = Error> + Send>
-{
-	let packet =
-		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientdisconnect",
-			vec![
-				// Reason: Disconnect
-				("reasonid", "8"),
-				("reasonmsg", "Bye"),
-			]
-			.into_iter(),
-			std::iter::empty(),
-		);
+pub async fn disconnect(con: &mut Client) -> Result<()> {
+	let mut cmd = OutCommand::new(
+		Direction::C2S,
+		Flags::empty(),
+		PacketType::Command,
+		"clientdisconnect",
+	);
+	cmd.write_arg("reasonid", &8);
+	cmd.write_arg("reasonmsg", &"Bye");
 
-	let addr = if let Some(con) = con.upgrade() {
-		con.mutex.lock().unwrap().1.address
-	} else {
-		return Box::new(future::ok(()));
-	};
-	let wait = client.lock().unwrap().wait_for_disconnect(addr);
-
-	Box::new(con.as_packet_sink().send(packet).and_then(|_| wait))
+	con.send_packet(cmd.into_packet())?;
+	con.wait_disconnect().await?;
+	Ok(())
 }

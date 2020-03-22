@@ -2,7 +2,6 @@
 members = [
 	"tsclientlib",
 	"tsproto",
-	"utils/analyzer",
 	"utils/ts-bookkeeping",
 	"utils/tsproto-packets",
 	"utils/tsproto-structs",

@@ -22,16 +22,12 @@ impl Default for BookToMessagesDeclarations<'static> {
 	fn default() -> Self { BookToMessagesDeclarations(&DATA) }
 }
 
-fn to_ref_type(s: &str) -> String {
-	if s == "String" { "&str".into() } else { s.into() }
-}
-
 fn get_arguments(r: &RuleKind) -> String {
 	match r {
 		RuleKind::Map { .. } | RuleKind::Function { .. } => format!(
 			"{}: {}",
 			r.from_name().to_snake_case(),
-			to_ref_type(&r.from().get_rust_type()),
+			r.from().get_rust_type(true),
 		),
 		RuleKind::ArgumentMap { from, to } => format!(
 			"{}: {}",
@@ -45,10 +41,8 @@ fn get_arguments(r: &RuleKind) -> String {
 }
 
 fn get_all_arguments<'a>(
-	e: &'a Event<'a>,
-	r: Option<&'a RuleKind<'a>>,
-) -> String
-{
+	e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>,
+) -> String {
 	let mut args = String::new();
 	for r in e.ids.iter().chain(r.iter().cloned()) {
 		match r {
@@ -81,10 +75,8 @@ fn get_arguments_use(r: &RuleKind) -> String {
 }
 
 fn get_all_arguments_use<'a>(
-	e: &'a Event<'a>,
-	r: Option<&'a RuleKind<'a>>,
-) -> String
-{
+	e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>,
+) -> String {
 	let mut args = String::new();
 	for r in e.ids.iter().chain(r.iter().cloned()) {
 		match r {

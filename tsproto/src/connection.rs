@@ -1,36 +1,135 @@
-use std::fmt;
+use std::collections::VecDeque;
+use std::io;
+use std::mem;
 use std::net::SocketAddr;
-use std::{u16, u64};
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use std::u16;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use bytes::Bytes;
-use failure::format_err;
-use futures::sync::mpsc;
-use futures::{self, AsyncSink, Sink};
+use anyhow::format_err;
+use futures::prelude::*;
 use num_traits::ToPrimitive;
-use serde::de::{Unexpected, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use slog;
+use slog::{o, Logger};
+use tokio::net::UdpSocket;
 use tsproto_packets::packets::*;
 use tsproto_packets::HexSlice;
 
-use crate::algorithms as algs;
-use crate::crypto::{EccKeyPrivP256, EccKeyPubP256};
-use crate::handler_data::{ConnectionValue, ConnectionValueWeak};
-use crate::resend::DefaultResender;
-use crate::{Error, Result};
+use crate::crypto::EccKeyPubP256;
+use crate::packet_codec::PacketCodec;
+use crate::resend::{PacketId, PartialPacketId, Resender, ResenderState};
+use crate::{Error, Result, MAX_UDP_PACKET_LENGTH, UDP_SINK_CAPACITY};
+
+/// The needed functions, this can be used to abstract from the underlying
+/// transport and allows simulation.
+pub trait Socket {
+	fn poll_recv_from(
+		&self, cx: &mut Context, buf: &mut [u8],
+	) -> Poll<io::Result<(usize, SocketAddr)>>;
+	fn poll_send_to(
+		&self, cx: &mut Context, buf: &[u8], target: &SocketAddr,
+	) -> Poll<io::Result<usize>>;
+	fn local_addr(&self) -> io::Result<SocketAddr>;
+}
 
 /// A cache for the key and nonce for a generation id.
 /// This has to be stored for each packet type.
 #[derive(Debug)]
 pub struct CachedKey {
-	/// The generation id
 	pub generation_id: u32,
-	/// The key
 	pub key: GenericArray<u8, U16>,
-	/// The nonce
 	pub nonce: GenericArray<u8, U16>,
+}
+
+/// Data that has to be stored for a connection when it is connected.
+pub struct ConnectedParams {
+	/// The client id of this connection.
+	pub c_id: u16,
+	/// If voice packets should be encrypted
+	pub voice_encryption: bool,
+
+	/// The public key of the other side.
+	pub public_key: EccKeyPubP256,
+	/// The iv used to encrypt and decrypt packets.
+	pub shared_iv: [u8; 64],
+	/// The mac used for unencrypted packets.
+	pub shared_mac: [u8; 8],
+	/// Cached key and nonce per packet type and for server to client (without
+	/// client id inside the packet) and client to server communication.
+	pub key_cache: [[CachedKey; 2]; 8],
+}
+
+/// An event that originates from a tsproto raw connection.
+#[derive(Debug)]
+pub enum Event<'a> {
+	ReceiveUdpPacket(&'a InUdpPacket<'a>),
+	ReceivePacket(&'a InPacket<'a>),
+	SendUdpPacket(&'a OutUdpPacket),
+	SendPacket(&'a OutPacket),
+}
+
+/// An item that originates from a tsproto raw event stream.
+///
+/// The disconnected event is signaled by returning `None` from the stream.
+#[derive(Debug)]
+pub enum StreamItem {
+	Command(InCommandBuf),
+	Audio(InAudioBuf),
+	C2SInit(InC2SInitBuf),
+	S2CInit(InS2CInitBuf),
+	/// All packets with an id less or equal to this id were acknowledged.
+	AckPacket(PacketId),
+	Error(Error),
+}
+
+type EventListener = Box<dyn for<'a> Fn(&'a Event<'a>) -> () + Send>;
+
+/// Represents a currently alive connection.
+pub struct Connection {
+	pub is_client: bool,
+	pub logger: Logger,
+	/// The parameters of this connection, if it is already established.
+	pub params: Option<ConnectedParams>,
+	/// The adress of the other side, where packets are coming from and going
+	/// to.
+	pub address: SocketAddr,
+
+	pub resender: Resender,
+	pub codec: PacketCodec,
+	pub udp_socket: Box<dyn Socket + Send>,
+	udp_buffer: Vec<u8>,
+
+	/// A buffer of packets that should be returned from the stream.
+	///
+	/// If a new udp packet is received and we already received the following
+	/// ids, we can get multiple packets back at once. As we can only return one
+	/// from the stream, the rest is stored here.
+	pub(crate) stream_items: VecDeque<StreamItem>,
+
+	/// The queue of non-command packets that should be sent.
+	///
+	/// These packets are not influenced by congestion control.
+	/// If it gets too long, we don't poll from the `udp_socket` anymore.
+	acks_to_send: VecDeque<OutUdpPacket>,
+
+	pub event_listeners: Vec<EventListener>,
+}
+
+impl Socket for UdpSocket {
+	fn poll_recv_from(
+		&self, cx: &mut Context, buf: &mut [u8],
+	) -> Poll<io::Result<(usize, SocketAddr)>> {
+		self.poll_recv_from(cx, buf)
+	}
+
+	fn poll_send_to(
+		&self, cx: &mut Context, buf: &[u8], target: &SocketAddr,
+	) -> Poll<io::Result<usize>> {
+		self.poll_send_to(cx, buf, target)
+	}
+
+	fn local_addr(&self) -> io::Result<SocketAddr> { self.local_addr() }
 }
 
 impl Default for CachedKey {
@@ -43,67 +142,11 @@ impl Default for CachedKey {
 	}
 }
 
-pub enum SharedIv {
-	/// The protocol until TeamSpeak server 3.1 (excluded) uses this format.
-	ProtocolOrig([u8; 20]),
-	/// The protocol since TeamSpeak server 3.1 uses this format.
-	Protocol31([u8; 64]),
-}
-
-impl fmt::Debug for SharedIv {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match *self {
-			SharedIv::ProtocolOrig(ref data) => {
-				write!(f, "SharedIv::ProtocolOrig({:?})", HexSlice(data))
-			}
-			SharedIv::Protocol31(ref data) => {
-				write!(f, "SharedIv::Protocol32({:?})", HexSlice(data))
-			}
-		}
-	}
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct Identity {
-	#[serde(
-		serialize_with = "serialize_id_key",
-		deserialize_with = "deserialize_id_key"
-	)]
-	key: EccKeyPrivP256,
-	/// The `client_key_offest`/counter for hash cash.
-	counter: u64,
-	/// The maximum counter that was tried, this is greater equal to `counter`
-	/// but may yield a lower level.
-	max_counter: u64,
-}
-
-/// Data that has to be stored for a connection when it is connected.
-#[derive(Debug)]
-pub struct ConnectedParams {
-	/// The client id of this connection.
-	pub c_id: u16,
-	/// If voice packets should be encrypted
-	pub voice_encryption: bool,
-
-	/// The public key of the other side.
-	pub public_key: EccKeyPubP256,
-	/// The iv used to encrypt and decrypt packets.
-	pub shared_iv: SharedIv,
-	/// The mac used for unencrypted packets.
-	pub shared_mac: [u8; 8],
-	/// Cached key and nonce per packet type and for server to client (without
-	/// client id inside the packet) and client to server communication.
-	pub key_cache: [[CachedKey; 2]; 8],
-}
-
 impl ConnectedParams {
 	/// Fills the parameters for a connection with their default state.
 	pub fn new(
-		public_key: EccKeyPubP256,
-		shared_iv: SharedIv,
-		shared_mac: [u8; 8],
-	) -> Self
-	{
+		public_key: EccKeyPubP256, shared_iv: [u8; 64], shared_mac: [u8; 8],
+	) -> Self {
 		Self {
 			c_id: 0,
 			voice_encryption: true,
@@ -115,86 +158,39 @@ impl ConnectedParams {
 	}
 }
 
-/// Represents a currently alive connection.
-#[derive(Debug)]
-pub struct Connection {
-	pub is_client: bool,
-	/// A logger for this connection.
-	pub logger: slog::Logger,
-	/// The parameters of this connection, if it is already established.
-	pub params: Option<ConnectedParams>,
-	/// The adress of the other side, where packets are coming from and going
-	/// to.
-	pub address: SocketAddr,
-
-	pub resender: DefaultResender,
-	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-	pub s2c_init_sink: mpsc::UnboundedSender<InS2CInit>,
-	pub c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
-	pub command_sink: mpsc::UnboundedSender<InCommand>,
-	pub audio_sink: mpsc::UnboundedSender<InAudio>,
-
-	/// The next packet id that should be sent.
-	///
-	/// This list is indexed by the [`PacketType`], [`PacketType::Init`] is an
-	/// invalid index.
-	///
-	/// [`PacketType`]: udp/enum.PacketType.html
-	/// [`PacketType::Init`]: udp/enum.PacketType.html
-	pub outgoing_p_ids: [(u32, u16); 8],
-	/// Used for incoming out-of-order packets.
-	///
-	/// Only used for `Command` and `CommandLow` packets.
-	pub receive_queue: [Vec<InPacket>; 2],
-	/// Used for incoming fragmented packets.
-	///
-	/// Only used for `Command` and `CommandLow` packets.
-	pub fragmented_queue: [Option<(InPacket, Vec<u8>)>; 2],
-	/// The next packet id that is expected.
-	///
-	/// Works like the `outgoing_p_ids`.
-	pub incoming_p_ids: [(u32, u16); 8],
-}
-
 impl Connection {
-	/// Creates a new connection struct.
 	pub fn new(
-		address: SocketAddr,
-		resender: DefaultResender,
-		logger: slog::Logger,
-		udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-		is_client: bool,
-		s2c_init_sink: mpsc::UnboundedSender<InS2CInit>,
-		c2s_init_sink: mpsc::UnboundedSender<InC2SInit>,
-		command_sink: mpsc::UnboundedSender<InCommand>,
-		audio_sink: mpsc::UnboundedSender<InAudio>,
+		is_client: bool, logger: Logger, address: SocketAddr,
+		udp_socket: Box<dyn Socket + Send>,
 	) -> Self
 	{
+		let logger = logger.new(
+			o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),
+			"remote_addr" => address.to_string()),
+		);
+
 		let mut res = Self {
 			is_client,
 			logger,
 			params: None,
 			address,
-			resender,
-			udp_packet_sink,
-			s2c_init_sink,
-			c2s_init_sink,
-			command_sink,
-			audio_sink,
+			resender: Default::default(),
+			codec: Default::default(),
+			udp_socket,
+			udp_buffer: Default::default(),
 
-			outgoing_p_ids: Default::default(),
-			receive_queue: Default::default(),
-			fragmented_queue: Default::default(),
-			incoming_p_ids: Default::default(),
+			stream_items: Default::default(),
+			acks_to_send: Default::default(),
+			event_listeners: Default::default(),
 		};
 		if is_client {
 			// The first command is sent as part of the C2SInit::Init4 packet
 			// so it does not get registered automatically.
-			res.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
+			res.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 		} else {
-			res.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
+			res.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 		}
 		res
 	}
@@ -207,195 +203,263 @@ impl Connection {
 	/// 1. The minimum accepted packet id
 	/// 1. The maximum accepted packet id
 	pub(crate) fn in_receive_window(
-		&self,
-		p_type: PacketType,
-		p_id: u16,
-	) -> (bool, u32, u16, u16)
-	{
+		&self, p_type: PacketType, p_id: u16,
+	) -> (bool, u32, u16, u16) {
 		if p_type == PacketType::Init {
 			return (true, 0, 0, 0);
 		}
 		let type_i = p_type.to_usize().unwrap();
 		// Receive window is the next half of ids
-		let cur_next = self.incoming_p_ids[type_i].1;
+		let cur_next = self.codec.incoming_p_ids[type_i].packet_id;
 		let (limit, next_gen) = cur_next.overflowing_add(u16::MAX / 2);
-		let gen = self.incoming_p_ids[type_i].0;
-		(
-			(!next_gen && p_id >= cur_next && p_id < limit)
-				|| (next_gen && (p_id >= cur_next || p_id < limit)),
-			if next_gen && p_id < limit { gen + 1 } else { gen },
-			cur_next,
-			limit,
-		)
-	}
-}
+		let gen = self.codec.incoming_p_ids[type_i].generation_id;
+		let in_recv_win = (!next_gen && p_id >= cur_next && p_id < limit)
+			|| (next_gen && (p_id >= cur_next || p_id < limit));
+		let gen_id = if in_recv_win {
+			if next_gen && p_id < limit { gen + 1 } else { gen }
+		} else {
+			if p_id < cur_next { gen } else { gen - 1 }
+		};
 
-struct IdKeyVisitor;
-impl<'de> Visitor<'de> for IdKeyVisitor {
-	type Value = EccKeyPrivP256;
-
-	fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "a P256 private ecc key")
+		(in_recv_win, gen_id, cur_next, limit)
 	}
 
-	fn visit_str<E: serde::de::Error>(
-		self,
-		s: &str,
-	) -> std::result::Result<Self::Value, E>
-	{
-		EccKeyPrivP256::import_str(s).map_err(|_| {
-			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
-		})
-	}
-}
-
-fn serialize_id_key<S: Serializer>(
-	key: &EccKeyPrivP256,
-	s: S,
-) -> std::result::Result<S::Ok, S::Error>
-{
-	s.serialize_str(&base64::encode(&key.to_short()))
-}
-
-fn deserialize_id_key<'de, D: Deserializer<'de>>(
-	d: D,
-) -> std::result::Result<EccKeyPrivP256, D::Error> {
-	d.deserialize_str(IdKeyVisitor)
-}
-
-impl Identity {
-	#[inline]
-	pub fn create() -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::create()?, 0);
-		res.upgrade_level(8)?;
-		Ok(res)
-	}
-
-	#[inline]
-	pub fn new(key: EccKeyPrivP256, counter: u64) -> Self {
-		Self::new_with_max_counter(key, counter, counter)
-	}
-
-	#[inline]
-	pub fn new_with_max_counter(
-		key: EccKeyPrivP256,
-		counter: u64,
-		max_counter: u64,
-	) -> Self
-	{
-		Self { key, counter, max_counter }
-	}
-
-	#[inline]
-	pub fn new_from_str(key: &str) -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::import_str(key)?, 0);
-		res.upgrade_level(8)?;
-		Ok(res)
-	}
-
-	#[inline]
-	pub fn new_from_bytes(key: &[u8]) -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::import(key)?, 0);
-		res.upgrade_level(8)?;
-		Ok(res)
-	}
-
-	#[inline]
-	pub fn key(&self) -> &EccKeyPrivP256 { &self.key }
-	#[inline]
-	pub fn counter(&self) -> u64 { self.counter }
-	#[inline]
-	pub fn max_counter(&self) -> u64 { self.max_counter }
-
-	#[inline]
-	pub fn set_key(&mut self, key: EccKeyPrivP256) { self.key = key }
-	#[inline]
-	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
-	#[inline]
-	pub fn set_max_counter(&mut self, max_counter: u64) {
-		self.max_counter = max_counter;
-	}
-
-	/// Compute the current hash cash level.
-	#[inline]
-	pub fn level(&self) -> Result<u8> {
-		let omega = self.key.to_pub().to_ts()?;
-		Ok(algs::get_hash_cash_level(&omega, self.counter))
-	}
-
-	/// Compute a better hash cash level.
-	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
-		let omega = self.key.to_pub().to_ts()?;
-		let mut offset = self.max_counter;
-		while offset < u64::MAX
-			&& algs::get_hash_cash_level(&omega, offset) < target
-		{
-			offset += 1;
+	pub fn send_event(&self, event: &Event) {
+		for l in &self.event_listeners {
+			l(event)
 		}
-		self.counter = offset;
-		self.max_counter = offset;
+	}
+
+	pub fn hand_back_buffer(&mut self, buffer: Vec<u8>) {
+		if self.udp_buffer.capacity() < MAX_UDP_PACKET_LENGTH
+			&& buffer.capacity() >= MAX_UDP_PACKET_LENGTH
+		{
+			self.udp_buffer = buffer;
+		}
+	}
+
+	fn poll_send_acks(&mut self, cx: &mut Context) -> Result<()> {
+		// Poll acks_to_send
+		while let Some(packet) = self.acks_to_send.front() {
+			match self.poll_send_udp_packet(cx, packet) {
+				Poll::Ready(Ok(())) => {}
+				Poll::Ready(Err(e)) => return Err(e),
+				Poll::Pending => break,
+			}
+			self.acks_to_send.pop_front();
+		}
 		Ok(())
 	}
-}
 
-pub struct ConnectionUdpPacketSink<T: Send + 'static> {
-	con: ConnectionValueWeak<T>,
-	address: SocketAddr,
-	udp_packet_sink: mpsc::Sender<(SocketAddr, Bytes)>,
-}
-
-impl<T: Send + 'static> ConnectionUdpPacketSink<T> {
-	pub fn new(con: &ConnectionValue<T>) -> Self {
-		let address;
-		let udp_packet_sink;
-		{
-			let con = con.mutex.lock().unwrap();
-			address = con.1.address;
-			udp_packet_sink = con.1.udp_packet_sink.clone();
+	fn poll_incoming_udp_packet(
+		&mut self, cx: &mut Context,
+	) -> Poll<Result<StreamItem>> {
+		if self.acks_to_send.len() >= UDP_SINK_CAPACITY {
+			return Poll::Pending;
 		}
 
-		Self { con: con.downgrade(), address, udp_packet_sink }
+		loop {
+			// Poll udp_socket
+			if self.udp_buffer.len() != MAX_UDP_PACKET_LENGTH {
+				self.udp_buffer.resize(MAX_UDP_PACKET_LENGTH, 0);
+			}
+
+			match self.udp_socket.poll_recv_from(cx, &mut self.udp_buffer) {
+				Poll::Ready(Ok((size, addr))) => {
+					let mut udp_buffer =
+						mem::replace(&mut self.udp_buffer, Vec::new());
+					udp_buffer.truncate(size);
+					match self.handle_udp_packet(cx, udp_buffer, addr) {
+						Ok(()) => {
+							if let Some(item) = self.stream_items.pop_front() {
+								return Poll::Ready(Ok(item));
+							}
+						}
+						Err(e) => {
+							return Poll::Ready(Err(e));
+						}
+					}
+				}
+				// Udp socket closed
+				Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+				Poll::Pending => return Poll::Pending,
+			}
+		}
 	}
-}
 
-impl<T: Send + 'static> Sink for ConnectionUdpPacketSink<T> {
-	type SinkItem = (PacketType, u32, u16, Bytes);
-	type SinkError = Error;
+	fn handle_udp_packet(
+		&mut self, cx: &mut Context, udp_buffer: Vec<u8>, addr: SocketAddr,
+	) -> Result<()> {
+		if addr != self.address {
+			self.stream_items.push_back(StreamItem::Error(format_err!(
+				"Received UDP packet from wrong address"
+			)));
+			return Ok(());
+		}
 
-	fn start_send(
-		&mut self,
-		(p_type, p_gen, p_id, udp_packet): Self::SinkItem,
-	) -> futures::StartSend<Self::SinkItem, Self::SinkError>
-	{
-		match p_type {
+		let dir = if self.is_client { Direction::S2C } else { Direction::C2S };
+		let packet = InUdpPacket(match InPacket::try_new(dir, &udp_buffer) {
+			Ok(r) => r,
+			Err(e) => {
+				let e: Error = e.into();
+				self.stream_items.push_back(StreamItem::Error(
+					e.context(format!("Buffer {}", HexSlice(&udp_buffer))),
+				));
+				return Ok(());
+			}
+		});
+		let event = Event::ReceiveUdpPacket(&packet);
+		self.send_event(&event);
+
+		self.resender.received_packet();
+		PacketCodec::handle_udp_packet(self, cx, udp_buffer)?;
+
+		Ok(())
+	}
+
+	/// Try to send an ack packet.
+	///
+	/// If it does not work, add it to the ack queue.
+	pub(crate) fn send_ack_packet(
+		&mut self, cx: &mut Context, packet: OutPacket,
+	) -> Result<()> {
+		self.send_event(&Event::SendPacket(&packet));
+		let mut udp_packets = PacketCodec::encode_packet(self, packet)?;
+		assert_eq!(
+			udp_packets.len(),
+			1,
+			"Encoding an ack packet should only yield a single packet"
+		);
+		let packet = udp_packets.pop().unwrap();
+
+		match self.poll_send_udp_packet(cx, &packet) {
+			Poll::Ready(r) => r,
+			Poll::Pending => {
+				self.acks_to_send.push_back(packet);
+				Ok(())
+			}
+		}
+	}
+
+	/// Add a packet to the send queue.
+	///
+	/// This function buffers indefinitely, to prevent using a large amount of
+	/// memory, check `is_send_queue_full` first and only send a packet if this
+	/// function returns `false`.
+	///
+	/// When the `PacketId` which is returned by this function is acknowledged,
+	/// the packet was successfully received by the other side of the
+	/// connection.
+	pub fn send_packet(&mut self, packet: OutPacket) -> Result<PacketId> {
+		self.send_event(&Event::SendPacket(&packet));
+		let udp_packets = PacketCodec::encode_packet(self, packet)?;
+
+		let id = udp_packets.last().unwrap().into();
+		for p in udp_packets {
+			self.send_udp_packet(p);
+		}
+		Ok(id)
+	}
+
+	/// Add an udp packet to the send queue.
+	pub fn send_udp_packet(&mut self, packet: OutUdpPacket) {
+		match packet.packet_type() {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
-				if let Some(mutex) = self.con.mutex.upgrade() {
-					let mut con = mutex.lock().unwrap();
-					con.1.resender.start_send((p_type, p_gen, p_id, udp_packet))
+				Resender::send_packet(self, packet);
+			}
+			_ => self.acks_to_send.push_back(packet),
+		}
+	}
+
+	pub fn poll_send_udp_packet(
+		&self, cx: &mut Context, packet: &OutUdpPacket,
+	) -> Poll<Result<()>> {
+		Self::static_poll_send_udp_packet(
+			&*self.udp_socket,
+			&self.address,
+			&self.event_listeners,
+			cx,
+			packet,
+		)
+	}
+
+	pub fn static_poll_send_udp_packet(
+		udp_socket: &dyn Socket, address: &SocketAddr,
+		event_listeners: &[EventListener], cx: &mut Context,
+		packet: &OutUdpPacket,
+	) -> Poll<Result<()>>
+	{
+		let data = packet.data().data();
+		match udp_socket.poll_send_to(cx, data, address)? {
+			Poll::Pending => Poll::Pending,
+			Poll::Ready(size) => {
+				let event = Event::SendUdpPacket(&packet);
+				for l in event_listeners {
+					l(&event)
+				}
+
+				if size != data.len() {
+					Poll::Ready(Err(format_err!(
+						"Failed to send whole udp packet"
+					)))
 				} else {
-					Err(format_err!("Connection is gone").into())
+					Poll::Ready(Ok(()))
 				}
 			}
-			_ => Ok(
-				match self
-					.udp_packet_sink
-					.start_send((self.address, udp_packet))
-					.map_err(|e| {
-						format_err!("Failed to send udp packet ({:?})", e)
-					})? {
-					AsyncSink::Ready => AsyncSink::Ready,
-					AsyncSink::NotReady((_, p)) => {
-						AsyncSink::NotReady((p_type, p_gen, p_id, p))
-					}
-				},
-			),
 		}
 	}
 
-	fn poll_complete(&mut self) -> futures::Poll<(), Self::SinkError> {
-		self.udp_packet_sink.poll_complete().map_err(|e| {
-			format_err!("Failed to complete sending udp packet ({:?})", e)
-				.into()
-		})
+	pub fn is_send_queue_full(&self) -> bool { self.resender.is_full() }
+	pub fn is_send_queue_empty(&self) -> bool { self.resender.is_empty() }
+}
+
+/// Pull for events.
+///
+/// `Ok(StreamItem::Error)` is recoverable, `Err()` is not.
+///
+/// Polling does a few things in round robin fashion:
+/// 1. Check for new udp packets
+/// 2. Use the resender to resend packets if necessary
+/// 3. Use the resender to send ping packets if necessary
+impl Stream for Connection {
+	type Item = Result<StreamItem>;
+	fn poll_next(
+		mut self: Pin<&mut Self>, cx: &mut Context,
+	) -> Poll<Option<Self::Item>> {
+		if let Err(e) = self.poll_send_acks(cx) {
+			return Poll::Ready(Some(Err(e)));
+		}
+
+		if self.resender.get_state() == ResenderState::Disconnected {
+			// Send all ack packets and return `None` afterwards
+			if self.acks_to_send.is_empty() {
+				return Poll::Ready(None);
+			}
+		}
+
+		// Use the resender to resend packes
+		match Resender::poll_resend(&mut *self, cx) {
+			Ok(()) => {}
+			Err(e) => return Poll::Ready(Some(Err(e))),
+		}
+
+		// Use the resender to send pings
+		match Resender::poll_ping(&mut *self, cx) {
+			Ok(()) => {}
+			Err(e) => return Poll::Ready(Some(Err(e))),
+		}
+
+		// Return existing stream_items
+		if let Some(item) = self.stream_items.pop_front() {
+			return Poll::Ready(Some(Ok(item)));
+		}
+
+		// Check for new udp packets
+		match self.poll_incoming_udp_packet(cx) {
+			Poll::Ready(r) => return Poll::Ready(Some(r)),
+			Poll::Pending => {}
+		}
+
+		Poll::Pending
 	}
 }

@@ -2,15 +2,15 @@ use std::borrow::Cow;
 use std::io::prelude::*;
 use std::str;
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use time::OffsetDateTime;
+use anyhow::format_err;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use failure::format_err;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
+use omnom::{ReadExt, WriteExt};
 use ring::digest;
+use time::OffsetDateTime;
 
 use crate::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 use crate::Result;
@@ -114,7 +114,18 @@ impl InnerLicense {
 impl Licenses {
 	pub fn new() -> Self { Self::default() }
 
-	pub fn parse(mut data: &[u8]) -> Result<Self> {
+	/// Parse a license but ignore expired licenses.
+	///
+	/// This is useful for tests but should not be used otherwise.
+	pub fn parse_ignore_expired(data: &[u8]) -> Result<Self> {
+		Self::parse_internal(data, false)
+	}
+
+	pub fn parse(data: &[u8]) -> Result<Self> {
+		Self::parse_internal(data, true)
+	}
+
+	fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
 		let version = data[0];
 		if version != 1 {
 			return Err(format_err!("Unsupported version").into());
@@ -135,10 +146,10 @@ impl Licenses {
 			let (license, len) = License::parse(data)?;
 
 			// Check if the certificate is valid
-			if license.not_valid_before > now {
+			if license.not_valid_before > now && check_expired {
 				return Err(format_err!("License is not yet valid").into());
 			}
-			if license.not_valid_after < now {
+			if license.not_valid_after < now && check_expired {
 				return Err(format_err!("License expired").into());
 			}
 			if let Some((start, end)) = bounds {
@@ -159,9 +170,9 @@ impl Licenses {
 		Ok(res)
 	}
 
-	pub fn write(&self, w: &mut dyn Write) -> Result<()> {
+	pub fn write(&self, mut w: &mut dyn Write) -> Result<()> {
 		// Version
-		w.write_u8(1)?;
+		w.write_be(1u8)?;
 
 		for l in &self.blocks {
 			l.write(w)?;
@@ -198,11 +209,8 @@ impl Licenses {
 	///
 	/// Panics if `starting_block` is not a valid license block index.
 	pub fn derive_private_key(
-		&self,
-		starting_block: usize,
-		first_key: EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519>
-	{
+		&self, starting_block: usize, first_key: EccKeyPrivEd25519,
+	) -> Result<EccKeyPrivEd25519> {
 		let mut res = first_key;
 		for l in &self.blocks[starting_block..] {
 			res = l.derive_private_key(&res)?;
@@ -241,12 +249,12 @@ impl License {
 		let mut key_data = [0; 32];
 		key_data.copy_from_slice(&data[1..33]);
 
-		let before_ts = (&data[34..]).read_u32::<BigEndian>()?;
-		let after_ts = (&data[38..]).read_u32::<BigEndian>()?;
+		let before_ts: u32 = (&data[34..]).read_be()?;
+		let after_ts: u32 = (&data[38..]).read_be()?;
 
 		let (inner, extra_len) = match data[33] {
 			0 => {
-				let license_data = (&data[42..]).read_u32::<BigEndian>()?;
+				let license_data: u32 = (&data[42..]).read_be()?;
 				if license_data > 0x7f {
 					return Err(format_err!(
 						"Invalid data in intermediate license"
@@ -280,7 +288,7 @@ impl License {
 					LicenseType::from_u8(data[42]).ok_or_else(|| {
 						format_err!("Unknown license type {}", data[42])
 					})?;
-				let license_data = (&data[43..]).read_u32::<BigEndian>()?;
+				let license_data: u32 = (&data[43..]).read_be()?;
 				let len = if let Some(len) =
 					data[47..].iter().position(|&b| b == 0)
 				{
@@ -320,9 +328,11 @@ impl License {
 			License {
 				key: LicenseKey::Public(EccKeyPubEd25519::from_bytes(key_data)),
 				not_valid_before: OffsetDateTime::from_unix_timestamp(
-					i64::from(before_ts) + TIMESTAMP_OFFSET),
+					i64::from(before_ts) + TIMESTAMP_OFFSET,
+				),
 				not_valid_after: OffsetDateTime::from_unix_timestamp(
-					i64::from(after_ts) + TIMESTAMP_OFFSET),
+					i64::from(after_ts) + TIMESTAMP_OFFSET,
+				),
 				hash,
 				inner,
 			},
@@ -330,39 +340,39 @@ impl License {
 		))
 	}
 
-	pub fn write(&self, w: &mut dyn Write) -> Result<()> {
-		w.write_u8(0)?;
+	pub fn write(&self, mut w: &mut dyn Write) -> Result<()> {
+		w.write_be(0u8)?;
 		// Public key
 		w.write_all(self.key.get_pub_bytes().as_ref())?;
 		// Type
-		w.write_u8(self.inner.type_id())?;
+		w.write_be(self.inner.type_id())?;
 
-		w.write_u32::<BigEndian>(
+		w.write_be(
 			(self.not_valid_before.timestamp() - TIMESTAMP_OFFSET) as u32,
 		)?;
-		w.write_u32::<BigEndian>(
+		w.write_be(
 			(self.not_valid_after.timestamp() - TIMESTAMP_OFFSET) as u32,
 		)?;
 
 		match self.inner {
 			InnerLicense::Intermediate { ref issuer, data } => {
-				w.write_u32::<BigEndian>(u32::from(data))?;
+				w.write_be(u32::from(data))?;
 				w.write_all(issuer.as_bytes())?;
-				w.write_u8(0)?;
+				w.write_be(0u8)?;
 			}
 			InnerLicense::Website { ref issuer } => {
 				w.write_all(issuer.as_bytes())?;
-				w.write_u8(0)?;
+				w.write_be(0u8)?;
 			}
 			InnerLicense::Server { ref issuer, license_type, data } => {
-				w.write_u8(license_type.to_u8().unwrap())?;
-				w.write_u32::<BigEndian>(data)?;
+				w.write_be(license_type.to_u8().unwrap())?;
+				w.write_be(data)?;
 				w.write_all(issuer.as_bytes())?;
-				w.write_u8(0)?;
+				w.write_be(0u8)?;
 			}
 			InnerLicense::Code { ref issuer } => {
 				w.write_all(issuer.as_bytes())?;
-				w.write_u8(0)?;
+				w.write_be(0u8)?;
 			}
 			InnerLicense::Ephemeral => {}
 		}
@@ -381,10 +391,8 @@ impl License {
 	}
 
 	pub fn derive_public_key(
-		&self,
-		parent_key: &EdwardsPoint,
-	) -> Result<EdwardsPoint>
-	{
+		&self, parent_key: &EdwardsPoint,
+	) -> Result<EdwardsPoint> {
 		let hash_key = self.get_hash_key();
 		let pub_key = self.key.get_pub()?;
 		Ok(pub_key * hash_key + parent_key)
@@ -398,10 +406,8 @@ impl License {
 	///
 	/// `parent_key`: The resulting private key of the previous block.
 	pub fn derive_private_key(
-		&self,
-		parent_key: &EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519>
-	{
+		&self, parent_key: &EccKeyPrivEd25519,
+	) -> Result<EccKeyPrivEd25519> {
 		let priv_key = if let LicenseKey::Private(ref k) = self.key {
 			&k.0
 		} else {

@@ -1,15 +1,9 @@
-#[macro_use]
-extern crate criterion;
-extern crate futures;
-#[macro_use]
-extern crate slog;
-extern crate tokio;
-extern crate tsproto;
-
-use criterion::{Bencher, Benchmark, Criterion};
-use futures::{future, Future, Sink};
-
-use tsproto::packets::*;
+use anyhow::Error;
+use criterion::{
+	criterion_group, criterion_main, Bencher, Benchmark, Criterion,
+};
+use slog::info;
+use tsproto_packets::packets::*;
 
 mod utils;
 use crate::utils::*;
@@ -18,35 +12,24 @@ fn send_messages(b: &mut Bencher) {
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
-	let logger = {
-		let drain = slog::Discard;
-		//use slog::Drain;
-		//let decorator = slog_term::TermDecorator::new().build();
-		//let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		//let drain = slog_async::Async::new(drain).build().fuse();
-		slog::Logger::root(drain, o!())
-	};
+	let logger = create_logger(false);
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
-	let logger2 = logger.clone();
-	let (c, con) = rt
-		.block_on(future::lazy(move || {
-			let c = create_client(
-				local_address,
-				logger2.clone(),
-				SimplePacketHandler,
-				0,
-			);
+	let mut con = rt
+		.block_on(async move {
+			let mut con =
+				create_client(local_address, address, logger.clone(), 0)
+					.await?;
 
-			info!(logger2, "Connecting");
-			utils::connect(logger2.clone(), c.clone(), address)
-				.map_err(|e| panic!("Failed to connect ({:?})", e))
-				.map(move |con| (c, con))
-		}))
+			info!(logger, "Connecting");
+			connect(&mut con).await?;
+			Ok::<_, Error>(con)
+		})
 		.unwrap();
 
 	let mut i = 0;
 
+	let mut last_id = None;
 	b.iter(|| {
 		let text = format!("Hello {}", i);
 		let packet =
@@ -59,22 +42,29 @@ fn send_messages(b: &mut Bencher) {
 			);
 		i += 1;
 
-		let sink = con.as_packet_sink();
-		rt.block_on(future::lazy(move || sink.send(packet))).unwrap();
+		rt.block_on(async {
+			con.wait_until_can_send().await.unwrap();
+			last_id = Some(con.send_packet(packet).unwrap());
+		});
 	});
-	let c2 = c.clone();
-	rt.block_on(future::lazy(move || {
-		disconnect(&c2, con)
-			.map_err(|e| panic!("Failed to disconnect ({:?})", e))
-			.and_then(move |_| {
-				info!(logger, "Disconnected");
-				// Quit client
-				drop(c);
-				Ok(())
-			})
-	}))
+
+	rt.block_on(async move {
+		if let Some(id) = last_id {
+			info!(con.logger, "Waiting for {:?}", id);
+			con.wait_for_ack(id).await?;
+		}
+		tokio::select! {
+			_ = tokio::time::delay_for(tokio::time::Duration::from_millis(50)) => {
+			}
+			_ = con.wait_disconnect() => {
+				anyhow::bail!("Disconnected");
+			}
+		};
+
+		info!(con.logger, "Disconnecting");
+		disconnect(&mut con).await
+	})
 	.unwrap();
-	rt.shutdown_on_idle().wait().unwrap();
 }
 
 fn bench_message(c: &mut Criterion) {

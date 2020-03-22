@@ -41,11 +41,8 @@ struct SdlCallback {
 
 impl AudioToTs {
 	pub fn new(
-		logger: Logger,
-		audio_subsystem: AudioSubsystem,
-		executor: Handle,
-	) -> Result<Arc<Mutex<Self>>, Error>
-	{
+		logger: Logger, audio_subsystem: AudioSubsystem, executor: Handle,
+	) -> Result<Arc<Mutex<Self>>, Error> {
 		let logger = logger.new(o!("pipeline" => "audio-to-ts"));
 		let listener = Arc::new(Mutex::new(Default::default()));
 		let volume = Arc::new(Mutex::new(1.0));
@@ -75,11 +72,8 @@ impl AudioToTs {
 	}
 
 	fn open_capture(
-		logger: Logger,
-		audio_subsystem: &AudioSubsystem,
-		executor: Handle,
-		listener: Arc<Mutex<Option<ClientConVal>>>,
-		volume: Arc<Mutex<f32>>,
+		logger: Logger, audio_subsystem: &AudioSubsystem, executor: Handle,
+		listener: Arc<Mutex<Option<ClientConVal>>>, volume: Arc<Mutex<f32>>,
 	) -> Result<AudioDevice<SdlCallback>, Error>
 	{
 		let desired_spec = AudioSpecDesired {
@@ -128,7 +122,9 @@ impl AudioToTs {
 		panic!("`unstable` feature needs to be enabled!");
 	}
 
-	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock().unwrap() = volume; }
+	pub fn set_volume(&mut self, volume: f32) {
+		*self.volume.lock().unwrap() = volume;
+	}
 
 	pub fn set_playing(&mut self, playing: bool) {
 		if playing {

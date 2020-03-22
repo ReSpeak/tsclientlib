@@ -25,26 +25,24 @@ features = ["unstable"]
 unstable = []
 
 [dependencies]
-base64 = "0.11"
-bytes = "0.4"
-chashmap = "2"
-derive_more = "0.99"
-failure = "0.1"
-futures = "0.1"
+anyhow = "1"
+base64 = "0.12"
+futures = "0.3"
 git-testament = "0.1"
-itertools = "0.8"
+itertools = "0.9"
 num-traits = "0.2"
+pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
-reqwest = "0.9"
+reqwest = "0.10"
 slog = "2"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
+thiserror = "1"
 time = "0.2"
-tokio = "0.1"
-tokio-threadpool = "0.1"
-trust-dns-proto = "0.7"
-trust-dns-resolver = "0.11"
+tokio = { version = "0.2", features = ["stream", "time"] }
+trust-dns-proto = "0.19"
+trust-dns-resolver = "0.19"
 ts-bookkeeping = { path = "../utils/ts-bookkeeping" }
 tsproto = { path = "../tsproto", version = "=0.1.0" }
 tsproto-packets = { path = "../utils/tsproto-packets" }
@@ -58,4 +56,5 @@ tsproto-structs = { path = "../utils/tsproto-structs", version = "=0.1.0" }
 audiopus = "0.2"
 sdl2 = "0.33"
 structopt = { version = "0.3", default-features = false }
+tokio = { version = "0.2", features = ["rt-threaded", "signal"] }
 tokio-signal = "0.2"

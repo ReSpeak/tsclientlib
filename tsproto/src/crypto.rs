@@ -1,20 +1,21 @@
 //! This module contains cryptography related code.
 use std::{cmp, fmt, str};
 
+use anyhow::format_err;
 use arrayref::array_ref;
 use base64;
+use curve25519_dalek::constants;
+use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::scalar::Scalar;
 use num_bigint::{BigInt, Sign};
 use ring::digest;
 use ring::signature::KeyPair;
 use simple_asn1::ASN1Block;
-
-use curve25519_dalek::constants;
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::scalar::Scalar;
-use failure::format_err;
 use untrusted::Input;
 
-use crate::{Error, Result};
+use crate::BasicError;
+
+type Result<T> = std::result::Result<T, BasicError>;
 
 pub enum KeyType {
 	Public,
@@ -135,15 +136,12 @@ impl EccKeyPubP256 {
 		let pubkey_y =
 			BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
 
-		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
-			0,
-			vec![
-				ASN1Block::BitString(0, 1, vec![0]),
-				ASN1Block::Integer(0, 32.into()),
-				ASN1Block::Integer(0, pubkey_x),
-				ASN1Block::Integer(0, pubkey_y),
-			],
-		))?)
+		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+			ASN1Block::BitString(0, 1, vec![0]),
+			ASN1Block::Integer(0, 32.into()),
+			ASN1Block::Integer(0, pubkey_x),
+			ASN1Block::Integer(0, pubkey_y),
+		]))?)
 	}
 
 	/// The shortest format of a public key.
@@ -170,12 +168,16 @@ impl EccKeyPubP256 {
 		Ok(base64::encode(&self.get_uid_no_base64()?))
 	}
 
-	pub fn verify(self, data: &[u8], signature: &[u8]) -> Result<()> {
+	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let key = ring::signature::UnparsedPublicKey::new(
 			&ring::signature::ECDSA_P256_SHA256_ASN1,
 			&self.0,
 		);
-		key.verify(data, signature).map_err(|_| Error::WrongSignature)
+		key.verify(data, signature).map_err(|_| BasicError::WrongSignature {
+			key: self.clone(),
+			data: data.to_vec(),
+			signature: signature.to_vec(),
+		})
 	}
 }
 
@@ -375,16 +377,13 @@ impl EccKeyPrivP256 {
 
 		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0);
 
-		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(
-			0,
-			vec![
-				ASN1Block::BitString(0, 1, vec![0x80]),
-				ASN1Block::Integer(0, 32.into()),
-				ASN1Block::Integer(0, pubkey_x),
-				ASN1Block::Integer(0, pubkey_y),
-				ASN1Block::Integer(0, privkey),
-			],
-		))?)
+		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+			ASN1Block::BitString(0, 1, vec![0x80]),
+			ASN1Block::Integer(0, 32.into()),
+			ASN1Block::Integer(0, pubkey_x),
+			ASN1Block::Integer(0, pubkey_y),
+			ASN1Block::Integer(0, privkey),
+		]))?)
 	}
 
 	/// Create a `ring` key from the stored private key.
@@ -411,7 +410,6 @@ impl EccKeyPrivP256 {
 
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
 		let key = self.to_ring();
-		// TODO Return ring signature for one less copy
 		Ok(key
 			.sign(&ring::rand::SystemRandom::new(), data)
 			.map_err(|_| format_err!("Failed to create signature"))?
@@ -469,10 +467,8 @@ impl EccKeyPrivEd25519 {
 
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(
-		&self,
-		pub_key: &EdwardsPoint,
-	) -> Result<[u8; 32]>
-	{
+		&self, pub_key: &EdwardsPoint,
+	) -> Result<[u8; 32]> {
 		let res = pub_key * self.0;
 		Ok(res.compress().0)
 	}

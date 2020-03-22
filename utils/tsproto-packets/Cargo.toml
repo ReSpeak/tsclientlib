@@ -2,20 +2,16 @@
 name = "tsproto-packets"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
-license = "OSL-3.0"
+license = "MIT/Apache-2.0"
 edition = "2018"
 
 [dependencies]
 arrayref = "0.3"
 base64 = "0.11"
 bitflags = "1"
-byteorder = "1"
-bytes = "0.4"
-derive_more = "0.99"
-failure = "0.1"
-nom = "5"
 num-derive = "0.3"
 num-traits = "0.2"
+omnom = "3"
 rental = "0.5"
 serde = { version = "1", features = ["derive"] }
-stable_deref_trait = "1"
+thiserror = "1"

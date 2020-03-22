@@ -26,7 +26,7 @@ fn main() {
 	let dir = if args.c2s { Direction::C2S } else { Direction::S2C };
 
 	let data = utils::read_hex(&args.data).unwrap();
-	let packet = match InPacket::try_new(data.into(), dir) {
+	let packet = match InPacket::try_new(dir, &data) {
 		Ok(p) => p,
 		Err(e) => {
 			if args.debug {

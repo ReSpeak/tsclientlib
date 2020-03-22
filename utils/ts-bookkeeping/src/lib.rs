@@ -1,8 +1,7 @@
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 
-use derive_more::From;
-use failure::{Fail, ResultExt};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub mod data;
@@ -20,32 +19,6 @@ pub use tsproto_types::{
 	PermissionType, PluginTargetMode, Reason, ServerGroupId, TalkPowerRequest,
 	TextMessageTargetMode, TokenType, Uid, UidRef,
 };
-
-type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Fail, Debug, From)]
-#[non_exhaustive]
-pub enum Error {
-	#[fail(display = "{}", _0)]
-	Base64(#[cause] base64::DecodeError),
-	#[fail(display = "{}", _0)]
-	Ts(#[cause] TsError),
-	#[fail(display = "{}", _0)]
-	Utf8(#[cause] std::str::Utf8Error),
-	#[fail(display = "{}", _0)]
-	ParseInt(#[cause] std::num::ParseIntError),
-	#[fail(display = "{}", _0)]
-	ParseError(#[cause] messages::ParseError),
-	#[fail(display = "{}", _0)]
-	Other(#[cause] failure::Compat<failure::Error>),
-}
-
-impl From<failure::Error> for Error {
-	fn from(e: failure::Error) -> Self {
-		let r: std::result::Result<(), _> = Err(e);
-		Error::Other(r.compat().unwrap_err())
-	}
-}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ServerAddress {

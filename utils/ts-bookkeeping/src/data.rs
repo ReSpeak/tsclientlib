@@ -1,23 +1,17 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::marker::PhantomData;
-use std::mem;
 use std::net::{IpAddr, SocketAddr};
-use std::u16;
+use std::{iter, mem, u16};
 
-use failure::format_err;
-use num_traits::FromPrimitive;
+use anyhow::format_err;
 use serde::{Deserialize, Serialize};
+use slog::{debug, Logger};
 use time::{Duration, OffsetDateTime};
-use tsproto_packets::commands::{CanonicalCommand, CommandData};
-use tsproto_packets::packets::{
-	Direction, InCommand, OutCommand, OutPacket, PacketType,
-};
+use tsproto_packets::packets::OutCommand;
 use tsproto_types::*;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
-use crate::messages::s2c::{InMessage, InMessageTrait, InMessages};
-use crate::messages::{c2s, s2c, CommandExt, ParseError};
+use crate::messages::s2c::InMessage;
+use crate::messages::{c2s, s2c};
 use crate::{MessageTarget, Result};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
@@ -26,18 +20,15 @@ include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/properties.rs"));
 
 macro_rules! max_clients {
-	($cmd:ident) => {{
-		if $cmd.get("channel_flag_maxclients_unlimited") == Some("1") {
+	($msg:ident) => {{
+		if $msg.is_max_clients_unlimited.unwrap_or_default() {
 			Some(MaxClients::Unlimited)
-		} else if $cmd
-			.get("channel_maxclients")
-			.and_then(|s| s.parse().ok())
-			.map(|i: i32| i >= 0 && i <= u16::MAX as i32)
-			.unwrap_or(false)
+		} else if $msg
+			.max_clients
+			.map(|i| i >= 0 && i <= u16::MAX as i32)
+			.unwrap_or_default()
 			{
-			Some(MaxClients::Limited(
-				$cmd.get("channel_maxclients").unwrap().parse().unwrap(),
-			))
+			Some(MaxClients::Limited($msg.max_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
@@ -48,21 +39,16 @@ macro_rules! max_clients {
 macro_rules! copy_attrs {
 	($from:ident, $to:ident; $($attr:ident),* $(,)*; $($extra:ident: $ex:expr),* $(,)*) => {
 		$to {
-			$($attr: $from.$attr.into(),)*
+			$($attr: $from.$attr.clone(),)*
 			$($extra: $ex,)*
 		}
 	};
 }
 
 impl Connection {
-	pub fn new(server_uid: Uid, msg: &InMessage) -> Self {
+	pub fn new(server_uid: Uid, msg: &s2c::InInitServer) -> Self {
 		// TODO Use server public key instead of uid
-		let packet = if let InMessages::InitServer(p) = msg.msg() {
-			p
-		} else {
-			panic!("Got no initserver packet in Connection::new");
-		};
-		let packet = packet.iter().next().unwrap();
+		let packet = msg.iter().next().unwrap();
 		Self {
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;
@@ -88,15 +74,15 @@ impl Connection {
 				temp_channel_default_delete_delay,
 				;
 
-				uid: server_uid,
-				name: packet.name.into(),
-				platform: packet.server_platform.into(),
-				version: packet.server_version.into(),
+				uid: server_uid.clone(),
+				name: packet.name.clone(),
+				platform: packet.server_platform.clone(),
+				version: packet.server_version.clone(),
 				created: packet.server_created,
-				ips: packet.server_ip.iter().cloned().collect(),
+				ips: packet.server_ip.clone(),
 				ask_for_privilegekey: packet.ask_for_privilegekey,
-				// TODO Or get from license struct for newer servers
-				license: packet.license_type.unwrap_or(LicenseType::NoLicense),
+				// TODO Get from license struct
+				license: LicenseType::NoLicense,
 
 				optional_data: None,
 				connection_data: None,
@@ -107,24 +93,24 @@ impl Connection {
 		}
 	}
 
-	pub fn handle_command(&mut self, cmd: &InCommand) -> Result<Vec<Event>> {
+	pub fn handle_command(
+		&mut self, logger: &Logger, msg: &s2c::InMessage,
+	) -> Result<Vec<Event>> {
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
-		let (mut handled, mut events) =
-			self.handle_command_generated(&cmd.data())?;
+		let (mut handled, mut events) = self.handle_command_generated(msg)?;
 		// Handle special messages
-		match cmd.name() {
-			"notifytextmessage" => {
-				let cmd = s2c::InTextMessage::new(cmd)?;
-				for cmd in cmd.iter() {
-					let target = match cmd.target {
+		match msg {
+			InMessage::TextMessage(msg) => {
+				for msg in msg.iter() {
+					let target = match msg.target {
 						TextMessageTargetMode::Server => MessageTarget::Server,
 						TextMessageTargetMode::Channel => {
 							MessageTarget::Channel
 						}
 						TextMessageTargetMode::Client => {
 							let client =
-								if let Some(client) = cmd.target_client_id {
+								if let Some(client) = msg.target_client_id {
 									client
 								} else {
 									return Err(format_err!(
@@ -145,35 +131,33 @@ impl Connection {
 					events.push(Event::Message {
 						target,
 						invoker: Invoker {
-							name: cmd.invoker_name.into(),
-							id: cmd.invoker_id,
-							uid: cmd
-								.invoker_uid
-								.as_ref()
-								.map(|i| i.clone().into()),
+							name: msg.invoker_name.clone(),
+							id: msg.invoker_id,
+							uid: msg.invoker_uid.clone(),
 						},
-						message: cmd.message.to_string(),
+						message: msg.message.to_string(),
 					});
 					handled = true;
 				}
 			}
-			"notifyclientpoke" => {
-				let cmd = s2c::InClientPoke::new(cmd)?;
-				for cmd in cmd.iter() {
+			InMessage::ClientPoke(msg) => {
+				for msg in msg.iter() {
 					events.push(Event::Message {
-						target: MessageTarget::Poke(cmd.invoker_id),
+						target: MessageTarget::Poke(msg.invoker_id),
 						invoker: Invoker {
-							name: cmd.invoker_name.into(),
-							id: cmd.invoker_id,
-							uid: cmd
-								.invoker_uid
-								.as_ref()
-								.map(|i| i.clone().into()),
+							name: msg.invoker_name.clone(),
+							id: msg.invoker_id,
+							uid: msg.invoker_uid.clone(),
 						},
-						message: cmd.message.to_string(),
+						message: msg.message.to_string(),
 					});
 					handled = true;
 				}
+			}
+			InMessage::CommandError(_) => handled = true,
+			InMessage::ChannelListFinished(_) => {
+				events.push(Event::ChannelListFinished);
+				handled = true;
 			}
 			_ => {}
 		}
@@ -193,10 +177,8 @@ impl Connection {
 			}
 		}
 
-		if !handled && cmd.name() != "error" {
-			// TODO
-			//debug!(logger, "Unknown message"; "message" => msg.command().name());
-			eprintln!("Unknown message {}", cmd.name());
+		if !handled {
+			debug!(logger, "Unhandled message"; "message" => msg.get_command_name());
 		}
 
 		Ok(events)
@@ -211,11 +193,8 @@ impl Connection {
 		})
 	}
 	fn add_server_group(
-		&mut self,
-		group: ServerGroupId,
-		r: ServerGroup,
-	) -> Result<Option<ServerGroup>>
-	{
+		&mut self, group: ServerGroupId, r: ServerGroup,
+	) -> Result<Option<ServerGroup>> {
 		Ok(self.groups.insert(group, r))
 	}
 
@@ -246,11 +225,8 @@ impl Connection {
 			.ok_or_else(|| format_err!("Client {} not found", client).into())
 	}
 	fn add_client(
-		&mut self,
-		client: ClientId,
-		r: Client,
-	) -> Result<Option<Client>>
-	{
+		&mut self, client: ClientId, r: Client,
+	) -> Result<Option<Client>> {
 		Ok(self.clients.insert(client, r))
 	}
 	fn remove_client(&mut self, client: ClientId) -> Result<Option<Client>> {
@@ -258,10 +234,8 @@ impl Connection {
 	}
 
 	fn get_connection_client_data(
-		&self,
-		client: ClientId,
-	) -> Result<&ConnectionClientData>
-	{
+		&self, client: ClientId,
+	) -> Result<&ConnectionClientData> {
 		if let Some(c) = self.clients.get(&client) {
 			c.connection_data.as_ref().ok_or_else(|| {
 				format_err!("Client {} has no connection data", client).into()
@@ -271,11 +245,8 @@ impl Connection {
 		}
 	}
 	fn add_connection_client_data(
-		&mut self,
-		client: ClientId,
-		r: ConnectionClientData,
-	) -> Result<Option<ConnectionClientData>>
-	{
+		&mut self, client: ClientId, r: ConnectionClientData,
+	) -> Result<Option<ConnectionClientData>> {
 		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
@@ -284,10 +255,8 @@ impl Connection {
 	}
 
 	fn get_optional_client_data(
-		&self,
-		client: ClientId,
-	) -> Result<&OptionalClientData>
-	{
+		&self, client: ClientId,
+	) -> Result<&OptionalClientData> {
 		if let Some(c) = self.clients.get(&client) {
 			c.optional_data.as_ref().ok_or_else(|| {
 				format_err!("Client {} has no optional data", client).into()
@@ -308,19 +277,14 @@ impl Connection {
 			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
 	}
 	fn add_channel(
-		&mut self,
-		channel: ChannelId,
-		r: Channel,
-	) -> Result<Option<Channel>>
-	{
+		&mut self, channel: ChannelId, r: Channel,
+	) -> Result<Option<Channel>> {
 		self.channel_order_insert(r.id, r.order, r.parent);
 		Ok(self.channels.insert(channel, r))
 	}
 	fn remove_channel(
-		&mut self,
-		channel: ChannelId,
-	) -> Result<Option<Channel>>
-	{
+		&mut self, channel: ChannelId,
+	) -> Result<Option<Channel>> {
 		let old = self.channels.remove(&channel);
 		if let Some(ch) = &old {
 			self.channel_order_remove(ch.id, ch.order);
@@ -329,10 +293,8 @@ impl Connection {
 	}
 
 	fn get_optional_channel_data(
-		&self,
-		channel: ChannelId,
-	) -> Result<&OptionalChannelData>
-	{
+		&self, channel: ChannelId,
+	) -> Result<&OptionalChannelData> {
 		if let Some(c) = self.channels.get(&channel) {
 			c.optional_data.as_ref().ok_or_else(|| {
 				format_err!("Channel {} has no optional data", channel).into()
@@ -357,28 +319,19 @@ impl Connection {
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<(Option<MaxClients>, Option<MaxClients>)>
-	{
-		let ch = max_clients!(cmd);
-		let ch_fam = if cmd.get("channel_flag_maxfamilyclients_unlimited")
-			== Some("1")
-		{
+		&self, msg: &s2c::InChannelCreatedPart,
+	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
+		let ch = max_clients!(msg);
+		let ch_fam = if msg.is_max_family_clients_unlimited {
 			Some(MaxClients::Unlimited)
-		} else if cmd.get("channel_flag_maxfamilyclients_inherited")
-			== Some("1")
-		{
+		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
-		} else if cmd
-			.get("channel_maxfamilyclients")
-			.and_then(|s| s.parse().ok())
-			.map(|i: i32| i >= 0 && i <= u16::MAX as i32)
-			.unwrap_or(false)
+		} else if msg
+			.max_family_clients
+			.map(|i| i >= 0 && i <= u16::MAX as i32)
+			.unwrap_or_default()
 		{
-			Some(MaxClients::Limited(
-				cmd.get("channel_maxfamilyclients").unwrap().parse().unwrap(),
-			))
+			Some(MaxClients::Limited(msg.max_family_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
@@ -386,43 +339,34 @@ impl Connection {
 		Ok((ch, ch_fam))
 	}
 	fn max_clients_ce_fun(
-		&mut self,
-		channel_id: ChannelId,
-		cmd: &CanonicalCommand,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
 		let channel = self.get_mut_channel(channel_id)?;
-		let invoker = cmd.get_invoker()?;
 
-		let ch = max_clients!(cmd);
+		let ch = max_clients!(msg);
 		if let Some(ch) = ch {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelMaxClients(channel_id),
 				old: PropertyValue::OptionMaxClients(
 					channel.max_clients.take(),
 				),
-				invoker: invoker.clone(),
+				invoker: msg.get_invoker(),
 			});
 			channel.max_clients = Some(ch);
 		}
-		let ch_fam = if cmd.get("channel_flag_maxfamilyclients_unlimited")
-			== Some("1")
+		let ch_fam = if msg.is_max_family_clients_unlimited.unwrap_or_default()
 		{
 			Some(MaxClients::Unlimited)
-		} else if cmd.get("channel_flag_maxfamilyclients_inherited")
-			== Some("1")
-		{
+		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
-		} else if cmd
-			.get("channel_maxfamilyclients")
-			.and_then(|s| s.parse().ok())
-			.map(|i: i32| i >= 0 && i <= u16::MAX as i32)
-			.unwrap_or(false)
+		} else if msg
+			.max_family_clients
+			.map(|i| i >= 0 && i <= u16::MAX as i32)
+			.unwrap_or_default()
 		{
-			Some(MaxClients::Limited(
-				cmd.get("channel_maxfamilyclients").unwrap().parse().unwrap(),
-			))
+			Some(MaxClients::Limited(msg.max_family_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
@@ -433,19 +377,17 @@ impl Connection {
 				old: PropertyValue::OptionMaxClients(
 					channel.max_family_clients.take(),
 				),
-				invoker,
+				invoker: msg.get_invoker(),
 			});
 			channel.max_family_clients = Some(ch_fam);
 		}
 		Ok(())
 	}
 	fn max_clients_cl_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<(Option<MaxClients>, Option<MaxClients>)>
-	{
-		let max_clients: i32 = cmd.get_arg("channel_maxclients")?.parse()?;
-		let ch = if cmd.get_arg("channel_flag_maxclients_unlimited")? == "1" {
+		&self, msg: &s2c::InChannelListPart,
+	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
+		let max_clients: i32 = msg.max_clients;
+		let ch = if msg.is_max_clients_unlimited {
 			Some(MaxClients::Unlimited)
 		} else if max_clients >= 0 && max_clients <= u16::MAX as i32 {
 			Some(MaxClients::Limited(max_clients as u16))
@@ -454,32 +396,26 @@ impl Connection {
 			None
 		};
 
-		let max_clients: i32 =
-			cmd.get_arg("channel_maxfamilyclients")?.parse()?;
-		let ch_fam =
-			if cmd.get_arg("channel_flag_maxfamilyclients_unlimited")? == "1" {
-				Some(MaxClients::Unlimited)
-			} else if cmd.get_arg("channel_flag_maxfamilyclients_inherited")?
-				== "1"
-			{
-				Some(MaxClients::Inherited)
-			} else if max_clients >= 0 && max_clients <= u16::MAX as i32 {
-				Some(MaxClients::Limited(max_clients as u16))
-			} else {
-				// Max clients is less than zero or too high so ignore it
-				Some(MaxClients::Unlimited)
-			};
+		let max_clients: i32 = msg.max_family_clients;
+		let ch_fam = if msg.is_max_family_clients_unlimited {
+			Some(MaxClients::Unlimited)
+		} else if msg.inherits_max_family_clients {
+			Some(MaxClients::Inherited)
+		} else if max_clients >= 0 && max_clients <= u16::MAX as i32 {
+			Some(MaxClients::Limited(max_clients as u16))
+		} else {
+			// Max clients is less than zero or too high so ignore it
+			Some(MaxClients::Unlimited)
+		};
 		Ok((ch, ch_fam))
 	}
 
 	fn channel_type_cc_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<ChannelType>
-	{
-		if cmd.get("channel_flag_permanent") == Some("1") {
+		&self, msg: &s2c::InChannelCreatedPart,
+	) -> Result<ChannelType> {
+		if msg.is_permanent.unwrap_or_default() {
 			Ok(ChannelType::Permanent)
-		} else if cmd.get("channel_flag_semi_permanent") == Some("1") {
+		} else if msg.is_semi_permanent.unwrap_or_default() {
 			Ok(ChannelType::SemiPermanent)
 		} else {
 			Ok(ChannelType::Temporary)
@@ -487,22 +423,15 @@ impl Connection {
 	}
 
 	fn channel_type_ce_fun(
-		&mut self,
-		channel_id: ChannelId,
-		cmd: &CanonicalCommand,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
 		let channel = self.get_mut_channel(channel_id)?;
-		let invoker = cmd.get_invoker()?;
 
-		let typ = if let Some(perm) = cmd.get("channel_flag_permanent") {
-			if perm == "1" {
-				ChannelType::Permanent
-			} else {
-				ChannelType::Temporary
-			}
-		} else if cmd.get("channel_flag_semi_permanent") == Some("1") {
+		let typ = if let Some(perm) = msg.is_permanent {
+			if perm { ChannelType::Permanent } else { ChannelType::Temporary }
+		} else if msg.is_semi_permanent.unwrap_or_default() {
 			ChannelType::SemiPermanent
 		} else {
 			return Ok(());
@@ -510,87 +439,74 @@ impl Connection {
 		events.push(Event::PropertyChanged {
 			id: PropertyId::ChannelChannelType(channel_id),
 			old: PropertyValue::ChannelType(channel.channel_type),
-			invoker,
+			invoker: msg.get_invoker(),
 		});
 		channel.channel_type = typ;
 		Ok(())
 	}
 
 	fn channel_type_cl_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<ChannelType>
-	{
-		self.channel_type_cc_fun(cmd)
-	}
-
-	fn away_cev_fun(&self, cmd: &CanonicalCommand) -> Result<Option<String>> {
-		if cmd.get_arg("client_away")? == "1" {
-			Ok(cmd.get_arg("client_away_message").ok().map(|s| s.to_string()))
+		&self, msg: &s2c::InChannelListPart,
+	) -> Result<ChannelType> {
+		if msg.is_permanent {
+			Ok(ChannelType::Permanent)
+		} else if msg.is_semi_permanent {
+			Ok(ChannelType::SemiPermanent)
 		} else {
-			Ok(None)
+			Ok(ChannelType::Temporary)
 		}
 	}
 
-	fn client_type_cev_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<ClientType>
+	fn away_cev_fun(
+		&self, msg: &s2c::InClientEnterViewPart,
+	) -> Result<Option<String>> {
+		if msg.is_away { Ok(Some(msg.away_message.clone())) } else { Ok(None) }
 	{
-		match cmd.get_arg("client_type")? {
-			"0" => Ok(ClientType::Normal),
-			"1" => Ok(ClientType::Query {
 				admin: cmd.get_arg("client_unique_identifier")?
 					== "ServerAdmin",
 			}),
-			val => Err(ParseError::InvalidValue {
-				arg: "client_type",
-				value: val.to_string(),
-			}
 			.into()),
+	}
+
+	fn client_type_cev_fun(
+		&self, msg: &s2c::InClientEnterViewPart,
+	) -> Result<ClientType> {
+		if msg.uid.is_server_admin() {
+			if let ClientType::Query { .. } = msg.client_type {
+				return Ok(ClientType::Query { admin: true });
+			}
 		}
+		Ok(msg.client_type.clone())
 	}
 
 	fn away_cu_fun(
-		&mut self,
-		client_id: ClientId,
-		cmd: &CanonicalCommand,
+		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		if let Ok(away) = cmd.get_arg("client_away") {
-			let client = self.get_mut_client(client_id)?;
-			let invoker = cmd.get_invoker()?;
+		let client = self.get_mut_client(client_id)?;
 
-			let away = if away == "1" {
-				Some(
-					cmd.get_arg("client_away_message")
-						.map(|s| s.to_string())
-						.unwrap_or_else(|_| String::new()),
-				)
-			} else {
-				None
-			};
-			events.push(Event::PropertyChanged {
-				id: PropertyId::ClientAwayMessage(client_id),
-				old: PropertyValue::OptionString(client.away_message.take()),
-				invoker,
-			});
-			client.away_message = away;
-		}
+		let away = if msg.is_away.unwrap_or_default() {
+			Some(msg.away_message.clone().unwrap_or_else(String::new))
+		} else {
+			None
+		};
+		events.push(Event::PropertyChanged {
+			id: PropertyId::ClientAwayMessage(client_id),
+			old: PropertyValue::OptionString(client.away_message.take()),
+			invoker: msg.get_invoker(),
+		});
+		client.away_message = away;
 		Ok(())
 	}
 
 	fn talk_power_cev_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<Option<TalkPowerRequest>>
-	{
-		let timestamp: i64 = cmd.get_arg("client_talk_request")?.parse()?;
-		if timestamp > 0 {
+		&self, msg: &s2c::InClientEnterViewPart,
+	) -> Result<Option<TalkPowerRequest>> {
+		if msg.talk_power_request_time.timestamp() > 0 {
 			Ok(Some(TalkPowerRequest {
-				time: OffsetDateTime::from_unix_timestamp(timestamp),
-				message: cmd.get_arg("client_talk_request_msg")?.into(),
+				time: msg.talk_power_request_time,
+				message: msg.talk_power_request_message.clone(),
 			}))
 		} else {
 			Ok(None)
@@ -598,21 +514,20 @@ impl Connection {
 	}
 
 	fn talk_power_cu_fun(
-		&mut self,
-		client_id: ClientId,
-		cmd: &CanonicalCommand,
+		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		if let Ok(talk_request) = cmd.get_arg("client_talk_request") {
-			let timestamp: i64 = talk_request.parse()?;
+		if let Some(talk_request) = msg.talk_power_request_time {
 			let client = self.get_mut_client(client_id)?;
-			let invoker = cmd.get_invoker()?;
 
-			let talk_request = if timestamp > 0 {
+			let talk_request = if talk_request.timestamp() > 0 {
 				Some(TalkPowerRequest {
-					time: OffsetDateTime::from_unix_timestamp(timestamp),
-					message: cmd.get_arg("client_talk_request_msg")?.into(),
+					time: talk_request,
+					message: msg
+						.talk_power_request_message
+						.clone()
+						.unwrap_or_else(String::new),
 				})
 			} else {
 				None
@@ -622,7 +537,7 @@ impl Connection {
 				old: PropertyValue::OptionTalkPowerRequest(
 					client.talk_power_request.take(),
 				),
-				invoker,
+				invoker: msg.get_invoker(),
 			});
 			client.talk_power_request = talk_request;
 		}
@@ -630,25 +545,17 @@ impl Connection {
 	}
 
 	fn address_fun(
-		&self,
-		cmd: &CanonicalCommand,
-	) -> Result<Option<SocketAddr>>
-	{
-		let ip = if let Ok(ip) = cmd.get_arg("connection_client_ip")?.parse() {
-			ip
+		&self, msg: &s2c::InClientConnectionInfoPart,
+	) -> Result<Option<SocketAddr>> {
+		if !msg.ip.is_empty() {
+			Ok(Some(SocketAddr::new(msg.ip.parse()?, msg.port)))
 		} else {
-			return Ok(None);
-		};
-		Ok(Some(SocketAddr::new(
-			ip,
-			cmd.get_arg("connection_client_port")?.parse()?,
-		)))
+			Ok(None)
+		}
 	}
 
 	fn channel_subscribe_fun(
-		&mut self,
-		channel_id: ChannelId,
-		_: &CanonicalCommand,
+		&mut self, channel_id: ChannelId, _: &s2c::InChannelSubscribedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -663,9 +570,7 @@ impl Connection {
 	}
 
 	fn channel_unsubscribe_fun(
-		&mut self,
-		channel_id: ChannelId,
-		_: &CanonicalCommand,
+		&mut self, channel_id: ChannelId, _: &s2c::InChannelUnsubscribedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
@@ -696,11 +601,8 @@ impl Connection {
 	}
 
 	fn channel_order_remove(
-		&mut self,
-		channel_id: ChannelId,
-		channel_order: ChannelId,
-	)
-	{
+		&mut self, channel_id: ChannelId, channel_order: ChannelId,
+	) {
 		// [ C:7 | O:_ ]
 		// [ C:5 | O:7 ] ─>X
 		// [ C:_ | O:5 ]     (Upd: O -> 7)
@@ -715,9 +617,7 @@ impl Connection {
 	}
 
 	fn channel_order_insert(
-		&mut self,
-		channel_id: ChannelId,
-		channel_order: ChannelId,
+		&mut self, channel_id: ChannelId, channel_order: ChannelId,
 		channel_parent: ChannelId,
 	)
 	{
@@ -740,63 +640,41 @@ impl Connection {
 	}
 
 	fn channel_order_cc_fun(
-		&mut self,
-		cmd: &CanonicalCommand,
-	) -> Result<ChannelId>
-	{
-		Ok(ChannelId(cmd.get_arg("channel_order")?.parse()?))
+		&mut self, msg: &s2c::InChannelCreatedPart,
+	) -> Result<ChannelId> {
+		self.channel_order_insert(msg.channel_id, msg.order, msg.parent_id);
+		Ok(msg.order)
 	}
 
 	fn channel_order_ce_fun(
-		&mut self,
-		channel_id: ChannelId,
-		cmd: &CanonicalCommand,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		let new_order = cmd
-			.get_arg("channel_order")
-			.ok()
-			.map(str::parse)
-			.transpose()?
-			.map(ChannelId);
-		let parent = cmd
-			.get_arg("cpid")
-			.ok()
-			.map(str::parse)
-			.transpose()?
-			.map(ChannelId);
-		self.channel_order_move_fun(channel_id, new_order, parent, events)
+		self.channel_order_move_fun(
+			channel_id,
+			msg.order,
+			msg.parent_id,
+			events,
+		)
 	}
 
 	fn channel_order_cm_fun(
-		&mut self,
-		channel_id: ChannelId,
-		cmd: &CanonicalCommand,
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelMovedPart,
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		let new_order = cmd
-			.get_arg("order")
-			.ok()
-			.map(str::parse)
-			.transpose()?
-			.map(ChannelId);
-		let parent = cmd
-			.get_arg("cpid")
-			.ok()
-			.map(str::parse)
-			.transpose()?
-			.map(ChannelId);
-		self.channel_order_move_fun(channel_id, new_order, parent, events)
+		self.channel_order_move_fun(
+			channel_id,
+			Some(msg.order),
+			Some(msg.parent_id),
+			events,
+		)
 	}
 
 	fn channel_order_move_fun(
-		&mut self,
-		channel_id: ChannelId,
-		new_order: Option<ChannelId>,
-		parent: Option<ChannelId>,
-		events: &mut Vec<Event>,
+		&mut self, channel_id: ChannelId, new_order: Option<ChannelId>,
+		parent: Option<ChannelId>, events: &mut Vec<Event>,
 	) -> Result<()>
 	{
 		let old_order;
@@ -822,82 +700,27 @@ impl Connection {
 	}
 
 	// Book to messages
-	fn away_fun_b2m<'a>(
-		&self,
-		args: &mut Vec<(&'static str, Cow<'a, str>)>,
-		msg: Option<&'a str>,
-	)
-	{
-		args.push(("client_away", "1".into()));
-		if let Some(msg) = msg {
-			args.push(("client_away_message", msg.into()));
-		}
-	}
-
-	fn name_b2m<'a>(
-		&self,
-		args: &mut Vec<(&'static str, Cow<'a, str>)>,
-		name: &'a str,
-	)
-	{
-		args.push(("client_nickname", name.into()));
-	}
-
-	fn input_muted_b2m(
-		&self,
-		args: &mut Vec<(&'static str, Cow<str>)>,
-		muted: bool,
-	)
-	{
-		args.push(("client_input_muted", if muted { "1" } else { "0" }.into()));
-	}
-
-	fn output_muted_b2m(
-		&self,
-		args: &mut Vec<(&'static str, Cow<str>)>,
-		muted: bool,
-	)
-	{
-		args.push((
-			"client_output_muted",
-			if muted { "1" } else { "0" }.into(),
-		));
+	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (bool, &'a str) {
+		if let Some(msg) = msg { (true, msg) } else { (false, "") }
 	}
 }
 
 impl Client {
 	// Book to messages
-	fn get_empty_string(&self, _: &mut Vec<(&'static str, Cow<str>)>) {}
+	fn get_empty_string(&self) -> &str { "" }
 
-	fn password_b2m<'a>(
-		&self,
-		args: &mut Vec<(&'static str, Cow<'a, str>)>,
-		password: &'a str,
-	)
-	{
-		args.push(("cpw", password.into()));
-	}
-
-	fn channel_id_b2m(
-		&self,
-		args: &mut Vec<(&'static str, Cow<str>)>,
-		channel: ChannelId,
-	)
-	{
-		args.push(("cid", channel.0.to_string().into()));
-	}
+	fn password_b2m<'a>(&self, password: &'a str) -> &'a str { password }
+	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
-// TODO?
+// TODO ClientServerGroup?
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ClientServerGroup {
 	database_id: ClientDbId,
 	inner: ServerGroupId,
 }
 impl ClientServerGroup {
-	fn get_id(&self, args: &mut Vec<(&'static str, Cow<str>)>) {
-		args.push(("sgid", self.inner.0.to_string().into()));
-	}
+	fn get_id(&self) -> ServerGroupId { self.inner }
 }
 
 /// The `ChannelOptions` are used to set initial properties of a new channel.
@@ -993,10 +816,8 @@ impl<'a> ChannelOptions<'a> {
 	}
 
 	pub fn max_family_clients(
-		mut self,
-		max_family_clients: MaxClients,
-	) -> Self
-	{
+		mut self, max_family_clients: MaxClients,
+	) -> Self {
 		self.max_family_clients = Some(max_family_clients);
 		self
 	}
@@ -1029,7 +850,7 @@ impl<'a> ChannelOptions<'a> {
 }
 
 impl Server {
-	pub fn add_channel(&self, options: ChannelOptions) -> OutPacket {
+	pub fn add_channel(&self, options: ChannelOptions) -> OutCommand {
 		let inherits_max_family_clients =
 			options.max_family_clients.as_ref().and_then(|m| {
 				if let MaxClients::Inherited = m { Some(true) } else { None }
@@ -1061,8 +882,8 @@ impl Server {
 			if *t == ChannelType::SemiPermanent { Some(true) } else { None }
 		});
 
-		c2s::OutChannelCreateMessage::new(
-			vec![c2s::ChannelCreatePart {
+		c2s::OutChannelCreateMessage::new(&mut iter::once(
+			c2s::OutChannelCreatePart {
 				name: options.name,
 				description: options.description,
 				parent_id: options.parent_id,
@@ -1087,113 +908,76 @@ impl Server {
 				password: options.password,
 				phonetic_name: options.phonetic_name,
 				topic: options.topic,
-				phantom: PhantomData,
-			}]
-			.into_iter(),
-		)
+			},
+		))
 	}
 
-	pub fn send_textmessage(&self, message: &str) -> OutPacket {
-		c2s::OutSendTextMessageMessage::new(
-			vec![c2s::SendTextMessagePart {
+	pub fn send_textmessage(&self, message: &str) -> OutCommand {
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(
+			c2s::OutSendTextMessagePart {
 				target: TextMessageTargetMode::Server,
 				target_client_id: None,
 				message,
-				phantom: PhantomData,
-			}]
-			.into_iter(),
-		)
+			},
+		))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
-	pub fn set_subscribed(&self, subscribed: bool) -> OutPacket {
+	pub fn set_subscribed(&self, subscribed: bool) -> OutCommand {
 		if subscribed {
-			c2s::OutChannelSubscribeAllMessage::new(
-				vec![c2s::ChannelSubscribeAllPart { phantom: PhantomData }]
-					.into_iter(),
-			)
+			c2s::OutChannelSubscribeAllMessage::new()
 		} else {
-			c2s::OutChannelUnsubscribeAllMessage::new(
-				vec![c2s::ChannelUnsubscribeAllPart { phantom: PhantomData }]
-					.into_iter(),
-			)
+			c2s::OutChannelUnsubscribeAllMessage::new()
 		}
 	}
 }
 
 impl Connection {
 	pub fn send_message(
-		&self,
-		target: MessageTarget,
-		message: &str,
-	) -> OutPacket
-	{
+		&self, target: MessageTarget, message: &str,
+	) -> OutCommand {
 		match target {
 			MessageTarget::Server => c2s::OutSendTextMessageMessage::new(
-				vec![c2s::SendTextMessagePart {
+				&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Server,
 					target_client_id: None,
 					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
+				}),
 			),
 			MessageTarget::Channel => c2s::OutSendTextMessageMessage::new(
-				vec![c2s::SendTextMessagePart {
+				&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Channel,
 					target_client_id: None,
 					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
+				}),
 			),
 			MessageTarget::Client(id) => c2s::OutSendTextMessageMessage::new(
-				vec![c2s::SendTextMessagePart {
+				&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Client,
 					target_client_id: Some(id),
 					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
+				}),
 			),
-			MessageTarget::Poke(id) => c2s::OutClientPokeRequestMessage::new(
-				vec![c2s::ClientPokeRequestPart {
-					client_id: id,
-					message,
-					phantom: PhantomData,
-				}]
-				.into_iter(),
-			),
+			MessageTarget::Poke(id) => {
+				c2s::OutClientPokeRequestMessage::new(&mut iter::once(
+					c2s::OutClientPokeRequestPart { client_id: id, message },
+				))
+			}
 		}
 	}
 
-	pub fn disconnect<O: Into<Option<crate::DisconnectOptions>>>(
-		&self,
-		options: O,
-	) -> OutPacket
-	{
-		let options = options.into().unwrap_or_default();
-
-		let mut args = Vec::new();
-		if let Some(reason) = options.reason {
-			args.push(("reasonid", (reason as u8).to_string()));
-		}
-		if let Some(msg) = options.message {
-			args.push(("reasonmsg", msg));
-		}
-
-		OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"clientdisconnect",
-			args.into_iter(),
-			std::iter::empty(),
-		)
+	pub fn disconnect(&self, options: crate::DisconnectOptions) -> OutCommand {
+		c2s::OutDisconnectMessage::new(&mut iter::once(
+			c2s::OutDisconnectPart {
+				reason: options.reason,
+				reason_message: options.message.as_ref().map(|m| m.as_str()),
+			},
+		))
 	}
 }
 
 impl Client {
-	// TODO
+	// TODO Move other clients
 	/*/// Move this client to another channel.
 	/// This function takes a password so it is possible to join protected
 	/// channels.
@@ -1211,26 +995,19 @@ impl Client {
 	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
 	/// ```*/
 
-	pub fn send_textmessage(&self, message: &str) -> OutPacket {
-		c2s::OutSendTextMessageMessage::new(
-			vec![c2s::SendTextMessagePart {
+	pub fn send_textmessage(&self, message: &str) -> OutCommand {
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(
+			c2s::OutSendTextMessagePart {
 				target: TextMessageTargetMode::Client,
 				target_client_id: Some(self.id),
 				message,
-				phantom: PhantomData,
-			}]
-			.into_iter(),
-		)
+			},
+		))
 	}
 
-	pub fn poke(&self, message: &str) -> OutPacket {
-		c2s::OutClientPokeRequestMessage::new(
-			vec![c2s::ClientPokeRequestPart {
-				client_id: self.id,
-				message,
-				phantom: PhantomData,
-			}]
-			.into_iter(),
-		)
+	pub fn poke(&self, message: &str) -> OutCommand {
+		c2s::OutClientPokeRequestMessage::new(&mut iter::once(
+			c2s::OutClientPokeRequestPart { client_id: self.id, message },
+		))
 	}
 }

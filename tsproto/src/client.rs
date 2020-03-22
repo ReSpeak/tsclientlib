@@ -1,1357 +1,1009 @@
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, Weak};
+use std::ops::{Deref, DerefMut};
+use std::pin::Pin;
+use std::str;
+use std::task::{Context, Poll};
 
-use failure::format_err;
-use futures::sync::{mpsc, oneshot};
-use futures::{future, Future, Sink, Stream};
+use anyhow::{bail, Error};
+use futures::prelude::*;
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
 #[cfg(not(feature = "rug"))]
 use num_traits::One;
-use rand::{self, Rng};
+use rand::Rng;
 #[cfg(feature = "rug")]
 use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
-use slog::{debug, error, info, Logger};
+use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
-
-use crate::algorithms as algs;
-use crate::connection::*;
-use crate::connectionmanager::{
-	Resender, ResenderEvent, SocketConnectionManager,
-};
-use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use crate::handler_data::{
-	ConnectionValue, ConnectionValueWeak, Data, DataM, OutPacketObserver,
-	PacketHandler,
-};
-use crate::license::Licenses;
-use crate::{Error, Result, TESTAMENT};
+use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
 
-pub type CM<PH> =
-	SocketConnectionManager<DefaultPacketHandler<PH>, ServerConnectionData>;
-/// The data of our client.
-pub type ClientData<PH> = Data<CM<PH>>;
-pub type ClientDataM<PH> = DataM<CM<PH>>;
-/// Connections from a client to a server.
-pub type ClientConnection = Connection;
-pub type ClientConVal = ConnectionValueWeak<ServerConnectionData>;
+use crate::algorithms as algs;
+use crate::connection::{ConnectedParams, Connection, Socket, StreamItem};
+use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
+use crate::license::Licenses;
+use crate::resend::{PacketId, ResenderState};
+use crate::Result;
 
-pub struct ServerConnectionData {
-	/// Every function in this list is called when the state of the connection
-	/// changes.
-	///
-	/// Return `false` to remain in the list of listeners.
-	/// If `true` is returned, this listener will be removed.
-	pub state_change_listener:
-		Vec<Box<dyn FnMut(&ServerConnectionState) -> bool + Send>>,
-	pub state: ServerConnectionState,
+pub struct Client {
+	con: Connection,
+	pub private_key: EccKeyPrivP256,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ServerConnectionState {
-	/// After `Init0` was sent.
-	Init0 { version: u32 },
-	/// After `Init2` was sent.
-	Init2 { version: u32 },
-	/// After `Init4` was sent.
-	ClientInitIv { alpha: [u8; 10] },
-	/// The initial handshake is done and the next packet has to be
-	/// `clientinit`.
-	Connecting,
-	/// Fully connected, the client id is known.
-	Connected,
-	/// The connection is finishing, no more packets should be sent.
-	/// We are only waiting until the last ack is sent.
-	Disconnecting,
-}
-
-/// Wait until a client reaches a certain state.
-///
-/// `is_state` should return `true`, if the state is reached and `false` if this
-/// function should continue waiting.
-pub fn wait_for_state<
-	F: Fn(&ServerConnectionState) -> bool + Send + 'static,
->(
-	connection: &ClientConVal,
-	f: F,
-) -> Box<dyn Future<Item = (), Error = Error> + Send>
-{
-	let (send, recv) = mpsc::channel(0);
-	let con = match connection.mutex.upgrade() {
-		Some(c) => c,
-		None => {
-			return Box::new(future::err(
-				format_err!("Connection is gone").into(),
-			));
-		}
-	};
-	let mut con = con.lock().unwrap();
-	con.0.state_change_listener.push(Box::new(move |s| {
-		// Check if it is the right state
-		if f(s) {
-			let send = send.clone();
-			// Ignore errors
-			tokio::spawn(send.send(()).then(|_| Ok(())));
-			true
-		} else {
-			false
-		}
-	}));
-	Box::new(
-		recv.into_future()
-			.map_err(|e| {
-				format_err!(
-					"Failed to receive while waiting for state ({:?})",
-					e
-				)
-				.into()
-			})
-			.and_then(|(r, _)| match r {
-				Some(()) => Ok(()),
-				None => Err(format_err!("Connection is gone").into()),
-			}),
-	)
-}
-
-pub fn wait_until_connected(
-	connection: &ClientConVal,
-) -> impl Future<Item = (), Error = Error> {
-	wait_for_state(connection, |state| {
-		*state == ServerConnectionState::Connected
-	})
-}
-
-pub fn new<
-	PH: PacketHandler<ServerConnectionData> + 'static,
-	L: Into<Option<slog::Logger>>,
->(
-	local_addr: SocketAddr,
-	private_key: EccKeyPrivP256,
-	packet_handler: PH,
-	logger: L,
-) -> Result<Arc<Mutex<ClientData<PH>>>>
-{
-	let c = ClientData::new(
-		local_addr,
-		private_key,
-		true,
-		None,
-		DefaultPacketHandler::new(packet_handler),
-		SocketConnectionManager::new(),
-		logger,
-	)?;
-
-	let c2 = Arc::downgrade(&c);
+impl Client {
+	pub fn new(
+		logger: Logger, address: SocketAddr,
+		udp_socket: Box<dyn Socket + Send>, private_key: EccKeyPrivP256,
+	) -> Self
 	{
-		let mut c = c.lock().unwrap();
-		let c = &mut *c;
-		// Set the data reference
-		c.packet_handler.complete(c2.clone());
-
-		// Change state on disconnect
-		c.add_out_packet_observer(
-			"tsproto::client".into(),
-			Box::new(ClientOutPacketObserver),
-		);
+		Self {
+			con: Connection::new(true, logger, address, udp_socket),
+			private_key,
+		}
 	}
 
-	Ok(c)
-}
-
-/// Connect to a server.
-///
-/// This function returns, when the client reached the
-/// [`ServerConnectionState::Connecting`] state. Then the client should send the
-/// `clientinit` packet and call [`wait_until_connected`].
-///
-/// [`ServerConnectionState::Connecting`]: enum.ServerConnectionState.html
-/// [`wait_until_connected`]: method.wait_until_connected.html
-pub fn connect<PH: PacketHandler<ServerConnectionData>>(
-	datam: Weak<Mutex<ClientData<PH>>>,
-	data: &mut ClientData<PH>,
-	server_addr: SocketAddr,
-) -> impl Future<Item = ClientConVal, Error = Error>
-{
-	// Send the first init packet
-	// Get the current timestamp
-	let now = OffsetDateTime::now();
-	let timestamp = now.timestamp() as u32;
-	let mut rng = rand::thread_rng();
-
-	// Random bytes
-	let random0 = rng.gen::<[u8; 4]>();
-
-	let state = ServerConnectionData {
-		state_change_listener: Vec::new(),
-		state: ServerConnectionState::Init0 { version: timestamp },
-	};
-	// Add the connection to the connection list
-	let key = data.add_connection(datam, state, server_addr);
-	let con = data.get_connection(&key).unwrap().downgrade();
-
-	let packet = OutC2SInit0::new(timestamp, timestamp, random0);
-	let con2 = con.clone();
-	con.as_packet_sink()
-		.send(packet)
-		.and_then(move |_| {
-			wait_for_state(&con, |state| {
-				*state == ServerConnectionState::Connecting
+	async fn get_init(&mut self, init_step: u8) -> Result<InS2CInitBuf> {
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					if packet.data().data().get_step() == init_step {
+						Some(packet)
+					} else {
+						// Resent packet
+						warn!(con.logger, "Got wrong init packet");
+						con.hand_back_buffer(packet.into_buffer());
+						None
+					}
+				}
+				StreamItem::C2SInit(packet) => {
+					warn!(
+						con.logger,
+						"Got init packet from the wrong direction"
+					);
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(_) => None,
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
+					None
+				}
 			})
 		})
-		.and_then(move |_| Ok(con2))
-}
+		.await
+	}
 
-struct ClientOutPacketObserver;
-impl OutPacketObserver<ServerConnectionData> for ClientOutPacketObserver {
-	fn observe(
-		&self,
-		(_, con): &mut (ServerConnectionData, Connection),
-		packet: &mut OutPacket,
-	)
-	{
-		let p_type = packet.header().packet_type();
-		if p_type == PacketType::Command {
-			let s = b"clientdisconnect";
-			if packet.content().len() >= s.len()
-				&& packet.content()[..s.len()] == s[..]
-			{
-				con.resender.handle_event(
-					crate::connectionmanager::ResenderEvent::Disconnecting,
+	async fn get_command(&mut self) -> Result<InCommandBuf> {
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::C2SInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Command(packet) => Some(packet),
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(_) => None,
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted Command"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
+	}
+
+	/// Drop all packets until the given packet is acknowledged.
+	pub async fn wait_for_ack(&mut self, id: PacketId) -> Result<()> {
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::C2SInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Command(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(ack) => {
+					if id <= ack {
+						Some(())
+					} else {
+						None
+					}
+				}
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
+	}
+
+	/// Drop all packets until the send queue is not full anymore.
+	pub async fn wait_until_can_send(&mut self) -> Result<()> {
+		if !self.is_send_queue_full() {
+			return Ok(());
+		}
+		self.filter_items(|con, i| {
+			Ok(match i {
+				StreamItem::S2CInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::C2SInit(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Command(packet) => {
+					con.hand_back_buffer(packet.into_buffer());
+					None
+				}
+				StreamItem::Error(e) => {
+					warn!(con.logger, "Got connection error"; "error" => %e);
+					None
+				}
+				StreamItem::AckPacket(_) => {
+					if !con.is_send_queue_full() {
+						Some(())
+					} else {
+						None
+					}
+				}
+				i => {
+					warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
+					None
+				}
+			})
+		})
+		.await
+	}
+
+	/// Send a packet. The `send_packet` function will resolve to a future when
+	/// the packet has been sent.
+	///
+	/// If the packet has an acknowledgement (ack or pong), the returned future
+	/// will resolve when it is received. Otherwise it will resolve instantly.
+	pub fn send_packet(&mut self, packet: OutPacket) -> Result<PacketId> {
+		if packet.header().packet_type() == PacketType::Command
+			&& packet.content().starts_with(b"clientdisconnect")
+		{
+			let this = &mut **self;
+			this.resender.set_state(&this.logger, ResenderState::Disconnecting);
+		}
+		self.con.send_packet(packet)
+	}
+
+	pub async fn connect(&mut self) -> Result<()> {
+		// Send the first init packet
+		// Get the current timestamp
+		let now = OffsetDateTime::now();
+		let timestamp = now.timestamp() as u32;
+
+		// Random bytes
+		let random0 = rand::rngs::OsRng.gen::<[u8; 4]>();
+
+		// Wait for Init1
+		{
+			self.send_packet(OutC2SInit0::new(timestamp, timestamp, random0))?;
+			let init1 = self.get_init(1).await?;
+			match init1.data().data() {
+				S2CInitData::Init1 { random1, random0_r } => {
+					// Check the response
+					// Most of the time, random0_r is the reversed random0, but
+					// sometimes it isn't so do not check it.
+					// random0.as_ref().iter().rev().eq(random0_r.as_ref())
+					// The packet is correct.
+
+					// Send next init packet
+					self.send_packet(OutC2SInit2::new(
+						timestamp,
+						random1,
+						**random0_r,
+					))?;
+				}
+				_ => bail!("Unexpected init packet, needs Init1"),
+			}
+		}
+
+		// Wait for Init3
+		let alpha;
+		{
+			let init3 = self.get_init(3).await?;
+			match init3.data().data() {
+				S2CInitData::Init3 { x, n, level, random2 } => {
+					let level = *level;
+					// Solve RSA puzzle: y = x ^ (2 ^ level) % n
+					// Use Montgomery Reduction
+					if level > 10_000_000 {
+						// Reject too high exponents
+						bail!("Requested level {} is too high", level);
+					}
+
+					// Create clientinitiv
+					alpha = rand::rngs::OsRng.gen::<[u8; 10]>();
+					// omega is an ASN.1-DER encoded public key from
+					// the ECDH parameters.
+
+					let ip = self.con.address.ip();
+
+					let x = **x;
+					let n = **n;
+					let random2 = **random2;
+
+					let mut time_reporter =
+						slog_perf::TimeReporter::new_with_level(
+							"Solve RSA puzzle",
+							self.con.logger.clone(),
+							Level::Info,
+						);
+					time_reporter.start("");
+
+					// Use gmp for faster computations if it is
+					// available.
+					#[cfg(feature = "rug")]
+					let y = {
+						let mut e = Integer::new();
+						let n = Integer::from_digits(&n[..], Order::Msf);
+						let x = Integer::from_digits(&x[..], Order::Msf);
+						e.set_bit(level, true);
+						let y = x.pow_mod(&e, &n).map_err(|_| {
+							format_err!("Failed to solve RSA puzzle")
+						})?;
+						let mut yi = [0; 64];
+						y.write_digits(&mut yi, Order::Msf);
+						yi
+					};
+
+					#[cfg(not(feature = "rug"))]
+					let y = {
+						let xi = BigUint::from_bytes_be(&x);
+						let ni = BigUint::from_bytes_be(&n);
+						let e = BigUint::one() << level as usize;
+						let yi = xi.modpow(&e, &ni);
+						info!(self.con.logger, "Solve RSA puzzle";
+							"level" => level, "x" => %xi, "n" => %ni,
+							"y" => %yi);
+						algs::biguint_to_array(&yi)
+					};
+
+					time_reporter.finish();
+					info!(self.con.logger, "Solve RSA puzzle"; "level" => level);
+
+					// Create the command string
+					// omega is an ASN.1-DER encoded public key from
+					// the ECDH parameters.
+					let omega = self.private_key.to_pub().to_tomcrypt()?;
+					let ip = if crate::utils::is_global_ip(&ip) {
+						ip.to_string()
+					} else {
+						String::new()
+					};
+
+					// Send next init packet
+					self.send_packet(OutC2SInit4::new(
+						timestamp, &x, &n, level, &random2, &y, &alpha, &omega,
+						&ip,
+					))?;
+				}
+				_ => bail!("Unexpected init packet, needs Init3"),
+			}
+		}
+
+		let clientek_id;
+		{
+			let command = self.get_command().await?;
+
+			let (name, args) =
+				CommandParser::new(command.data().packet().content());
+			if name != b"initivexpand2" {
+				bail!(
+					"Expected initivexpand2 but got {:?}",
+					str::from_utf8(name)
 				);
+			}
+
+			let mut l = None;
+			let mut beta_vec = None;
+			let mut server_key = None;
+			let mut proof = None;
+			let mut ot = false;
+			for item in args {
+				match item {
+					CommandItem::NextCommand => {
+						bail!("Got multiple initivexpand2s in one packet")
+					}
+					CommandItem::Argument(arg) => match arg.name() {
+						b"l" => l = Some(base64::decode(&arg.value().get())?),
+						b"beta" => {
+							beta_vec = Some(base64::decode(&arg.value().get())?)
+						}
+						b"omega" => {
+							server_key = Some(EccKeyPubP256::from_ts(
+								&arg.value().get_str()?,
+							)?)
+						}
+						b"proof" => {
+							proof = Some(base64::decode(&arg.value().get())?)
+						}
+						b"ot" => ot = arg.value().get_raw() == b"1",
+						_ => {}
+					},
+				}
+			}
+
+			if !ot {
+				bail!("Got no ot=1, probably the server is outdated");
+			}
+			if l.is_none()
+				|| beta_vec.is_none()
+				|| server_key.is_none()
+				|| proof.is_none()
+			{
+				bail!("initivexpand2 command has wrong arguments");
+			}
+			let l = l.unwrap();
+			let beta_vec = beta_vec.unwrap();
+			let server_key = server_key.unwrap();
+			let proof = proof.unwrap();
+
+			// Check signature of l (proof)
+			server_key.clone().verify(&l, &proof)?;
+
+			if beta_vec.len() != 54 {
+				bail!("Incorrect beta length: {} != 54", beta_vec.len());
+			}
+
+			let mut beta = [0; 54];
+			beta.copy_from_slice(&beta_vec);
+
+			// Parse license argument
+			let licenses = Licenses::parse(&l)?;
+			// Ephemeral key of server
+			let server_ek = licenses.derive_public_key()?;
+
+			// Create own ephemeral key
+			let ek = EccKeyPrivEd25519::create()?;
+
+			let (iv, mac) =
+				algs::compute_iv_mac(&alpha, &beta, &ek, &server_ek)?;
+			self.con.params = Some(ConnectedParams::new(server_key, iv, mac));
+
+			// Send clientek
+			let ek_pub = ek.to_pub();
+			let ek_s = base64::encode(ek_pub.0.as_bytes());
+
+			// Proof: ECDSA signature of ek || beta
+			let mut all = Vec::with_capacity(32 + 54);
+			all.extend_from_slice(ek_pub.0.as_bytes());
+			all.extend_from_slice(&beta);
+			let proof = self.private_key.clone().sign(&all)?;
+			let proof_s = base64::encode(&proof);
+
+			// Send clientek
+			let mut cmd = OutCommand::new(
+				Direction::C2S,
+				Flags::empty(),
+				PacketType::Command,
+				"clientek",
+			);
+			cmd.write_arg("ek", &ek_s);
+			cmd.write_arg("proof", &proof_s);
+			clientek_id = self.send_packet(cmd.into_packet())?;
+		}
+		self.wait_for_ack(clientek_id).await?;
+
+		Ok(())
+	}
+
+	/// Filter the incoming items.
+	pub async fn filter_items<
+		T,
+		F: Fn(&mut Client, StreamItem) -> Result<Option<T>>,
+	>(
+		&mut self, filter: F,
+	) -> Result<T> {
+		loop {
+			let item = self.next().await;
+			match item {
+				None => {
+					bail!("Connection ended before a matching item was found")
+				}
+				Some(r) => {
+					if let Some(r) = filter(self, r?)? {
+						return Ok(r);
+					}
+				}
 			}
 		}
 	}
-}
 
-pub struct DefaultPacketHandler<
-	IPH: PacketHandler<ServerConnectionData> + 'static,
-> {
-	pub inner: IPH,
-	/// The data instance is created after the packet handler so this has to be
-	/// an option.
-	data: Option<Weak<Mutex<ClientData<IPH>>>>,
-}
-
-impl<IPH: PacketHandler<ServerConnectionData> + 'static>
-	PacketHandler<ServerConnectionData> for DefaultPacketHandler<IPH>
-{
-	fn new_connection<S1, S2, S3, S4>(
-		&mut self,
-		con_val: &ConnectionValue<ServerConnectionData>,
-		s2c_init_stream: S1,
-		c2s_init_stream: S2,
-		command_stream: S3,
-		audio_stream: S4,
-	) where
-		S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
-		S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
-		S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
-		S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
-	{
-		let con_val2 = con_val.downgrade();
-		let data = self.data.as_ref().unwrap().clone();
-		// TODO Unify handling inits and commands
-		let s2c_init_stream = s2c_init_stream
-			.and_then(move |p| -> Result<Option<InS2CInit>> {
-				// Get private key
-				let key = {
-					let d = if let Some(d) = data.upgrade() {
-						d
-					} else {
-						// Connection doesn't exist anymore
-						return Err(format_err!(
-							"Connection does not exist while handling packet"
-						)
-						.into());
-					};
-					let d = d.lock().unwrap();
-					d.private_key.clone()
-				};
-
-				let con_val_weak = con_val2.clone();
-				let con_val = con_val2
-					.upgrade()
-					.ok_or_else(|| format_err!("Connection is gone"))?;
-				let con_val3 = con_val.clone();
-				let mut con = con_val.mutex.lock().unwrap();
-				let logger = con.1.logger.clone();
-				let mut ignore_packet = true;
-				let handle_res = match Self::handle_init(
-					&con_val3,
-					&mut *con,
-					&p,
-					&mut ignore_packet,
-					key,
-					&logger,
-				) {
-					Ok(r) => r,
-					Err(e) => {
-						error!(logger, "Error handling init packet";
-							"error" => ?e);
-						// Ignore packet, it is probably malformed
-						return Ok(None);
-					}
-				};
-
-				if let Some((s, packet)) = handle_res {
-					con.0.state = s;
-					if let Some(packet) = packet {
-						drop(con);
-						// First send the packet, then notify the listeners,
-						// this ensures that the clientek packet is sent
-						// before the clientinit.
-						tokio::spawn(
-							con_val2
-								.as_packet_sink()
-								.send(packet)
-								.and_then(move |_| {
-									let mutex = con_val_weak
-										.upgrade()
-										.ok_or_else(|| {
-											format_err!("Connection is gone")
-										})?
-										.mutex;
-									let mut con = mutex.lock().unwrap();
-									let state = &mut con.0;
-									// Notify state changed listeners
-									let mut i = 0;
-									while i < state.state_change_listener.len()
-									{
-										if (&mut state.state_change_listener[i])(
-											&state.state,
-										) {
-											let _ = state
-												.state_change_listener
-												.remove(i);
-										} else {
-											i += 1;
-										}
-									}
-									Ok(())
-								})
-								.map_err(move |e| {
-									error!(logger,
-										"Error sending response packet";
-										"error" => ?e)
-								}),
-						);
-					} else {
-						let state = &mut con.0;
-						// Notify state changed listeners
-						let mut i = 0;
-						while i < state.state_change_listener.len() {
-							if (&mut state.state_change_listener[i])(
-								&state.state,
-							) {
-								let _ = state.state_change_listener.remove(i);
-							} else {
-								i += 1;
-							}
-						}
+	/// Filter the incoming items. Drops audio packets.
+	pub async fn filter_commands<
+		T,
+		F: Fn(&mut Client, InCommandBuf) -> Result<Option<T>>,
+	>(
+		&mut self, filter: F,
+	) -> Result<T> {
+		loop {
+			let item = self.next().await;
+			match item {
+				None => {
+					bail!("Connection ended before a matching item was found")
+				}
+				Some(Err(e)) => return Err(e),
+				Some(Ok(StreamItem::Error(e))) => {
+					warn!(self.logger, "Got connection error"; "error" => %e);
+				}
+				Some(Ok(StreamItem::AckPacket(_))) => {}
+				Some(Ok(StreamItem::S2CInit(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::C2SInit(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::Audio(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::Command(packet))) => {
+					if let Some(r) = filter(self, packet)? {
+						return Ok(r);
 					}
 				}
-
-				if ignore_packet { Ok(None) } else { Ok(Some(p)) }
-			})
-			.filter_map(|p| p);
-
-		let con_val2 = con_val.downgrade();
-		let data = self.data.as_ref().unwrap().clone();
-		let command_stream = command_stream
-			.and_then(move |cmd| -> Result<Option<InCommand>> {
-				// Check if we handle this packet
-				let name = cmd.name();
-				if name != "initivexpand"
-					&& name != "initivexpand2"
-					&& name != "initserver"
-					&& name != "notifyclientleftview"
-					&& name != "notifyplugincmd"
-				{
-					// Forward packet
-					return Ok(Some(cmd));
-				}
-
-				// Get private key
-				let key = {
-					let d = if let Some(d) = data.upgrade() {
-						d
-					} else {
-						// Connection doesn't exist anymore
-						return Err(format_err!(
-							"Connection does not exist while handling packet"
-						)
-						.into());
-					};
-					let d = d.lock().unwrap();
-					d.private_key.clone()
-				};
-
-				let con_val_weak = con_val2.clone();
-				let con_val = con_val2
-					.upgrade()
-					.ok_or_else(|| format_err!("Connection is gone"))?;
-				let mut con = con_val.mutex.lock().unwrap();
-				let logger = con.1.logger.clone();
-				let mut ignore_packet = true;
-				let handle_res = match Self::handle_command(
-					&mut *con,
-					&cmd,
-					&mut ignore_packet,
-					key,
-					&logger,
-				) {
-					Ok(r) => r,
-					Err(e) => {
-						error!(logger, "Error handling client command";
-							"error" => ?e);
-						// Ignore packet, it is probably malformed
-						return Ok(None);
-					}
-				};
-
-				let addr = con.1.address;
-				let is_end;
-				if let Some((s, packet)) = handle_res {
-					is_end = s == ServerConnectionState::Disconnecting;
-					con.0.state = s;
-					if let Some(packet) = packet {
-						drop(con);
-						// First send the packet, then notify the listeners,
-						// this ensures that the clientek packet is sent
-						// before the clientinit.
-						tokio::spawn(
-							con_val2
-								.as_packet_sink()
-								.send(packet)
-								.and_then(move |_| {
-									let mutex = con_val_weak
-										.upgrade()
-										.ok_or_else(|| {
-											format_err!("Connection is gone")
-										})?
-										.mutex;
-									let mut con = mutex.lock().unwrap();
-									let state = &mut con.0;
-									// Notify state changed listeners
-									let mut i = 0;
-									while i < state.state_change_listener.len()
-									{
-										if (&mut state.state_change_listener[i])(
-											&state.state,
-										) {
-											let _ = state
-												.state_change_listener
-												.remove(i);
-										} else {
-											i += 1;
-										}
-									}
-									Ok(())
-								})
-								.map_err(move |e| {
-									error!(logger,
-										"Error sending response packet";
-										"error" => ?e)
-								}),
-						);
-					} else {
-						let state = &mut con.0;
-						// Notify state changed listeners
-						let mut i = 0;
-						while i < state.state_change_listener.len() {
-							if (&mut state.state_change_listener[i])(
-								&state.state,
-							) {
-								let _ = state.state_change_listener.remove(i);
-							} else {
-								i += 1;
-							}
-						}
-					}
-				} else {
-					is_end = false
-				}
-
-				if is_end {
-					// Close connection
-					let d = if let Some(d) = data.upgrade() {
-						d
-					} else {
-						// Connection doesn't exist anymore, ignore it, the
-						// connection is already gone.
-						return Ok(None);
-					};
-					d.lock().unwrap().remove_connection(&addr);
-				}
-
-				if ignore_packet { Ok(None) } else { Ok(Some(cmd)) }
-			})
-			.filter_map(|p| p);
-
-		self.inner.new_connection(
-			con_val,
-			s2c_init_stream,
-			c2s_init_stream,
-			command_stream,
-			audio_stream,
-		);
-	}
-}
-
-impl<IPH: PacketHandler<ServerConnectionData> + 'static>
-	DefaultPacketHandler<IPH>
-{
-	/// Do not forget to call [`complete`] afterwards.
-	///
-	/// [`complete`]: #method.complete
-	pub fn new(inner: IPH) -> Self { Self { inner, data: None } }
-
-	/// Needs to be called to complete the initialization of this packet handler.
-	pub fn complete(&mut self, data: Weak<Mutex<ClientData<IPH>>>) {
-		self.data = Some(data);
+			}
+		}
 	}
 
-	fn handle_init(
-		con_value: &ConnectionValue<ServerConnectionData>,
-		(state, con): &mut (ServerConnectionData, Connection),
-		packet: &InS2CInit,
-		ignore_packet: &mut bool,
-		private_key: EccKeyPrivP256,
-		logger: &Logger,
-	) -> Result<Option<(ServerConnectionState, Option<OutPacket>)>>
-	{
-		let con_value = con_value.downgrade();
-		let res = match state.state {
-			ServerConnectionState::Init0 { version } => {
-				// Handle an Init1
-				packet.with_data(|init| {
-					if let S2CInitData::Init1 { random1, random0_r } = init {
-						// Check the response
-						// Most of the time, random0_r is the reversed random0, but
-						// sometimes it isn't so do not check it.
-						// random0.as_ref().iter().rev().eq(random0_r.as_ref())
-						con.resender.ack_packet(PacketType::Init, 0);
-						// The packet is correct.
-						// Send next init packet
-
-						let state = ServerConnectionState::Init2 { version };
-
-						Some((
-							state,
-							Some(OutC2SInit2::new(
-								version,
-								random1,
-								**random0_r,
-							)),
-						))
-					} else {
-						None
-					}
-				})
+	pub async fn wait_disconnect(&mut self) -> Result<()> {
+		loop {
+			let item = self.next().await;
+			match item {
+				None => return Ok(()),
+				Some(Err(e)) => return Err(e),
+				Some(Ok(StreamItem::AckPacket(_))) => {}
+				Some(Ok(StreamItem::Error(e))) => {
+					warn!(self.logger, "Got connection error"; "error" => %e);
+				}
+				Some(Ok(StreamItem::S2CInit(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::C2SInit(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::Audio(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
+				Some(Ok(StreamItem::Command(packet))) => {
+					self.hand_back_buffer(packet.into_buffer());
+				}
 			}
-			ServerConnectionState::Init2 { version } => {
-				// Handle an Init3
-				packet.with_data(|init| {
-					if let S2CInitData::Init3 { x, n, level, random2 } = init {
-						let level = *level;
-						// Solve RSA puzzle: y = x ^ (2 ^ level) % n
-						// Use Montgomery Reduction
-						if level > 10_000_000 {
-							// Reject too high exponents
-							None
-						} else {
-							con.resender.ack_packet(PacketType::Init, 2);
-							// Create clientinitiv
-							let mut rng = rand::thread_rng();
-							let alpha = rng.gen::<[u8; 10]>();
-							// omega is an ASN.1-DER encoded public key from
-							// the ECDH parameters.
-
-							let ip = con.address.ip();
-							let logger = logger.clone();
-
-							let x = **x;
-							let n = **n;
-							let random2 = **random2;
-
-							// Spawn this as another future
-							let logger2 = logger.clone();
-							let fut = future::lazy(move || {
-								let (send, recv) = oneshot::channel();
-								std::thread::spawn(move || {
-									let mut time_reporter = ::slog_perf::TimeReporter::new_with_level(
-										"Solve RSA puzzle", logger.clone(),
-										::slog::Level::Info);
-									time_reporter.start("");
-
-									// Use gmp for faster computations if it is
-									// available.
-									#[cfg(feature = "rug")]
-									let y = {
-										let mut e = Integer::new();
-										let n = Integer::from_digits(
-											&n[..],
-											Order::Msf,
-										);
-										let x = Integer::from_digits(
-											&x[..],
-											Order::Msf,
-										);
-										e.set_bit(level, true);
-										let y = match x.pow_mod(&e, &n) {
-											Ok(r) => r,
-											Err(_) => {
-												return Err(format_err!(
-													"Failed to solve RSA \
-													 challenge"
-												)
-												.into());
-											}
-										};
-										let mut yi = [0; 64];
-										y.write_digits(&mut yi, Order::Msf);
-										yi
-									};
-
-									#[cfg(not(feature = "rug"))]
-									let y = {
-										let xi = BigUint::from_bytes_be(&x);
-										let ni = BigUint::from_bytes_be(&n);
-										let mut e = BigUint::one();
-										e <<= level as usize;
-										let yi = xi.modpow(&e, &ni);
-										info!(logger, "Solve RSA puzzle";
-											  "level" => level, "x" => %xi, "n" => %ni,
-											  "y" => %yi);
-										algs::biguint_to_array(&yi)
-									};
-
-									time_reporter.finish();
-									info!(logger, "Solve RSA puzzle";
-										  "level" => level);
-									let _ = send.send((x, n, y));
-								});
-
-								recv.from_err().and_then(
-									move |(x, n, y)| -> Box<
-										dyn Future<Item = _, Error = _> + Send,
-									> {
-										// Create the command string
-										// omega is an ASN.1-DER encoded public key from
-										// the ECDH parameters.
-										let omega = private_key
-											.to_pub()
-											.to_tomcrypt()
-											.unwrap();
-										// Set ip always except if it is a local address
-										let ip = if crate::utils::is_global_ip(
-											&ip,
-										) {
-											ip.to_string()
-										} else {
-											String::new()
-										};
-
-										let packet = OutC2SInit4::new(
-											version, &x, &n, level, &random2,
-											&y, &alpha, &omega, &ip,
-										);
-										Box::new(
-											con_value
-												.as_packet_sink()
-												.send(packet)
-												.map(|_| ()),
-										)
-									},
-								)
-							})
-							.map(|_| ())
-							.map_err(move |error| {
-								error!(logger2, "Cannot send packet";
-									"error" => ?error)
-							});
-							tokio::spawn(fut);
-
-							let state =
-								ServerConnectionState::ClientInitIv { alpha };
-							Some((state, None))
-						}
-					} else {
-						None
-					}
-				})
-			}
-			_ => {
-				*ignore_packet = false;
-				None
-			}
-		};
-		Ok(res)
+		}
 	}
 
 	fn handle_command(
-		(state, con): &mut (ServerConnectionData, Connection),
-		command: &InCommand,
-		ignore_packet: &mut bool,
-		private_key: EccKeyPrivP256,
-		logger: &Logger,
-	) -> Result<Option<(ServerConnectionState, Option<OutPacket>)>>
-	{
-		let res = match state.state {
-			ServerConnectionState::ClientInitIv { ref alpha } => {
-				let resender = &mut con.resender;
-				let res =
-					(|con_params: &mut Option<ConnectedParams>| -> Result<_> {
-						let cmd = command.iter().next().unwrap();
-						if command.name() == "initivexpand"
-							&& cmd.has("alpha") && cmd.has("beta")
-							&& cmd.has("omega") && base64::decode(cmd.0["alpha"])
-							.map(|a| a == alpha)
-							.unwrap_or(false)
-						{
-							resender.ack_packet(PacketType::Init, 4);
-
-							let beta_vec = base64::decode(cmd.0["beta"])?;
-							if beta_vec.len() != 10 {
-								return Err(format_err!(
-									"Incorrect beta length"
-								))?;
-							}
-
-							let mut beta = [0; 10];
-							beta.copy_from_slice(&beta_vec);
-							let server_key =
-								EccKeyPubP256::from_ts(cmd.0["omega"])?;
-
-							let (iv, mac) = algs::compute_iv_mac(
-								alpha,
-								&beta,
-								private_key.clone(),
-								server_key.clone(),
-							)?;
-							let params = ConnectedParams::new(
-								server_key,
-								SharedIv::ProtocolOrig(iv),
-								mac,
-							);
-							*con_params = Some(params);
-							Ok(None)
-						} else if command.name() == "initivexpand2"
-							&& cmd.has("l") && cmd.has("beta")
-							&& cmd.has("omega") && cmd.get("ot")
-							== Some("1") && cmd.has("time")
-							&& cmd.has("beta")
-						{
-							resender.ack_packet(PacketType::Init, 4);
-
-							let server_key =
-								EccKeyPubP256::from_ts(cmd.0["omega"])?;
-							let l = base64::decode(cmd.0["l"])?;
-							let proof = base64::decode(cmd.0["proof"])?;
-							// Check signature of l (proof)
-							server_key.clone().verify(&l, &proof)?;
-
-							let beta_vec = base64::decode(cmd.0["beta"])?;
-							if beta_vec.len() != 54 {
-								return Err(format_err!(
-									"Incorrect beta length"
+		&mut self, command: InCommandBuf,
+	) -> Result<Option<InCommandBuf>> {
+		let (name, args) =
+			CommandParser::new(command.data().packet().content());
+		if name == b"initserver" {
+			// Handle an initserver
+			if let Some(params) = &mut self.params {
+				let mut c_id = None;
+				for item in args {
+					match item {
+						CommandItem::NextCommand => {
+							bail!("Got multiple initservers in one packet")
+						}
+						CommandItem::Argument(arg) => match arg.name() {
+							b"aclid" => {
+								c_id = Some(
+									arg.value().get_parse::<Error, u16>()?,
 								)
-								.into());
 							}
-
-							let mut beta = [0; 54];
-							beta.copy_from_slice(&beta_vec);
-
-							// Parse license argument
-							let licenses = Licenses::parse(&l)?;
-							// Ephemeral key of server
-							let server_ek = licenses.derive_public_key()?;
-
-							// Create own ephemeral key
-							let ek = EccKeyPrivEd25519::create()?;
-
-							let (iv, mac) = algs::compute_iv_mac31(
-								alpha, &beta, &ek, &server_ek,
-							)?;
-							let params = ConnectedParams::new(
-								server_key,
-								SharedIv::Protocol31(iv),
-								mac,
-							);
-							*con_params = Some(params);
-
-							// Send clientek
-							let ek_pub = ek.to_pub();
-							let ek_s = base64::encode(ek_pub.0.as_bytes());
-
-							// Proof: ECDSA signature of ek || beta
-							let mut all = Vec::with_capacity(32 + 54);
-							all.extend_from_slice(ek_pub.0.as_bytes());
-							all.extend_from_slice(&beta);
-							let proof = private_key.clone().sign(&all)?;
-							let proof_s = base64::encode(&proof);
-
-							Ok(Some(OutCommand::new::<
-								_,
-								_,
-								String,
-								String,
-								_,
-								_,
-								std::iter::Empty<_>,
-							>(
-								Direction::C2S,
-								PacketType::Command,
-								"clientek",
-								vec![("ek", ek_s), ("proof", proof_s)]
-									.into_iter(),
-								std::iter::empty(),
-							)))
-						} else {
-							Err(format_err!(
-								"initivexpand command has wrong arguments"
-							)
-							.into())
-						}
-					})(&mut con.params);
-
-				match res {
-					Ok(p) => Some((ServerConnectionState::Connecting, p)),
-					Err(error) => {
-						error!(logger, "Handle udp init packet"; "error" => %error);
-						None
+							_ => {}
+						},
 					}
 				}
-			}
-			ServerConnectionState::Connecting => {
-				let cmd = command.iter().next().unwrap();
-				if command.name() == "initserver" {
-					// Handle an initserver
-					if let Some(params) = &mut con.params {
-						if let Ok(c_id) = cmd.get_parse("aclid") {
-							params.c_id = c_id;
-						}
 
-						let clientinit_id =
-							if let SharedIv::Protocol31(_) = params.shared_iv {
-								2
-							} else {
-								1
-							};
-						// initserver is the ack for clientinit
-						// Remove from send queue
-						con.resender
-							.ack_packet(PacketType::Command, clientinit_id);
-					}
-
-					// Notify the resender that we are connected
-					con.resender.handle_event(ResenderEvent::Connected);
-					*ignore_packet = false;
-					Some((ServerConnectionState::Connected, None))
+				if let Some(c_id) = c_id {
+					params.c_id = c_id;
 				} else {
-					None
+					bail!("Got initserver without aclid");
+				}
+			} else {
+				bail!("Got initserver, but we have not yet a full connection");
+			}
+
+			// Notify the resender that we are connected
+			let this = &mut **self;
+			this.resender.set_state(&this.logger, ResenderState::Connected);
+		} else if name == b"notifyclientleftview" {
+			// Handle disconnect
+			if let Some(params) = &mut self.params {
+				let mut own_client = false;
+				for item in args {
+					match item {
+						CommandItem::NextCommand => {}
+						CommandItem::Argument(arg) => match arg.name() {
+							b"clid" => {
+								let c_id =
+									arg.value().get_parse::<Error, u16>()?;
+								own_client |= c_id == params.c_id;
+							}
+							_ => {}
+						},
+					}
+				}
+
+				if own_client {
+					// We are disconnected
+					let this = &mut **self;
+					this.resender
+						.set_state(&this.logger, ResenderState::Disconnected);
 				}
 			}
-			ServerConnectionState::Connected => {
-				*ignore_packet = false;
-				let cmd = command.iter().next().unwrap();
-				if command.name() == "notifyclientleftview" {
-					// Handle a disconnect
-					if let Some(ref mut params) = con.params {
-						if cmd.get_parse("clid") == Ok(params.c_id) {
-							// Wait with the disconnect until we sent the ack.
-							Some((ServerConnectionState::Disconnecting, None))
-						} else {
-							None
+		} else if name == b"notifyplugincmd" {
+			let mut is_getversion = false;
+			let sender = None;
+			for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
+				match item {
+					CommandItem::Argument(arg) => match arg.name() {
+						b"name" => {
+							is_getversion =
+								arg.value().get_raw() == b"getversion"
 						}
-					} else {
-						None
-					}
-				} else if command.name() == "notifyplugincmd"
-					&& cmd.get("name") == Some("getversion")
-					&& cmd.has("data")
-				{
-					let res: Result<_> = (|| {
-						// Format: sender,nonce
-						// sender is the client id of the sender who asks for
-						// information.
-						// The nonce is base64 encoded.
-						let data = cmd.0["data"].split(',').collect::<Vec<_>>();
-						if data.len() != 2 {
-							return Err(format_err!(
-								"Cannot parse getversion: {}",
-								cmd.0["data"]
-							)
-							.into());
-						}
-
-						let sender: u16 = data[0].parse()?;
-						let nonce = base64::decode(&data[1])?;
-						if nonce.is_empty() {
-							return Err(format_err!("Empty nonce").into());
-						}
-
-						let mut version = format!(
-							"{} {}",
-							env!("CARGO_PKG_NAME"),
-							git_testament::render_testament!(TESTAMENT),
-						);
-						#[cfg(debug_assertions)]
-						version.push_str(" (Debug)");
-						#[cfg(not(debug_assertions))]
-						version.push_str(" (Release)");
-
-						let mut sign_data = version.as_bytes().to_vec();
-						sign_data.extend_from_slice(&nonce);
-
-						let pub_key = private_key.to_pub();
-						let signature = private_key.sign(&sign_data)?;
-
-						// Return format: sender,version,identity,nonce,signature
-						//
-						// The identity is the public key of this client. The
-						// receiver can check it if he knows the uid, because
-						// uid = sha1(public key of identity)
-						//
-						// The signature is a base64 encoded ecdsa signature of
-						// version || nonce
-						// The response is signed because there is no way for
-						// clients to find the originator of a plugin message.
-						// With the signature, a client can verify the origin.
-						let p = Some(OutCommand::new::<
-							_,
-							_,
-							String,
-							String,
-							_,
-							_,
-							std::iter::Empty<_>,
-						>(
-							Direction::C2S,
-							PacketType::Command,
-							"plugincmd",
-							vec![
-								("name", "getversion".into()),
-								(
-									"data",
-									format!(
-										"{},{},{},{},{}",
-										con.params.as_ref().unwrap().c_id,
-										version,
-										base64::encode(pub_key.to_short()),
-										data[1],
-										base64::encode(&signature),
-									),
+						_ => {}
+					},
+					CommandItem::NextCommand => {
+						if is_getversion && sender.is_some() {
+							let sender: u16 = sender.unwrap();
+							// TODO getversion
+							let mut version = format!(
+								"{} {}",
+								env!("CARGO_PKG_NAME"),
+								git_testament::render_testament!(
+									crate::TESTAMENT
 								),
-								// PluginTargetMode::Client
-								("targetmode", 2.to_string()),
-								("target", sender.to_string()),
-							]
-							.into_iter(),
-							std::iter::empty(),
-						));
-						Ok(p)
-					})();
+							);
+							#[cfg(debug_assertions)]
+							version.push_str(" (Debug)");
+							#[cfg(not(debug_assertions))]
+							version.push_str(" (Release)");
 
-					match res {
-						Ok(r) => Some((ServerConnectionState::Connected, r)),
-						Err(e) => {
-							debug!(logger, "Cannot handle getversion"; "error" => ?e);
-							None
+							let mut cmd = OutCommand::new(
+								Direction::C2S,
+								Flags::empty(),
+								PacketType::Command,
+								"plugincmd",
+							);
+							cmd.write_arg("name", &"getversion");
+							cmd.write_arg("data", &version);
+							cmd.write_arg("targetmode", &2);
+							cmd.write_arg("target", &sender);
+							self.send_packet(cmd.into_packet())?;
 						}
 					}
-				} else {
-					None
 				}
 			}
-			_ => {
-				*ignore_packet = false;
-				None
+		}
+
+		Ok(Some(command))
+	}
+}
+
+impl Deref for Client {
+	type Target = Connection;
+	fn deref(&self) -> &Self::Target { &self.con }
+}
+
+impl DerefMut for Client {
+	fn deref_mut(&mut self) -> &mut Self::Target { &mut self.con }
+}
+
+/// Return queued errors and inspect packets.
+impl Stream for Client {
+	type Item = Result<StreamItem>;
+	fn poll_next(
+		mut self: Pin<&mut Self>, cx: &mut Context,
+	) -> Poll<Option<Self::Item>> {
+		loop {
+			match Pin::new(&mut **self).poll_next(cx) {
+				Poll::Ready(Some(Ok(StreamItem::Command(command)))) => {
+					match self.handle_command(command) {
+						Err(e) => return Poll::Ready(Some(Err(e))),
+						Ok(Some(cmd)) => {
+							return Poll::Ready(Some(Ok(StreamItem::Command(
+								cmd,
+							))));
+						}
+						Ok(None) => {}
+					}
+				}
+				r => return r,
 			}
-		};
-		Ok(res)
+		}
 	}
 }
 
 #[cfg(test)]
 mod tests {
-	use super::*;
-	use crate::handler_data::InPacketObserver;
+	use std::cell::Cell;
+	use std::collections::VecDeque;
+	use std::io;
+	use std::sync::{Arc, Mutex};
+	use std::task::Waker;
 
-	use std::time::Duration;
-
-	use bytes::{Bytes, BytesMut};
-	use futures::stream;
 	use num_traits::ToPrimitive;
-	use slog::{o, Drain};
-	use tokio::runtime::current_thread::Runtime;
-	use tokio::util::FutureExt;
+	use slog::{debug, o, Drain};
+	use tokio::sync::oneshot;
+	use tokio::time::{self, Duration};
 
-	pub struct TestPacketHandler;
+	use super::*;
+	use crate::connection::Event;
+	use crate::resend::PartialPacketId;
 
-	impl<T: 'static> PacketHandler<T> for TestPacketHandler {
-		fn new_connection<S1, S2, S3, S4>(
-			&mut self,
-			_con_val: &ConnectionValue<T>,
-			s2c_init_stream: S1,
-			_c2s_init_stream: S2,
-			command_stream: S3,
-			audio_stream: S4,
-		) where
-			S1: Stream<Item = InS2CInit, Error = Error> + Send + 'static,
-			S2: Stream<Item = InC2SInit, Error = Error> + Send + 'static,
-			S3: Stream<Item = InCommand, Error = Error> + Send + 'static,
-			S4: Stream<Item = InAudio, Error = Error> + Send + 'static,
-		{
-			tokio::spawn(
-				s2c_init_stream
-					.for_each(|_| Ok(()))
-					.map_err(|e| panic!("s2c_init_stream errored: {:?}", e)),
-			);
-			tokio::spawn(
-				command_stream
-					.for_each(|_| Ok(()))
-					.map_err(|e| panic!("command_stream errored: {:?}", e)),
-			);
-			tokio::spawn(
-				audio_stream
-					.for_each(|_| Ok(()))
-					.map_err(|e| panic!("audio_stream errored: {:?}", e)),
-			);
+	#[derive(Clone, Debug)]
+	struct SimulatedSocketState {
+		logger: Logger,
+		buffer: [VecDeque<Vec<u8>>; 2],
+		wakers: [Option<Waker>; 2],
+	}
+
+	/// Simulate a connection
+	#[derive(Clone, Debug)]
+	struct SimulatedSocket {
+		state: Arc<Mutex<SimulatedSocketState>>,
+		/// Index into the wakers list.
+		i: usize,
+		addr: SocketAddr,
+	}
+
+	impl SimulatedSocketState {
+		fn new(logger: Logger) -> Self {
+			Self {
+				logger,
+				buffer: Default::default(),
+				wakers: Default::default(),
+			}
 		}
 	}
 
+	impl SimulatedSocket {
+		fn new(
+			state: Arc<Mutex<SimulatedSocketState>>, i: usize, addr: SocketAddr,
+		) -> Self {
+			Self { state, i, addr }
+		}
+
+		/// Create a pair of simulated sockets which are connected with each
+		/// other.
+		fn pair(
+			logger: Logger, addr0: SocketAddr, addr1: SocketAddr,
+		) -> (SimulatedSocket, SimulatedSocket) {
+			let state = Arc::new(Mutex::new(SimulatedSocketState::new(logger)));
+			// Switch addresses as we use them as address from receiving packets
+			(Self::new(state.clone(), 0, addr1), Self::new(state, 1, addr0))
+		}
+	}
+
+	impl Socket for SimulatedSocket {
+		fn poll_recv_from(
+			&self, cx: &mut Context, buf: &mut [u8],
+		) -> Poll<io::Result<(usize, SocketAddr)>> {
+			let mut state = self.state.lock().unwrap();
+			if let Some(packet) = state.buffer[self.i].pop_front() {
+				let len = std::cmp::min(buf.len(), packet.len());
+				buf[..len].copy_from_slice(&packet[..len]);
+				debug!(state.logger, "{} receives packet", self.i);
+				Poll::Ready(Ok((len, self.addr)))
+			} else {
+				state.wakers[self.i] = Some(cx.waker().clone());
+				Poll::Pending
+			}
+		}
+
+		fn poll_send_to(
+			&self, _: &mut Context, buf: &[u8], _: &SocketAddr,
+		) -> Poll<io::Result<usize>> {
+			let mut state = self.state.lock().unwrap();
+			debug!(state.logger, "{} sends packet", self.i);
+			state.buffer[1 - self.i].push_back(buf.to_vec());
+			if let Some(waker) = state.wakers[1 - self.i].take() {
+				waker.wake();
+			}
+			Poll::Ready(Ok(buf.len()))
+		}
+
+		fn local_addr(&self) -> io::Result<SocketAddr> { Ok(self.addr) }
+	}
+
 	pub struct TestConnection {
-		pub client: Arc<Mutex<ClientData<TestPacketHandler>>>,
-		pub client_con: ClientConVal,
-		// Mocked "server" to send and receive packets
-		pub server: Arc<Mutex<ClientData<TestPacketHandler>>>,
-		pub server_con: ClientConVal,
+		pub client: Client,
+		pub server: Client,
 	}
 
 	impl TestConnection {
-		pub fn new() -> (Runtime, Self) {
-			let mut runtime = Runtime::new().unwrap();
-
-			let (send_sink, send_stream) =
-				mpsc::unbounded::<(Bytes, SocketAddr)>();
-			let (recv_sink, recv_stream) =
-				mpsc::unbounded::<(BytesMut, SocketAddr)>();
-
+		pub fn new() -> Result<Self> {
 			let logger = {
-				// TODO Write to stdout, somehow does not work
-				//let decorator = slog_term::PlainDecorator::new(std::io::stdout());
 				let decorator =
-					slog_term::TermDecorator::new().stdout().build();
+					slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
 				let drain =
-					slog_term::FullFormat::new(decorator).build().fuse();
-				let drain = slog_async::Async::new(drain).build().fuse();
+					Mutex::new(slog_term::FullFormat::new(decorator).build())
+						.fuse();
 
 				slog::Logger::root(drain, o!())
 			};
 
-			let res = runtime
-				.block_on(future::lazy(|| -> Result<_> {
-					// Create client
-					let c = ClientData::new_with_socket(
-						"127.0.0.1:0".parse().unwrap(),
-						EccKeyPrivP256::create().unwrap(),
-						true,
-						None,
-						DefaultPacketHandler::new(TestPacketHandler),
-						SocketConnectionManager::new(),
-						send_sink,
-						recv_stream,
-						logger.clone(),
-					)
-					.expect("Failed to create client");
+			let addr = "127.0.0.1:0".parse()?;
+			let client_key = EccKeyPrivP256::create()?;
+			let server_key = EccKeyPrivP256::create()?;
 
-					let c2 = Arc::downgrade(&c);
-					{
-						let mut c = c.lock().unwrap();
-						let c = &mut *c;
-						// Set the data reference
-						c.packet_handler.complete(c2.clone());
+			let (socket0, socket1) =
+				SimulatedSocket::pair(logger.clone(), addr, addr);
+			let mut client = Client::new(
+				logger.clone(),
+				addr,
+				Box::new(socket0),
+				client_key,
+			);
+			let mut server = Client::new(
+				logger.clone(),
+				addr,
+				Box::new(socket1),
+				server_key,
+			);
+			server.is_client = false;
 
-						//crate::log::add_udp_packet_logger(c);
-						// Change state on disconnect
-						c.add_out_packet_observer(
-							"tsproto::client".into(),
-							Box::new(ClientOutPacketObserver),
-						);
-					}
+			crate::log::add_logger(
+				logger.new(o!("is" => "client")),
+				2,
+				&mut client,
+			);
+			crate::log::add_logger(
+				logger.new(o!("is" => "server")),
+				2,
+				&mut server,
+			);
 
-					// Create "server"
-					let s = ClientData::new_with_socket(
-						"127.0.0.1:0".parse().unwrap(),
-						EccKeyPrivP256::create().unwrap(),
-						false,
-						None,
-						DefaultPacketHandler::new(TestPacketHandler),
-						SocketConnectionManager::new(),
-						recv_sink
-							.sink_map_err(|e| {
-								format_err!(
-									"Failed to send from server: {:?}",
-									e
-								)
-							})
-							.with(|(b, a): (Bytes, SocketAddr)| -> Result<_> {
-								Ok((b.into(), a))
-							}),
-						send_stream.map(|(b, a)| (b.into(), a)),
-						logger.new(o!("server" => true)),
-					)
-					.expect("Failed to create \"server\" mock");
+			Ok(Self { client, server })
+		}
 
-					let s2 = Arc::downgrade(&s);
-					{
-						let mut c = s.lock().unwrap();
-						let c = &mut *c;
-						// Set the data reference
-						c.packet_handler.complete(s2.clone());
-						//crate::log::add_udp_packet_logger(c);
-					}
-
-					let client_con = Self::set_connected(&c);
-					let server_con = Self::set_connected(&s);
-					let res =
-						Self { client: c, server: s, client_con, server_con };
-
-					Ok(res)
-				}))
-				.unwrap();
-
-			(runtime, res)
+		pub async fn set_connected(&mut self) {
+			Self::set_con_connected(
+				&mut self.client,
+				self.server.private_key.to_pub(),
+			)
+			.await;
+			Self::set_con_connected(
+				&mut self.server,
+				self.client.private_key.to_pub(),
+			)
+			.await;
 		}
 
 		/// Set the connection to connected.
-		fn set_connected(
-			data: &Arc<Mutex<ClientData<TestPacketHandler>>>,
-		) -> ClientConVal {
-			let mut client = data.lock().unwrap();
-			let con_key = client.add_connection(
-				Arc::downgrade(&data),
-				ServerConnectionData {
-					state_change_listener: Vec::new(),
-					state: ServerConnectionState::Connected,
-				},
-				"127.0.0.1:1".parse().unwrap(),
-			);
-			let connection = client.get_connection(&con_key).unwrap();
-			let mut con = connection.mutex.lock().unwrap();
-			con.1.resender.handle_event(ResenderEvent::Connected);
-			con.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
-			con.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
-			con.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
-			con.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] = (0, 1);
+		async fn set_con_connected(con: &mut Client, other_key: EccKeyPubP256) {
+			let con = &mut **con;
+			con.resender.set_state(&con.logger, ResenderState::Connected);
+
+			con.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 1 };
+			con.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 1 };
+			con.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 1 };
+			con.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 
 			// Set params
-			con.1.params = Some(ConnectedParams::new(
-				client.private_key.to_pub(),
-				SharedIv::Protocol31([0; 64]),
-				[0; 8],
-			));
-			let params = con.1.params.as_mut().unwrap();
+			con.params =
+				Some(ConnectedParams::new(other_key, [0; 64], [0x42; 8]));
+			let params = con.params.as_mut().unwrap();
 			params.c_id = 1;
-
-			connection.downgrade()
-		}
-
-		/// Encrypts the packet content and sends it to the connection.
-		pub fn send_packet(
-			&self,
-			packet: OutPacket,
-		) -> impl Future<Item = (), Error = Error>
-		{
-			self.server_con
-				.as_packet_sink()
-				.send(packet)
-				.map_err(|e| panic!("Failed to send simulated packet: {:?}", e))
-				.map(|_| ())
 		}
 	}
 
-	struct InitObserver(mpsc::UnboundedSender<()>);
-	impl<T> InPacketObserver<T> for InitObserver {
-		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
-			let header = packet.header();
-			if header.packet_type() == PacketType::Init {
-				tokio::spawn(
-					self.0
-						.clone()
-						.send(())
-						.map(|_| ())
-						.map_err(|e| panic!("Failed to send: {:?}", e)),
-				);
+	/// Check if init packet is sent and connect timeout is working.
+	#[tokio::test]
+	async fn test_connect_timeout() -> Result<()> {
+		let mut state = TestConnection::new()?;
+
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Init {
+					if let Some(s) = send.replace(None) {
+						s.send(()).unwrap();
+					}
+				}
 			}
-		}
-	}
+			_ => {}
+		};
 
-	#[test]
-	fn test_connect_timeout() {
-		let (mut runtime, con) = TestConnection::new();
+		state.server.event_listeners.push(Box::new(listener));
 
-		runtime.spawn(future::lazy(move || {
-			let cw = Arc::downgrade(&con.client);
-			// Add observer
-			let (send, recv) = mpsc::unbounded();
-			con.server.lock().unwrap().add_in_packet_observer(
-				"tsproto::test".into(),
-				Box::new(InitObserver(send)),
-			);
-
-			let r = connect(
-				cw,
-				&mut *con.client.lock().unwrap(),
-				"127.0.0.1:1".parse().unwrap(),
-			);
-			r.map(|_| panic!("Should not connect")).then(|_| {
-				// Drop client in the end
-				drop(con);
-				recv.into_future()
-					.map(|_| ())
-					.map_err(|_| panic!("Failed to receive init packet"))
-			})
-		}));
-		runtime.run().unwrap();
-	}
-
-	struct PongObserver(mpsc::UnboundedSender<()>);
-	impl<T> InPacketObserver<T> for PongObserver {
-		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
-			let header = packet.header();
-			if header.packet_type() == PacketType::Pong
-				&& header.packet_id() == 1
-			{
-				tokio::spawn(
-					self.0
-						.clone()
-						.send(())
-						.map(|_| ())
-						.map_err(|e| panic!("Failed to send: {:?}", e)),
-				);
+		tokio::select!(
+			(r, err) = future::join(
+				time::timeout(Duration::from_secs(10), recv),
+				state.client.connect(),
+			) => {
+				r??;
+				assert!(err.is_err(), "Connect should timeout");
+				return Ok(());
 			}
-		}
+			_ = state.server.wait_disconnect() => {
+				bail!("Server should just run in the background");
+			}
+		);
+	}
+
+	#[tokio::test]
+	async fn test_disconnect_timeout() -> Result<()> {
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
+
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Command {
+					send.replace(None).unwrap().send(()).unwrap();
+				}
+			}
+			_ => {}
+		};
+
+		state.server.event_listeners.push(Box::new(listener));
+
+		let mut cmd = OutCommand::new(
+			Direction::C2S,
+			Flags::empty(),
+			PacketType::Command,
+			"clientdisconnect",
+		);
+		cmd.write_arg("reasonid", &8);
+		cmd.write_arg("reasonmsg", &"Bye");
+
+		state.client.send_packet(cmd.into_packet())?;
+
+		tokio::select!(
+			(r, err) = future::join(
+				time::timeout(Duration::from_secs(10), recv),
+				state.client.wait_disconnect(),
+			) => {
+				r??;
+				assert!(err.is_err(), "Connect should timeout");
+				return Ok(());
+			}
+			_ = state.server.wait_disconnect() => {
+				bail!("Server should just run in the background");
+			}
+		);
 	}
 
 	/// Send ping and check that a pong is received.
-	#[test]
-	fn test_pong() {
-		let (mut runtime, con) = TestConnection::new();
+	#[tokio::test]
+	async fn test_pong() -> Result<()> {
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
 
-		runtime
-			.block_on(future::lazy(|| {
-				let packet = OutPacket::new_with_dir(
-					Direction::S2C,
-					Flags::UNENCRYPTED,
-					PacketType::Ping,
-				);
-				tokio::spawn(
-					con.send_packet(packet.clone())
-						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
-				);
-				tokio::spawn(
-					con.send_packet(packet)
-						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
-				);
+		let packet = OutPacket::new_with_dir(
+			Direction::S2C,
+			Flags::UNENCRYPTED,
+			PacketType::Ping,
+		);
+		state.server.send_packet(packet.clone())?;
+		state.server.send_packet(packet.clone())?;
 
-				// Add observer
-				let (send, recv) = mpsc::unbounded();
-				con.server.lock().unwrap().add_in_packet_observer(
-					"tsproto::test".into(),
-					Box::new(PongObserver(send)),
-				);
-				recv.into_future()
-					.map(|_| drop(con))
-					.timeout(Duration::from_secs(5))
-					.map_err(|_| panic!("Failed to receive pong"))
-			}))
-			.unwrap();
-	}
-
-	struct CounterObserver(mpsc::UnboundedSender<()>, Mutex<usize>);
-	impl<T> InPacketObserver<T> for CounterObserver {
-		fn observe(&self, _: &mut (T, Connection), packet: &InPacket) {
-			let header = packet.header();
-			if header.packet_type() == PacketType::Command
-				&& *self.1.lock().unwrap() == 0
-			{
-				tokio::spawn(
-					self.0
-						.clone()
-						.send(())
-						.map(|_| ())
-						.map_err(|e| panic!("Failed to send: {:?}", e)),
-				);
-			} else {
-				*self.1.lock().unwrap() -= 1;
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let counter = Cell::new(0u8);
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Pong {
+					counter.set(counter.get() + 1);
+					// Until 2 pongs are received
+					if counter.get() == 2 {
+						send.replace(None).unwrap().send(()).unwrap();
+					}
+				}
 			}
-		}
+			_ => {}
+		};
+
+		state.server.event_listeners.push(Box::new(listener));
+
+		tokio::select!(
+			r = time::timeout(Duration::from_secs(5), recv) => {
+				r??;
+				return Ok(());
+			}
+			_ = state.client.wait_disconnect() => {}
+			_ = state.server.wait_disconnect() => {}
+		);
+		bail!("Unexpected disconnect");
 	}
 
-	#[test]
-	fn test_generation_id() {
-		let (mut runtime, con) = TestConnection::new();
+	/// Check that the packet id wraps around.
+	#[tokio::test]
+	async fn test_generation_id() -> Result<()> {
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
+
+		// Sending 70 000 messages takes about 7 minutes in debug mode so we
+		// start at 65 500 and send only 100.
+		let count = 100;
 
 		// Set current id
-		for c in &[&con.client_con, &con.server_con] {
-			let c = c.upgrade().unwrap();
-			let mut c = c.mutex.lock().unwrap();
-			c.1.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 65_000);
-			c.1.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 65_000);
-			c.1.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 65_000);
-			c.1.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 65_000);
+		for c in &mut [&mut state.client, &mut state.server] {
+			c.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
+			c.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
+			c.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
+			c.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
 		}
 
-		runtime.spawn(future::lazy(move || {
-			// Sending 70 000 messages takes about 7 minutes (in debug mode) so
-			// we start at 65 000 and send only 5 000
-			let mut msgs = Vec::new();
-			let count = 5_000;
-			let (send, recv) = mpsc::unbounded();
-			con.client.lock().unwrap().add_in_packet_observer(
-				"tsproto::test".into(),
-				Box::new(CounterObserver(send, Mutex::new(count - 1))),
-			);
-
-			for i in 0..count {
-				let packet = OutCommand::new::<
-					_,
-					_,
-					String,
-					String,
-					_,
-					_,
-					std::iter::Empty<_>,
-				>(
-					Direction::S2C,
-					PacketType::Command,
-					"notifytextmessage",
-					vec![("msg", format!("message {}", i))].into_iter(),
-					std::iter::empty(),
-				);
-				msgs.push(
-					con.send_packet(packet.clone())
-						.map_err(|e| panic!("Failed to send packet: {:?}", e)),
-				);
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let counter = Cell::new(0u8);
+		let listener = move |event: &Event| match event {
+			Event::ReceivePacket(packet) => {
+				if packet.header().packet_type() == PacketType::Command {
+					counter.set(counter.get() + 1);
+					if counter.get() == count {
+						send.replace(None).unwrap().send(()).unwrap();
+					}
+				}
 			}
+			_ => {}
+		};
 
-			tokio::spawn(stream::futures_ordered(msgs).for_each(|_| Ok(())));
+		state.client.event_listeners.push(Box::new(listener));
 
-			recv.into_future()
-				.map(|_| drop(con))
-				.map_err(|_| panic!("Failed to receive all packets"))
-		}));
-		runtime.run().unwrap();
+		for i in 0..count {
+			let mut cmd = OutCommand::new(
+				Direction::S2C,
+				Flags::empty(),
+				PacketType::Command,
+				"notifytextmessage",
+			);
+			cmd.write_arg("msg", &format!("message {}", i));
+			state.server.send_packet(cmd.into_packet())?;
+		}
+
+		tokio::select!(
+			r = recv => {
+				r?;
+				return Ok(());
+			}
+			_ = state.client.wait_disconnect() => {}
+			_ = state.server.wait_disconnect() => {}
+		);
+		bail!("Unexpected disconnect");
 	}
 }

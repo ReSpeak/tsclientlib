@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
-use time::{OffsetDateTime, Duration};
 use serde::{Deserialize, Serialize};
+use time::{Duration, OffsetDateTime};
 
 use crate::data::{
 	Channel, ChatEntry, Client, Connection, ConnectionClientData,
@@ -47,11 +47,13 @@ pub enum Event {
 		invoker: Option<Invoker>,
 	},
 
+	/// All channels are available and we can subscribe them now.
+	ChannelListFinished,
 	Message {
 		/// Where this message was sent to, in the server or channel chat or
 		/// directly to client.
 		///
-		/// This is our own client for messages private messages from others.
+		/// This is our own client for private messages from others.
 		target: MessageTarget,
 		/// The user who wrote the message.
 		invoker: Invoker,
@@ -66,6 +68,7 @@ impl Event {
 			Event::PropertyAdded { invoker, .. }
 			| Event::PropertyChanged { invoker, .. }
 			| Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
+			Event::ChannelListFinished => None,
 			Event::Message { invoker, .. } => Some(invoker),
 		}
 	}

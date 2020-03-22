@@ -35,14 +35,7 @@ fn get_id_args(event: &Event) -> String {
 		if is_ref_type(&f.get_rust_type("", false)) {
 			res.push('&');
 		}
-		res.push_str(&format!(
-			"{{
-			let val = cmd.get_arg(\"{}\")?;
-			{}
-		}}",
-			f.ts,
-			generate_deserializer(f)
-		));
+		res.push_str(&format!("m.{}", f.get_rust_name()));
 	}
 	res
 }
@@ -72,14 +65,7 @@ fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
 			ids.push_str(", ");
 		}
 		if m == "map" || m == "array" {
-			ids.push_str(&format!(
-				"{{
-				let val = cmd.get_arg(\"{}\")?;
-				{}
-			}}",
-				from.ts,
-				generate_deserializer(from)
-			));
+			ids.push_str(&format!("m.{}", from.get_rust_name()));
 		} else {
 			panic!("Unknown modifier {}", m);
 		}
@@ -95,14 +81,4 @@ fn get_property(p: &Property, name: &str) -> String {
 	let type_s = get_rust_type(p);
 	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
 	format!("PropertyValue::{}({})", type_s, name)
-}
-
-fn generate_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("", false);
-	let res = if rust_type.starts_with("Vec<") {
-		crate::message_parser::vector_value_deserializer(field)
-	} else {
-		crate::message_parser::single_value_deserializer(field, &rust_type)
-	};
-	res.replace("*val", "val")
 }

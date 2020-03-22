@@ -34,8 +34,7 @@ lazy_static! {
 					.find(|s| s.name == r.from)
 					.unwrap_or_else(|| panic!("Cannot find struct {}", r.from));
 
-				let find_prop = |name: &str,
-								 book_struct: &'static Struct|
+				let find_prop = |name: &str, book_struct: &'static Struct|
 				 -> Option<&'static Property> {
 					if let Some(prop) = book_struct
 						.properties
@@ -139,6 +138,9 @@ lazy_static! {
 						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
 					}) {
 						// Try to find matching property
+						// We don't automatically add methods for optional
+						// properties because we don't know in which case they
+						// are `None`.
 						if let Some(prop) = book
 							.get_struct(&ev.book_struct.name)
 							.properties

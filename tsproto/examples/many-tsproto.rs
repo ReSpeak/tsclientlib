@@ -1,15 +1,15 @@
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
 
-use futures::{future, stream, Future, Stream};
-use slog::{info, o, Drain};
+use anyhow::Result;
+use futures::prelude::*;
+use slog::info;
 use structopt::StructOpt;
-use tokio::timer::Delay;
+use tokio::time::{self, Duration};
 
 mod utils;
 use crate::utils::*;
 
-#[derive(StructOpt, Debug)]
+#[derive(StructOpt, Clone, Debug)]
 #[structopt(author, about)]
 struct Args {
 	/// The address of the server to connect to
@@ -31,85 +31,48 @@ struct Args {
 	count: usize,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<()> { real_main().await }
+
+async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
+	let logger = create_logger();
 
-	let logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
+	stream::iter(0..args.count)
+		.for_each_concurrent(None, |_| {
+			let args = args.clone();
+			let logger = logger.clone();
+			tokio::spawn(async move {
+				let mut con = create_client(
+					args.local_address,
+					args.address,
+					logger.clone(),
+					args.verbose,
+				)
+				.await
+				.unwrap();
 
-		slog::Logger::root(drain, o!())
-	};
+				// Connect
+				connect(&mut con).await.unwrap();
+				info!(logger, "Connected");
 
-	tokio::run(
-		future::lazy(move || {
-			stream::iter_ok(0..args.count)
-				.map(move |_| {
-					let c = create_client(
-						args.local_address.clone(),
-						logger.clone(),
-						SimplePacketHandler,
-						args.verbose,
-					);
+				// Wait some time
+				tokio::select! {
+					_ = &mut time::delay_for(Duration::from_secs(2)) => {}
+					_ = con.wait_disconnect() => {
+						panic!("Disconnected");
+					}
+				};
+				info!(logger, "Waited");
 
-					// Connect
-					let logger = logger.clone();
-					let logger2 = logger.clone();
-					let logger3 = logger.clone();
-					let c2 = c.clone();
-					connect(logger.clone(), c.clone(), args.address)
-				.and_then(move |con| {
-					info!(logger2, "Connected");
-					// Wait some time
-					Delay::new(Instant::now() + Duration::from_secs(5))
-						.map(move |_| con)
-						.map_err(|e| e.into())
-				})
-				/*.and_then(move |con| {
-					info!(logger, "Waited");
-
-					// Send packet
-					let packet = OutCommand::new::<
-						_,
-						_,
-						String,
-						String,
-						_,
-						_,
-						std::iter::Empty<_>,
-					>(
-						Direction::C2S,
-						PacketType::Command,
-						"sendtextmessage",
-						vec![("targetmode", "3"), ("msg", "Hello")].into_iter(),
-						std::iter::empty(),
-					);
-					con.as_packet_sink()
-						.send(packet)
-						.map_err(|e| panic!("Failed to send packet ({:?})", e))
-						.and_then(|_| {
-							Delay::new(Instant::now() + Duration::from_secs(3))
-						})
-						.map(move |_| con)
-				})*/
-				.and_then(move |con| {
-					// Disconnect
-					disconnect(&c2, con).map_err(|e| {
-						panic!("Failed to disconnect ({:?})", e)
-					}).map(move |_| c2)
-				})
-				.and_then(move |c| {
-					info!(logger3, "Disconnected");
-					// Quit client
-					drop(c);
-					Ok(())
-				})
-				})
-				.buffered(10000)
-				.for_each(|_| Ok(()))
+				// Disconnect
+				let _ = disconnect(&mut con).await;
+				info!(logger, "Disconnected");
+			})
+			.map(|_| ())
 		})
-		.map_err(|e| println!("An error occurred {:?}", e)),
-	);
+		.await;
+
+	Ok(())
 }

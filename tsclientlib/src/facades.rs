@@ -1,13 +1,12 @@
 #![allow(dead_code)]
-
 use std::net::IpAddr;
 use std::ops::Deref;
 
-use futures::Future;
+use anyhow::Result;
 use ts_bookkeeping::data::*;
 use ts_bookkeeping::*;
 
-use crate::{Error, MessageTarget};
+use crate::{ConnectedConnection, MessageHandle, MessageTarget};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));
@@ -29,17 +28,14 @@ impl ServerMut<'_> {
 	/// let con_mut = con_lock.to_mut();
 	/// // Send a message
 	/// tokio::spawn(con_mut.get_server().add_channel(ChannelOptions::new("My new channel"))
-	///	    .map_err(|e| println!("Failed to create channel ({:?})", e)));
+	///     .map_err(|e| println!("Failed to create channel ({:?})", e)));
 	/// ```
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
-	#[must_use = "futures do nothing unless polled"]
 	pub fn add_channel(
-		&self,
-		options: ChannelOptions,
-	) -> impl Future<Item = (), Error = Error>
-	{
-		self.connection.send_packet(self.inner.add_channel(options))
+		&mut self, options: ChannelOptions,
+	) -> Result<MessageHandle> {
+		self.connection.send_command(self.inner.add_channel(options))
 	}
 
 	/// Send a text message in the server chat.
@@ -54,22 +50,15 @@ impl ServerMut<'_> {
 	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
 	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
-	pub fn send_textmessage(
-		&self,
-		message: &str,
-	) -> impl Future<Item = (), Error = Error>
-	{
-		self.connection.send_packet(self.inner.send_textmessage(message))
+	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
+		self.connection.send_command(self.inner.send_textmessage(message))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
 	pub fn set_subscribed(
-		&self,
-		subscribed: bool,
-	) -> impl Future<Item = (), Error = Error>
-	{
-		self.connection.send_packet(self.inner.set_subscribed(subscribed))
+		&mut self, subscribed: bool,
+	) -> Result<MessageHandle> {
+		self.connection.send_command(self.inner.set_subscribed(subscribed))
 	}
 }
 
@@ -87,19 +76,15 @@ impl ConnectionMut<'_> {
 	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
 	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
 	pub fn send_message(
-		&self,
-		target: MessageTarget,
-		message: &str,
-	) -> impl Future<Item = (), Error = Error>
-	{
-		self.connection.send_packet(self.inner.send_message(target, message))
+		&mut self, target: MessageTarget, message: &str,
+	) -> Result<MessageHandle> {
+		self.connection.send_command(self.inner.send_message(target, message))
 	}
 }
 
 impl ClientMut<'_> {
-	// TODO
+	// TODO clientmove
 	/*/// Move this client to another channel.
 	/// This function takes a password so it is possible to join protected
 	/// channels.
@@ -132,13 +117,8 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.send_textmessage("Hi me!")
 	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
-	pub fn send_textmessage(
-		&self,
-		message: &str,
-	) -> impl Future<Item = (), Error = Error>
-	{
-		self.connection.send_packet(self.inner.send_textmessage(message))
+	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
+		self.connection.send_command(self.inner.send_textmessage(message))
 	}
 
 	/// Poke this client with a message.
@@ -155,8 +135,7 @@ impl ClientMut<'_> {
 	/// tokio::spawn(client.poke("Hihihi")
 	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
-	pub fn poke(&self, message: &str) -> impl Future<Item = (), Error = Error> {
-		self.connection.send_packet(self.inner.poke(message))
+	pub fn poke(&mut self, message: &str) -> Result<MessageHandle> {
+		self.connection.send_command(self.inner.poke(message))
 	}
 }

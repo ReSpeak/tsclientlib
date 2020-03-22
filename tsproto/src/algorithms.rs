@@ -3,17 +3,19 @@ use std::u64;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use byteorder::{NetworkEndian, WriteBytesExt};
 use curve25519_dalek::edwards::EdwardsPoint;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
+use omnom::WriteExt;
 use quicklz::CompressionLevel;
 use ring::digest;
 
-use crate::connection::{CachedKey, SharedIv};
-use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
-use crate::{Error, Result};
+use crate::connection::CachedKey;
+use crate::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
+use crate::BasicError;
 use tsproto_packets::packets::*;
+
+type Result<T> = std::result::Result<T, BasicError>;
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -44,10 +46,8 @@ pub fn should_encrypt(t: PacketType, voice_encryption: bool) -> bool {
 /// Returns an error if the packet is too large but cannot be splitted.
 /// Only `Command` and `CommandLow` packets can be compressed and splitted.
 pub fn compress_and_split(
-	is_client: bool,
-	packet: OutPacket,
-) -> Vec<OutPacket>
-{
+	is_client: bool, packet: OutPacket,
+) -> Vec<OutPacket> {
 	// Everything except whisper packets has to be less than 500 bytes
 	let header_size = if is_client {
 		tsproto_packets::C2S_HEADER_LEN
@@ -122,12 +122,8 @@ pub fn compress_and_split(
 }
 
 fn create_key_nonce(
-	p_type: PacketType,
-	c_id: Option<u16>,
-	p_id: u16,
-	generation_id: u32,
-	iv: &SharedIv,
-	cache: &mut [[CachedKey; 2]; 8],
+	p_type: PacketType, c_id: Option<u16>, p_id: u16, generation_id: u32,
+	iv: &[u8; 64], cache: &mut [[CachedKey; 2]; 8],
 ) -> (GenericArray<u8, U16>, GenericArray<u8, U16>)
 {
 	// Check if this generation is cached
@@ -142,20 +138,10 @@ fn create_key_nonce(
 			temp[0] = 0x30;
 		}
 		temp[1] = p_type.to_u8().unwrap();
-		(&mut temp[2..6]).write_u32::<NetworkEndian>(generation_id).unwrap();
-		let len;
-		match iv {
-			SharedIv::ProtocolOrig(data) => {
-				temp[6..26].copy_from_slice(data);
-				len = 26;
-			}
-			SharedIv::Protocol31(data) => {
-				temp[6..].copy_from_slice(data);
-				len = 70;
-			}
-		}
+		(&mut temp[2..6]).write_be(generation_id).unwrap();
+		temp[6..].copy_from_slice(iv);
 
-		let keynonce = digest::digest(&digest::SHA256, &temp[..len]);
+		let keynonce = digest::digest(&digest::SHA256, &temp[..]);
 		let keynonce = keynonce.as_ref();
 		cache.generation_id = generation_id;
 		cache.key.copy_from_slice(&keynonce[..16]);
@@ -171,12 +157,11 @@ fn create_key_nonce(
 }
 
 pub fn encrypt_key_nonce(
-	packet: &mut OutPacket,
-	key: &GenericArray<u8, U16>,
+	packet: &mut OutPacket, key: &GenericArray<u8, U16>,
 	nonce: &GenericArray<u8, U16>,
 ) -> Result<()>
 {
-	let meta = packet.header().get_meta();
+	let meta = packet.header().get_meta().to_vec();
 	let mac = eax::Eax::<aes::Aes128>::encrypt(
 		key,
 		nonce,
@@ -196,9 +181,7 @@ pub fn encrypt_fake(packet: &mut OutPacket) -> Result<()> {
 }
 
 pub fn encrypt(
-	packet: &mut OutPacket,
-	generation_id: u32,
-	iv: &SharedIv,
+	packet: &mut OutPacket, generation_id: u32, iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<()>
 {
@@ -215,8 +198,7 @@ pub fn encrypt(
 }
 
 pub fn decrypt_key_nonce(
-	packet: &InPacket,
-	key: &GenericArray<u8, U16>,
+	packet: &InPacket, key: &GenericArray<u8, U16>,
 	nonce: &GenericArray<u8, U16>,
 ) -> Result<Vec<u8>>
 {
@@ -232,7 +214,11 @@ pub fn decrypt_key_nonce(
 		header.mac(),
 	)
 	.map(|()| content)
-	.map_err(|_| Error::WrongMac(header.packet_type(), 0, header.packet_id()))
+	.map_err(|_| BasicError::WrongMac {
+		p_type: header.packet_type(),
+		generation_id: 0,
+		packet_id: header.packet_id(),
+	})
 }
 
 pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
@@ -244,9 +230,7 @@ pub fn decrypt_fake(packet: &InPacket) -> Result<Vec<u8>> {
 }
 
 pub fn decrypt(
-	packet: &InPacket,
-	generation_id: u32,
-	iv: &SharedIv,
+	packet: &InPacket, generation_id: u32, iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
 ) -> Result<Vec<u8>>
 {
@@ -260,8 +244,8 @@ pub fn decrypt(
 		cache,
 	);
 	decrypt_key_nonce(packet, &key, &nonce).map_err(|e| {
-		if let Error::WrongMac(t, _, i) = e {
-			Error::WrongMac(t, generation_id, i)
+		if let BasicError::WrongMac { p_type, packet_id, .. } = e {
+			BasicError::WrongMac { p_type, generation_id, packet_id }
 		} else {
 			e
 		}
@@ -270,36 +254,7 @@ pub fn decrypt(
 
 /// Compute shared iv and shared mac.
 pub fn compute_iv_mac(
-	alpha: &[u8; 10],
-	beta: &[u8; 10],
-	our_key: EccKeyPrivP256,
-	other_key: EccKeyPubP256,
-) -> Result<([u8; 20], [u8; 8])>
-{
-	let shared_secret = our_key.create_shared_secret(other_key)?;
-	let mut shared_iv = [0; 20];
-	shared_iv.copy_from_slice(
-		digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_secret)
-			.as_ref(),
-	);
-	for i in 0..10 {
-		shared_iv[i] ^= alpha[i];
-	}
-	for i in 0..10 {
-		shared_iv[i + 10] ^= beta[i];
-	}
-	let mut shared_mac = [0; 8];
-	shared_mac.copy_from_slice(
-		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()
-			[..8],
-	);
-	Ok((shared_iv, shared_mac))
-}
-
-pub fn compute_iv_mac31(
-	alpha: &[u8; 10],
-	beta: &[u8; 54],
-	our_key: &EccKeyPrivEd25519,
+	alpha: &[u8; 10], beta: &[u8; 54], our_key: &EccKeyPrivEd25519,
 	other_key: &EdwardsPoint,
 ) -> Result<([u8; 64], [u8; 8])>
 {
@@ -371,6 +326,7 @@ mod tests {
 	use super::*;
 	use crate::license::Licenses;
 	use crate::packets::PacketType;
+	use crate::utils;
 
 	#[test]
 	fn test_fake_crypt() {
@@ -383,8 +339,8 @@ mod tests {
 		packet.data_mut().extend_from_slice(&data);
 		encrypt_fake(&mut packet).unwrap();
 		let packet = InPacket::try_new(
-			packet.data_mut().as_slice().into(),
 			Direction::C2S,
+			packet.data_mut().as_slice().into(),
 		)
 		.unwrap();
 		let dec_data = decrypt_fake(&packet).unwrap();
@@ -447,7 +403,7 @@ mod tests {
 		];
 
 		let (mut shared_iv, _shared_mac) =
-			compute_iv_mac31(&alpha, &beta, &priv_key, &derived_key).unwrap();
+			compute_iv_mac(&alpha, &beta, &priv_key, &derived_key).unwrap();
 
 		assert_eq!(
 			&shared_iv as &[u8],
@@ -488,5 +444,70 @@ mod tests {
 		];
 
 		assert!(keynonce.as_ref() == &expected_keynonce as &[u8]);
+	}
+
+	#[test]
+	fn test_new_decrypt() {
+		let shared_iv = utils::read_hex(
+			"C2 45 6F CB FC 22 08 AE 44 2B 7D E7 3A 67 1B DA 93 09 B2 00 F2 \
+			 CD 10 49 08 CD 3A B0 7B DD 58 AD",
+		)
+		.unwrap();
+		let mut shared_iv =
+			digest::digest(&digest::SHA512, &shared_iv).as_ref().to_vec();
+		assert_eq!(
+			utils::read_hex(
+				"4D 3F DA B7 D8 B0 2C 82 70 6A 39 3E 97 17 61 09 FA 03 AB 30 \
+				 5C BB 78 7A 9A 82 D5 39 9A 60 FD A9 F6 7A D9 04 52 F2 AE 00 \
+				 3E 35 E8 19 10 89 40 43 80 58 27 1F 0A E0 E0 3D E0 9C F0 A3 \
+				 4D 15 6B F0"
+			)
+			.unwrap()
+			.as_slice(),
+			shared_iv.as_slice()
+		);
+
+		let alpha = [0; 10];
+		let beta = base64::decode("I4onb0zMyAD6bd24QANDls40eOES7qmjonBFtt5wRWzAfIIQWTSxjEas6TGTZIJ8QSJNX+Pl").unwrap();
+
+		for i in 0..10 {
+			shared_iv[i] ^= alpha[i];
+		}
+		for i in 0..54 {
+			shared_iv[i + 10] ^= beta[i];
+		}
+
+		let mut temp = [0; 70];
+		temp[0] = 0x31;
+		temp[1] = 0x2 & 0xf;
+		temp[6..].copy_from_slice(&shared_iv);
+
+		let keynonce = digest::digest(&digest::SHA256, &temp);
+		let keynonce = keynonce.as_ref();
+
+		let all = utils::read_hex("2b982443ab38be6b00020000329abf64d4572e1349897b5e1e96fbc4a763a4c4ce1f64f0c1e3febd0a5f04a82ab1f2bc2344bb374fd16181beb8233b5b06944280470e9b6893290a1da0776ffcd89f3beec2ce23b9694930c09efaaea0d88a6895a08ede4d5cbfea61291fc553ac651f1e2bc1d2bd277a8bd9ab5386415579a9e56fac46d8b6b119f454bebd99179cd317dec60af205341d11f274d02bbacdd7e9773f72a426358ca1d39016dd95bde2409cd81bf99b340887e997ea982370c6790cf4d23150460820224766838ea4ec4d71dd102ede701ea0001f392623aa410dd9ab0e45874da82e29e6e370515ec30a37dd73f5a364c233ff014384beab5f1708c9f48dfba33a520f8fcdcef055789c54693c3fe72c5bfaca7cb4ca1fed77b8624660b8abc882f4b95b1284cb6dc55019c6082dd6dd146fa50383662d7298bef04ababaf1af80e15cd4c1f81326f085788e2918e00324147dce39b23db71326abc3de4b94df10f1531e9cce202bba71fa3ebeefd77b21fa3260a62e92eeee2183421d384a8c48777e2f9efbc58d4f442c5f0529c7c0e27e81b2b6b1b05eb8fa19256886248d553582dfd24c7cfab3c3f7317a5cebc6504b53fa0e86fc8c1100fc1d506fcf96caa76a7c0b6a27e577f2efdecd4070e847a559bf37d75bfdbe9e814c702426ce696d8645bc300b5f28f9e7f1ce").unwrap();
+
+		let packet = InPacket::try_new(Direction::C2S, &all).unwrap();
+		println!("Packet: {:?}", packet);
+		let mut key = [0; 16];
+		let mut nonce = [0; 16];
+		key.copy_from_slice(&keynonce[..16]);
+		nonce.copy_from_slice(&keynonce[16..]);
+
+		let expected_key =
+			utils::read_hex("D2 42 75 71 9C EE 83 35 EF 8A CE E0 B7 28 40 B8")
+				.unwrap();
+		let expected_nonce =
+			utils::read_hex("9C D9 30 B7 58 FE 50 23 64 66 11 C5 36 0E A2 5F")
+				.unwrap();
+
+		assert_eq!(&expected_nonce, &nonce);
+		assert_eq!(&expected_key, &key);
+
+		key[1] ^= 2; // packet id
+		let dec =
+			decrypt_key_nonce(&packet, &key.into(), &nonce.into()).unwrap();
+
+		println!("Decrypted: {:?}", String::from_utf8_lossy(&dec));
 	}
 }
