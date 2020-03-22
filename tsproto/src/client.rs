@@ -661,6 +661,7 @@ mod tests {
 
 	use super::*;
 	use crate::connection::Event;
+	use crate::resend::PartialPacketId;
 
 	#[derive(Clone, Debug)]
 	struct SimulatedSocketState {
@@ -807,13 +808,13 @@ mod tests {
 			con.resender.set_state(&con.logger, ResenderState::Connected);
 
 			con.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 			con.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 1);
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 			con.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 1);
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 			con.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 1);
+				PartialPacketId { generation_id: 0, packet_id: 1 };
 
 			// Set params
 			con.params =
@@ -954,13 +955,13 @@ mod tests {
 		// Set current id
 		for c in &mut [&mut state.client, &mut state.server] {
 			c.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 65_500);
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
 			c.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
-				(0, 65_500);
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
 			c.codec.outgoing_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 65_500);
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
 			c.codec.incoming_p_ids[PacketType::Ack.to_usize().unwrap()] =
-				(0, 65_500);
+				PartialPacketId { generation_id: 0, packet_id: 65_500 };
 		}
 
 		let (send, recv) = oneshot::channel();

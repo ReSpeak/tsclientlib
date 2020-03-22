@@ -1,4 +1,4 @@
-use failure::bail;
+use anyhow::{bail, Result};
 use pnet_packet::ip::IpNextHeaderProtocols;
 use pnet_packet::Packet;
 use structopt::StructOpt;
@@ -6,13 +6,10 @@ use tsproto::algorithms as algs;
 use tsproto_packets::packets::*;
 use tsproto_packets::HexSlice;
 
-type Result<T> = std::result::Result<T, failure::Error>;
-
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
 struct Args {
 	/// The capture file
-	#[structopt(short = "f", long)]
 	file: String,
 }
 
@@ -41,16 +38,20 @@ fn get_udp_payload(data: &[u8]) -> Result<Vec<u8>> {
 	}
 }
 
-fn get_packet(data: &[u8], dir: Direction) -> Result<InPacket> {
-	let mut packet = InPacket::try_new(data.into(), dir)?;
-	let header = packet.header();
+fn print_packet(mut data: Vec<u8>, dir: Direction) -> Result<()> {
+	let packet = InPacket::try_new(dir, &data)?;
 
-	if header.packet_type() == PacketType::Command {
+	if packet.header().packet_type() == PacketType::Command {
 		if let Ok(dec) = algs::decrypt_fake(&packet) {
-			packet.set_content(dec);
+			let start = packet.header().data().len();
+			(&mut data[start..]).copy_from_slice(&dec);
+			let packet = InPacket::try_new(dir, &data)?;
+			println!("Packet: {:?}", packet);
+			return Ok(());
 		}
 	}
-	Ok(packet)
+	println!("Packet: {:?}", packet);
+	Ok(())
 }
 
 fn main() -> Result<()> {
@@ -62,24 +63,15 @@ fn main() -> Result<()> {
 	while let Ok(packet) = capture.next() {
 		match get_udp_payload(&*packet) {
 			Ok(packet) => {
-				println!("Packet: {:?}", HexSlice(&packet));
+				println!("Packet: {}", HexSlice(&packet));
 				// Try to parse as ts packet
-				let packet = if let Ok(p) = get_packet(&packet, Direction::S2C)
-				{
-					p
-				} else if let Ok(p) = get_packet(&packet, Direction::C2S) {
-					p
-				} else {
-					println!("Error, no ts packet");
-					continue;
-				};
-
-				// Check if it is an init packet
-				println!("Packet: {:?}", packet);
+				if print_packet(packet.clone(), Direction::S2C).is_err() {
+					if print_packet(packet, Direction::C2S).is_err() {
+						println!("Error, no ts packet");
+					}
+				}
 			}
-			Err(_error) => {
-				//println!("Error: {:?}", _error);
-			}
+			Err(_) => {}
 		}
 	}
 

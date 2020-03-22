@@ -6,7 +6,7 @@ edition = "2018"
 description = "Analyze recorded TeamSpeak packet logs"
 
 [dependencies]
-failure = "0.1"
+anyhow = "1"
 num-traits = "0.2"
 pcap = "0.7"
 pnet_packet = "0.25"
