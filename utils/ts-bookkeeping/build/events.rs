@@ -42,7 +42,7 @@ fn get_ids(structs: &[Struct], struc: &Struct) -> String {
 		if !res.is_empty() {
 			res.push_str(", ");
 		}
-		res.push_str(&p.get_rust_type());
+		res.push_str(&p.get_rust_type(false));
 	}
 	res
 }

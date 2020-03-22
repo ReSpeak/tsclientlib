@@ -58,8 +58,12 @@ async fn real_main() -> Result<()> {
 	info!(logger, "Waited");
 
 	// Send packet
-	let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
-		PacketType::Command, "sendtextmessage");
+	let mut cmd = OutCommand::new(
+		Direction::C2S,
+		Flags::empty(),
+		PacketType::Command,
+		"sendtextmessage",
+	);
 	cmd.write_arg("targetmode", &3);
 	cmd.write_arg("msg", &"Hello");
 	let id = con.send_packet(cmd.into_packet())?;

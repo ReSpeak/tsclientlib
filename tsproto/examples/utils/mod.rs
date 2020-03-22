@@ -65,8 +65,12 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 
 	// Create clientinit packet
 	let offset = offset.to_string();
-	let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
-		PacketType::Command, "clientinit");
+	let mut cmd = OutCommand::new(
+		Direction::C2S,
+		Flags::empty(),
+		PacketType::Command,
+		"clientinit",
+	);
 	cmd.write_arg("client_nickname", &"Bot");
 	cmd.write_arg("client_version", &"3.?.? [Build: 5680278000]");
 	cmd.write_arg("client_platform", &"Linux");
@@ -83,7 +87,10 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 	cmd.write_arg("client_key_offset", &offset);
 	cmd.write_arg("client_default_token", &"");
 	cmd.write_arg("client_badges", &"Overwolf=0");
-	cmd.write_arg("hwid", &"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
+	cmd.write_arg(
+		"hwid",
+		&"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc",
+	);
 
 	con.send_packet(cmd.into_packet())?;
 	Ok(con
@@ -99,8 +106,12 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 }
 
 pub async fn disconnect(con: &mut Client) -> Result<()> {
-	let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
-		PacketType::Command, "clientdisconnect");
+	let mut cmd = OutCommand::new(
+		Direction::C2S,
+		Flags::empty(),
+		PacketType::Command,
+		"clientdisconnect",
+	);
 	cmd.write_arg("reasonid", &8);
 	cmd.write_arg("reasonmsg", &"Bye");
 

@@ -1,15 +1,16 @@
-use failure::format_err;
-use futures::future;
+use anyhow::{bail, Result};
 use futures::prelude::*;
 use slog::{error, o, Drain, Logger};
 use structopt::StructOpt;
-use tokio::runtime::current_thread::Runtime;
+use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use tsproto_packets::packets::{InAudio, InCommand};
 
-use tsclientlib::{ConnectOptions, Connection, Identity, PHBox, PacketHandler};
+use tsclientlib::{
+	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
+};
 
-mod audio_utils;
+// TODO
+//mod audio_utils;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ConnectionId(u64);
@@ -33,14 +34,14 @@ struct Args {
 	verbose: u8,
 }
 
-#[derive(Clone)]
+/*#[derive(Clone)]
 struct AudioPacketHandler {
 	logger: Logger,
 	con: ConnectionId,
 	send: mpsc::Sender<(ConnectionId, InAudio)>,
-}
+}*/
 
-fn main() -> Result<(), failure::Error> {
+fn main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
@@ -49,7 +50,7 @@ fn main() -> Result<(), failure::Error> {
 		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
 		let drain = slog_async::Async::new(drain).build().fuse();
 
-		slog::Logger::root(drain, o!())
+		Logger::root(drain, o!())
 	};
 
 	// We need an explicit runtime and executor because we want to spawn new
@@ -61,78 +62,74 @@ fn main() -> Result<(), failure::Error> {
 	let con_id = ConnectionId(0);
 	let vol = args.volume;
 	let logger2 = logger.clone();
-	runtime.block_on(
-			futures::lazy(move || -> Box<dyn Future<Item=_, Error=_>> {
-				let audiodata = match audio_utils::start(logger, executor2) {
-					Ok(r) => r,
-					Err(e) => return Box::new(future::err(e.into())),
-				};
+	runtime.block_on(async {
+		//let audiodata = audio_utils::start(logger, executor2)?;
+		//let (send, recv) = mpsc::channel(5);
 
-				let (send, recv) = mpsc::channel(5);
+		let logger = logger2.clone();
+		let con_config = ConnectOptions::new(args.address)
+			.log_commands(args.verbose >= 1)
+			.log_packets(args.verbose >= 2)
+			.log_udp_packets(args.verbose >= 3);
 
-				let logger = logger2.clone();
-				let con_config = ConnectOptions::new(args.address)
-					.log_commands(args.verbose >= 1)
-					.log_packets(args.verbose >= 2)
-					.log_udp_packets(args.verbose >= 3)
-					.handle_packets(Box::new(AudioPacketHandler {
-						logger,
-						con: con_id,
-						send,
-					}));
-
-				let t2a = audiodata.ts2a.clone();
-				tokio::runtime::current_thread::spawn(recv
-					.map_err(|e| e.into())
-					.for_each(move |(con, packet)| {
-						let mut t2a = t2a.lock().unwrap();
-						t2a.play_packet(con, &packet)
-					})
-					.map_err(move |e| error!(logger2,
-						"Failed to redirect audio packet"; "error" => ?e)));
-
-				// Optionally set the key of this client, otherwise a new key is generated.
-				let id = Identity::new_from_str(
-					"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-					k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
-					C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
-				let con_config = con_config.identity(id);
-
-				// Connect
-				Box::new(Connection::new(con_config).map(|c| (c, audiodata)))
+		/*let t2a = audiodata.ts2a.clone();
+		tokio::spawn(recv
+			.map_err(|e| e.into())
+			.for_each(move |(con, packet)| {
+				let mut t2a = t2a.lock().unwrap();
+				t2a.play_packet(con, &packet)
 			})
-			.and_then(move |(con, audiodata)| -> Box<dyn Future<Item=_, Error=_>> {
-				{
-					let mut a2t = audiodata.a2ts.lock().unwrap();
-					a2t.set_listener(&con);
-					a2t.set_volume(vol);
-					a2t.set_playing(true);
-				}
+			.map_err(move |e| error!(logger2,
+				"Failed to redirect audio packet"; "error" => ?e)));*/
 
-				// Wait for ctrl + c
-				let ctrl_c = tokio_signal::ctrl_c().flatten_stream();
-				Box::new(ctrl_c
-					.into_future()
-					.map_err(|_| {
-						format_err!("Failed to wait for ctrl + c").into()
-					})
-					.map(move |_| (con, audiodata)))
-			})
-			.and_then(|(con, _)| {
-				// Disconnect
-				drop(con);
-				Ok(())
-			})
-			.map_err(|e| panic!("An error occurred {:?}", e)),
-		).unwrap();
+		// Optionally set the key of this client, otherwise a new key is generated.
+		let id = Identity::new_from_str(
+			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
+			C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+		let con_config = con_config.identity(id);
 
-	// Not everything is cleanup perfectly
-	//runtime.run().unwrap();
+		// Connect
+		let mut con = Connection::new(con_config)?;
+
+		let r = con
+			.events()
+			.try_filter(|e| {
+				future::ready(matches!(e, StreamItem::ConEvents(_)))
+			})
+			.next()
+			.await;
+		if let Some(r) = r {
+			r?;
+		}
+
+		/*{
+			let mut a2t = audiodata.a2ts.lock().unwrap();
+			a2t.set_listener(&con);
+			a2t.set_volume(vol);
+			a2t.set_playing(true);
+		}*/
+
+		// Wait for ctrl + c
+		let mut events = con.events().try_filter(|_| future::ready(false));
+		tokio::select! {
+			_ = tokio::signal::ctrl_c() => {}
+			_ = events.next() => {
+				bail!("Disconnected");
+			}
+		};
+		drop(events);
+
+		// Disconnect
+		con.disconnect(DisconnectOptions::new()).await;
+
+		Ok(())
+	})?;
 
 	Ok(())
 }
 
-impl PacketHandler for AudioPacketHandler {
+/*impl PacketHandler for AudioPacketHandler {
 	fn new_connection(
 		&mut self,
 		command_stream: Box<
@@ -170,4 +167,4 @@ impl PacketHandler for AudioPacketHandler {
 
 	/// Clone into a box.
 	fn clone(&self) -> PHBox { Box::new(Clone::clone(self)) }
-}
+}*/

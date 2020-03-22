@@ -877,8 +877,12 @@ mod tests {
 
 		state.server.event_listeners.push(Box::new(listener));
 
-		let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(),
-			PacketType::Command, "clientdisconnect");
+		let mut cmd = OutCommand::new(
+			Direction::C2S,
+			Flags::empty(),
+			PacketType::Command,
+			"clientdisconnect",
+		);
 		cmd.write_arg("reasonid", &8);
 		cmd.write_arg("reasonmsg", &"Bye");
 
@@ -982,8 +986,12 @@ mod tests {
 		state.client.event_listeners.push(Box::new(listener));
 
 		for i in 0..count {
-			let mut cmd = OutCommand::new(Direction::S2C, Flags::empty(),
-				PacketType::Command, "notifytextmessage");
+			let mut cmd = OutCommand::new(
+				Direction::S2C,
+				Flags::empty(),
+				PacketType::Command,
+				"notifytextmessage",
+			);
 			cmd.write_arg("msg", &format!("message {}", i));
 			state.server.send_packet(cmd.into_packet())?;
 		}

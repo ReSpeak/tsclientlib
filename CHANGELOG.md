@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 	- New command serializer, 2× faster than the old one
 - Switched error handling library
 
+### Removed
+- The `ConnectionManager` in `tsproto` was removed
+
 ### Fixed
 - Hashcash implementation counts leading zeroes from lsb instead of msb
 - Use `3.?.?` version by default to allow connecting to newer TeamSpeak servers

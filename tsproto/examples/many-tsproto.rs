@@ -50,7 +50,8 @@ async fn real_main() -> Result<()> {
 					logger.clone(),
 					args.verbose,
 				)
-				.await.unwrap();
+				.await
+				.unwrap();
 
 				// Connect
 				connect(&mut con).await.unwrap();

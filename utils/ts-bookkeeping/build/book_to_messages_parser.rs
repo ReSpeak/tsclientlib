@@ -23,10 +23,6 @@ impl Default for BookToMessagesDeclarations<'static> {
 	fn default() -> Self { BookToMessagesDeclarations(&DATA) }
 }
 
-fn to_ref_type(s: &str) -> String {
-	if s == "String" { "&str".into() } else { s.into() }
-}
-
 fn get_to_list(to: &[&Field]) -> String {
 	let mut res = String::new();
 	if to.len() > 1 {
@@ -82,7 +78,7 @@ fn get_arguments(r: &RuleKind) -> String {
 		RuleKind::Map { .. } | RuleKind::Function { .. } => format!(
 			"{}: {}",
 			r.from_name().to_snake_case(),
-			to_ref_type(&r.from().get_rust_type())
+			r.from().get_rust_type(true)
 		),
 		RuleKind::ArgumentMap { from, to } => format!(
 			"{}: {}",

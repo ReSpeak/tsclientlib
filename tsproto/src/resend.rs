@@ -302,10 +302,7 @@ impl Resender {
 					con.codec.outgoing_p_ids[p_type.to_usize().unwrap()]
 				};
 
-				let id = PacketId {
-					packet_type: p_type,
-					part: p_id - 1,
-				};
+				let id = PacketId { packet_type: p_type, part: p_id - 1 };
 				con.stream_items.push_back(StreamItem::AckPacket(id));
 
 				first.clone()

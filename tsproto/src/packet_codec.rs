@@ -220,11 +220,10 @@ impl PacketCodec {
 					let in_ids = &mut con.codec.incoming_p_ids;
 					if p_type != PacketType::Init {
 						let (id, next_gen) = id.overflowing_add(1);
-						let generation_id = if next_gen { gen_id + 1 } else { gen_id };
-						in_ids[type_i] = PartialPacketId {
-							generation_id,
-							packet_id: id,
-						};
+						let generation_id =
+							if next_gen { gen_id + 1 } else { gen_id };
+						in_ids[type_i] =
+							PartialPacketId { generation_id, packet_id: id };
 					}
 
 					match packet.ack_packet() {
@@ -432,15 +431,18 @@ impl PacketCodec {
 		// We fake encrypt the first command packet of the server (id 0) and the
 		// first command packet of the client (id 1, clientek).
 		let mut fake_encrypt = p_type == PacketType::Command
-			&& p_id.generation_id == 0 && ((!con.is_client && p_id.packet_id == 0)
-			|| (con.is_client && p_id.packet_id == 1 && {
-				// Test if it is a clientek packet
-				packet.content().starts_with(b"clientek")
-			}));
+			&& p_id.generation_id == 0
+			&& ((!con.is_client && p_id.packet_id == 0)
+				|| (con.is_client && p_id.packet_id == 1 && {
+					// Test if it is a clientek packet
+					packet.content().starts_with(b"clientek")
+				}));
 		// Also fake encrypt the first ack of the client, which is the response
 		// for the initivexpand2 packet.
-		fake_encrypt |=
-			con.is_client && p_type == PacketType::Ack && p_id.generation_id == 0 && p_id.packet_id == 0;
+		fake_encrypt |= con.is_client
+			&& p_type == PacketType::Ack
+			&& p_id.generation_id == 0
+			&& p_id.packet_id == 0;
 
 		// Get values from parameters
 		let should_encrypt;
@@ -491,12 +493,10 @@ impl PacketCodec {
 			.map(|mut packet| -> Result<_> {
 				// Get packet id
 				let p_id = if p_type == PacketType::Init {
-					PartialPacketId {
-						generation_id: 0,
-						packet_id: 0,
-					}
+					PartialPacketId { generation_id: 0, packet_id: 0 }
 				} else {
-					packet.packet_id(con.codec.outgoing_p_ids[type_i].packet_id);
+					packet
+						.packet_id(con.codec.outgoing_p_ids[type_i].packet_id);
 					con.codec.outgoing_p_ids[type_i]
 				};
 

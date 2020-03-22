@@ -22,16 +22,12 @@ impl Default for BookToMessagesDeclarations<'static> {
 	fn default() -> Self { BookToMessagesDeclarations(&DATA) }
 }
 
-fn to_ref_type(s: &str) -> String {
-	if s == "String" { "&str".into() } else { s.into() }
-}
-
 fn get_arguments(r: &RuleKind) -> String {
 	match r {
 		RuleKind::Map { .. } | RuleKind::Function { .. } => format!(
 			"{}: {}",
 			r.from_name().to_snake_case(),
-			to_ref_type(&r.from().get_rust_type()),
+			r.from().get_rust_type(true),
 		),
 		RuleKind::ArgumentMap { from, to } => format!(
 			"{}: {}",

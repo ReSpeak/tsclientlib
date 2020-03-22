@@ -98,8 +98,8 @@ impl Property {
 	pub fn get_set(&self, struc: &Struct) -> bool {
 		self.set.unwrap_or_else(|| struc.accessor.set)
 	}
-	pub fn get_rust_type(&self) -> String {
-		let mut res = convert_type(&self.type_s, false);
+	pub fn get_rust_type(&self, is_ref: bool) -> String {
+		let mut res = convert_type(&self.type_s, is_ref);
 
 		if self.is_array() {
 			res = format!("Vec<{}>", res);
@@ -121,7 +121,7 @@ impl Property {
 	}
 
 	pub fn get_as_ref(&self) -> String {
-		let res = self.get_rust_type();
+		let res = self.get_rust_type(true);
 
 		let append;
 		if res.contains("&") || res.contains("Uid") {
@@ -173,8 +173,8 @@ impl<'a> PropId<'a> {
 
 	pub fn get_rust_type(&self, structs: &[Struct]) -> String {
 		match *self {
-			PropId::Prop(p) => p.get_rust_type(),
-			PropId::Id(id) => id.find_property(structs).get_rust_type(),
+			PropId::Prop(p) => p.get_rust_type(false),
+			PropId::Id(id) => id.find_property(structs).get_rust_type(false),
 		}
 	}
 }

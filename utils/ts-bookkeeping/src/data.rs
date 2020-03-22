@@ -637,11 +637,7 @@ impl Connection {
 	fn channel_order_cc_fun(
 		&mut self, msg: &s2c::InChannelCreatedPart,
 	) -> Result<ChannelId> {
-		self.channel_order_insert(
-			msg.channel_id,
-			msg.order,
-			msg.parent_id,
-		);
+		self.channel_order_insert(msg.channel_id, msg.order, msg.parent_id);
 		Ok(msg.order)
 	}
 

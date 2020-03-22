@@ -56,5 +56,5 @@ tsproto-structs = { path = "../utils/tsproto-structs", version = "=0.1.0" }
 audiopus = "0.2"
 sdl2 = "0.33"
 structopt = { version = "0.3", default-features = false }
-tokio = { version = "0.2", features = ["rt-threaded"] }
+tokio = { version = "0.2", features = ["rt-threaded", "signal"] }
 tokio-signal = "0.2"
