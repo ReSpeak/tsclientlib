@@ -50,6 +50,11 @@ pub struct MessageHandle(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FileTransferHandle(pub u16);
 
+/// The result of a download request.
+///
+/// A file download can be started by [`Connection::download_file`].
+///
+/// [`Connection::download_file`]: struct.Connection.html#method.download_file
 #[derive(Debug)]
 pub struct FileDownloadResult {
 	/// The size of the requested file.
@@ -59,13 +64,16 @@ pub struct FileDownloadResult {
 	pub stream: TcpStream,
 }
 
+/// The result of an upload request.
+///
+/// A file upload can be started by [`Connection::upload_file`].
+/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 #[derive(Debug)]
 pub struct FileUploadResult {
 	/// The size of the already uploaded part when `resume` was set to `true`
-	/// in [`download_file`].
+	/// in [`Connection::upload_file`].
 	///
-	/// [`download_file`]: struct.Connection.html#method.download_file
-	// TODO Link works?
+	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 	pub seek_position: u64,
 	/// The stream where the file can be uploaded.
 	pub stream: TcpStream,
@@ -76,7 +84,6 @@ pub struct FileUploadResult {
 /// A stream of these events is returned by [`Connection::events`].
 ///
 /// [`Connection::events`]: struct.Connection.html#method.events
-// TODO Link works?
 #[derive(Debug)]
 pub enum StreamItem {
 	/// All the incoming events.
@@ -93,12 +100,51 @@ pub enum StreamItem {
 	/// rebuilt automatically.
 	DisconnectedTemporarily,
 	/// The result of sending a message.
+	///
+	/// The [`MessageHandle`] is the return value of
+	/// [`Connection::send_command`].
+	///
+	/// [`MessageHandle`]: struct.MessageHandle.html
+	/// [`Connection::send_command`]: struct.Connection.html#method.send_command
 	MessageResult(MessageHandle, result::Result<(), TsError>),
+	/// A file download succeeded. This event contains the `TcpStream` where the
+	/// file can be downloaded.
+	///
+	/// The [`FileTransferHandle`] is the return value of
+	/// [`Connection::download_file`].
+	///
+	/// [`FileTransferHandle`]: struct.FileTransferHandle.html
+	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
 	FileDownload(FileTransferHandle, FileDownloadResult),
+	/// A file upload succeeded. This event contains the `TcpStream` where the
+	/// file can be uploaded.
+	///
+	/// The [`FileTransferHandle`] is the return value of
+	/// [`Connection::upload_file`].
+	///
+	/// [`FileTransferHandle`]: struct.FileTransferHandle.html
+	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 	FileUpload(FileTransferHandle, FileUploadResult),
+	/// A file download or upload failed.
+	///
+	/// This can happen if either the TeamSpeak server denied the file transfer
+	/// or the tcp connection failed.
+	///
+	/// The [`FileTransferHandle`] is the return value of
+	/// [`Connection::download_file`] or [`Connection::upload_file`].
+	///
+	/// [`FileTransferHandle`]: struct.FileTransferHandle.html
+	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
+	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 	FileTransferFailed(FileTransferHandle, Error),
 }
 
+/// The `Connection` is the main interaction point with this library.
+///
+/// It represents a connection to a TeamSpeak server. It will reconnect
+/// automatically when the connection times out (though timeout is not yet
+/// implemented). It will not reconnect which the client is kicked or banned
+/// from the server.
 pub struct Connection {
 	state: ConnectionState,
 	logger: Logger,
@@ -125,8 +171,6 @@ enum ConnectionState {
 		>,
 	),
 	IdentityLevelIncreasing {
-		/// The wanted level
-		level: u8,
 		/// We get the improved identity here.
 		recv: oneshot::Receiver<Result<Identity>>,
 		state: Arc<Mutex<IdentityIncreaseLevelState>>,
@@ -137,6 +181,8 @@ enum ConnectionState {
 	},
 }
 
+/// A wrapper to poll events from a connection. This is used so a user can drop
+/// and filter the stream of events without problems.
 struct EventStream<'a>(&'a mut Connection);
 
 enum IdentityIncreaseLevelState {
@@ -145,11 +191,15 @@ enum IdentityIncreaseLevelState {
 	Canceled,
 }
 
+/// Internalt connect error.
+///
+/// `IdentityLevelIncrease` is used to signal that the connection failed because
+/// of a too low identity level.
 #[derive(Debug, Error)]
 enum ConnectError {
 	#[error("Need to increase the identity level to {0}")]
 	IdentityLevelIncrease(u8),
-	#[error("Got error {0}")]
+	#[error("{0}")]
 	TsError(TsError),
 	#[error(transparent)]
 	Other(#[from] anyhow::Error),
@@ -157,24 +207,47 @@ enum ConnectError {
 
 /// The main type of this crate, which represents a connection to a server.
 ///
-/// A new connection can be opened with the [`Connection::new`] function.
+/// After creating a connection with [`Connection::new`], there are a few ways
+/// of interacting with it. [`get_state`] lets you inspect the other clients and
+/// channels on the server. [`get_mut_state`] in additian allowes changing them.
+/// The setter methods e.g. for your own nickname or channel send a command to
+/// the server. The methods return a handle which can then be used to check if
+/// the action succeeded or not.
+///
+/// The second way of interaction is polling with [`events()`], which returns a
+/// stream of [`StreamItem`]s.
+///
+/// The connection will not do anything unless the event stream is polled. Even
+/// sending packets will only happen while polling. Make sure to always wait for
+/// events when awaiting other futures.
 ///
 /// # Examples
 /// This will open a connection to the TeamSpeak server at `localhost`.
 ///
 /// ```no_run
-/// use tokio::prelude::*;
-/// use tsclientlib::{Connection, ConnectOptions};
+/// use futures::prelude::*;
+/// use tsclientlib::{Connection, ConnectOptions, StreamItem};
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     Connection::new(ConnectOptions::new("localhost")).await.unwrap();
+///     let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+///     // Wait until connected
+///     con.events()
+///         // We are connected when we receive the first ConEvents
+///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+///         .next()
+///         .await
+///         .unwrap();
 /// }
 /// ```
 ///
 /// [`Connection::new`]: #method.new
+/// [`get_state`]: #method.get_state
+/// [`get_mut_state`]: #method.get_mut_state
+/// [`events()`]: #method.events
+/// [`StreamItem`]: enum.StreamItem.html
 impl Connection {
-	/// Connect to a server.
+	/// Create a connection
 	///
 	/// This function opens a new connection to a server. The returned future
 	/// resolves, when the connection is established successfully.
@@ -186,15 +259,19 @@ impl Connection {
 	/// This will open a connection to the TeamSpeak server at `localhost`.
 	///
 	/// ```no_run
-	/// # use tokio::prelude::Future;
-	/// # use tsclientlib::{Connection, ConnectOptions};
-	/// #
-	/// # fn main() {
-	///     tokio::run(
-	///         Connection::new(ConnectOptions::new("localhost"))
-	///         .map(|connection| ())
-	///         .map_err(|_| ())
-	///     );
+	/// # use futures::prelude::*;
+	/// # use tsclientlib::{Connection, ConnectOptions, StreamItem};
+	///
+	/// # #[tokio::main]
+	/// # async fn main() {
+	///     let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	///     // Wait until connected
+	///     con.events()
+	///         // We are connected when we receive the first ConEvents
+	///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///         .next()
+	///         .await
+	///         .unwrap();
 	/// # }
 	/// ```
 	///
@@ -247,13 +324,14 @@ impl Connection {
 
 	/// Get the options which were used to create this connection.
 	///
-	/// The identity of the options can be updated while connecting when the
-	/// identity level needs to be improved.
+	/// The identity of the options is updated while connecting if the identity
+	/// level needs to be improved.
 	pub fn get_options(&self) -> &ConnectOptions { &self.options }
 
-	/// Get a stream of events. This is the main interaction point with a
-	/// connection. You need to poll the event stream, otherwise nothing will
-	/// happen in a connection.
+	/// Get a stream of events. You need to poll the event stream, otherwise
+	/// nothing will happen in a connection, not even sending packets will work.
+	///
+	/// The returned stream can be dropped and recreated if needed.
 	pub fn events<'a>(
 		&'a mut self,
 	) -> impl Stream<Item = Result<StreamItem>> + 'a {
@@ -465,39 +543,47 @@ impl Connection {
 		});
 
 		self.state = ConnectionState::IdentityLevelIncreasing {
-			level: needed,
 			recv,
 			state,
 		};
 		Ok(())
 	}
 
-	pub fn cancel_identity_level_increase(&mut self) -> Result<()> {
+	/// Cancels the computation to increase the identity level.
+	///
+	/// This function initiates the cancellation and immediately returns. It
+	/// does not wait until the background thread quits.
+	///
+	/// Does nothing if the identity level is currently not increased.
+	pub fn cancel_identity_level_increase(&mut self) {
 		if let ConnectionState::IdentityLevelIncreasing { state, .. } =
 			&mut self.state
 		{
 			*state.lock().unwrap() = IdentityIncreaseLevelState::Canceled;
 		}
-		Ok(())
 	}
 
-	/// Fails if disconnected
+	/// Get access to the raw connection.
+	///
+	/// Fails if the connection is currently not connected to the server.
 	#[cfg(feature = "unstable")]
 	pub fn get_tsproto_client(&self) -> Result<&client::Client> {
 		if let ConnectionState::Connected(c) = &self.state {
 			Ok(c)
 		} else {
-			bail!("Not connected")
+			bail!("Currently not connected");
 		}
 	}
 
-	/// Fails if disconnected
+	/// Get access to the raw connection.
+	///
+	/// Fails if the connection is currently not connected to the server.
 	#[cfg(feature = "unstable")]
 	pub fn get_tsproto_client_mut(&mut self) -> Result<&mut client::Client> {
 		if let ConnectionState::Connected(c) = &mut self.state {
 			Ok(c)
 		} else {
-			bail!("Not connected")
+			bail!("Currently not connected");
 		}
 	}
 
@@ -508,7 +594,7 @@ impl Connection {
 			if let Some(params) = &c.params {
 				Ok(params.public_key.clone())
 			} else {
-				bail!("Connection is not connected")
+				bail!("Currently not connected");
 			}
 		})
 	}
@@ -524,6 +610,9 @@ impl Connection {
 		}
 	}
 
+	/// Get the current state of clients and channels of this connection.
+	///
+	/// Fails if the connection is currently not connected to the server.
 	pub fn get_state(&self) -> Result<&data::Connection> {
 		if let ConnectionState::Connected { book, .. } = &self.state {
 			Ok(book)
@@ -532,6 +621,12 @@ impl Connection {
 		}
 	}
 
+	/// Get a connection where you can change properties.
+	///
+	/// Changing properties will send a packet to the server, it will not
+	/// immediately change the value.
+	///
+	/// Fails if the connection is currently not connected to the server.
 	pub fn get_mut_state(&mut self) -> Result<facades::ConnectionMut> {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			Ok(facades::ConnectionMut { connection: con, inner: book })
@@ -550,43 +645,47 @@ impl Connection {
 	/// Use default options:
 	///
 	/// ```no_run
-	/// # extern crate tokio;
-	/// # extern crate tsclientlib;
-	/// #
-	/// # use tokio::prelude::Future;
-	/// # use tsclientlib::{Connection, ConnectOptions};
-	/// # fn main() {
-	/// #
-	/// tokio::run(Connection::new(ConnectOptions::new("localhost"))
-	///     .and_then(|connection| {
-	///         connection.disconnect(None)
-	///     })
-	///     .map_err(|_| ())
-	/// );
+	/// # use futures::prelude::*;
+	/// # use tsclientlib::{Connection, ConnectOptions, DisconnectOptions, StreamItem};
+	///
+	/// # #[tokio::main]
+	/// # async fn main() {
+	/// let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	/// // Wait until connected
+	/// con.events()
+	///     // We are connected when we receive the first ConEvents
+	///     .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///     .next()
+	///     .await
+	///     .unwrap();
+	///
+	/// // Disconnect
+	/// con.disconnect(DisconnectOptions::new()).await;
 	/// # }
 	/// ```
 	///
 	/// Specify a reason and a quit message:
 	///
 	/// ```no_run
-	/// # extern crate tokio;
-	/// # extern crate tsclientlib;
-	/// #
-	/// # use tokio::prelude::Future;
-	/// # use tsclientlib::{Connection, ConnectOptions};
-	/// # fn main() {
-	/// #
-	/// use tsclientlib::{DisconnectOptions, Reason};
-	/// tokio::run(Connection::new(ConnectOptions::new("localhost"))
-	///     .and_then(|connection| {
-	///         let options = DisconnectOptions::new()
-	///             .reason(Reason::Clientdisconnect)
-	///             .message("Away for a while");
+	/// # use futures::prelude::*;
+	/// # use tsclientlib::{Connection, ConnectOptions, DisconnectOptions, Reason, StreamItem};
 	///
-	///         connection.disconnect(options)
-	///     })
-	///     .map_err(|_| ())
-	/// );
+	/// # #[tokio::main]
+	/// # async fn main() {
+	/// let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	/// // Wait until connected
+	/// con.events()
+	///     // We are connected when we receive the first ConEvents
+	///     .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///     .next()
+	///     .await
+	///     .unwrap();
+	///
+	/// // Disconnect
+	/// let options = DisconnectOptions::new()
+	///     .reason(Reason::Clientdisconnect)
+	///     .message("Away for a while");
+	/// con.disconnect(options).await;
 	/// # }
 	/// ```
 	#[must_use = "futures do nothing unless polled"]
@@ -605,7 +704,20 @@ impl Connection {
 		}
 	}
 
-	/// Return the size of the file and a tcp stream of the requested file.
+	/// Download a file from a channel of the connected TeamSpeak server.
+	///
+	/// Returns the size of the file and a tcp stream of the requested file.
+	///
+	/// # Example
+	/// Download an icon.
+	///
+	/// ```no_run
+	/// # use tsclientlib::ChannelId;
+	/// # let con: tsclientlib::Connection = panic!();
+	/// # let id = 0;
+	/// let handle_future = con.download_file(ChannelId(0), &format!("/icon_{}", id), None, None);
+	/// # // TODO Show rest of download
+	/// ```
 	pub fn download_file(
 		&mut self, channel_id: ChannelId, path: &str,
 		channel_password: Option<&str>, seek_position: Option<u64>,
@@ -618,8 +730,21 @@ impl Connection {
 		}
 	}
 
-	/// Return the size of the part which is already uploaded (when resume is
+	/// Upload a file to a channel of the connected TeamSpeak server.
+	///
+	/// Returns the size of the part which is already uploaded (when resume is
 	/// specified) and a tcp stream where the requested file should be uploaded.
+	///
+	/// # Example
+	/// Upload an avatar.
+	///
+	/// ```no_run
+	/// # use tsclientlib::ChannelId;
+	/// # let con: tsclientlib::Connection = panic!();
+	/// # let size = 0;
+	/// let handle_future = con.upload_file(ChannelId(0), "/avatar", None, size, true, false);
+	/// # // TODO Show rest of upload
+	/// ```
 	pub fn upload_file(
 		&mut self, channel_id: ChannelId, path: &str,
 		channel_password: Option<&str>, size: u64, overwrite: bool,
@@ -637,18 +762,6 @@ impl Connection {
 			)
 		} else {
 			bail!("Currently not connected");
-		}
-	}
-
-	/// Get a connection where you can change properties.
-	///
-	/// Changing properties will send a packet to the server, it will not
-	/// immediately change the value.
-	pub fn to_mut<'a>(&'a mut self) -> Result<facades::ConnectionMut<'a>> {
-		if let ConnectionState::Connected { con, book } = &mut self.state {
-			Ok(facades::ConnectionMut { connection: con, inner: book })
-		} else {
-			bail!("Not connected");
 		}
 	}
 
@@ -782,14 +895,7 @@ impl Connection {
 
 impl Drop for Connection {
 	fn drop(&mut self) {
-		match &mut self.state {
-			ConnectionState::IdentityLevelIncreasing { state, .. } => {
-				if let Ok(mut state) = state.lock() {
-					*state = IdentityIncreaseLevelState::Canceled;
-				}
-			}
-			_ => {}
-		}
+		self.cancel_identity_level_increase();
 	}
 }
 
@@ -861,8 +967,6 @@ impl ConnectedConnection {
 					});
 
 				self.file_transfers.push(Box::pin(fut));
-
-				// TODO filetransfer
 			}
 		} else if let InMessage::FileUpload(msg) = &msg {
 			for msg in msg.iter() {
@@ -893,8 +997,10 @@ impl ConnectedConnection {
 				self.file_transfers.push(Box::pin(fut));
 			}
 		} else if let InMessage::FileTransferStatus(msg) = &msg {
-			for _msg in msg.iter() {
-				//let status = FileTransferStatus::Status { status: msg.status };
+			for msg in msg.iter() {
+				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
+				stream_items.push_back(Ok(StreamItem::FileTransferFailed(ft_id,
+					msg.status.into())));
 			}
 		} else {
 			let events = match book.handle_command(logger, &msg) {
@@ -909,7 +1015,6 @@ impl ConnectedConnection {
 		}
 	}
 
-	// TODO Move return_code handling into tsproto::client
 	fn send_command(
 		&mut self, mut packet: OutCommand,
 	) -> Result<MessageHandle> {
@@ -921,8 +1026,7 @@ impl ConnectedConnection {
 			.map(|_| MessageHandle(code))
 	}
 
-	/// Return the size of the file and a tcp stream of the requested file.
-	pub fn download_file(
+	fn download_file(
 		&mut self, channel_id: ChannelId, path: &str,
 		channel_password: Option<&str>, seek_position: Option<u64>,
 	) -> Result<FileTransferHandle>
@@ -943,9 +1047,7 @@ impl ConnectedConnection {
 		self.send_command(packet).map(|_| FileTransferHandle(ft_id))
 	}
 
-	/// Return the size of the part which is already uploaded (when resume is
-	/// specified) and a tcp stream where the requested file should be uploaded.
-	pub fn upload_file(
+	fn upload_file(
 		&mut self, channel_id: ChannelId, path: &str,
 		channel_password: Option<&str>, size: u64, overwrite: bool,
 		resume: bool,
@@ -971,26 +1073,17 @@ impl ConnectedConnection {
 	}
 }
 
-/// The configuration to create a new connection.
+/// The configuration for creating a new connection.
 ///
 /// # Example
 ///
-/// ```no_run
-/// # extern crate tokio;
-/// # extern crate tsclientlib;
-/// #
-/// # use tokio::prelude::Future;
+/// ```
 /// # use tsclientlib::{Connection, ConnectOptions};
-/// # fn main() {
-/// #
-/// let con_config = ConnectOptions::new("localhost");
+/// let config = ConnectOptions::new("localhost")
+///     .name("MyUser".to_string())
+///     .channel("Default Channel/Nested".to_string());
 ///
-/// tokio::run(
-///     Connection::new(con_config)
-///     .map(|connection| ())
-///     .map_err(|_| ())
-/// );
-/// # }
+/// let con = Connection::new(config);
 /// ```
 #[derive(Clone, Debug)]
 pub struct ConnectOptions {
@@ -1120,7 +1213,7 @@ impl ConnectOptions {
 	/// ```
 	/// # use tsclientlib::ConnectOptions;
 	/// let opts = ConnectOptions::new("localhost")
-	///     .channel("Secret Channel".to_string());
+	///     .channel("Secret Channel".to_string())
 	///     .channel_password("My secret password".to_string());
 	/// ```
 	#[inline]

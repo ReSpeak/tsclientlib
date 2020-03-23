@@ -461,11 +461,6 @@ impl Connection {
 		&self, msg: &s2c::InClientEnterViewPart,
 	) -> Result<Option<String>> {
 		if msg.is_away { Ok(Some(msg.away_message.clone())) } else { Ok(None) }
-	{
-				admin: cmd.get_arg("client_unique_identifier")?
-					== "ServerAdmin",
-			}),
-			.into()),
 	}
 
 	fn client_type_cev_fun(

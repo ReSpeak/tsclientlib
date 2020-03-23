@@ -19,16 +19,12 @@ impl ServerMut<'_> {
 	/// [`ChannelOptions`] argument.
 	///
 	/// # Examples
-	/// ```rust,no_run
+	/// ```no_run
 	/// use tsclientlib::data::ChannelOptions;
-	/// # use futures::Future;
+	/// # use futures::prelude::*;
 	/// # let connection: tsclientlib::Connection = panic!();
-	///
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Send a message
-	/// tokio::spawn(con_mut.get_server().add_channel(ChannelOptions::new("My new channel"))
-	///     .map_err(|e| println!("Failed to create channel ({:?})", e)));
+	/// let mut state = connection.get_mut_state().unwrap();
+	/// let handle = state.get_server().add_channel(ChannelOptions::new("My new channel")).unwrap();
 	/// ```
 	///
 	/// [`ChannelOptions`]: struct.ChannelOptions.html
@@ -41,20 +37,25 @@ impl ServerMut<'_> {
 	/// Send a text message in the server chat.
 	///
 	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
+	/// ```no_run
+	/// # use futures::prelude::*;
 	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Send a message
-	/// tokio::spawn(con_mut.get_server().send_textmessage("Hi")
-	///	    .map_err(|e| println!("Failed to send text message ({:?})", e)));
+	/// let mut state = connection.get_mut_state().unwrap();
+	/// let handle = state.get_server().send_textmessage("Hi").unwrap();
 	/// ```
 	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
 		self.connection.send_command(self.inner.send_textmessage(message))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
+	///
+	/// # Examples
+	/// ```no_run
+	/// # use futures::prelude::*;
+	/// # let connection: tsclientlib::Connection = panic!();
+	/// let mut state = connection.get_mut_state().unwrap();
+	/// let handle = state.get_server().set_subscribed(true).unwrap();
+	/// ```
 	pub fn set_subscribed(
 		&mut self, subscribed: bool,
 	) -> Result<MessageHandle> {
@@ -66,15 +67,12 @@ impl ConnectionMut<'_> {
 	/// A generic method to send a text message or poke a client.
 	///
 	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
+	/// ```no_run
+	/// # use futures::prelude::*;
 	/// # use tsclientlib::MessageTarget;
 	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Send a message
-	/// tokio::spawn(con_mut.send_message(MessageTarget::Server, "Hi")
-	///	    .map_err(|e| println!("Failed to send message ({:?})", e)));
+	/// let mut state = connection.get_mut_state().unwrap();
+	/// let handle = state.send_message(MessageTarget::Server, "Hi").unwrap();
 	/// ```
 	pub fn send_message(
 		&mut self, target: MessageTarget, message: &str,
@@ -106,16 +104,14 @@ impl ClientMut<'_> {
 	///
 	/// # Examples
 	/// Greet a user:
-	/// ```rust,no_run
-	/// # use futures::Future;
+	/// ```no_run
+	/// # use futures::prelude::*;
 	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
+	/// let mut state = connection.get_mut_state().unwrap();
 	/// // Get our own client in mutable form
-	/// let client = con_mut.get_client(&con_lock.own_client).unwrap();
+	/// let client = state.get_client(&state.own_client).unwrap();
 	/// // Send a message
-	/// tokio::spawn(client.send_textmessage("Hi me!")
-	///	    .map_err(|e| println!("Failed to send me a text message ({:?})", e)));
+	/// let handle = client.send_textmessage("Hi me!").unwrap();
 	/// ```
 	pub fn send_textmessage(&mut self, message: &str) -> Result<MessageHandle> {
 		self.connection.send_command(self.inner.send_textmessage(message))
@@ -124,16 +120,14 @@ impl ClientMut<'_> {
 	/// Poke this client with a message.
 	///
 	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
+	/// ```no_run
+	/// # use futures::prelude::*;
 	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
+	/// let mut state = connection.get_mut_state().unwrap();
 	/// // Get our own client in mutable form
-	/// let client = con_mut.get_client(&con_lock.own_client).unwrap();
+	/// let client = state.get_client(&state.own_client).unwrap();
 	/// // Send a message
-	/// tokio::spawn(client.poke("Hihihi")
-	///	    .map_err(|e| println!("Failed to poke me ({:?})", e)));
+	/// let handle = client.poke("Hihihi").unwrap();
 	/// ```
 	pub fn poke(&mut self, message: &str) -> Result<MessageHandle> {
 		self.connection.send_command(self.inner.poke(message))
