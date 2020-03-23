@@ -542,10 +542,7 @@ impl Connection {
 			let _ = send.send(r.map(|()| identity));
 		});
 
-		self.state = ConnectionState::IdentityLevelIncreasing {
-			recv,
-			state,
-		};
+		self.state = ConnectionState::IdentityLevelIncreasing { recv, state };
 		Ok(())
 	}
 
@@ -568,8 +565,8 @@ impl Connection {
 	/// Fails if the connection is currently not connected to the server.
 	#[cfg(feature = "unstable")]
 	pub fn get_tsproto_client(&self) -> Result<&client::Client> {
-		if let ConnectionState::Connected(c) = &self.state {
-			Ok(c)
+		if let ConnectionState::Connected { con, .. } = &self.state {
+			Ok(&con.client)
 		} else {
 			bail!("Currently not connected");
 		}
@@ -580,8 +577,8 @@ impl Connection {
 	/// Fails if the connection is currently not connected to the server.
 	#[cfg(feature = "unstable")]
 	pub fn get_tsproto_client_mut(&mut self) -> Result<&mut client::Client> {
-		if let ConnectionState::Connected(c) = &mut self.state {
-			Ok(c)
+		if let ConnectionState::Connected { con, .. } = &mut self.state {
+			Ok(&mut con.client)
 		} else {
 			bail!("Currently not connected");
 		}
@@ -602,7 +599,9 @@ impl Connection {
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
 	#[cfg(feature = "unstable")]
-	pub fn send_command(&self, packet: OutCommand) -> Result<MessageHandle> {
+	pub fn send_command(
+		&mut self, packet: OutCommand,
+	) -> Result<MessageHandle> {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.send_command(packet)
 		} else {
@@ -894,9 +893,7 @@ impl Connection {
 }
 
 impl Drop for Connection {
-	fn drop(&mut self) {
-		self.cancel_identity_level_increase();
-	}
+	fn drop(&mut self) { self.cancel_identity_level_increase(); }
 }
 
 impl<'a> Stream for EventStream<'a> {
@@ -999,8 +996,10 @@ impl ConnectedConnection {
 		} else if let InMessage::FileTransferStatus(msg) = &msg {
 			for msg in msg.iter() {
 				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
-				stream_items.push_back(Ok(StreamItem::FileTransferFailed(ft_id,
-					msg.status.into())));
+				stream_items.push_back(Ok(StreamItem::FileTransferFailed(
+					ft_id,
+					msg.status.into(),
+				)));
 			}
 		} else {
 			let events = match book.handle_command(logger, &msg) {
