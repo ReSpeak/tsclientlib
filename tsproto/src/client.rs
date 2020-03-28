@@ -289,7 +289,6 @@ impl Client {
 					};
 
 					time_reporter.finish();
-					info!(self.con.logger, "Solve RSA puzzle"; "level" => level);
 
 					// Create the command string
 					// omega is an ASN.1-DER encoded public key from

@@ -849,7 +849,7 @@ impl Connection {
 						match item {
 							ProtoStreamItem::Error(e) => {
 								warn!(self.logger, "Connection got a non-fatal error";
-									"error" => ?e);
+									"error" => %e);
 							}
 							ProtoStreamItem::Audio(_audio) => {} // TODO
 							ProtoStreamItem::Command(cmd) => {
@@ -1275,4 +1275,41 @@ impl ConnectOptions {
 		self.logger = Some(logger);
 		self
 	}
+
+	#[inline]
+	pub fn get_address(&self) -> &ServerAddress { &self.address }
+	#[inline]
+	pub fn get_local_address(&self) -> Option<&SocketAddr> {
+		self.local_address.as_ref()
+	}
+	#[inline]
+	pub fn get_identity(&self) -> Option<&Identity> {
+		self.identity.as_ref()
+	}
+	#[inline]
+	pub fn get_name(&self) -> &str { &self.name }
+	#[inline]
+	pub fn get_version(&self) -> &Version { &self.version }
+	#[inline]
+	pub fn get_channel(&self) -> Option<&str> {
+		self.channel.as_ref().map(|s| s.as_str())
+	}
+	#[inline]
+	pub fn get_channel_password(&self) -> Option<&str> {
+		self.channel_password.as_ref().map(|s| s.as_str())
+	}
+	#[inline]
+	pub fn get_password(&self) -> Option<&str> {
+		self.password.as_ref().map(|s| s.as_str())
+	}
+	#[inline]
+	pub fn get_logger(&self) -> Option<&Logger> {
+		self.logger.as_ref()
+	}
+	#[inline]
+	pub fn get_log_commands(&self) -> bool { self.log_commands }
+	#[inline]
+	pub fn get_log_packets(&self) -> bool { self.log_packets }
+	#[inline]
+	pub fn get_log_udp_packets(&self) -> bool { self.log_udp_packets }
 }
