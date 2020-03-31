@@ -21,11 +21,14 @@ include = [
 features = ["unstable"]
 
 [features]
+default = ["audio"]
 # Enable the unstable api
 unstable = []
+audio = ["audiopus"]
 
 [dependencies]
 anyhow = "1"
+audiopus = { version = "0.2", optional = true }
 base64 = "0.12"
 futures = "0.3"
 git-testament = "0.1"

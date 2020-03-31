@@ -819,6 +819,17 @@ impl<'a> AudioData<'a> {
 			AudioData::S2CWhisper { .. } => Flags::empty(),
 		}
 	}
+
+	#[inline]
+	pub fn data(&self) -> &[u8] {
+		match self {
+			AudioData::C2S { data, .. } => data,
+			AudioData::C2SWhisper { data, .. } => data,
+			AudioData::C2SWhisperNew { data, .. } => data,
+			AudioData::S2C { data, .. } => data,
+			AudioData::S2CWhisper { data, .. } => data,
+		}
+	}
 }
 
 impl<'a> InS2CInit<'a> {

@@ -11,6 +11,7 @@
 //! [Qint]: https://github.com/ReSpeak/Qint
 // Needed for futures on windows.
 #![recursion_limit = "128"]
+#![feature(is_sorted)] // TODO
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -30,8 +31,10 @@ use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
-use tsproto_packets::packets::{InCommandBuf, OutCommand};
+use tsproto_packets::packets::{InAudioBuf, InCommandBuf, OutCommand};
 
+#[cfg(feature = "audio")]
+pub mod audio;
 mod facades;
 pub mod resolver;
 
@@ -91,6 +94,17 @@ pub enum StreamItem {
 	/// If a connection to the server was established this will contain an added
 	/// event of a server.
 	ConEvents(Vec<events::Event>),
+	/// The clients who are currently sending audio changed.
+	///
+	/// The list of currently talking clients is available through an
+	/// [`AudioHandler`].
+	///
+	/// [`AudioHandler`]: audio/structAudioHandler.html
+	#[cfg(feature = "audio")]
+	TalkersChanged, // TODO Remove, handled by AudioHandler
+	/// Received an audio packet
+	#[cfg(feature = "audio")]
+	Audio(InAudioBuf),
 	/// The needed level.
 	IdentityLevelIncreasing(u8),
 	/// This event may occur without an `IdentityLevelIncreasing` event before
@@ -659,7 +673,8 @@ impl Connection {
 	///     .unwrap();
 	///
 	/// // Disconnect
-	/// con.disconnect(DisconnectOptions::new()).await;
+	/// con.disconnect(DisconnectOptions::new()).unwrap();
+	/// con.events().filter(|_| false).next().await;
 	/// # }
 	/// ```
 	///
@@ -684,23 +699,16 @@ impl Connection {
 	/// let options = DisconnectOptions::new()
 	///     .reason(Reason::Clientdisconnect)
 	///     .message("Away for a while");
-	/// con.disconnect(options).await;
+	/// con.disconnect(options).unwrap();
+	/// con.events().filter(|_| false).next().await;
 	/// # }
 	/// ```
-	#[must_use = "futures do nothing unless polled"]
-	pub async fn disconnect(&mut self, options: DisconnectOptions) {
+	pub fn disconnect(&mut self, options: DisconnectOptions) -> Result<()> {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			let packet = book.disconnect(options);
-			if let Err(e) = con.client.send_packet(packet.into_packet()) {
-				warn!(self.logger, "Failed to send disconnect packet";
-					"error" => ?e);
-				return;
-			}
-			if let Err(e) = con.client.wait_disconnect().await {
-				warn!(self.logger, "Error when disconnecting";
-					"error" => ?e);
-			}
+			con.client.send_packet(packet.into_packet())?;
 		}
+		Ok(())
 	}
 
 	/// Download a file from a channel of the connected TeamSpeak server.
@@ -851,7 +859,18 @@ impl Connection {
 								warn!(self.logger, "Connection got a non-fatal error";
 									"error" => %e);
 							}
-							ProtoStreamItem::Audio(_audio) => {} // TODO
+							ProtoStreamItem::Audio(audio) => {
+								#[cfg(feature = "audio")]
+								{
+									return Poll::Ready(Some(Ok(
+										StreamItem::Audio(audio),
+									)));
+								}
+								#[cfg(not(feature = "audio"))]
+								{
+									let _ = audio;
+								}
+							}
 							ProtoStreamItem::Command(cmd) => {
 								con.handle_command(
 									&self.logger,
