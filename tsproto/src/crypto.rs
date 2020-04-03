@@ -88,7 +88,7 @@ impl EccKeyPubP256 {
 	/// - `Integer`: X coordinate of the public key
 	/// - `Integer`: Y coordinate of the public key
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
-		let blocks = ::simple_asn1::from_der(data)?;
+		let blocks = simple_asn1::from_der(data)?;
 		if blocks.len() != 1 {
 			return Err(format_err!("More than one ASN.1 block").into());
 		}
@@ -302,7 +302,7 @@ impl EccKeyPrivP256 {
 	/// The TS3AudioBot stores two 1 bits in the first `BitString` and omits the
 	/// public key.
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
-		let blocks = ::simple_asn1::from_der(data)?;
+		let blocks = simple_asn1::from_der(data)?;
 		if blocks.len() != 1 {
 			return Err(format_err!("More than one ASN.1 block").into());
 		}

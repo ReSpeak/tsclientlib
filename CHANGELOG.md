@@ -5,25 +5,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Added
-- Automatically improve identity level if it is not high enough
-- Add `channel`, `channel_password` and (server-)`password` to `ConnectOptions`
-- Filetransfer: Download and upload files from and to TeamSpeak servers
-- Audio example for `tsclientlib`
+### ✅ Added
+- 🎵 An audio queue that automatically sort, decode and handle lost audio packets
+- 🎵Audio example for `tsclientlib`
+- ⏫ Automatically improve identity level if it is not high enough
+- 🔓 Add `channel`, `channel_password` and (server-)`password` to `ConnectOptions`
+- 📂 Filetransfer: Download and upload files from and to TeamSpeak servers
 - Most structs can be serialized with `serde` now
 
-### Changed
-- Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 0.2 for `async`/`await` support
-- Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks.
-- Many performance improvements
+### ℹ Changed
+- ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 0.2 for `async`/`await` support
+- 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks.
+- 🚀 Many performance improvements
 	- New command parser, 2×–2.5× faster than the old one
 	- New command serializer, 2× faster than the old one
-- Switched error handling library
+- Switched error handling library from `failure` to `anyhow` and `thiserror`
 
-### Removed
+### ❌ Removed
 - The `ConnectionManager` in `tsproto` was removed
 
-### Fixed
+### 🟡 Fixed
 - Hashcash implementation counts leading zeroes from lsb instead of msb
 - Use `3.?.?` version by default to allow connecting to newer TeamSpeak servers
 - Fix channel order handling

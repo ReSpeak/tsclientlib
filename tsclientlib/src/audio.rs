@@ -7,7 +7,9 @@
 //!
 //! [`AudioHandler`]: struct.AudioHandler.html
 
+use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
+use std::convert::TryInto;
 use std::hash::Hash;
 
 use anyhow::{bail, Result};
@@ -24,7 +26,7 @@ const CHANNEL_NUM: usize = 2;
 /// If this amount of packets is lost consecutively, we assume the stream stopped.
 const MAX_PACKET_LOSSES: usize = 3;
 /// Store the buffer sizes for the last `LAST_BUFFER_SIZE_COUNT` packets.
-const LAST_BUFFER_SIZE_COUNT: u16 = 512;
+const LAST_BUFFER_SIZE_COUNT: u8 = 255;
 /// The amount of samples to maximally buffer. Equivalent to 0.5 s.
 const MAX_BUFFER_SIZE: usize = 48_000 / 2;
 /// Maximum number of packets in the queue.
@@ -33,11 +35,16 @@ const MAX_BUFFER_PACKETS: usize = 50;
 const MAX_BUFFER_TIME: usize = 48_000 / 2;
 /// Duplicate or remove every `step` sample when speeding-up.
 const SPEED_CHANGE_STEPS: usize = 100;
+/// The usual amount of samples in a frame.
+///
+/// Use 48 kHz, 20 ms frames (50 per second) and mono data (1 channel).
+/// This means 1920 samples and 7.5 kiB.
+const USUAL_FRAME_SIZE: usize = 48000 / 50;
 
 #[derive(Clone, Debug)]
-struct SlidingWindowMinimum {
+struct SlidingWindowMinimum<T: Copy + Default + Ord> {
 	/// How long a value stays in the sliding window.
-	size: u16,
+	size: u8,
 	/// This is a sliding window minimum, it contains
 	/// `(insertion time, value)`.
 	///
@@ -47,9 +54,9 @@ struct SlidingWindowMinimum {
 	///
 	/// Provides amortized O(1) minimum.
 	/// Source: https://people.cs.uct.ac.za/~ksmith/articles/sliding_window_minimum.html#sliding-window-minimum-algorithm
-	queue: VecDeque<(u16, usize)>,
+	queue: VecDeque<(u8, T)>,
 	/// The current insertion time.
-	cur_time: u16,
+	cur_time: u8,
 }
 
 struct QueuePacket {
@@ -60,6 +67,7 @@ struct QueuePacket {
 
 /// A queue for audio packets for one audio stream.
 pub struct AudioQueue {
+	logger: Logger,
 	decoder: Decoder,
 	/// The id of the next packet that should be decoded.
 	///
@@ -80,10 +88,12 @@ pub struct AudioQueue {
 	packet_loss_num: usize,
 	/// The amount of samples to buffer until this queue is ready to play.
 	buffering_samples: usize,
-	/// The amount of samples in the buffer when a packet was decoded.
+	/// The amount of packets in the buffer when a packet was decoded.
 	///
+	/// Uses the amount of samples in the `packet_buffer` / `USUAL_PACKET_SAMPLES`.
 	/// Used to expand or reduce the buffer.
-	last_buffer_samples: SlidingWindowMinimum,
+	last_buffer_size_min: SlidingWindowMinimum<u8>,
+	last_buffer_size_max: SlidingWindowMinimum<Reverse<u8>>,
 	/// Buffered for this duration.
 	buffered_for_samples: usize,
 }
@@ -101,34 +111,35 @@ pub struct AudioHandler<Id: Clone + Eq + Hash + PartialEq = ClientId> {
 	avg_buffer_samples: usize,
 }
 
-impl SlidingWindowMinimum {
-	fn new(size: u16) -> Self {
+impl<T: Copy + Default + Ord> SlidingWindowMinimum<T> {
+	fn new(size: u8) -> Self {
 		Self { size, queue: Default::default(), cur_time: 0 }
 	}
 
-	fn push(&mut self, value: usize) {
+	fn push(&mut self, value: T) {
 		while self.queue.back().map(|(_, s)| *s >= value).unwrap_or_default() {
 			self.queue.pop_back();
 		}
 		let i = self.cur_time;
 		self.queue.push_back((i, value));
-		self.cur_time = self.cur_time.wrapping_add(1);
-		while self.queue.front().map(|(i, _)| self.cur_time.wrapping_sub(*i) > self.size).unwrap_or_default() {
+		while self.queue.front().map(|(i, _)| self.cur_time.wrapping_sub(*i) >= self.size).unwrap_or_default() {
 			self.queue.pop_front();
 		}
+		self.cur_time = self.cur_time.wrapping_add(1);
 	}
 
-	fn get_min(&self) -> usize {
+	fn get_min(&self) -> T {
 		self.queue.front().map(|(_, s)| *s).unwrap_or_default()
 	}
 }
 
 impl AudioQueue {
-	fn new(logger: &Logger, packet: InAudioBuf) -> Result<Self> {
+	fn new(logger: Logger, packet: InAudioBuf) -> Result<Self> {
 		let data = packet.data().data();
 		let last_packet_samples =
 			packet::nb_samples(data.data(), SAMPLE_RATE)? * CHANNEL_NUM;
 		let mut res = Self {
+			logger,
 			decoder: Decoder::new(SAMPLE_RATE, CHANNELS)?,
 			next_id: data.id(),
 			whispering: false,
@@ -139,11 +150,12 @@ impl AudioQueue {
 			last_packet_samples,
 			packet_loss_num: 0,
 			buffering_samples: 0,
-			last_buffer_samples: SlidingWindowMinimum::new(LAST_BUFFER_SIZE_COUNT),
+			last_buffer_size_min: SlidingWindowMinimum::new(LAST_BUFFER_SIZE_COUNT),
+			last_buffer_size_max: SlidingWindowMinimum::<Reverse<u8>>::new(LAST_BUFFER_SIZE_COUNT),
 			buffered_for_samples: 0,
 		};
 		res.add_buffer_size(0);
-		res.add_packet(logger, packet)?;
+		res.add_packet(packet)?;
 		Ok(res)
 	}
 
@@ -152,14 +164,23 @@ impl AudioQueue {
 
 	/// Size is in samples.
 	fn add_buffer_size(&mut self, size: usize) {
-		self.last_buffer_samples.push(size);
+		if let Ok(size) = (size / USUAL_FRAME_SIZE).try_into() {
+			self.last_buffer_size_min.push(size);
+			self.last_buffer_size_max.push(Reverse(size));
+		} else {
+			warn!(self.logger, "Failed to put amount of packets into an u8";
+				"size" => size);
+		}
 	}
 
-	fn get_min_queue_size(&self) -> usize {
-		self.last_packet_samples + self.last_buffer_samples.get_min()
+	/// The approximate deviation of the buffer size.
+	fn get_deviation(&self) -> u8 {
+		let min = self.last_buffer_size_min.get_min();
+		let max = self.last_buffer_size_max.get_min();
+		max.0 - min
 	}
 
-	fn add_packet(&mut self, logger: &Logger, packet: InAudioBuf) -> Result<()> {
+	fn add_packet(&mut self, packet: InAudioBuf) -> Result<()> {
 		if self.packet_buffer.len() >= MAX_BUFFER_PACKETS {
 			bail!("Audio queue is full, dropping");
 		}
@@ -183,7 +204,7 @@ impl AudioQueue {
 		// Put into first spot where the id is smaller
 		let i = self.packet_buffer.len() - self.packet_buffer.iter().enumerate()
 			.rev().take_while(|(_, p)| p.id.wrapping_sub(id) <= MAX_BUFFER_PACKETS as u16).count();
-		trace!(logger, "Insert packet {} at {}", id, i);
+		trace!(self.logger, "Insert packet {} at {}", id, i);
 		let last_id = self.packet_buffer.back().map(|p| p.id.wrapping_add(1)).unwrap_or(id);
 		if last_id <= id {
 			self.buffering_samples = self.buffering_samples.saturating_sub(samples);
@@ -198,8 +219,8 @@ impl AudioQueue {
 		Ok(())
 	}
 
-	fn decode_packet(&mut self, logger: &Logger, packet: Option<&QueuePacket>, fec: bool) -> Result<()> {
-		trace!(logger, "Decoding packet"; "has_packet" => packet.is_some(),
+	fn decode_packet(&mut self, packet: Option<&QueuePacket>, fec: bool) -> Result<()> {
+		trace!(self.logger, "Decoding packet"; "has_packet" => packet.is_some(),
 			"fec" => fec);
 		let packet_data;
 		let len;
@@ -227,15 +248,14 @@ impl AudioQueue {
 			self.packet_loss_num = 0;
 		}
 
-		// Update last_buffer_samples
+		// Update last_buffer_size
 		let mut count = self.packet_buffer_samples;
 		if let Some(last) = self.packet_buffer.back() {
 			// Lost packets
-			trace!(logger, "Ids"; "last_id" => last.id,
+			trace!(self.logger, "Ids"; "last_id" => last.id,
 				"next_id" => self.next_id,
 				"first_id" => self.packet_buffer.front().unwrap().id,
-				"buffer_len" => self.packet_buffer.len(),
-				"min_size" => self.get_min_queue_size());
+				"buffer_len" => self.packet_buffer.len());
 			count += (usize::from(last.id.wrapping_sub(self.next_id))
 				+ 1 - self.packet_buffer.len()) * self.last_packet_samples;
 		}
@@ -248,17 +268,17 @@ impl AudioQueue {
 	///
 	/// Returns `true` in the second return value when the stream ended,
 	/// `false` when it continues normally.
-	pub fn get_next_data(&mut self, logger: &Logger, len: usize) -> Result<(&[f32], bool)> {
+	pub fn get_next_data(&mut self, len: usize) -> Result<(&[f32], bool)> {
 		if self.buffering_samples > 0 {
 			if self.buffered_for_samples >= MAX_BUFFER_TIME {
 				self.buffering_samples = 0;
 				self.buffered_for_samples = 0;
-				trace!(logger, "Buffered for too long";
+				trace!(self.logger, "Buffered for too long";
 					"buffered_for_samples" => self.buffered_for_samples,
 					"buffering_samples" => self.buffering_samples);
 			} else {
 				self.buffered_for_samples += len;
-				trace!(logger, "Buffering";
+				trace!(self.logger, "Buffering";
 					"buffered_for_samples" => self.buffered_for_samples,
 					"buffering_samples" => self.buffering_samples);
 				return Ok((&[], false));
@@ -288,37 +308,36 @@ impl AudioQueue {
 				self.next_id = self.next_id.wrapping_add(1);
 				if packet.id > cur_id {
 					// Packet loss
-					debug!(logger, "Audio packet loss"; "need" => cur_id,
+					debug!(self.logger, "Audio packet loss"; "need" => cur_id,
 						"have" => packet.id);
 					if packet.id == self.next_id {
 						// Can use forward-error-correction
-						self.decode_packet(logger, Some(&packet), true)?;
+						self.decode_packet(Some(&packet), true)?;
 					} else {
-						self.decode_packet(logger, None, false)?;
+						self.decode_packet(None, false)?;
 					}
 					self.packet_buffer_samples += packet.samples;
 					self.packet_buffer.push_front(packet);
 				} else {
 					debug_assert!(packet.id == cur_id, "Invalid packet queue state: {} != {}", packet.id, cur_id);
-					self.decode_packet(logger, Some(&packet), false)?;
+					self.decode_packet(Some(&packet), false)?;
 				}
 			} else {
-				// TODO This happens too often, we should buffer more if this happens
-				debug!(logger, "No packets in queue");
+				debug!(self.logger, "No packets in queue");
 				// Packet loss or end of stream
-				self.decode_packet(logger, None, false)?;
+				self.decode_packet(None, false)?;
 			}
 
 			// Check if we should speed-up playback
-			let min = self.get_min_queue_size();
-			let min_left = min - self.last_packet_samples;
-			if min_left > MAX_BUFFER_SIZE {
-				debug!(logger, "Truncating buffer"; "min_left" => min_left);
+			let min = self.last_buffer_size_min.get_min();
+			let dev = self.get_deviation();
+			if min > (MAX_BUFFER_SIZE / USUAL_FRAME_SIZE) as u8 {
+				debug!(self.logger, "Truncating buffer"; "min" => min);
 				// Throw out all but min samples
 				let mut keep_samples = 0;
 				let keep = self.packet_buffer.iter().rev().take_while(|p| {
 					keep_samples += p.samples;
-					keep_samples < min
+					keep_samples < usize::from(min) + USUAL_FRAME_SIZE
 				}).count();
 				let len = self.packet_buffer.len() - keep;
 				self.packet_buffer.drain(..len);
@@ -327,11 +346,12 @@ impl AudioQueue {
 				if let Some(p) = self.packet_buffer.front() {
 					self.next_id = p.id;
 				}
-			} else if min_left > self.last_packet_samples {
+			} else if min > dev {
 				// Speed-up
-				debug!(logger, "Speed-up buffer"; "min" => min,
+				debug!(self.logger, "Speed-up buffer"; "min" => min,
 					"cur_packet_count" => self.packet_buffer.len(),
-					"last_packet_samples" => self.last_packet_samples);
+					"last_packet_samples" => self.last_packet_samples,
+					"dev" => dev);
 				let start = self.decoded_buffer.len() - self.last_packet_samples * CHANNEL_NUM;
 				for i in 0..(self.last_packet_samples / SPEED_CHANGE_STEPS) {
 					let i = start + i * (SPEED_CHANGE_STEPS - 1) * CHANNEL_NUM;
@@ -384,7 +404,7 @@ impl<Id: Clone + Eq + Hash + PartialEq> AudioHandler<Id> {
 				continue;
 			}
 
-			match queue.get_next_data(&self.logger, buf.len()) {
+			match queue.get_next_data(buf.len()) {
 				Err(e) => {
 					warn!(self.logger, "Failed to decode audio packet";
 						"error" => ?e);
@@ -414,18 +434,18 @@ impl<Id: Clone + Eq + Hash + PartialEq> AudioHandler<Id> {
 		}
 
 		if let Some(queue) = self.queues.get_mut(&id) {
-			queue.add_packet(&self.logger, packet)?;
+			queue.add_packet(packet)?;
 		} else {
 			if empty {
 				return Ok(());
 			}
 
 			trace!(self.logger, "Adding talker");
-			let mut queue = AudioQueue::new(&self.logger, packet)?;
+			let mut queue = AudioQueue::new(self.logger.clone(), packet)?;
 			if !self.queues.is_empty() {
 				// Update avg_buffer_samples
-				self.avg_buffer_samples = self.queues.values()
-					.map(|q| q.get_min_queue_size()).sum::<usize>() / self.queues.len();
+				self.avg_buffer_samples = USUAL_FRAME_SIZE + self.queues.values()
+					.map(|q| usize::from(q.last_buffer_size_min.get_min())).sum::<usize>() / self.queues.len();
 			}
 			queue.buffering_samples = self.avg_buffer_samples;
 			self.queues.insert(id, queue);
@@ -465,6 +485,19 @@ mod test {
 			assert_eq!(window.get_min(), *min, "Failed in iteration {} ({:?})",
 				i, window);
 		}
+	}
+
+	#[test]
+	fn sliding_window_minimum_full() {
+		let mut window = SlidingWindowMinimum::new(255);
+		window.push(1);
+		assert_eq!(window.get_min(), 1);
+		for _ in 0..254 {
+			window.push(2);
+		}
+		assert_eq!(window.get_min(), 1);
+		window.push(2);
+		assert_eq!(window.get_min(), 2);
 	}
 
 	#[test]
