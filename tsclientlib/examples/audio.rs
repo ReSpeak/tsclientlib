@@ -1,16 +1,17 @@
 use anyhow::{bail, Result};
 use futures::prelude::*;
-use slog::{error, o, Drain, Logger};
+use slog::{info, o, Drain, Logger};
 use structopt::StructOpt;
-use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
+use tokio::task::LocalSet;
 
 use tsclientlib::{
-	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
+	ClientId, ConnectOptions, Connection, DisconnectOptions, Identity,
+	StreamItem,
 };
+use tsproto_packets::packets::AudioData;
 
-// TODO
-//mod audio_utils;
+mod audio_utils;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ConnectionId(u64);
@@ -34,14 +35,10 @@ struct Args {
 	verbose: u8,
 }
 
-/*#[derive(Clone)]
-struct AudioPacketHandler {
-	logger: Logger,
-	con: ConnectionId,
-	send: mpsc::Sender<(ConnectionId, InAudio)>,
-}*/
+#[tokio::main]
+async fn main() -> Result<()> { real_main().await }
 
-fn main() -> Result<()> {
+async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
@@ -53,118 +50,88 @@ fn main() -> Result<()> {
 		Logger::root(drain, o!())
 	};
 
-	// We need an explicit runtime and executor because we want to spawn new
-	// tasks in callbacks from other threads.
-	let mut runtime = Runtime::new().unwrap();
-	let executor = runtime.handle();
-	let executor2 = executor.clone();
-
 	let con_id = ConnectionId(0);
-	let vol = args.volume;
-	let logger2 = logger.clone();
-	runtime.block_on(async {
-		//let audiodata = audio_utils::start(logger, executor2)?;
-		//let (send, recv) = mpsc::channel(5);
+	let local_set = LocalSet::new();
+	let audiodata = audio_utils::start(logger.clone(), &local_set)?;
 
-		let logger = logger2.clone();
-		let con_config = ConnectOptions::new(args.address)
-			.log_commands(args.verbose >= 1)
-			.log_packets(args.verbose >= 2)
-			.log_udp_packets(args.verbose >= 3);
+	let con_config = ConnectOptions::new(args.address)
+		.log_commands(args.verbose >= 1)
+		.log_packets(args.verbose >= 2)
+		.log_udp_packets(args.verbose >= 3);
 
-		/*let t2a = audiodata.ts2a.clone();
-		tokio::spawn(recv
-			.map_err(|e| e.into())
-			.for_each(move |(con, packet)| {
+	// Optionally set the key of this client, otherwise a new key is generated.
+	let id = Identity::new_from_str(
+		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
+		k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
+		C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
+	let con_config = con_config.identity(id);
+
+	// Connect
+	let mut con = Connection::new(con_config)?;
+
+	let r = con
+		.events()
+		.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+		.next()
+		.await;
+	if let Some(r) = r {
+		r?;
+	}
+
+	let (send, mut recv) = mpsc::channel(5);
+	{
+		let mut a2t = audiodata.a2ts.lock().unwrap();
+		a2t.set_listener(send);
+		a2t.set_volume(args.volume);
+		a2t.set_playing(true);
+	}
+
+	loop {
+		let t2a = audiodata.ts2a.clone();
+		let events = con.events().try_for_each(|e| async {
+			if let StreamItem::Audio(packet) = e {
+				let from = ClientId(match packet.data().data() {
+					AudioData::S2C { from, .. } => *from,
+					AudioData::S2CWhisper { from, .. } => *from,
+					_ => panic!(
+						"Can only handle S2C packets but got a C2S packet"
+					),
+				});
 				let mut t2a = t2a.lock().unwrap();
-				t2a.play_packet(con, &packet)
-			})
-			.map_err(move |e| error!(logger2,
-				"Failed to redirect audio packet"; "error" => ?e)));*/
-
-		// Optionally set the key of this client, otherwise a new key is generated.
-		let id = Identity::new_from_str(
-			"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
-			k9EQjEYSgIgNnImcmKo7ls5mExb6skfK2Tw+u54aeDr0OP1ITs\
-			C/50CIA8M5nmDBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
-		let con_config = con_config.identity(id);
-
-		// Connect
-		let mut con = Connection::new(con_config)?;
-
-		let r = con
-			.events()
-			.try_filter(|e| {
-				future::ready(matches!(e, StreamItem::ConEvents(_)))
-			})
-			.next()
-			.await;
-		if let Some(r) = r {
-			r?;
-		}
-
-		/*{
-			let mut a2t = audiodata.a2ts.lock().unwrap();
-			a2t.set_listener(&con);
-			a2t.set_volume(vol);
-			a2t.set_playing(true);
-		}*/
+				t2a.play_packet((con_id, from), packet)?;
+			}
+			Ok(())
+		});
 
 		// Wait for ctrl + c
-		let mut events = con.events().try_filter(|_| future::ready(false));
 		tokio::select! {
-			_ = tokio::signal::ctrl_c() => {}
-			_ = events.next() => {
+			send_audio = recv.next() => {
+				if let Some(packet) = send_audio {
+					#[cfg(feature = "unstable")]
+					{
+						con.get_tsproto_client_mut()?.send_packet(packet)?;
+					}
+					#[cfg(not(feature = "unstable"))]
+					{
+						let _ = packet;
+						info!(logger, "Audio sending currently works only on unstable");
+					}
+				} else {
+					info!(logger, "Audio sending stream was canceled");
+					break;
+				}
+			}
+			_ = tokio::signal::ctrl_c() => { break; }
+			r = events => {
+				r?;
 				bail!("Disconnected");
 			}
 		};
-		drop(events);
+	}
 
-		// Disconnect
-		con.disconnect(DisconnectOptions::new()).await;
-
-		Ok(())
-	})?;
+	// Disconnect
+	con.disconnect(DisconnectOptions::new())?;
+	con.events().for_each(|_| future::ready(())).await;
 
 	Ok(())
 }
-
-/*impl PacketHandler for AudioPacketHandler {
-	fn new_connection(
-		&mut self,
-		command_stream: Box<
-			dyn Stream<Item = InCommand, Error = tsproto::Error> + Send,
-		>,
-		audio_stream: Box<
-			dyn Stream<Item = InAudio, Error = tsproto::Error> + Send,
-		>,
-	)
-	{
-		let logger = self.logger.clone();
-		tokio::runtime::current_thread::spawn(
-			command_stream.for_each(|_| Ok(())).then(move |r| {
-				if let Err(e) = r {
-					error!(logger, "Failed to handle packets"; "error" => ?e);
-				}
-				Ok(())
-			}),
-		);
-
-		let logger = self.logger.clone();
-		let con = self.con;
-		let mut send = self.send.clone();
-		tokio::runtime::current_thread::spawn(
-			audio_stream
-				.for_each(move |packet| {
-					send.try_send((con, packet)).unwrap();
-					Ok(())
-				})
-				.map_err(
-					move |e| error!(logger, "Failed to handle packets"; "error" => ?e),
-				),
-		);
-	}
-
-	/// Clone into a box.
-	fn clone(&self) -> PHBox { Box::new(Clone::clone(self)) }
-}*/

@@ -88,7 +88,8 @@ async fn real_main() -> Result<()> {
 				drop(events);
 
 				// Disconnect
-				con.disconnect(DisconnectOptions::new()).await;
+				let _ = con.disconnect(DisconnectOptions::new());
+				con.events().for_each(|_| future::ready(())).await;
 			})
 			.map(|_| ())
 		})

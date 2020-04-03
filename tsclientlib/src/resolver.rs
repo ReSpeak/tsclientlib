@@ -117,14 +117,11 @@ pub fn resolve(
 
 			let name = name.trim_to(2);
 			// Pick the first srv record of the first server that answers
-			// TODO Which clones are needed?
-			let address2 = address2.clone();
 			Result::<_>::Ok(
 				resolve_srv(resolver, prefix.append_name(&name)).and_then(
 					move |srv| {
 						let address2 = address2.clone();
 						async move {
-							let address2 = address2.clone();
 							// Got tsdns server
 							let mut addr =
 								resolve_tsdns(srv, &address2).await?;

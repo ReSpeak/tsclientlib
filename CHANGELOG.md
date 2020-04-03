@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### ✅ Added
+### ✨ Added
 - 🎵 An audio queue that automatically sort, decode and handle lost audio packets
 - 🎵Audio example for `tsclientlib`
 - ⏫ Automatically improve identity level if it is not high enough
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### ❌ Removed
 - The `ConnectionManager` in `tsproto` was removed
 
-### 🟡 Fixed
+### 🐛 Fixed
 - Hashcash implementation counts leading zeroes from lsb instead of msb
 - Use `3.?.?` version by default to allow connecting to newer TeamSpeak servers
 - Fix channel order handling

@@ -11,7 +11,6 @@
 //! [Qint]: https://github.com/ReSpeak/Qint
 // Needed for futures on windows.
 #![recursion_limit = "128"]
-#![feature(is_sorted)] // TODO
 
 use std::collections::VecDeque;
 use std::net::SocketAddr;
@@ -94,15 +93,12 @@ pub enum StreamItem {
 	/// If a connection to the server was established this will contain an added
 	/// event of a server.
 	ConEvents(Vec<events::Event>),
-	/// The clients who are currently sending audio changed.
+	/// Received an audio packet.
 	///
-	/// The list of currently talking clients is available through an
-	/// [`AudioHandler`].
+	/// Audio packets can be handled by the [`AudioHandler`], which builds a
+	/// queue per client and handles packet loss and jitter.
 	///
 	/// [`AudioHandler`]: audio/structAudioHandler.html
-	#[cfg(feature = "audio")]
-	TalkersChanged, // TODO Remove, handled by AudioHandler
-	/// Received an audio packet
 	#[cfg(feature = "audio")]
 	Audio(InAudioBuf),
 	/// The needed level.
@@ -674,7 +670,7 @@ impl Connection {
 	///
 	/// // Disconnect
 	/// con.disconnect(DisconnectOptions::new()).unwrap();
-	/// con.events().filter(|_| false).next().await;
+	/// con.events().for_each(|_| future::ready(())).await;
 	/// # }
 	/// ```
 	///
@@ -700,7 +696,7 @@ impl Connection {
 	///     .reason(Reason::Clientdisconnect)
 	///     .message("Away for a while");
 	/// con.disconnect(options).unwrap();
-	/// con.events().filter(|_| false).next().await;
+	/// con.events().for_each(|_| future::ready(())).await;
 	/// # }
 	/// ```
 	pub fn disconnect(&mut self, options: DisconnectOptions) -> Result<()> {
@@ -853,40 +849,36 @@ impl Connection {
 							StreamItem::DisconnectedTemporarily,
 						)));
 					}
-					Poll::Ready(Some(Ok(item))) => {
-						match item {
-							ProtoStreamItem::Error(e) => {
-								warn!(self.logger, "Connection got a non-fatal error";
+					Poll::Ready(Some(Ok(item))) => match item {
+						ProtoStreamItem::Error(e) => {
+							warn!(self.logger, "Connection got a non-fatal error";
 									"error" => %e);
-							}
-							ProtoStreamItem::Audio(audio) => {
-								#[cfg(feature = "audio")]
-								{
-									return Poll::Ready(Some(Ok(
-										StreamItem::Audio(audio),
-									)));
-								}
-								#[cfg(not(feature = "audio"))]
-								{
-									let _ = audio;
-								}
-							}
-							ProtoStreamItem::Command(cmd) => {
-								con.handle_command(
-									&self.logger,
-									book,
-									&mut self.stream_items,
-									cmd,
-								);
-								if let Some(item) =
-									self.stream_items.pop_front()
-								{
-									break Poll::Ready(Some(item));
-								}
-							}
-							_ => {}
 						}
-					}
+						ProtoStreamItem::Audio(audio) => {
+							#[cfg(feature = "audio")]
+							{
+								return Poll::Ready(Some(Ok(
+									StreamItem::Audio(audio),
+								)));
+							}
+							#[cfg(not(feature = "audio"))]
+							{
+								let _ = audio;
+							}
+						}
+						ProtoStreamItem::Command(cmd) => {
+							con.handle_command(
+								&self.logger,
+								book,
+								&mut self.stream_items,
+								cmd,
+							);
+							if let Some(item) = self.stream_items.pop_front() {
+								break Poll::Ready(Some(item));
+							}
+						}
+						_ => {}
+					},
 				}
 			} {
 				Poll::Ready(r) => Poll::Ready(r),
@@ -1302,9 +1294,7 @@ impl ConnectOptions {
 		self.local_address.as_ref()
 	}
 	#[inline]
-	pub fn get_identity(&self) -> Option<&Identity> {
-		self.identity.as_ref()
-	}
+	pub fn get_identity(&self) -> Option<&Identity> { self.identity.as_ref() }
 	#[inline]
 	pub fn get_name(&self) -> &str { &self.name }
 	#[inline]
@@ -1322,9 +1312,7 @@ impl ConnectOptions {
 		self.password.as_ref().map(|s| s.as_str())
 	}
 	#[inline]
-	pub fn get_logger(&self) -> Option<&Logger> {
-		self.logger.as_ref()
-	}
+	pub fn get_logger(&self) -> Option<&Logger> { self.logger.as_ref() }
 	#[inline]
 	pub fn get_log_commands(&self) -> bool { self.log_commands }
 	#[inline]

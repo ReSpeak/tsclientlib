@@ -1,27 +1,24 @@
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
+use anyhow::{format_err, Result};
 use audiopus::coder::Encoder;
-use failure::{format_err, Error};
 use futures::prelude::*;
 use sdl2::audio::{
 	AudioCallback, AudioDevice, AudioSpec, AudioSpecDesired, AudioStatus,
 };
 use sdl2::AudioSubsystem;
 use slog::{debug, error, o, Logger};
-use tokio::runtime::current_thread::Handle;
-use tokio::timer::Interval;
-use tsclientlib::Connection;
-use tsproto::client::ClientConVal;
-use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
+use tokio::sync::mpsc;
+use tokio::task::LocalSet;
+use tokio::time::{self, Duration};
+use tsproto_packets::packets::{AudioData, CodecType, OutAudio, OutPacket};
 
 use super::*;
 
 pub struct AudioToTs {
 	logger: Logger,
 	audio_subsystem: AudioSubsystem,
-	executor: Handle,
-	listener: Arc<Mutex<Option<ClientConVal>>>,
+	listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
 	device: AudioDevice<SdlCallback>,
 
 	is_playing: bool,
@@ -32,8 +29,7 @@ struct SdlCallback {
 	logger: Logger,
 	spec: AudioSpec,
 	encoder: Encoder,
-	executor: Handle,
-	listener: Arc<Mutex<Option<ClientConVal>>>,
+	listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
 	volume: Arc<Mutex<f32>>,
 
 	opus_output: [u8; MAX_OPUS_FRAME_SIZE],
@@ -41,8 +37,8 @@ struct SdlCallback {
 
 impl AudioToTs {
 	pub fn new(
-		logger: Logger, audio_subsystem: AudioSubsystem, executor: Handle,
-	) -> Result<Arc<Mutex<Self>>, Error> {
+		logger: Logger, audio_subsystem: AudioSubsystem, local_set: &LocalSet,
+	) -> Result<Arc<Mutex<Self>>> {
 		let logger = logger.new(o!("pipeline" => "audio-to-ts"));
 		let listener = Arc::new(Mutex::new(Default::default()));
 		let volume = Arc::new(Mutex::new(1.0));
@@ -50,7 +46,6 @@ impl AudioToTs {
 		let device = Self::open_capture(
 			logger.clone(),
 			&audio_subsystem,
-			executor.clone(),
 			listener.clone(),
 			volume.clone(),
 		)?;
@@ -58,7 +53,6 @@ impl AudioToTs {
 		let res = Arc::new(Mutex::new(Self {
 			logger,
 			audio_subsystem,
-			executor,
 			listener,
 			device,
 
@@ -66,15 +60,16 @@ impl AudioToTs {
 			volume,
 		}));
 
-		Self::start(res.clone());
+		Self::start(res.clone(), local_set);
 
 		Ok(res)
 	}
 
 	fn open_capture(
-		logger: Logger, audio_subsystem: &AudioSubsystem, executor: Handle,
-		listener: Arc<Mutex<Option<ClientConVal>>>, volume: Arc<Mutex<f32>>,
-	) -> Result<AudioDevice<SdlCallback>, Error>
+		logger: Logger, audio_subsystem: &AudioSubsystem,
+		listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
+		volume: Arc<Mutex<f32>>,
+	) -> Result<AudioDevice<SdlCallback>>
 	{
 		let desired_spec = AudioSpecDesired {
 			freq: Some(48000),
@@ -101,7 +96,6 @@ impl AudioToTs {
 				logger,
 				spec,
 				encoder,
-				executor,
 				listener,
 				volume,
 
@@ -110,16 +104,9 @@ impl AudioToTs {
 		}).map_err(|e| format_err!("SDL error: {}", e))
 	}
 
-	#[cfg(feature = "unstable")]
-	pub fn set_listener(&self, con: &Connection) {
+	pub fn set_listener(&self, sender: mpsc::Sender<OutPacket>) {
 		let mut listener = self.listener.lock().unwrap();
-		*listener = Some(con.get_tsproto_connection());
-		#[cfg(not(feature = "unstable"))]
-		panic!("`unstable` feature needs to be enabled!");
-	}
-	#[cfg(not(feature = "unstable"))]
-	pub fn set_listener(&self, _: &Connection) {
-		panic!("`unstable` feature needs to be enabled!");
+		*listener = Some(sender);
 	}
 
 	pub fn set_volume(&mut self, volume: f32) {
@@ -135,42 +122,33 @@ impl AudioToTs {
 		self.is_playing = playing;
 	}
 
-	fn start(a2t: Arc<Mutex<Self>>) {
-		let logger = a2t.lock().unwrap().logger.clone();
-		tokio::runtime::current_thread::spawn(
-			Interval::new_interval(Duration::from_secs(1))
-				.for_each(move |_| {
-					let mut a2t = a2t.lock().unwrap();
-					if a2t.device.status() == AudioStatus::Stopped {
-						// Try to reconnect to audio
-						match Self::open_capture(
-							a2t.logger.clone(),
-							&a2t.audio_subsystem,
-							a2t.executor.clone(),
-							a2t.listener.clone(),
-							a2t.volume.clone(),
-						) {
-							Ok(d) => {
-								a2t.device = d;
-								debug!(
-									a2t.logger,
-									"Reconnected to capture device"
-								);
-								if a2t.is_playing {
-									a2t.device.resume();
-								}
+	fn start(a2t: Arc<Mutex<Self>>, local_set: &LocalSet) {
+		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(
+			move |_| {
+				let mut a2t = a2t.lock().unwrap();
+				if a2t.device.status() == AudioStatus::Stopped {
+					// Try to reconnect to audio
+					match Self::open_capture(
+						a2t.logger.clone(),
+						&a2t.audio_subsystem,
+						a2t.listener.clone(),
+						a2t.volume.clone(),
+					) {
+						Ok(d) => {
+							a2t.device = d;
+							debug!(a2t.logger, "Reconnected to capture device");
+							if a2t.is_playing {
+								a2t.device.resume();
 							}
-							Err(e) => {
-								error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
-							}
-						};
-					}
-					Ok(())
-				})
-				.map_err(
-					move |e| error!(logger, "a2t interval failed"; "error" => ?e),
-				),
-		);
+						}
+						Err(e) => {
+							error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
+						}
+					};
+				}
+				future::ready(())
+			},
+		));
 	}
 }
 
@@ -204,21 +182,13 @@ impl AudioCallback for SdlCallback {
 
 				// Write into packet sink
 				let mut listener = self.listener.lock().unwrap();
-				if let Some(con) = &mut *listener {
-					if con.upgrade().is_none() {
-						*listener = None;
-						return;
+				if let Some(lis) = &mut *listener {
+					match lis.try_send(packet) {
+						Err(mpsc::error::TrySendError::Closed(_)) => {
+							*listener = None
+						}
+						_ => {}
 					}
-
-					let sink = con.as_packet_sink();
-					let logger = self.logger.clone();
-					self.executor
-						.spawn(sink.send(packet).map(|_| ()).map_err(
-							move |e| {
-								error!(logger, "Failed to send packet"; "error" => ?e);
-							},
-						))
-						.unwrap();
 				}
 			}
 		}
