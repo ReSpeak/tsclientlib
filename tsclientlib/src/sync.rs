@@ -12,6 +12,7 @@ use futures::prelude::*;
 use slog::{error, info};
 use tokio::sync::{mpsc, oneshot};
 use ts_bookkeeping::{ChannelId, TsError};
+#[cfg(feature = "audio")]
 use tsproto_packets::packets::InAudioBuf;
 #[cfg(feature = "unstable")]
 use tsproto_packets::packets::OutCommand;
@@ -85,11 +86,20 @@ pub struct SyncConnection {
 	recv: mpsc::Receiver<SyncConMessage>,
 	send: mpsc::Sender<SyncConMessage>,
 
-	commands: HashMap<super::MessageHandle, oneshot::Sender<std::result::Result<(), TsError>>>,
+	commands: HashMap<
+		super::MessageHandle,
+		oneshot::Sender<std::result::Result<(), TsError>>,
+	>,
 	connects: Vec<oneshot::Sender<Result<()>>>,
 	disconnects: Vec<oneshot::Sender<Result<()>>>,
-	downloads: HashMap<super::FileTransferHandle, oneshot::Sender<Result<super::FileDownloadResult>>>,
-	uploads: HashMap<super::FileTransferHandle, oneshot::Sender<Result<super::FileUploadResult>>>,
+	downloads: HashMap<
+		super::FileTransferHandle,
+		oneshot::Sender<Result<super::FileDownloadResult>>,
+	>,
+	uploads: HashMap<
+		super::FileTransferHandle,
+		oneshot::Sender<Result<super::FileUploadResult>>,
+	>,
 }
 
 impl From<super::Connection> for SyncConnection {
@@ -166,9 +176,11 @@ impl Stream for SyncConnection {
 							send,
 						} => {
 							let handle = match self.con.download_file(
-								channel_id, &path,
+								channel_id,
+								&path,
 								channel_password.as_ref().map(|s| s.as_str()),
-								seek_position) {
+								seek_position,
+							) {
 								Ok(r) => r,
 								Err(e) => {
 									let _ = send.send(Err(e));
@@ -187,9 +199,13 @@ impl Stream for SyncConnection {
 							send,
 						} => {
 							let handle = match self.con.upload_file(
-								channel_id, &path,
+								channel_id,
+								&path,
 								channel_password.as_ref().map(|s| s.as_str()),
-								size, overwrite, resume) {
+								size,
+								overwrite,
+								resume,
+							) {
 								Ok(r) => r,
 								Err(e) => {
 									let _ = send.send(Err(e));
@@ -201,7 +217,10 @@ impl Stream for SyncConnection {
 					}
 					continue;
 				} else {
-					error!(self.con.logger, "Message stream ended unexpectedly");
+					error!(
+						self.con.logger,
+						"Message stream ended unexpectedly"
+					);
 				}
 			}
 			break;
@@ -219,14 +238,23 @@ impl Stream for SyncConnection {
 						}
 						#[cfg(feature = "audio")]
 						StreamItem::Audio(i) => SyncStreamItem::Audio(i),
-						StreamItem::IdentityLevelIncreasing(i) => SyncStreamItem::IdentityLevelIncreasing(i),
-						StreamItem::IdentityLevelIncreased => SyncStreamItem::IdentityLevelIncreased,
-						StreamItem::DisconnectedTemporarily => SyncStreamItem::DisconnectedTemporarily,
+						StreamItem::IdentityLevelIncreasing(i) => {
+							SyncStreamItem::IdentityLevelIncreasing(i)
+						}
+						StreamItem::IdentityLevelIncreased => {
+							SyncStreamItem::IdentityLevelIncreased
+						}
+						StreamItem::DisconnectedTemporarily => {
+							SyncStreamItem::DisconnectedTemporarily
+						}
 						StreamItem::MessageResult(handle, res) => {
 							if let Some(send) = self.commands.remove(&handle) {
 								let _ = send.send(res);
 							} else {
-								info!(self.con.logger, "Got untracked message result");
+								info!(
+									self.con.logger,
+									"Got untracked message result"
+								);
 							}
 							continue;
 						}
@@ -234,7 +262,10 @@ impl Stream for SyncConnection {
 							if let Some(send) = self.downloads.remove(&handle) {
 								let _ = send.send(Ok(res));
 							} else {
-								info!(self.con.logger, "Got untracked download");
+								info!(
+									self.con.logger,
+									"Got untracked download"
+								);
 							}
 							continue;
 						}
@@ -249,10 +280,15 @@ impl Stream for SyncConnection {
 						StreamItem::FileTransferFailed(handle, res) => {
 							if let Some(send) = self.downloads.remove(&handle) {
 								let _ = send.send(Err(res));
-							} else if let Some(send) = self.uploads.remove(&handle) {
+							} else if let Some(send) =
+								self.uploads.remove(&handle)
+							{
 								let _ = send.send(Err(res));
 							} else {
-								info!(self.con.logger, "Got untracked file transfer");
+								info!(
+									self.con.logger,
+									"Got untracked file transfer"
+								);
 							}
 							continue;
 						}
@@ -282,11 +318,19 @@ impl SyncConnection {
 
 impl SyncConnectionHandle {
 	/// Run a function on the connection.
-	pub async fn with_connection<T: Send + 'static, F: FnOnce(&mut SyncConnection) -> T + Send + 'static>(&mut self, f: F) -> Result<T> {
+	pub async fn with_connection<
+		T: Send + 'static,
+		F: FnOnce(&mut SyncConnection) -> T + Send + 'static,
+	>(
+		&mut self, f: F,
+	) -> Result<T> {
 		let (send, recv) = oneshot::channel();
-		self.send.send(SyncConMessage::RunFn(Box::new(move |con| {
-			let _ = send.send(f(con));
-		}))).await.map_err(|_| format_err!("Connection has gone"))?;
+		self.send
+			.send(SyncConMessage::RunFn(Box::new(move |con| {
+				let _ = send.send(f(con));
+			})))
+			.await
+			.map_err(|_| format_err!("Connection has gone"))?;
 		Ok(recv.await?)
 	}
 
@@ -295,7 +339,9 @@ impl SyncConnectionHandle {
 	#[cfg(feature = "unstable")]
 	pub async fn send_command(&mut self, arg: OutCommand) -> Result<()> {
 		let (send, recv) = oneshot::channel();
-		self.send.send(SyncConMessage::SendCommand(arg, send)).await
+		self.send
+			.send(SyncConMessage::SendCommand(arg, send))
+			.await
 			.map_err(|_| format_err!("Connection has gone"))?;
 		Ok(recv.await??)
 	}
@@ -303,7 +349,9 @@ impl SyncConnectionHandle {
 	/// This future resolves once the connection is connected to the server.
 	pub async fn wait_until_connected(&mut self) -> Result<()> {
 		let (send, recv) = oneshot::channel();
-		self.send.send(SyncConMessage::WaitConnected(send)).await
+		self.send
+			.send(SyncConMessage::WaitConnected(send))
+			.await
 			.map_err(|_| format_err!("Connection has gone"))?;
 		Ok(recv.await??)
 	}
@@ -359,7 +407,9 @@ impl SyncConnectionHandle {
 	/// ```
 	pub async fn disconnect(&mut self, arg: DisconnectOptions) -> Result<()> {
 		let (send, recv) = oneshot::channel();
-		self.send.send(SyncConMessage::Disconnect(arg, send)).await
+		self.send
+			.send(SyncConMessage::Disconnect(arg, send))
+			.await
 			.map_err(|_| format_err!("Connection has gone"))?;
 		Ok(recv.await??)
 	}
@@ -383,9 +433,16 @@ impl SyncConnectionHandle {
 	) -> Result<super::FileDownloadResult>
 	{
 		let (send, recv) = oneshot::channel();
-		self.send.send(SyncConMessage::DownloadFile {
-			channel_id, path, channel_password, seek_position, send,
-		}).await.map_err(|_| format_err!("Connection has gone"))?;
+		self.send
+			.send(SyncConMessage::DownloadFile {
+				channel_id,
+				path,
+				channel_password,
+				seek_position,
+				send,
+			})
+			.await
+			.map_err(|_| format_err!("Connection has gone"))?;
 		Ok(recv.await??)
 	}
 
@@ -410,9 +467,18 @@ impl SyncConnectionHandle {
 	) -> Result<super::FileUploadResult>
 	{
 		let (send, recv) = oneshot::channel();
-		self.send.send(SyncConMessage::UploadFile {
-			channel_id, path, channel_password, size, overwrite, resume, send,
-		}).await.map_err(|_| format_err!("Connection has gone"))?;
+		self.send
+			.send(SyncConMessage::UploadFile {
+				channel_id,
+				path,
+				channel_password,
+				size,
+				overwrite,
+				resume,
+				send,
+			})
+			.await
+			.map_err(|_| format_err!("Connection has gone"))?;
 		Ok(recv.await??)
 	}
 }

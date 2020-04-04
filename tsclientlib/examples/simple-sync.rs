@@ -3,10 +3,8 @@ use futures::prelude::*;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{
-	ConnectOptions, Connection, DisconnectOptions, Identity,
-};
 use tsclientlib::sync::SyncConnection;
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -53,9 +51,11 @@ async fn real_main() -> Result<()> {
 
 	handle.wait_until_connected().await?;
 
-	let welcome_message = handle.with_connection(|con| {
-		Result::<_>::Ok(con.get_state()?.server.welcome_message.clone())
-	}).await??;
+	let welcome_message = handle
+		.with_connection(|con| {
+			Result::<_>::Ok(con.get_state()?.server.welcome_message.clone())
+		})
+		.await??;
 	println!("Server welcome message: {}", sanitize(&welcome_message));
 
 	// Wait some time

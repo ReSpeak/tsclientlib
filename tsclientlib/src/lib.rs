@@ -30,11 +30,13 @@ use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
-use tsproto_packets::packets::{InAudioBuf, InCommandBuf, OutCommand};
+#[cfg(feature = "audio")]
+use tsproto_packets::packets::InAudioBuf;
+use tsproto_packets::packets::{InCommandBuf, OutCommand};
 
 #[cfg(feature = "audio")]
 pub mod audio;
-mod facades;
+pub mod facades;
 pub mod resolver;
 pub mod sync;
 
