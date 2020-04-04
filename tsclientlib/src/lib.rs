@@ -36,6 +36,7 @@ use tsproto_packets::packets::{InAudioBuf, InCommandBuf, OutCommand};
 pub mod audio;
 mod facades;
 pub mod resolver;
+pub mod sync;
 
 // The build environment of tsclientlib.
 git_testament::git_testament!(TESTAMENT);
@@ -910,9 +911,9 @@ impl Drop for Connection {
 impl<'a> Stream for EventStream<'a> {
 	type Item = Result<StreamItem>;
 	fn poll_next(
-		mut self: Pin<&mut Self>, cx: &mut Context,
+		mut self: Pin<&mut Self>, ctx: &mut Context,
 	) -> Poll<Option<Self::Item>> {
-		self.0.poll_next(cx)
+		self.0.poll_next(ctx)
 	}
 }
 
@@ -1021,7 +1022,9 @@ impl ConnectedConnection {
 				}
 			};
 			self.client.hand_back_buffer(cmd.into_buffer());
-			stream_items.push_back(Ok(StreamItem::ConEvents(events)));
+			if !events.is_empty() {
+				stream_items.push_back(Ok(StreamItem::ConEvents(events)));
+			}
 		}
 	}
 
