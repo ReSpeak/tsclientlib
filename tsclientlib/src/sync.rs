@@ -69,6 +69,12 @@ pub enum SyncStreamItem {
 	DisconnectedTemporarily,
 }
 
+/// A handle for a [`SyncConnection`] which can be sent across threads.
+///
+/// All actions like sending messages, downloading and uploading happens through
+/// a handle.
+///
+/// [`SyncConnection`]: struct.SyncConnection.html
 #[derive(Clone)]
 pub struct SyncConnectionHandle {
 	send: mpsc::Sender<SyncConMessage>,
@@ -314,21 +320,18 @@ impl SyncConnectionHandle {
 	/// ```no_run
 	/// # use futures::prelude::*;
 	/// # use tsclientlib::{Connection, ConnectOptions, DisconnectOptions, StreamItem};
+	/// # use tsclientlib::sync::SyncConnection;
 	///
 	/// # #[tokio::main]
 	/// # async fn main() {
-	/// let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	/// let con: SyncConnection = Connection::new(ConnectOptions::new("localhost")).unwrap().into();
+	/// let mut handle = con.get_handle();
+	/// tokio::spawn(con.for_each(|_| future::ready(())));
 	/// // Wait until connected
-	/// con.events()
-	///     // We are connected when we receive the first ConEvents
-	///     .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
-	///     .next()
-	///     .await
-	///     .unwrap();
+	/// handle.wait_until_connected().await.unwrap();
 	///
 	/// // Disconnect
-	/// con.disconnect(DisconnectOptions::new()).unwrap();
-	/// con.events().for_each(|_| future::ready(())).await;
+	/// handle.disconnect(DisconnectOptions::new()).await.unwrap();
 	/// # }
 	/// ```
 	///
@@ -337,24 +340,21 @@ impl SyncConnectionHandle {
 	/// ```no_run
 	/// # use futures::prelude::*;
 	/// # use tsclientlib::{Connection, ConnectOptions, DisconnectOptions, Reason, StreamItem};
+	/// # use tsclientlib::sync::SyncConnection;
 	///
 	/// # #[tokio::main]
 	/// # async fn main() {
-	/// let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	/// let con: SyncConnection = Connection::new(ConnectOptions::new("localhost")).unwrap().into();
+	/// let mut handle = con.get_handle();
+	/// tokio::spawn(con.for_each(|_| future::ready(())));
 	/// // Wait until connected
-	/// con.events()
-	///     // We are connected when we receive the first ConEvents
-	///     .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
-	///     .next()
-	///     .await
-	///     .unwrap();
+	/// handle.wait_until_connected().await.unwrap();
 	///
 	/// // Disconnect
 	/// let options = DisconnectOptions::new()
 	///     .reason(Reason::Clientdisconnect)
 	///     .message("Away for a while");
-	/// con.disconnect(options).unwrap();
-	/// con.events().for_each(|_| future::ready(())).await;
+	/// handle.disconnect(DisconnectOptions::new()).await.unwrap();
 	/// # }
 	/// ```
 	pub async fn disconnect(&mut self, arg: DisconnectOptions) -> Result<()> {
@@ -373,10 +373,9 @@ impl SyncConnectionHandle {
 	///
 	/// ```no_run
 	/// # use tsclientlib::ChannelId;
-	/// # let con: tsclientlib::Connection = panic!();
+	/// # let handle: tsclientlib::sync::SyncConnectionHandle = panic!();
 	/// # let id = 0;
-	/// let handle_future = con.download_file(ChannelId(0), &format!("/icon_{}", id), None, None);
-	/// # // TODO Show rest of download
+	/// let download = handle.download_file(ChannelId(0), format!("/icon_{}", id), None, None);
 	/// ```
 	pub async fn download_file(
 		&mut self, channel_id: ChannelId, path: String,
@@ -400,10 +399,9 @@ impl SyncConnectionHandle {
 	///
 	/// ```no_run
 	/// # use tsclientlib::ChannelId;
-	/// # let con: tsclientlib::Connection = panic!();
+	/// # let handle: tsclientlib::sync::SyncConnectionHandle = panic!();
 	/// # let size = 0;
-	/// let handle_future = con.upload_file(ChannelId(0), "/avatar", None, size, true, false);
-	/// # // TODO Show rest of upload
+	/// let upload = handle.upload_file(ChannelId(0), "/avatar".to_string(), None, size, true, false);
 	/// ```
 	pub async fn upload_file(
 		&mut self, channel_id: ChannelId, path: String,
