@@ -1,6 +1,7 @@
 version: 0.1.{build}
 image: Visual Studio 2019
 platform: x64
+build: off
 clone_depth: 1
 clone_folder: C:\projects\tsclientlib
 branches:
@@ -32,6 +33,7 @@ build_script:
 - |
   cd tsclientlib
   cargo check --no-default-features --features unstable
+  cd ..
 
 test_script:
 - cargo test
