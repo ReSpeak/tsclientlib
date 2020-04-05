@@ -40,7 +40,7 @@ pub enum PropertyId {
 			ids = format!("({})", ids);
 		}
 		#>
-	<#= struc.name #><#= get_property_name(p) #><#= ids #>,
+	<#= struc.name #><#= p.get_name() #><#= ids #>,
 <# }
 } #>
 }

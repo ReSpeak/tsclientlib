@@ -308,10 +308,6 @@ impl Connection {
 		unimplemented!("Files are not yet implemented")
 	}
 
-	fn get_chat_entry(&self, _sender: ClientId) -> Result<&ChatEntry> {
-		unimplemented!("Files are not yet implemented")
-	}
-
 	// Backing functions for MessageToBook declarations
 
 	fn return_false<T>(&self, _: T) -> Result<bool> { Ok(false) }

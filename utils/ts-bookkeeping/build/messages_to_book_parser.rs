@@ -55,7 +55,7 @@ fn gen_return_match(to: &[&Property]) -> String {
 }
 
 fn get_property_name(e: &Event, p: &Property) -> String {
-	format!("{}{}", e.book_struct.name, crate::events::get_property_name(p))
+	format!("{}{}", e.book_struct.name, p.get_name())
 }
 
 fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {

@@ -47,14 +47,6 @@ fn get_ids(structs: &[Struct], struc: &Struct) -> String {
 	res
 }
 
-pub fn get_property_name(p: &Property) -> &str {
-	if p.modifier.is_some() && p.name.ends_with('s') {
-		&p.name[..p.name.len() - 1]
-	} else {
-		&p.name
-	}
-}
-
 pub fn get_properties<'a>(
 	structs: &'a [Struct], s: &'a Struct,
 ) -> Vec<&'a Property> {

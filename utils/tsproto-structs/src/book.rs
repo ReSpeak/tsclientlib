@@ -113,6 +113,15 @@ impl Property {
 		res
 	}
 
+	/// Get the name without trailing `s`.
+	pub fn get_name(&self) -> &str {
+		if self.modifier.is_some() && self.name.ends_with('s') {
+			&self.name[..self.name.len() - 1]
+		} else {
+			&self.name
+		}
+	}
+
 	pub fn is_array(&self) -> bool {
 		self.modifier.as_ref().map(|s| s == "array").unwrap_or(false)
 	}

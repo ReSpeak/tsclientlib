@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 
 use crate::data::{
-	Channel, ChatEntry, Client, Connection, ConnectionClientData,
+	Channel, Client, Connection, ConnectionClientData,
 	ConnectionServerData, File, OptionalChannelData, OptionalClientData,
 	OptionalServerData, Server, ServerGroup,
 };
