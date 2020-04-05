@@ -29,7 +29,9 @@ install:
 
 build_script:
 - cargo check
-- cargo check --no-default-features --features unstable
+- |
+  cd tsclientlib
+  cargo check --no-default-features --features unstable
 
 test_script:
 - cargo test
