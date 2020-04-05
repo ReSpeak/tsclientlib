@@ -11,7 +11,7 @@ use anyhow::{format_err, Result};
 use futures::prelude::*;
 use slog::{error, info};
 use tokio::sync::{mpsc, oneshot};
-use ts_bookkeeping::{ChannelId, TsError};
+use ts_bookkeeping::ChannelId;
 #[cfg(feature = "audio")]
 use tsproto_packets::packets::InAudioBuf;
 #[cfg(feature = "unstable")]
@@ -22,7 +22,7 @@ use crate::{events, DisconnectOptions, StreamItem};
 enum SyncConMessage {
 	RunFn(Box<dyn FnOnce(&mut SyncConnection) + Send>),
 	#[cfg(feature = "unstable")]
-	SendCommand(OutCommand, oneshot::Sender<std::result::Result<(), TsError>>),
+	SendCommand(OutCommand, oneshot::Sender<Result<()>>),
 	WaitConnected(oneshot::Sender<Result<()>>),
 	Disconnect(DisconnectOptions, oneshot::Sender<Result<()>>),
 	DownloadFile {
@@ -88,7 +88,7 @@ pub struct SyncConnection {
 
 	commands: HashMap<
 		super::MessageHandle,
-		oneshot::Sender<std::result::Result<(), TsError>>,
+		oneshot::Sender<Result<()>>,
 	>,
 	connects: Vec<oneshot::Sender<Result<()>>>,
 	disconnects: Vec<oneshot::Sender<Result<()>>>,
@@ -249,7 +249,7 @@ impl Stream for SyncConnection {
 						}
 						StreamItem::MessageResult(handle, res) => {
 							if let Some(send) = self.commands.remove(&handle) {
-								let _ = send.send(res);
+								let _ = send.send(res.map_err(|e| e.into()));
 							} else {
 								info!(
 									self.con.logger,

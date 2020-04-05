@@ -1,5 +1,5 @@
 version: 0.1.{build}
-image: Ubuntu1804
+image: Ubuntu
 platform: x64
 clone_depth: 1
 branches:
@@ -14,18 +14,18 @@ environment:
 
 cache:
 - /home/appveyor/.cargo
-#- /home/appveyor/projects/tsclientlib/target
 
 install:
 - git submodule update --init --recursive
 - sudo apt-get update
-- sudo apt-get install -y libpcap-dev libsdl2-dev
+- sudo apt-get install -y libsdl2-dev libopus-dev
 - sh: curl https://sh.rustup.rs -sSf | sh -s -- -y
 - rustc -Vv
 - cargo -V
 
 build_script:
 - cargo check
+- cargo check --no-default-features --features unstable
 
 test_script:
 - cargo test
