@@ -494,7 +494,9 @@ impl PacketCodec {
 			algs::compress_and_split(con.is_client, packet)
 		} else {
 			// Set the inner packet id for voice packets
-			if p_type == PacketType::Voice || p_type == PacketType::VoiceWhisper
+			if con.is_client
+				&& (p_type == PacketType::Voice
+					|| p_type == PacketType::VoiceWhisper)
 			{
 				(&mut packet.content_mut()[..2])
 					.write_be(con.codec.outgoing_p_ids[type_i].packet_id)

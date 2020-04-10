@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use slog::{debug, Logger};
 use time::{Duration, OffsetDateTime};
 use tsproto_packets::packets::OutCommand;
-use tsproto_types::*;
 use tsproto_types::crypto::EccKeyPubP256;
+use tsproto_types::*;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
 use crate::messages::s2c::InMessage;

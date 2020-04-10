@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use futures::prelude::*;
-use slog::{info, o, Drain, Logger};
+use slog::{debug, info, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
@@ -98,7 +98,9 @@ async fn real_main() -> Result<()> {
 					),
 				});
 				let mut t2a = t2a.lock().unwrap();
-				t2a.play_packet((con_id, from), packet)?;
+				if let Err(e) = t2a.play_packet((con_id, from), packet) {
+					debug!(logger, "Failed to play packet"; "error" => %e);
+				}
 			}
 			Ok(())
 		});

@@ -216,7 +216,7 @@ pub struct InC2SInit<'a> {
 	data: C2SInitData<'a>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AudioData<'a> {
 	C2S {
 		id: u16,
@@ -743,7 +743,7 @@ impl<'a> AudioData<'a> {
 				}
 				let channel_count = content[3] as usize;
 				let client_count = content[4] as usize;
-				let channel_off = 4;
+				let channel_off = 5;
 				let client_off = channel_off + channel_count * 8;
 				let off = client_off + client_count * 2;
 				if content.len() < off {
@@ -813,7 +813,7 @@ impl<'a> AudioData<'a> {
 	pub fn flags(&self) -> Flags {
 		match self {
 			AudioData::C2S { .. } => Flags::empty(),
-			AudioData::C2SWhisper { .. } => Flags::NEWPROTOCOL,
+			AudioData::C2SWhisper { .. } => Flags::empty(),
 			AudioData::C2SWhisperNew { .. } => Flags::NEWPROTOCOL,
 			AudioData::S2C { .. } => Flags::empty(),
 			AudioData::S2CWhisper { .. } => Flags::empty(),
@@ -1319,5 +1319,74 @@ impl OutAudio {
 		}
 
 		res
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn test_audio_roundtrip(dir: Direction, data: &AudioData) {
+		let out_p = OutAudio::new(data);
+		let in_p = InPacket::try_new(dir, out_p.data()).unwrap();
+		let audio = in_p.into_audio().unwrap();
+		assert_eq!(audio.data(), data);
+	}
+
+	#[test]
+	fn test_audio_c2s() {
+		let data = AudioData::C2S {
+			codec: CodecType::OpusVoice,
+			id: 0x1234,
+			data: &[1, 2, 3],
+		};
+		test_audio_roundtrip(Direction::C2S, &data);
+	}
+
+	#[test]
+	fn test_audio_c2s_whisper() {
+		let data = AudioData::C2SWhisper {
+			codec: CodecType::OpusVoice,
+			channels: vec![4, 5, 6],
+			clients: vec![7, 8],
+			id: 0x1234,
+			data: &[1, 2, 3],
+		};
+		test_audio_roundtrip(Direction::C2S, &data);
+	}
+
+	#[test]
+	fn test_audio_c2s_whisper_new() {
+		let data = AudioData::C2SWhisperNew {
+			codec: CodecType::OpusVoice,
+			whisper_type: 3,
+			target: 4,
+			target_id: 5,
+			id: 0x1234,
+			data: &[1, 2, 3],
+		};
+		test_audio_roundtrip(Direction::C2S, &data);
+	}
+
+	#[test]
+	fn test_audio_s2c() {
+		let data = AudioData::S2C {
+			codec: CodecType::OpusVoice,
+			id: 0x1234,
+			from: 0x5678,
+			data: &[1, 2, 3],
+		};
+		test_audio_roundtrip(Direction::S2C, &data);
+	}
+
+	#[test]
+	fn test_audio_s2c_whisper() {
+		let data = AudioData::S2CWhisper {
+			codec: CodecType::OpusVoice,
+			id: 0x1234,
+			from: 0x5678,
+			data: &[1, 2, 3],
+		};
+		test_audio_roundtrip(Direction::S2C, &data);
 	}
 }

@@ -565,7 +565,7 @@ impl Client {
 			}
 		} else if name == b"notifyplugincmd" {
 			let mut is_getversion = false;
-			let sender = None;
+			let mut sender: Option<u16> = None;
 			for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
 				match item {
 					CommandItem::Argument(arg) => match arg.name() {
@@ -573,12 +573,17 @@ impl Client {
 							is_getversion =
 								arg.value().get_raw() == b"getversion"
 						}
+						b"invokerid" => {
+							if let Ok(id) = arg.value().get_parse::<Error, _>()
+							{
+								sender = Some(id);
+							}
+						}
 						_ => {}
 					},
 					CommandItem::NextCommand => {
 						if is_getversion && sender.is_some() {
 							let sender: u16 = sender.unwrap();
-							// TODO getversion
 							let mut version = format!(
 								"{} {}",
 								env!("CARGO_PKG_NAME"),

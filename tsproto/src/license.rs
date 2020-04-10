@@ -126,7 +126,9 @@ impl Licenses {
 		Self::parse_internal(data, true)
 	}
 
-	pub fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
+	pub fn parse_internal(
+		mut data: &[u8], check_expired: bool,
+	) -> Result<Self> {
 		let version = data[0];
 		if version != 1 {
 			return Err(format_err!("Unsupported version").into());
