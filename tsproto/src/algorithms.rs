@@ -9,9 +9,9 @@ use num_traits::ToPrimitive;
 use omnom::WriteExt;
 use quicklz::CompressionLevel;
 use ring::digest;
+use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 
 use crate::connection::CachedKey;
-use crate::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 use crate::BasicError;
 use tsproto_packets::packets::*;
 

@@ -10,12 +10,20 @@ build = "build/build.rs"
 edition = "2018"
 
 [dependencies]
+arrayref = "0.3"
 base64 = "0.11"
 bitflags = "1"
+curve25519-dalek = "2"
+flakebi-ring = "0.16.9"
+num-bigint = "0.2"
 num-traits = "0.2"
 num-derive = "0.3"
+rand = "0.7"
 serde = { version = "1", features = ["derive"] }
+simple_asn1 = "0.4"
+thiserror = "1"
 time = { version = "0.2", features = ["serde"] }
+untrusted = "0.7"
 
 [build-dependencies]
 heck = "0.3"

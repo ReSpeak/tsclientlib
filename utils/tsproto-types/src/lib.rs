@@ -6,6 +6,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+pub mod crypto;
 pub mod errors;
 pub mod versions;
 

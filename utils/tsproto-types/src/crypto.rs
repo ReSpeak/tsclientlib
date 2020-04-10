@@ -1,7 +1,6 @@
 //! This module contains cryptography related code.
 use std::{cmp, fmt, str};
 
-use anyhow::format_err;
 use arrayref::array_ref;
 use base64;
 use curve25519_dalek::constants;
@@ -10,13 +9,64 @@ use curve25519_dalek::scalar::Scalar;
 use num_bigint::{BigInt, Sign};
 use ring::digest;
 use ring::signature::KeyPair;
+use serde::{Deserialize, Serialize};
 use simple_asn1::ASN1Block;
+use thiserror::Error;
 use untrusted::Input;
 
-use crate::BasicError;
+type Result<T> = std::result::Result<T, Error>;
 
-type Result<T> = std::result::Result<T, BasicError>;
+#[derive(Debug, Clone, Error)]
+pub enum Error {
+	#[error("More than one ASN.1 block")]
+	TooManyAsn1Blocks,
+	#[error("Invalid ASN.1: Expected a public key, not a private key")]
+	UnexpectedPrivateKey,
+	#[error("Invalid ASN.1: Does not contain a private key")]
+	NoPrivateKey,
+	#[error("Invalid ASN.1: Public key not found")]
+	PublicKeyNotFound,
+	#[error("Invalid ASN.1: Expected a bitstring")]
+	ExpectedBitString,
+	#[error("Invalid ASN.1: Expected a sequence")]
+	ExpectedSequence,
+	#[error("Failed to generate key")]
+	KeyGenerationFailed,
+	#[error("Key data is empty")]
+	EmptyKeyData,
+	#[error("Any known methods to decode the key failed")]
+	KeyDecodeError,
+	#[error("Failed to parse short private key")]
+	NoShortKey,
+	#[error("Not a obfuscated TeamSpeak key")]
+	NoObfuscatedKey,
+	#[error("Failed to parse public key")]
+	ParsePublicKeyFailed,
+	#[error("Failed to complete key exchange")]
+	KeyExchangeFailed,
+	#[error("Failed to create signature")]
+	CreateSignatureFailed,
+	#[error("Wrong key length")]
+	WrongKeyLength,
+	#[error("Wrong signature")]
+	WrongSignature { key: EccKeyPubP256, data: Vec<u8>, signature: Vec<u8> },
 
+	#[error(transparent)]
+	Asn1Decode(#[from] simple_asn1::ASN1DecodeErr),
+	#[error(transparent)]
+	Asn1Encode(#[from] simple_asn1::ASN1EncodeErr),
+	#[error(transparent)]
+	Base64(#[from] base64::DecodeError),
+	#[error(transparent)]
+	Utf8(#[from] std::str::Utf8Error),
+}
+
+/// Xored onto saved identities in the TeamSpeak client settings file.
+const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
+	e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
+	62a4a017bb394833aa0983e6e";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KeyType {
 	Public,
 	Private,
@@ -25,12 +75,12 @@ pub enum KeyType {
 /// A public ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EccKeyPubP256(Vec<u8>);
 /// A private ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-#[derive(Clone)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EccKeyPrivP256(Vec<u8>);
 
 /// A public ecc key.
@@ -90,15 +140,12 @@ impl EccKeyPubP256 {
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
 		let blocks = simple_asn1::from_der(data)?;
 		if blocks.len() != 1 {
-			return Err(format_err!("More than one ASN.1 block").into());
+			return Err(Error::TooManyAsn1Blocks);
 		}
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
 			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
 				if *len != 1 || content[0] & 0x80 != 0 {
-					return Err(format_err!(
-						"Expected a public key, not a private key"
-					)
-					.into());
+					return Err(Error::UnexpectedPrivateKey);
 				}
 				if let (
 					Some(ASN1Block::Integer(_, x)),
@@ -115,13 +162,13 @@ impl EccKeyPubP256 {
 					data.extend_from_slice(&y.to_bytes_be().1);
 					Ok(EccKeyPubP256(data))
 				} else {
-					return Err(format_err!("Public key not found").into());
+					return Err(Error::PublicKeyNotFound);
 				}
 			} else {
-				return Err(format_err!("Expected a bitstring").into());
+				return Err(Error::ExpectedBitString);
 			}
 		} else {
-			return Err(format_err!("Expected a sequence").into());
+			return Err(Error::ExpectedSequence);
 		}
 	}
 
@@ -136,7 +183,7 @@ impl EccKeyPubP256 {
 		let pubkey_y =
 			BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
 
-		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0]),
 			ASN1Block::Integer(0, 32.into()),
 			ASN1Block::Integer(0, pubkey_x),
@@ -173,12 +220,15 @@ impl EccKeyPubP256 {
 			&ring::signature::ECDSA_P256_SHA256_ASN1,
 			&self.0,
 		);
-		key.verify(data, signature).map_err(|_| BasicError::WrongSignature {
+		key.verify(data, signature).map_err(|_| Error::WrongSignature {
 			key: self.clone(),
 			data: data.to_vec(),
 			signature: signature.to_vec(),
 		})
 	}
+
+	// For the bookkeeping
+	pub fn as_ref(&self) -> &Self { self }
 }
 
 impl EccKeyPrivP256 {
@@ -189,14 +239,14 @@ impl EccKeyPrivP256 {
 				&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 				&ring::rand::SystemRandom::new(),
 			)
-			.map_err(|_| format_err!("Failed to generate private key"))?,
+			.map_err(|_| Error::KeyGenerationFailed)?,
 		))
 	}
 
 	/// Try to import the key from any of the known formats.
 	pub fn import(data: &[u8]) -> Result<Self> {
 		if data.is_empty() {
-			return Err(format_err!("Key data is empty").into());
+			return Err(Error::EmptyKeyData);
 		}
 
 		if let Ok(s) = str::from_utf8(data) {
@@ -210,7 +260,7 @@ impl EccKeyPrivP256 {
 		if let Ok(r) = Self::from_short(data.to_vec()) {
 			return Ok(r);
 		}
-		Err(format_err!("Any known methods to decode the key failed").into())
+		Err(Error::KeyDecodeError)
 	}
 
 	/// Try to import the key from any of the known formats.
@@ -223,7 +273,7 @@ impl EccKeyPrivP256 {
 		if let Ok(r) = Self::from_ts_obfuscated(s) {
 			return Ok(r);
 		}
-		Err(format_err!("Any known methods to decode the key failed").into())
+		Err(Error::KeyDecodeError)
 	}
 
 	/// The shortest format of a private key.
@@ -235,7 +285,7 @@ impl EccKeyPrivP256 {
 			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 			Input::from(&data),
 		)
-		.map_err(|_| format_err!("Failed to parse private key"))?;
+		.map_err(|_| Error::NoShortKey)?;
 		Ok(Self(data))
 	}
 
@@ -262,9 +312,7 @@ impl EccKeyPrivP256 {
 	pub fn from_ts_obfuscated(data: &str) -> Result<Self> {
 		let mut data = base64::decode(data)?;
 		if data.len() < 20 {
-			return Err(
-				format_err!("Not a known obfuscated TeamSpeak key").into()
-			);
+			return Err(Error::NoObfuscatedKey);
 		}
 		// Hash everything until the first 0 byte, starting after the first 20
 		// bytes.
@@ -285,7 +333,7 @@ impl EccKeyPrivP256 {
 		// Xor first 100 bytes with a static value
 		#[allow(clippy::needless_range_loop)]
 		for i in 0..cmp::min(data.len(), 100) {
-			data[i] ^= crate::IDENTITY_OBFUSCATION[i];
+			data[i] ^= IDENTITY_OBFUSCATION[i];
 		}
 		Self::from_ts(str::from_utf8(&data)?)
 	}
@@ -304,34 +352,29 @@ impl EccKeyPrivP256 {
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
 		let blocks = simple_asn1::from_der(data)?;
 		if blocks.len() != 1 {
-			return Err(format_err!("More than one ASN.1 block").into());
+			return Err(Error::TooManyAsn1Blocks);
 		}
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
 			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
 				if (*len != 1 && *len != 2) || content[0] & 0x80 == 0 {
-					return Err(format_err!(
-						"Does not contain a private key ({}, {:?})",
-						len,
-						content
-					)
-					.into());
+					return Err(Error::NoPrivateKey);
 				}
 				if *len == 1 {
 					if let Some(ASN1Block::Integer(_, i)) = blocks.get(4) {
 						Self::from_short(i.to_bytes_be().1)
 					} else {
-						return Err(format_err!("Private key not found").into());
+						return Err(Error::NoPrivateKey);
 					}
 				} else if let Some(ASN1Block::Integer(_, i)) = blocks.get(2) {
 					Self::from_short(i.to_bytes_be().1)
 				} else {
-					return Err(format_err!("Private key not found").into());
+					return Err(Error::NoPrivateKey);
 				}
 			} else {
-				return Err(format_err!("Expected a bitstring").into());
+				return Err(Error::ExpectedBitString);
 			}
 		} else {
-			return Err(format_err!("Expected a sequence").into());
+			return Err(Error::ExpectedSequence);
 		}
 	}
 
@@ -346,7 +389,7 @@ impl EccKeyPrivP256 {
 		// Xor first 100 bytes with a static value
 		#[allow(clippy::needless_range_loop)]
 		for i in 0..cmp::min(data.len(), 100) {
-			data[i] ^= crate::IDENTITY_OBFUSCATION[i];
+			data[i] ^= IDENTITY_OBFUSCATION[i];
 		}
 
 		// Hash everything until the first 0 byte, starting after the first 20
@@ -377,7 +420,7 @@ impl EccKeyPrivP256 {
 
 		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0);
 
-		Ok(::simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0x80]),
 			ASN1Block::Integer(0, 32.into()),
 			ASN1Block::Integer(0, pubkey_x),
@@ -401,10 +444,10 @@ impl EccKeyPrivP256 {
 		use ring::ec::suite_b::ecdh;
 
 		let seed = Seed::from_p256_bytes(Input::from(&self.0))
-			.map_err(|_| format_err!("Failed to parse public key"))?;
+			.map_err(|_| Error::ParsePublicKeyFailed)?;
 		let mut res = vec![0; 32];
 		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))
-			.map_err(|_| format_err!("Failed to complete key exchange"))?;
+			.map_err(|_| Error::KeyExchangeFailed)?;
 		Ok(res)
 	}
 
@@ -412,7 +455,7 @@ impl EccKeyPrivP256 {
 		let key = self.to_ring();
 		Ok(key
 			.sign(&ring::rand::SystemRandom::new(), data)
-			.map_err(|_| format_err!("Failed to create signature"))?
+			.map_err(|_| Error::CreateSignatureFailed)?
 			.as_ref()
 			.to_vec())
 	}
@@ -434,7 +477,7 @@ impl EccKeyPubEd25519 {
 	pub fn from_base64(data: &str) -> Result<Self> {
 		let decoded = base64::decode(data)?;
 		if decoded.len() != 32 {
-			return Err(format_err!("Wrong key length").into());
+			return Err(Error::WrongKeyLength);
 		}
 		Ok(Self::from_bytes(*array_ref!(decoded, 0, 32)))
 	}
@@ -454,7 +497,7 @@ impl EccKeyPrivEd25519 {
 	pub fn from_base64(data: &str) -> Result<Self> {
 		let decoded = base64::decode(data)?;
 		if decoded.len() != 32 {
-			return Err(format_err!("Wrong key length").into());
+			return Err(Error::WrongKeyLength);
 		}
 		Ok(Self::from_bytes(*array_ref!(decoded, 0, 32)))
 	}

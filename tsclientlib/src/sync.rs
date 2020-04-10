@@ -86,10 +86,7 @@ pub struct SyncConnection {
 	recv: mpsc::Receiver<SyncConMessage>,
 	send: mpsc::Sender<SyncConMessage>,
 
-	commands: HashMap<
-		super::MessageHandle,
-		oneshot::Sender<Result<()>>,
-	>,
+	commands: HashMap<super::MessageHandle, oneshot::Sender<Result<()>>>,
 	connects: Vec<oneshot::Sender<Result<()>>>,
 	disconnects: Vec<oneshot::Sender<Result<()>>>,
 	downloads: HashMap<

@@ -8,6 +8,7 @@ use slog::{debug, Logger};
 use time::{Duration, OffsetDateTime};
 use tsproto_packets::packets::OutCommand;
 use tsproto_types::*;
+use tsproto_types::crypto::EccKeyPubP256;
 
 use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
 use crate::messages::s2c::InMessage;
@@ -46,8 +47,7 @@ macro_rules! copy_attrs {
 }
 
 impl Connection {
-	pub fn new(server_uid: Uid, msg: &s2c::InInitServer) -> Self {
-		// TODO Use server public key instead of uid
+	pub fn new(public_key: EccKeyPubP256, msg: &s2c::InInitServer) -> Self {
 		let packet = msg.iter().next().unwrap();
 		Self {
 			own_client: packet.client_id,
@@ -74,8 +74,9 @@ impl Connection {
 				temp_channel_default_delete_delay,
 				;
 
-				uid: server_uid.clone(),
+				public_key: public_key,
 				name: packet.name.clone(),
+				nickname: packet.nickname.clone(),
 				platform: packet.server_platform.clone(),
 				version: packet.server_version.clone(),
 				created: packet.server_created,

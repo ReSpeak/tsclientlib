@@ -47,7 +47,7 @@ impl Connection {
 
 				if p.opt && (p.type_s == "str" || p.type_s == "Uid") {
 					#>.as_ref().map(|r| r.as_ref())<#
-				} else if p.type_s == "str" || p.type_s == "Uid" || p.type_s == "TalkPowerRequest" {
+				} else if p.type_s == "str" || p.type_s == "Uid" || ["TalkPowerRequest", "EccKeyPubP256"].contains(&p.type_s.as_str()) {
 					#>.as_ref()<#
 				} #>),
 <# }

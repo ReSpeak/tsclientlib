@@ -5,8 +5,8 @@ use slog::{info, o, Drain, Level, Logger};
 use tokio::net::UdpSocket;
 use tsproto::algorithms as algs;
 use tsproto::client::Client;
-use tsproto::crypto::EccKeyPrivP256;
 use tsproto_packets::packets::*;
+use tsproto_types::crypto::EccKeyPrivP256;
 
 pub fn create_logger() -> Logger {
 	let decorator = slog_term::TermDecorator::new().build();

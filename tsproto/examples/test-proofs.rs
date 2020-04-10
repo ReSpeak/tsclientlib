@@ -1,5 +1,5 @@
 use structopt::StructOpt;
-use tsproto::crypto::EccKeyPubP256;
+use tsproto_types::crypto::EccKeyPubP256;
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]

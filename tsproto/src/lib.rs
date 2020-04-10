@@ -18,11 +18,11 @@ use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 use tsproto_packets::packets;
+use tsproto_types::crypto::EccKeyPrivP256;
 
 pub mod algorithms;
 pub mod client;
 pub mod connection;
-pub mod crypto;
 pub mod license;
 pub mod log;
 pub mod packet_codec;
@@ -30,7 +30,6 @@ pub mod resend;
 pub mod utils;
 
 use algorithms as algs;
-use crypto::{EccKeyPrivP256, EccKeyPubP256};
 
 // The build environment of tsproto.
 git_testament::git_testament!(TESTAMENT);
@@ -47,7 +46,7 @@ type Result<T> = std::result::Result<T, Error>;
 /// `algorithms::compress_and_split`.
 /// We pick the ethernet MTU for possible future compatibility, it is unlikely
 /// that a packet will get bigger.
-const MAX_UDP_PACKET_LENGTH: usize = 1500;
+pub const MAX_UDP_PACKET_LENGTH: usize = 1500;
 
 /// The maximum number of bytes for a fragmented packet.
 #[allow(clippy::unreadable_literal)]
@@ -70,10 +69,6 @@ const ROOT_KEY: [u8; 32] = [
 	0x8f, 0x68, 0xb3, 0xdc, 0x75, 0x55, 0xb2, 0x9d, 0xcc, 0xec, 0x73, 0xcd,
 	0x18, 0x75, 0x0f, 0x99, 0x38, 0x12, 0x40, 0x8a,
 ];
-/// Xored onto saved identities in the TeamSpeak client settings file.
-const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
-	e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
-	62a4a017bb394833aa0983e6e";
 
 /// The maximum amount of ack pachets that a connection intermediately stores.
 ///
@@ -85,11 +80,9 @@ const UDP_SINK_CAPACITY: usize = 50;
 #[non_exhaustive]
 pub enum BasicError {
 	#[error(transparent)]
-	Asn1Decode(#[from] simple_asn1::ASN1DecodeErr),
-	#[error(transparent)]
-	Asn1Encode(#[from] simple_asn1::ASN1EncodeErr),
-	#[error(transparent)]
 	Base64(#[from] base64::DecodeError),
+	#[error(transparent)]
+	Crypto(#[from] tsproto_types::crypto::Error),
 	#[error(transparent)]
 	Io(#[from] std::io::Error),
 	#[error(transparent)]
@@ -123,8 +116,6 @@ pub enum BasicError {
 	WrongMac { p_type: packets::PacketType, generation_id: u32, packet_id: u16 },
 	#[error("Maximum length exceeded for {0}")]
 	MaxLengthExceeded(String),
-	#[error("Wrong signature")]
-	WrongSignature { key: EccKeyPubP256, data: Vec<u8>, signature: Vec<u8> },
 	#[error(transparent)]
 	Other(#[from] Error),
 }

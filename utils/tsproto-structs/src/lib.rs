@@ -89,8 +89,8 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 		String::from("Duration")
 	} else if t == "ClientUid" {
 		if is_ref { String::from("UidRef") } else { String::from("Uid") }
-	} else if t == "TalkPowerRequest" && is_ref {
-		String::from("&TalkPowerRequest")
+	} else if ["TalkPowerRequest", "EccKeyPubP256"].contains(&t) && is_ref {
+		format!("&{}", t)
 	} else if t == "Ts3ErrorCode" {
 		String::from("Error")
 	} else if t == "PermissionId" {

@@ -85,7 +85,7 @@ pub struct In<#= msg.name #>Part {
 impl InMessageTrait for In<#= msg.name #> {
 	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self> {
 		// TODO newprotocol
-		if <#= if msg_group.default.np { "!" } else { "" } #>header.flags().contains(Flags::NEWPROTOCOL) { return Err(ParseError::WrongNewprotocol(<#= if msg_group.default.np { "false" } else { "true" } #>)); }
+		//if <#= if msg_group.default.np { "!" } else { "" } #>header.flags().contains(Flags::NEWPROTOCOL) { return Err(ParseError::WrongNewprotocol(<#= if msg_group.default.np { "false" } else { "true" } #>)); }
 		if header.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> { return Err(ParseError::WrongPacketType(header.packet_type())); }
 		<# if !msg_group.default.s2c { #>
 		if header.direction() == Direction::S2C { return Err(ParseError::WrongDirection(header.direction())); }

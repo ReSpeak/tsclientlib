@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt;
 use std::io::prelude::*;
 use std::str;
 
@@ -11,8 +12,8 @@ use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use ring::digest;
 use time::OffsetDateTime;
+use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 
-use crate::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 use crate::Result;
 
 pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
@@ -24,7 +25,7 @@ pub enum LicenseKey {
 	Private(EccKeyPrivEd25519),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct License {
 	pub key: LicenseKey,
 	pub not_valid_before: OffsetDateTime,
@@ -125,7 +126,7 @@ impl Licenses {
 		Self::parse_internal(data, true)
 	}
 
-	fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
+	pub fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
 		let version = data[0];
 		if version != 1 {
 			return Err(format_err!("Unsupported version").into());
@@ -415,6 +416,21 @@ impl License {
 		};
 		let hash_key = self.get_hash_key();
 		Ok(EccKeyPrivEd25519(priv_key * hash_key + parent_key.0))
+	}
+}
+
+impl fmt::Debug for License {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		write!(f, "License {{ key: ")?;
+		match &self.key {
+			LicenseKey::Public(k) => write!(f, "{:?}", k)?,
+			LicenseKey::Private(k) => write!(f, "{:?}", k)?,
+		}
+		let from = self.not_valid_before.format("%F %T");
+		let to = self.not_valid_after.format("%F %T");
+		write!(f, ", valid_between: {} - {}, ", from, to)?;
+		write!(f, "inner: {:?} }}", self.inner)?;
+		Ok(())
 	}
 }
 

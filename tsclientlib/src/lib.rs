@@ -30,6 +30,7 @@ use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
+use tsproto::resend::ResenderState;
 #[cfg(feature = "audio")]
 use tsproto_packets::packets::InAudioBuf;
 use tsproto_packets::packets::{InCommandBuf, OutCommand};
@@ -459,6 +460,12 @@ impl Connection {
 				hardware_id: "923f136fb1e22ae6ce95e60255529c00,\
 				              d13231b1bc33edfecfb9169cc7a63bcc",
 				badges: None,
+				signed_badges: None,
+				integrations: None,
+				active_integrations_info: None,
+				my_team_speak_avatar: None,
+				my_team_speak_id: None,
+				security_hash: None,
 			},
 		));
 
@@ -495,8 +502,7 @@ impl Connection {
 				return Err(ConnectError::TsError(e.id));
 			}
 			InMessage::InitServer(initserver) => {
-				// Get uid of server
-				let uid = {
+				let public_key = {
 					let params = if let Some(r) = &client.params {
 						r
 					} else {
@@ -507,14 +513,11 @@ impl Connection {
 						.into());
 					};
 
-					params
-						.public_key
-						.get_uid_no_base64()
-						.map_err(Error::from)?
+					params.public_key.clone()
 				};
 
 				// Create connection
-				let data = data::Connection::new(Uid(uid), &initserver);
+				let data = data::Connection::new(public_key, &initserver);
 
 				Ok((client, data))
 			}
@@ -599,7 +602,9 @@ impl Connection {
 
 	/// Returns the public key of the server, fails if disconnected.
 	#[cfg(feature = "unstable")]
-	pub fn get_server_key(&self) -> Result<tsproto::crypto::EccKeyPubP256> {
+	pub fn get_server_key(
+		&self,
+	) -> Result<tsproto_types::crypto::EccKeyPubP256> {
 		self.get_tsproto_client().and_then(|c| {
 			if let Some(params) = &c.params {
 				Ok(params.public_key.clone())
@@ -839,6 +844,14 @@ impl Connection {
 					Poll::Pending => break Poll::Pending,
 					Poll::Ready(None) => break Poll::Ready(None),
 					Poll::Ready(Some(Err(e))) => {
+						// Check if we were disconnecting
+						let state = con.client.resender.get_state();
+						if state == ResenderState::Disconnected
+							|| state == ResenderState::Disconnecting
+						{
+							break Poll::Ready(None);
+						}
+
 						warn!(self.logger, "Connection failed, reconnecting";
 							"error" => ?e);
 						// Reconnect

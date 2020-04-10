@@ -362,7 +362,9 @@ impl Resender {
 	}
 
 	/// If the send queue is empty.
-	pub fn is_empty(&self) -> bool { self.send_queue.is_empty() }
+	pub fn is_empty(&self) -> bool {
+		self.full_send_queue.iter().all(|q| q.is_empty())
+	}
 
 	/// Take the first packets from `to_send_ordered` and put them into
 	/// `to_send`.

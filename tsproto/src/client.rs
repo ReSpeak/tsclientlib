@@ -19,10 +19,10 @@ use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
 use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
+use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 
 use crate::algorithms as algs;
 use crate::connection::{ConnectedParams, Connection, Socket, StreamItem};
-use crate::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
 use crate::license::Licenses;
 use crate::resend::{PacketId, ResenderState};
 use crate::Result;
@@ -518,7 +518,8 @@ impl Client {
 							b"aclid" => {
 								c_id = Some(
 									arg.value().get_parse::<Error, u16>()?,
-								)
+								);
+								break;
 							}
 							_ => {}
 						},
@@ -816,10 +817,10 @@ mod tests {
 				PartialPacketId { generation_id: 0, packet_id: 1 };
 
 			// Set params
-			con.params =
-				Some(ConnectedParams::new(other_key, [0; 64], [0x42; 8]));
-			let params = con.params.as_mut().unwrap();
+			let mut params =
+				ConnectedParams::new(other_key, [0; 64], [0x42; 8]);
 			params.c_id = 1;
+			con.params = Some(params);
 		}
 	}
 

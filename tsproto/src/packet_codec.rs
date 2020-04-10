@@ -63,7 +63,10 @@ impl PacketCodec {
 			}
 			if !con.is_client {
 				let c_id = packet.header().client_id().unwrap();
-				if c_id != params.c_id {
+				// Accept any client id for the first few acks
+				let is_first_ack =
+					gen_id == 0 && id <= 3 && p_type == PacketType::Ack;
+				if c_id != params.c_id && !is_first_ack {
 					con.stream_items.push_back(StreamItem::Error(
 						BasicError::WrongClientId(c_id).into(),
 					));
@@ -203,6 +206,19 @@ impl PacketCodec {
 										cx,
 										PacketType::Command,
 										2,
+									);
+								} else if !con.is_client
+									&& c.data()
+										.packet()
+										.content()
+										.starts_with(b"clientek ")
+								{
+									// clientek acks initivexpand2
+									Resender::ack_packet(
+										con,
+										cx,
+										PacketType::Command,
+										0,
 									);
 								}
 								StreamItem::Command(c)

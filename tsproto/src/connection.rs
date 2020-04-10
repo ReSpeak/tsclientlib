@@ -15,8 +15,8 @@ use slog::{o, Logger};
 use tokio::net::UdpSocket;
 use tsproto_packets::packets::*;
 use tsproto_packets::HexSlice;
+use tsproto_types::crypto::EccKeyPubP256;
 
-use crate::crypto::EccKeyPubP256;
 use crate::packet_codec::PacketCodec;
 use crate::resend::{PacketId, PartialPacketId, Resender, ResenderState};
 use crate::{Error, Result, MAX_UDP_PACKET_LENGTH, UDP_SINK_CAPACITY};
@@ -166,7 +166,7 @@ impl Connection {
 	{
 		let logger = logger.new(
 			o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),
-			"remote_addr" => address.to_string()),
+				"remote_addr" => address.to_string()),
 		);
 
 		let mut res = Self {
