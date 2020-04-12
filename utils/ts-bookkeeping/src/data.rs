@@ -67,7 +67,6 @@ impl Connection {
 				hostbutton_tooltip,
 				hostbutton_url,
 				hostbutton_gfx_url,
-				phonetic_name,
 				hostbanner_mode,
 				protocol_version,
 				icon_id,
@@ -75,7 +74,8 @@ impl Connection {
 				;
 
 				public_key: public_key,
-				name: packet.name.clone(),
+				name: packet.server_name.clone(),
+				phonetic_name: packet.server_phonetic_name.clone(),
 				nickname: packet.nickname.clone(),
 				platform: packet.server_platform.clone(),
 				version: packet.server_version.clone(),
@@ -194,7 +194,7 @@ impl Connection {
 		})
 	}
 	fn add_server_group(
-		&mut self, group: ServerGroupId, r: ServerGroup,
+		&mut self, group: ServerGroupId, r: ServerGroup, _: &mut Vec<Event>,
 	) -> Result<Option<ServerGroup>> {
 		Ok(self.groups.insert(group, r))
 	}
@@ -226,11 +226,11 @@ impl Connection {
 			.ok_or_else(|| format_err!("Client {} not found", client).into())
 	}
 	fn add_client(
-		&mut self, client: ClientId, r: Client,
+		&mut self, client: ClientId, r: Client, _: &mut Vec<Event>,
 	) -> Result<Option<Client>> {
 		Ok(self.clients.insert(client, r))
 	}
-	fn remove_client(&mut self, client: ClientId) -> Result<Option<Client>> {
+	fn remove_client(&mut self, client: ClientId, _: &mut Vec<Event>) -> Result<Option<Client>> {
 		Ok(self.clients.remove(&client))
 	}
 
@@ -246,7 +246,7 @@ impl Connection {
 		}
 	}
 	fn add_connection_client_data(
-		&mut self, client: ClientId, r: ConnectionClientData,
+		&mut self, client: ClientId, r: ConnectionClientData, _: &mut Vec<Event>,
 	) -> Result<Option<ConnectionClientData>> {
 		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
@@ -278,17 +278,17 @@ impl Connection {
 			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
 	}
 	fn add_channel(
-		&mut self, channel: ChannelId, r: Channel,
+		&mut self, channel: ChannelId, r: Channel, events: &mut Vec<Event>,
 	) -> Result<Option<Channel>> {
-		self.channel_order_insert(r.id, r.order, r.parent);
+		self.channel_order_insert(r.id, r.order, r.parent, events);
 		Ok(self.channels.insert(channel, r))
 	}
 	fn remove_channel(
-		&mut self, channel: ChannelId,
+		&mut self, channel: ChannelId, events: &mut Vec<Event>,
 	) -> Result<Option<Channel>> {
 		let old = self.channels.remove(&channel);
 		if let Some(ch) = &old {
-			self.channel_order_remove(ch.id, ch.order);
+			self.channel_order_remove(ch.id, ch.order, events);
 		}
 		Ok(old)
 	}
@@ -311,12 +311,12 @@ impl Connection {
 
 	// Backing functions for MessageToBook declarations
 
-	fn return_false<T>(&self, _: T) -> Result<bool> { Ok(false) }
-	fn return_none<T, O>(&self, _: T) -> Result<Option<O>> { Ok(None) }
+	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> { Ok(false) }
+	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> { Ok(None) }
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
-		&self, msg: &s2c::InChannelCreatedPart,
+		&self, msg: &s2c::InChannelCreatedPart, _: &mut Vec<Event>,
 	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
 		let ch = max_clients!(msg);
 		let ch_fam = if msg.is_max_family_clients_unlimited {
@@ -381,7 +381,7 @@ impl Connection {
 		Ok(())
 	}
 	fn max_clients_cl_fun(
-		&self, msg: &s2c::InChannelListPart,
+		&self, msg: &s2c::InChannelListPart, _: &mut Vec<Event>,
 	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
 		let max_clients: i32 = msg.max_clients;
 		let ch = if msg.is_max_clients_unlimited {
@@ -408,7 +408,7 @@ impl Connection {
 	}
 
 	fn channel_type_cc_fun(
-		&self, msg: &s2c::InChannelCreatedPart,
+		&self, msg: &s2c::InChannelCreatedPart, _: &mut Vec<Event>,
 	) -> Result<ChannelType> {
 		if msg.is_permanent.unwrap_or_default() {
 			Ok(ChannelType::Permanent)
@@ -443,7 +443,7 @@ impl Connection {
 	}
 
 	fn channel_type_cl_fun(
-		&self, msg: &s2c::InChannelListPart,
+		&self, msg: &s2c::InChannelListPart, _: &mut Vec<Event>,
 	) -> Result<ChannelType> {
 		if msg.is_permanent {
 			Ok(ChannelType::Permanent)
@@ -455,13 +455,13 @@ impl Connection {
 	}
 
 	fn away_cev_fun(
-		&self, msg: &s2c::InClientEnterViewPart,
+		&self, msg: &s2c::InClientEnterViewPart, _: &mut Vec<Event>,
 	) -> Result<Option<String>> {
 		if msg.is_away { Ok(Some(msg.away_message.clone())) } else { Ok(None) }
 	}
 
 	fn client_type_cev_fun(
-		&self, msg: &s2c::InClientEnterViewPart,
+		&self, msg: &s2c::InClientEnterViewPart, _: &mut Vec<Event>,
 	) -> Result<ClientType> {
 		if msg.uid.is_server_admin() {
 			if let ClientType::Query { .. } = msg.client_type {
@@ -493,7 +493,7 @@ impl Connection {
 	}
 
 	fn talk_power_cev_fun(
-		&self, msg: &s2c::InClientEnterViewPart,
+		&self, msg: &s2c::InClientEnterViewPart, _: &mut Vec<Event>,
 	) -> Result<Option<TalkPowerRequest>> {
 		if msg.talk_power_request_time.timestamp() > 0 {
 			Ok(Some(TalkPowerRequest {
@@ -537,7 +537,7 @@ impl Connection {
 	}
 
 	fn address_fun(
-		&self, msg: &s2c::InClientConnectionInfoPart,
+		&self, msg: &s2c::InClientConnectionInfoPart, _: &mut Vec<Event>,
 	) -> Result<Option<SocketAddr>> {
 		if !msg.ip.is_empty() {
 			Ok(Some(SocketAddr::new(msg.ip.parse()?, msg.port)))
@@ -594,12 +594,18 @@ impl Connection {
 
 	fn channel_order_remove(
 		&mut self, channel_id: ChannelId, channel_order: ChannelId,
+		events: &mut Vec<Event>,
 	) {
 		// [ C:7 | O:_ ]
 		// [ C:5 | O:7 ] ─>X
 		// [ C:_ | O:5 ]     (Upd: O -> 7)
 		self.channels.values_mut().any(|c| {
 			if c.order == channel_id && c.id != channel_id {
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ChannelOrder(c.id),
+					old: PropertyValue::ChannelId(c.order),
+					invoker: None,
+				});
 				c.order = channel_order;
 				true
 			} else {
@@ -610,7 +616,7 @@ impl Connection {
 
 	fn channel_order_insert(
 		&mut self, channel_id: ChannelId, channel_order: ChannelId,
-		channel_parent: ChannelId,
+		channel_parent: ChannelId, events: &mut Vec<Event>,
 	)
 	{
 		// [ C:7 | O:_ ]
@@ -623,6 +629,11 @@ impl Connection {
 				&& c.parent == channel_parent
 				&& c.id != channel_id
 			{
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ChannelOrder(c.id),
+					old: PropertyValue::ChannelId(c.order),
+					invoker: None,
+				});
 				c.order = channel_id;
 				true
 			} else {
@@ -632,9 +643,10 @@ impl Connection {
 	}
 
 	fn channel_order_cc_fun(
-		&mut self, msg: &s2c::InChannelCreatedPart,
+		&mut self, msg: &s2c::InChannelCreatedPart, events: &mut Vec<Event>,
 	) -> Result<ChannelId> {
-		self.channel_order_insert(msg.channel_id, msg.order, msg.parent_id);
+		self.channel_order_insert(msg.channel_id, msg.order, msg.parent_id,
+			events);
 		Ok(msg.order)
 	}
 
@@ -675,18 +687,21 @@ impl Connection {
 			let channel = self.get_mut_channel(channel_id)?;
 			old_order = channel.order;
 			new_parent = parent.unwrap_or(channel.parent);
-			channel.order = new_order.unwrap_or(old_order);
+			if let Some(order) = new_order {
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ChannelOrder(channel.id),
+					old: PropertyValue::ChannelId(channel.order),
+					invoker: None,
+				});
+				channel.order = order;
+			}
 		}
-		events.push(Event::PropertyChanged {
-			id: PropertyId::ChannelOrder(channel_id),
-			old: PropertyValue::ChannelId(old_order),
-			invoker: None,
-		});
-		self.channel_order_remove(channel_id, old_order);
+		self.channel_order_remove(channel_id, old_order, events);
 		self.channel_order_insert(
 			channel_id,
 			new_order.unwrap_or(old_order),
 			new_parent,
+			events,
 		);
 		Ok(())
 	}

@@ -16,7 +16,6 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 /// An event gets fired when something in the data structure of a connection
 /// changes or something happens like we receive a text message or get poked.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[non_exhaustive]
 pub enum Event {
 	/// The object with this id was added.
 	///

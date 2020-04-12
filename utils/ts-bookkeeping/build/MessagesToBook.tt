@@ -51,7 +51,7 @@ impl Connection {
 					ids.clone()
 				};
 				#>
-				let old = self.<#= function_name #>(<#= ids #>)?
+				let old = self.<#= function_name #>(<#= ids #>, &mut events)?
 					.ok_or_else(|| format_err!("<#= book_name #> \
 						should be removed but does not exist"))?;
 				events.push(Event::PropertyRemoved {
@@ -148,7 +148,7 @@ impl Connection {
 				// First, call all functions
 				for fun in event.rules.iter().filter(|r| r.is_function()) {
 					if let RuleKind::Function { name, to } = fun { #>
-				let <#= gen_return_match(to) #> = self.<#= name.to_snake_case() #>(m)?;
+				let <#= gen_return_match(to) #> = self.<#= name.to_snake_case() #>(m, &mut events)?;
 					<# }
 				} #>
 				let r = <#= book_name #> {
@@ -191,7 +191,7 @@ impl Connection {
 					ids.clone()
 				}; #>
 				};
-				self.<#= function_name #>(<#= ids #>, r)?;
+				self.<#= function_name #>(<#= ids #>, r, &mut events)?;
 				events.push(Event::PropertyAdded {
 					id: PropertyId::<#= book_name #><#= ids2 #>,
 					invoker: invoker.clone(),
