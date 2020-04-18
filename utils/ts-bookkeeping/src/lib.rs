@@ -186,7 +186,7 @@ impl fmt::Debug for ConnectOptions {
 	}
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DisconnectOptions {
 	reason: Option<Reason>,
 	message: Option<String>,
