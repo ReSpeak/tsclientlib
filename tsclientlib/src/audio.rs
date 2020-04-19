@@ -214,8 +214,10 @@ impl AudioQueue {
 		let id = packet.data().data().id();
 		let packet = QueuePacket { packet, samples, id };
 		if id.wrapping_sub(self.next_id) > MAX_BUFFER_PACKETS as u16 {
-			bail!("Audio packet is too late, dropping");
+			bail!("Audio packet is too late, dropping (wanted {}, got {})",
+				self.next_id, id);
 		}
+
 		// Put into first spot where the id is smaller
 		let i = self.packet_buffer.len()
 			- self
@@ -227,6 +229,13 @@ impl AudioQueue {
 					p.id.wrapping_sub(id) <= MAX_BUFFER_PACKETS as u16
 				})
 				.count();
+		// Check for duplicate packet
+		if let Some(p) = self.packet_buffer.get(i) {
+			if p.id == packet.id {
+				bail!("Got duplicate packet id {}", p.id);
+			}
+		}
+
 		trace!(self.logger, "Insert packet {} at {}", id, i);
 		let last_id = self
 			.packet_buffer
@@ -415,6 +424,7 @@ impl AudioQueue {
 			}
 		}
 
+		self.decoded_pos = len;
 		Ok((&self.decoded_buffer[..len], false))
 	}
 }
@@ -519,10 +529,24 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 mod test {
 	use std::sync::Mutex;
 
+	use audiopus::coder::Encoder;
 	use slog::{o, Drain};
 	use tsproto_packets::packets::{Direction, OutAudio};
 
 	use super::*;
+
+	enum SimulateAction {
+		CreateEncoder,
+		/// Create packet with id.
+		///
+		/// The `bool` is `false` if packet handling shoud fail.
+		ReceivePacket(u16, bool),
+		ReceiveRaw(u16, Vec<u8>),
+		/// Fetch audio of this sample count and expect a certain packet id.
+		FillBuffer(usize, Option<u16>),
+		/// Custom check
+		Check(Box<dyn FnOnce(&AudioHandler<ClientId>)>),
+	}
 
 	fn create_logger() -> Logger {
 		let decorator =
@@ -531,6 +555,112 @@ mod test {
 			Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
 
 		slog::Logger::root(drain, o!())
+	}
+
+	fn check_packet(data: &[u8]) -> Result<()> {
+		let logger = create_logger();
+		let mut handler = AudioHandler::<ClientId>::new(logger);
+		let id = ClientId(0);
+		let mut buf = vec![0.0; 48_000 / 100 * 2];
+
+		// Sometimes, TS sends short, non-opus packets
+		let packet = OutAudio::new(&AudioData::S2C {
+			id: 30,
+			codec: CodecType::OpusMusic,
+			from: 0,
+			data,
+		});
+		let input =
+			InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
+		handler.handle_packet(id, input)?;
+
+		handler.fill_buffer(&mut buf);
+		handler.fill_buffer(&mut buf);
+		Ok(())
+	}
+
+	fn simulate(actions: Vec<SimulateAction>) -> Result<()> {
+		let mut encoder = None;
+		let mut opus_output = [0; 1275]; // Max size for an opus packet
+		let id = ClientId(0);
+		let logger = create_logger();
+		let mut handler = AudioHandler::<ClientId>::new(logger);
+
+		for a in actions {
+			println!("\nCurrent state");
+			for q in &handler.queues {
+				print!("Queue {:?}:", q.0);
+				for p in &q.1.packet_buffer {
+					print!(" {:?},", p);
+				}
+				println!();
+			}
+
+			match a {
+				SimulateAction::CreateEncoder => {
+					encoder = Some(Encoder::new(
+						audiopus::SampleRate::Hz48000,
+						audiopus::Channels::Mono,
+						audiopus::Application::Voip,
+					)?);
+				}
+				SimulateAction::ReceivePacket(i, success) => {
+					let e = encoder.as_mut().unwrap();
+					let data = vec![i as f32; USUAL_FRAME_SIZE];
+					let len = e.encode_float(&data, &mut opus_output[..])?;
+					let packet = OutAudio::new(&AudioData::S2C {
+						id: i,
+						codec: CodecType::OpusMusic,
+						from: 0,
+						data: &opus_output[..len],
+					});
+					let input = InAudioBuf::try_new(Direction::S2C,
+						packet.into_vec()).unwrap();
+					if handler.handle_packet(id, input).is_ok() != success {
+						bail!("handle_packet returned {:?} but expected {:?}",
+							!success, success);
+					}
+				}
+				SimulateAction::ReceiveRaw(i, data) => {
+					let packet = OutAudio::new(&AudioData::S2C {
+						id: i,
+						codec: CodecType::OpusMusic,
+						from: 0,
+						data: &data,
+					});
+					let input = InAudioBuf::try_new(Direction::S2C,
+						packet.into_vec()).unwrap();
+					let _ = handler.handle_packet(id, input);
+				}
+				SimulateAction::FillBuffer(size, expect) => {
+					let mut buf = vec![0.0; size * 2]; // Stereo
+					let cur_packet_id = handler.queues.get(&id).and_then(|q|
+						q.packet_buffer.front()).map(|p| p.id);
+					handler.fill_buffer(&mut buf);
+					let next_packet_id = handler.queues.get(&id).and_then(|q|
+						q.packet_buffer.front()).map(|p| p.id);
+
+					if expect.is_some() {
+						assert_eq!(expect, cur_packet_id);
+						assert_ne!(cur_packet_id, next_packet_id);
+					}
+
+					/*if let Some(e) = expect {
+						let e = *e as f32;
+						for b in &buf {
+							if (*b - e).abs() > 0.01 {
+								bail!("Buffer contains wrong value, \
+									expected {}: {:?}", e, buf);
+							}
+						}
+					}*/
+				}
+				SimulateAction::Check(f) => {
+					f(&handler);
+				}
+			}
+		}
+		Ok(())
 	}
 
 	#[test]
@@ -602,28 +732,6 @@ mod test {
 		}
 	}
 
-	fn check_packet(data: &[u8]) -> Result<()> {
-		let logger = create_logger();
-		let mut handler = AudioHandler::<ClientId>::new(logger);
-		let id = ClientId(0);
-		let mut buf = vec![0.0; 48_000 / 100 * 2];
-
-		// Sometimes, TS sends short, non-opus packets
-		let packet = OutAudio::new(&AudioData::S2C {
-			id: 30,
-			codec: CodecType::OpusMusic,
-			from: 0,
-			data,
-		});
-		let input =
-			InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
-		handler.handle_packet(id, input)?;
-
-		handler.fill_buffer(&mut buf);
-		handler.fill_buffer(&mut buf);
-		Ok(())
-	}
-
 	#[test]
 	fn short_packet() {
 		assert!(check_packet(&[7]).is_err());
@@ -651,5 +759,123 @@ mod test {
 			handler.fill_buffer(&mut buf);
 			handler.fill_buffer(&mut buf);
 		}
+	}
+
+	// TODO
+	/*#[test]
+	fn test_opus_roundtrip() -> Result<()> {
+		let mut opus_output = [0; 1275]; // Max size for an opus packet
+		let encoder = Encoder::new(
+			audiopus::SampleRate::Hz48000,
+			audiopus::Channels::Mono,
+			audiopus::Application::Voip,
+		)?;
+		let mut decoder = Decoder::new(SAMPLE_RATE, CHANNELS)?;
+		let data = vec![0.1234 as f32; USUAL_FRAME_SIZE];
+		let len = encoder.encode_float(&data, &mut opus_output[..])?;
+		let mut decoded_buffer = vec![0.0; USUAL_FRAME_SIZE * 2];
+		let len2 = decoder.decode_float(
+			Some(&opus_output[..len]),
+			&mut decoded_buffer[..],
+			false,
+		)?;
+		assert_eq!(len2, USUAL_FRAME_SIZE);
+
+		for b in &decoded_buffer {
+			if (*b - 0.1234).abs() > 0.1 {
+				bail!("Buffer contains wrong value, expected 0.1234: {:?}",
+					decoded_buffer);
+			}
+		}
+
+		Ok(())
+	}*/
+
+	#[test]
+	fn packets_wrapping2() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		for i in 0..100 {
+			let i = 65_500u16.wrapping_add(i);
+			a.push(SimulateAction::ReceivePacket(i, true));
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, Some(i)));
+		}
+		for _ in 0..4 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		simulate(a)
+	}
+
+	#[test]
+	fn silence() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		for _ in 0..100 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		simulate(a)
+	}
+
+	#[test]
+	fn reversed() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		for i in 0..5 {
+			a.push(SimulateAction::ReceivePacket(i, true));
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, Some(i)));
+		}
+		a.push(SimulateAction::ReceivePacket(4, false));
+		a.push(SimulateAction::ReceivePacket(3, false));
+		for _ in 0..4 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		simulate(a)
+	}
+
+	#[test]
+	fn duplicate() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		a.push(SimulateAction::ReceivePacket(0, true));
+		a.push(SimulateAction::ReceivePacket(0, false));
+		a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, Some(0)));
+		a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		simulate(a)
+	}
+
+	#[test]
+	fn big_whole() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		for i in 27120..27124 {
+			a.push(SimulateAction::ReceivePacket(i, true));
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, Some(i)));
+		}
+		a.push(SimulateAction::ReceiveRaw(27124, vec![2]));
+		for _ in 0..10 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		for i in 27339..27349 {
+			a.push(SimulateAction::ReceivePacket(i, true));
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		for _ in 0..4 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		simulate(a)
+	}
+
+	#[test]
+	fn end_packet() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		for i in 0..10 {
+			a.push(SimulateAction::ReceivePacket(i, true));
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, Some(i)));
+		}
+		a.push(SimulateAction::ReceiveRaw(10, vec![]));
+		for _ in 0..4 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		simulate(a)
 	}
 }
