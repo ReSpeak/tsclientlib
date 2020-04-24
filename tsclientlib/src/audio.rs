@@ -348,14 +348,21 @@ impl AudioQueue {
 
 			// Decode a packet
 			if let Some(packet) = self.packet_buffer.pop_front() {
-				if packet.packet.data().data().data().is_empty() {
+				if packet.packet.data().data().data().len() <= 1 {
+					// End of stream
 					return Ok((&self.decoded_buffer, true));
 				}
 
 				self.packet_buffer_samples -= packet.samples;
 				let cur_id = self.next_id;
 				self.next_id = self.next_id.wrapping_add(1);
-				if packet.id > cur_id {
+				if packet.id != cur_id {
+					debug_assert!(
+						packet.id.wrapping_sub(cur_id) < MAX_BUFFER_PACKETS as u16,
+						"Invalid packet queue state: {} < {}",
+						packet.id,
+						cur_id
+					);
 					// Packet loss
 					debug!(self.logger, "Audio packet loss"; "need" => cur_id,
 						"have" => packet.id);
@@ -368,12 +375,6 @@ impl AudioQueue {
 					self.packet_buffer_samples += packet.samples;
 					self.packet_buffer.push_front(packet);
 				} else {
-					debug_assert!(
-						packet.id == cur_id,
-						"Invalid packet queue state: {} != {}",
-						packet.id,
-						cur_id
-					);
 					self.decode_packet(Some(&packet), false)?;
 				}
 			} else {
@@ -873,6 +874,30 @@ mod test {
 		}
 		a.push(SimulateAction::ReceiveRaw(10, vec![]));
 		for _ in 0..4 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		simulate(a)
+	}
+
+	#[test]
+	fn packet_loss() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		a.push(SimulateAction::ReceivePacket(50, true));
+		a.push(SimulateAction::ReceivePacket(53, true));
+		for _ in 0..8 {
+			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
+		}
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		simulate(a)
+	}
+
+	#[test]
+	fn packet_wrapping_loss() -> Result<()> {
+		let mut a = vec![SimulateAction::CreateEncoder];
+		a.push(SimulateAction::ReceivePacket(65534, true));
+		a.push(SimulateAction::ReceivePacket(0, true));
+		for _ in 0..7 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
 		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
