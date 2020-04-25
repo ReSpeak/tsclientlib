@@ -13,7 +13,8 @@ branches:
 
 environment:
   global:
-    CHANNEL: stable
+    # Needed for features in workspace: https://github.com/rust-lang/cargo/issues/5364
+    CHANNEL: nightly
     TARGET: x86_64-pc-windows-msvc
 
 cache:
@@ -29,11 +30,11 @@ install:
 - cargo -V
 
 build_script:
-- cargo check --features bundled
+- cargo -Zpackage-features check --features tsclientlib/bundled
 - |
   cd tsclientlib
   cargo check --no-default-features --features "unstable bundled"
   cd ..
 
 test_script:
-- cargo test
+- cargo -Zpackage-features test --features tsclientlib/bundled
