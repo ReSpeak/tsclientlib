@@ -467,7 +467,6 @@ mod test {
 
 	#[test]
 	fn parse_ip_bad() {
-		assert!(parse_ip("").is_err());
 		assert!(parse_ip(":1").is_err());
 		assert!(parse_ip(":").is_err());
 		assert!(parse_ip("127.0.0.1:").is_err());
