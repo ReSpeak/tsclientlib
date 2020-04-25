@@ -449,27 +449,23 @@ mod test {
 
 	#[test]
 	fn parse_ip_address_without_port() {
-		let res = parse_ip("localhost");
-		assert_eq!(res.unwrap(), ParseIpResult::Other("localhost", None));
+		assert_eq!(
+			parse_ip("localhost").unwrap(),
+			ParseIpResult::Other("localhost", None)
+		);
 	}
 
 	#[test]
 	fn parse_ip_address_with_port() {
-		let res = parse_ip("localhost:1");
-		assert_eq!(res.unwrap(), ParseIpResult::Other("localhost", Some(1)));
+		assert_eq!(
+			parse_ip("localhost:1").unwrap(),
+			ParseIpResult::Other("localhost", Some(1))
+		);
 	}
 
 	#[test]
 	fn parse_ip_with_large_port() {
-		let res = parse_ip("127.0.0.1:65536");
-		assert!(res.is_err());
-	}
-
-	#[test]
-	fn parse_ip_bad() {
-		assert!(parse_ip(":1").is_err());
-		assert!(parse_ip(":").is_err());
-		assert!(parse_ip("127.0.0.1:").is_err());
+		assert!(parse_ip("127.0.0.1:65536").is_err());
 	}
 
 	#[tokio::test]

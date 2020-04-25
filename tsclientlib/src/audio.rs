@@ -214,8 +214,11 @@ impl AudioQueue {
 		let id = packet.data().data().id();
 		let packet = QueuePacket { packet, samples, id };
 		if id.wrapping_sub(self.next_id) > MAX_BUFFER_PACKETS as u16 {
-			bail!("Audio packet is too late, dropping (wanted {}, got {})",
-				self.next_id, id);
+			bail!(
+				"Audio packet is too late, dropping (wanted {}, got {})",
+				self.next_id,
+				id
+			);
 		}
 
 		// Put into first spot where the id is smaller
@@ -276,12 +279,16 @@ impl AudioQueue {
 		self.packet_loss_num += 1;
 
 		self.decoded_buffer.resize(self.decoded_pos + len * CHANNEL_NUM, 0.0);
-		let len = self.decoder.decode_float(
-			packet_data,
-			&mut self.decoded_buffer[self.decoded_pos..],
-			fec,
-		).map_err(|e| format_err!("Opus decode failed ({}) (packet: {:?})",
-			e, packet))?;
+		let len = self
+			.decoder
+			.decode_float(
+				packet_data,
+				&mut self.decoded_buffer[self.decoded_pos..],
+				fec,
+			)
+			.map_err(|e| {
+				format_err!("Opus decode failed ({}) (packet: {:?})", e, packet)
+			})?;
 		self.last_packet_samples = len;
 		self.decoded_buffer.truncate(self.decoded_pos + len * CHANNEL_NUM);
 		self.decoded_pos += len * CHANNEL_NUM;
@@ -358,7 +365,8 @@ impl AudioQueue {
 				self.next_id = self.next_id.wrapping_add(1);
 				if packet.id != cur_id {
 					debug_assert!(
-						packet.id.wrapping_sub(cur_id) < MAX_BUFFER_PACKETS as u16,
+						packet.id.wrapping_sub(cur_id)
+							< MAX_BUFFER_PACKETS as u16,
 						"Invalid packet queue state: {} < {}",
 						packet.id,
 						cur_id
@@ -615,11 +623,15 @@ mod test {
 						from: 0,
 						data: &opus_output[..len],
 					});
-					let input = InAudioBuf::try_new(Direction::S2C,
-						packet.into_vec()).unwrap();
+					let input =
+						InAudioBuf::try_new(Direction::S2C, packet.into_vec())
+							.unwrap();
 					if handler.handle_packet(id, input).is_ok() != success {
-						bail!("handle_packet returned {:?} but expected {:?}",
-							!success, success);
+						bail!(
+							"handle_packet returned {:?} but expected {:?}",
+							!success,
+							success
+						);
 					}
 				}
 				SimulateAction::ReceiveRaw(i, data) => {
@@ -629,17 +641,24 @@ mod test {
 						from: 0,
 						data: &data,
 					});
-					let input = InAudioBuf::try_new(Direction::S2C,
-						packet.into_vec()).unwrap();
+					let input =
+						InAudioBuf::try_new(Direction::S2C, packet.into_vec())
+							.unwrap();
 					let _ = handler.handle_packet(id, input);
 				}
 				SimulateAction::FillBuffer(size, expect) => {
 					let mut buf = vec![0.0; size * 2]; // Stereo
-					let cur_packet_id = handler.queues.get(&id).and_then(|q|
-						q.packet_buffer.front()).map(|p| p.id);
+					let cur_packet_id = handler
+						.queues
+						.get(&id)
+						.and_then(|q| q.packet_buffer.front())
+						.map(|p| p.id);
 					handler.fill_buffer(&mut buf);
-					let next_packet_id = handler.queues.get(&id).and_then(|q|
-						q.packet_buffer.front()).map(|p| p.id);
+					let next_packet_id = handler
+						.queues
+						.get(&id)
+						.and_then(|q| q.packet_buffer.front())
+						.map(|p| p.id);
 
 					if expect.is_some() {
 						assert_eq!(expect, cur_packet_id);
@@ -803,7 +822,9 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		simulate(a)
 	}
 
@@ -828,7 +849,9 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		simulate(a)
 	}
 
@@ -853,7 +876,9 @@ mod test {
 		for _ in 0..10 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		for i in 27339..27349 {
 			a.push(SimulateAction::ReceivePacket(i, true));
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
@@ -861,7 +886,9 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		simulate(a)
 	}
 
@@ -876,7 +903,9 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		simulate(a)
 	}
 
@@ -888,7 +917,9 @@ mod test {
 		for _ in 0..8 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		simulate(a)
 	}
 
@@ -900,7 +931,9 @@ mod test {
 		for _ in 0..7 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
+		a.push(SimulateAction::Check(Box::new(|h| {
+			assert!(h.queues.is_empty())
+		})));
 		simulate(a)
 	}
 }

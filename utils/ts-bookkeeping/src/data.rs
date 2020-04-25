@@ -230,7 +230,9 @@ impl Connection {
 	) -> Result<Option<Client>> {
 		Ok(self.clients.insert(client, r))
 	}
-	fn remove_client(&mut self, client: ClientId, _: &mut Vec<Event>) -> Result<Option<Client>> {
+	fn remove_client(
+		&mut self, client: ClientId, _: &mut Vec<Event>,
+	) -> Result<Option<Client>> {
 		Ok(self.clients.remove(&client))
 	}
 
@@ -246,8 +248,10 @@ impl Connection {
 		}
 	}
 	fn add_connection_client_data(
-		&mut self, client: ClientId, r: ConnectionClientData, _: &mut Vec<Event>,
-	) -> Result<Option<ConnectionClientData>> {
+		&mut self, client: ClientId, r: ConnectionClientData,
+		_: &mut Vec<Event>,
+	) -> Result<Option<ConnectionClientData>>
+	{
 		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
@@ -311,8 +315,12 @@ impl Connection {
 
 	// Backing functions for MessageToBook declarations
 
-	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> { Ok(false) }
-	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> { Ok(None) }
+	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> {
+		Ok(false)
+	}
+	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> {
+		Ok(None)
+	}
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
@@ -595,7 +603,8 @@ impl Connection {
 	fn channel_order_remove(
 		&mut self, channel_id: ChannelId, channel_order: ChannelId,
 		events: &mut Vec<Event>,
-	) {
+	)
+	{
 		// [ C:7 | O:_ ]
 		// [ C:5 | O:7 ] ─>X
 		// [ C:_ | O:5 ]     (Upd: O -> 7)
@@ -645,8 +654,12 @@ impl Connection {
 	fn channel_order_cc_fun(
 		&mut self, msg: &s2c::InChannelCreatedPart, events: &mut Vec<Event>,
 	) -> Result<ChannelId> {
-		self.channel_order_insert(msg.channel_id, msg.order, msg.parent_id,
-			events);
+		self.channel_order_insert(
+			msg.channel_id,
+			msg.order,
+			msg.parent_id,
+			events,
+		);
 		Ok(msg.order)
 	}
 
