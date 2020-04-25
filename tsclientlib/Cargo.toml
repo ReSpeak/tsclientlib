@@ -25,6 +25,9 @@ default = ["audio"]
 # Enable the unstable api
 unstable = []
 audio = ["audiopus"]
+# Statically link on windows with this feature, should be default when this is
+# stabilized: https://github.com/rust-lang/cargo/issues/7914
+bundled = ["sdl2/bundled"]
 
 [dependencies]
 anyhow = "1"

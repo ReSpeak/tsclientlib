@@ -29,10 +29,10 @@ install:
 - cargo -V
 
 build_script:
-- cargo check
+- cargo check --features bundled
 - |
   cd tsclientlib
-  cargo check --no-default-features --features unstable
+  cargo check --no-default-features --features "unstable bundled"
   cd ..
 
 test_script:
