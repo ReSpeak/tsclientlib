@@ -71,6 +71,7 @@ struct QueuePacket {
 pub struct AudioQueue {
 	logger: Logger,
 	decoder: Decoder,
+	pub volume: f32,
 	/// The id of the next packet that should be decoded.
 	///
 	/// Used to check for packet loss.
@@ -106,7 +107,6 @@ pub struct AudioQueue {
 pub struct AudioHandler<Id: Clone + Debug + Eq + Hash + PartialEq = ClientId> {
 	logger: Logger,
 	queues: HashMap<Id, AudioQueue>,
-	talkers_changed: bool,
 	/// Buffer this amount of samples for new queues before starting to play.
 	///
 	/// Updated when a new queue gets added.
@@ -152,6 +152,7 @@ impl AudioQueue {
 		let mut res = Self {
 			logger,
 			decoder: Decoder::new(SAMPLE_RATE, CHANNELS)?,
+			volume: 1.0,
 			next_id: data.id(),
 			whispering: false,
 			packet_buffer: Default::default(),
@@ -200,7 +201,7 @@ impl AudioQueue {
 			bail!("Audio queue is full, dropping");
 		}
 		let samples;
-		if packet.data().data().data().is_empty() {
+		if packet.data().data().data().len() <= 1 {
 			// End of stream
 			samples = 0;
 		} else {
@@ -443,7 +444,6 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 		Self {
 			logger,
 			queues: Default::default(),
-			talkers_changed: false,
 			avg_buffer_samples: 0,
 		}
 	}
@@ -451,21 +451,15 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	/// Delete all queues
 	pub fn reset(&mut self) {
 		self.queues.clear();
-		self.talkers_changed = false;
 	}
 
 	pub fn get_queues(&self) -> &HashMap<Id, AudioQueue> { &self.queues }
-	pub fn talkers_changed(&mut self) -> bool {
-		if self.talkers_changed {
-			self.talkers_changed = false;
-			true
-		} else {
-			false
-		}
-	}
+	pub fn get_mut_queues(&mut self) -> &mut HashMap<Id, AudioQueue> { &mut self.queues }
 
 	/// `buf` is not cleared before filling it.
-	pub fn fill_buffer(&mut self, buf: &mut [f32]) {
+	///
+	/// Returns the clients that are not talking anymore.
+	pub fn fill_buffer(&mut self, buf: &mut [f32]) -> Vec<Id> {
 		trace!(self.logger, "Filling audio buffer"; "len" => buf.len());
 		let mut to_remove = Vec::new();
 		for (id, queue) in self.queues.iter_mut() {
@@ -476,6 +470,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 				continue;
 			}
 
+			let vol = queue.volume;
 			match queue.get_next_data(buf.len()) {
 				Err(e) => {
 					warn!(self.logger, "Failed to decode audio packet";
@@ -483,7 +478,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 				}
 				Ok((r, is_end)) => {
 					for i in 0..r.len() {
-						buf[i] += r[i];
+						buf[i] += r[i] * vol;
 					}
 					if is_end {
 						to_remove.push(id.clone());
@@ -492,14 +487,17 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 			}
 		}
 
-		for id in to_remove {
+		for id in &to_remove {
 			self.queues.remove(&id);
-			self.talkers_changed = true;
 		}
+		to_remove
 	}
 
-	pub fn handle_packet(&mut self, id: Id, packet: InAudioBuf) -> Result<()> {
-		let empty = packet.data().data().data().is_empty();
+	/// Add a packet to the audio queue.
+	///
+	/// If a new client started talking, returns the id of this client.
+	pub fn handle_packet(&mut self, id: Id, packet: InAudioBuf) -> Result<Option<Id>> {
+		let empty = packet.data().data().data().len() <= 1;
 		let codec = packet.data().data().codec();
 		if codec != CodecType::OpusMusic && codec != CodecType::OpusVoice {
 			bail!("Can only handle opus audio but got {:?}", codec);
@@ -507,9 +505,10 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 
 		if let Some(queue) = self.queues.get_mut(&id) {
 			queue.add_packet(packet)?;
+			Ok(None)
 		} else {
 			if empty {
-				return Ok(());
+				return Ok(None);
 			}
 
 			trace!(self.logger, "Adding talker");
@@ -527,10 +526,9 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 						.sum::<usize>() / self.queues.len();
 			}
 			queue.buffering_samples = self.avg_buffer_samples;
-			self.queues.insert(id, queue);
-			self.talkers_changed = true;
+			self.queues.insert(id.clone(), queue);
+			Ok(Some(id))
 		}
-		Ok(())
 	}
 }
 
