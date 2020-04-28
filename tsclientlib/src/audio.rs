@@ -750,11 +750,6 @@ mod test {
 		}
 	}
 
-	#[test]
-	fn short_packet() {
-		assert!(check_packet(&[7]).is_err());
-	}
-
 	#[quickcheck_macros::quickcheck]
 	fn short_packet_quickcheck(data: Vec<Vec<u8>>) {
 		let logger = create_logger();
