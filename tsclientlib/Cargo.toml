@@ -40,12 +40,11 @@ num-traits = "0.2"
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
 reqwest = "0.10"
-slog = "2"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 thiserror = "1"
-time = "0.2"
+time = "0.2.15"
 tokio = { version = "0.2", features = ["stream", "time"] }
 trust-dns-proto = "0.19"
 trust-dns-resolver = "0.19"
@@ -53,6 +52,10 @@ ts-bookkeeping = { path = "../utils/ts-bookkeeping" }
 tsproto = { path = "../tsproto", version = "=0.1.0" }
 tsproto-packets = { path = "../utils/tsproto-packets" }
 tsproto-types = { path = "../utils/tsproto-types" }
+
+[dependencies.slog]
+version = "2"
+features = ["max_level_trace", "release_max_level_debug"]
 
 [build-dependencies]
 heck = "0.3"

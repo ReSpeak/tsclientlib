@@ -80,7 +80,7 @@ impl Connection {
 				platform: packet.server_platform.clone(),
 				version: packet.server_version.clone(),
 				created: packet.server_created,
-				ips: packet.server_ip.clone(),
+				ips: packet.server_ip.clone().unwrap_or_else(Vec::new),
 				ask_for_privilegekey: packet.ask_for_privilegekey,
 				// TODO Get from license struct
 				license: LicenseType::NoLicense,

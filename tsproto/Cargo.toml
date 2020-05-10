@@ -42,7 +42,7 @@ slog-perf = "0.2"
 slog-term = "2"
 stable_deref_trait = "1"
 thiserror = "1"
-time = "0.2"
+time = "0.2.15"
 tokio = { version = "0.2", features = ["dns", "macros", "sync", "tcp", "time", "udp"] }
 tsproto-packets = { path = "../utils/tsproto-packets" }
 tsproto-types = { path = "../utils/tsproto-types" }

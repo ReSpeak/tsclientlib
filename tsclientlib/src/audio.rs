@@ -441,20 +441,16 @@ impl AudioQueue {
 
 impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	pub fn new(logger: Logger) -> Self {
-		Self {
-			logger,
-			queues: Default::default(),
-			avg_buffer_samples: 0,
-		}
+		Self { logger, queues: Default::default(), avg_buffer_samples: 0 }
 	}
 
 	/// Delete all queues
-	pub fn reset(&mut self) {
-		self.queues.clear();
-	}
+	pub fn reset(&mut self) { self.queues.clear(); }
 
 	pub fn get_queues(&self) -> &HashMap<Id, AudioQueue> { &self.queues }
-	pub fn get_mut_queues(&mut self) -> &mut HashMap<Id, AudioQueue> { &mut self.queues }
+	pub fn get_mut_queues(&mut self) -> &mut HashMap<Id, AudioQueue> {
+		&mut self.queues
+	}
 
 	/// `buf` is not cleared before filling it.
 	///
@@ -496,7 +492,9 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	/// Add a packet to the audio queue.
 	///
 	/// If a new client started talking, returns the id of this client.
-	pub fn handle_packet(&mut self, id: Id, packet: InAudioBuf) -> Result<Option<Id>> {
+	pub fn handle_packet(
+		&mut self, id: Id, packet: InAudioBuf,
+	) -> Result<Option<Id>> {
 		let empty = packet.data().data().data().len() <= 1;
 		let codec = packet.data().data().codec();
 		if codec != CodecType::OpusMusic && codec != CodecType::OpusVoice {

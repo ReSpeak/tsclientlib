@@ -22,7 +22,7 @@ rand = "0.7"
 serde = { version = "1", features = ["derive"] }
 simple_asn1 = "0.4"
 thiserror = "1"
-time = { version = "0.2", features = ["serde"] }
+time = { version = "0.2.15", features = ["serde"] }
 untrusted = "0.7"
 
 [build-dependencies]

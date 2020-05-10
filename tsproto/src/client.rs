@@ -198,7 +198,7 @@ impl Client {
 	pub async fn connect(&mut self) -> Result<()> {
 		// Send the first init packet
 		// Get the current timestamp
-		let now = OffsetDateTime::now();
+		let now = OffsetDateTime::now_utc();
 		let timestamp = now.timestamp() as u32;
 
 		// Random bytes

@@ -21,11 +21,12 @@ use std::{iter, result};
 
 use anyhow::{bail, format_err, Error, Result};
 use futures::prelude::*;
-use slog::{debug, info, o, warn, Drain, Logger};
+use slog::{debug, info, o, trace, warn, Drain, Logger};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
+use tokio::time;
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use tsproto::client;
@@ -371,6 +372,8 @@ impl Connection {
 			match Self::connect_to(&logger, &options, addr).await {
 				Ok(res) => return Ok(res),
 				Err(ConnectError::Other(e)) => {
+					trace!(logger, "Connecting failed, trying next address";
+						"error" => ?e);
 					info!(logger, "Connecting failed, trying next address";
 						"error" => %e);
 				}
@@ -471,57 +474,80 @@ impl Connection {
 
 		client.send_packet(packet.into_packet())?;
 
-		// Wait until we received the initserver packet.
-
-		let cmd = client
-			.filter_commands(|_, cmd| Ok(Some(cmd)))
-			.await
-			.map_err(Error::from)?;
-		let msg = InMessage::new(
-			logger,
-			cmd.data().packet().header(),
-			cmd.data().packet().content(),
+		match time::timeout(
+			time::Duration::from_secs(5),
+			Self::wait_initserver(logger, client),
 		)
-		.map_err(Error::from)?;
-		match msg {
-			InMessage::CommandError(e) => {
-				let e = e.iter().next().unwrap();
-				if e.id
-					== ts_bookkeeping::TsError::ClientCouldNotValidateIdentity
-				{
-					if let Some(needed) = e
-						.extra_message
-						.as_ref()
-						.and_then(|m| m.parse::<u8>().ok())
-					{
-						return Err(ConnectError::IdentityLevelIncrease(
-							needed,
-						));
-					}
-				}
-				return Err(ConnectError::TsError(e.id));
+		.await
+		{
+			Ok(r) => r,
+			Err(_) => {
+				Err(format_err!("Timeout while waiting for initserver").into())
 			}
-			InMessage::InitServer(initserver) => {
-				let public_key = {
-					let params = if let Some(r) = &client.params {
-						r
-					} else {
-						return Err(format_err!(
-							"We should be connected but the connection params \
-							 do not exist"
-						)
-						.into());
+		}
+	}
+
+	async fn wait_initserver(
+		logger: &Logger, mut client: client::Client,
+	) -> result::Result<(client::Client, data::Connection), ConnectError> {
+		// Wait until we received the initserver packet.
+		loop {
+			let cmd = client
+				.filter_commands(|_, cmd| Ok(Some(cmd)))
+				.await
+				.map_err(Error::from)?;
+			let msg = InMessage::new(
+				logger,
+				cmd.data().packet().header(),
+				cmd.data().packet().content(),
+			)
+			.map_err(Error::from);
+
+			match msg {
+				Ok(InMessage::CommandError(e)) => {
+					let e = e.iter().next().unwrap();
+					if e.id
+						== ts_bookkeeping::TsError::ClientCouldNotValidateIdentity
+					{
+						if let Some(needed) = e
+							.extra_message
+							.as_ref()
+							.and_then(|m| m.parse::<u8>().ok())
+						{
+							return Err(ConnectError::IdentityLevelIncrease(
+								needed,
+							));
+						}
+					}
+					return Err(ConnectError::TsError(e.id));
+				}
+				Ok(InMessage::InitServer(initserver)) => {
+					let public_key = {
+						let params = if let Some(r) = &client.params {
+							r
+						} else {
+							return Err(format_err!(
+								"We should be connected but the connection \
+								 params do not exist"
+							)
+							.into());
+						};
+
+						params.public_key.clone()
 					};
 
-					params.public_key.clone()
-				};
+					// Create connection
+					let data = data::Connection::new(public_key, &initserver);
 
-				// Create connection
-				let data = data::Connection::new(public_key, &initserver);
-
-				Ok((client, data))
+					return Ok((client, data));
+				}
+				Ok(msg) => {
+					warn!(logger, "Expected initserver, dropping command"; "message" => ?msg);
+				}
+				Err(e) => {
+					warn!(logger, "Expected initserver, failed to parse command"; "error" => %e);
+				}
 			}
-			_ => Err(format_err!("Got no initserver but {:?}", msg).into()),
 		}
 	}
 

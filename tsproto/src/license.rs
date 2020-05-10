@@ -130,14 +130,14 @@ impl Licenses {
 		mut data: &[u8], check_expired: bool,
 	) -> Result<Self> {
 		let version = data[0];
-		if version != 1 {
+		if version != 0 && version != 1 {
 			return Err(format_err!("Unsupported version").into());
 		}
 		// Read licenses
 		let mut res = Licenses { blocks: Vec::new() };
 		data = &data[1..];
 
-		let now = OffsetDateTime::now();
+		let now = OffsetDateTime::now_utc();
 		let mut bounds = None;
 		while !data.is_empty() {
 			if res.blocks.len() >= 8 {

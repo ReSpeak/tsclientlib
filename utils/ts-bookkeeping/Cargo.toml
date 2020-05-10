@@ -16,7 +16,7 @@ num-derive = "0.3"
 serde = { version = "1", features = ["derive"] }
 slog = "2"
 thiserror = "1"
-time = { version = "0.2", features = ["serde"] }
+time = { version = "0.2.15", features = ["serde"] }
 tsproto-packets = { path = "../tsproto-packets" }
 tsproto-types = { path = "../tsproto-types" }
 
