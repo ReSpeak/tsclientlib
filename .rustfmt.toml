@@ -1,6 +1,5 @@
 version = "Two"
 edition = "2018"
-max_width = 80
 newline_style = "Unix"
 
 hard_tabs = true
