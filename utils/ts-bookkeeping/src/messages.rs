@@ -37,41 +37,21 @@ pub enum ParseError {
 	#[error("Wrong direction {0:?}")]
 	WrongDirection(Direction),
 	#[error("Cannot parse \"{value}\" as int for parameter {arg} ({source})")]
-	ParseInt {
-		arg: &'static str,
-		value: String,
-		source: std::num::ParseIntError,
-	},
-	#[error(
-		"Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})"
-	)]
-	ParseAddr {
-		arg: &'static str,
-		value: String,
-		source: std::net::AddrParseError,
-	},
-	#[error(
-		"Cannot parse \"{value}\" as float for parameter {arg} ({source})"
-	)]
-	ParseFloat {
-		arg: &'static str,
-		value: String,
-		source: std::num::ParseFloatError,
-	},
+	ParseInt { arg: &'static str, value: String, source: std::num::ParseIntError },
+	#[error("Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})")]
+	ParseAddr { arg: &'static str, value: String, source: std::net::AddrParseError },
+	#[error("Cannot parse \"{value}\" as float for parameter {arg} ({source})")]
+	ParseFloat { arg: &'static str, value: String, source: std::num::ParseFloatError },
 	#[error("Cannot parse \"{value}\" as bool for parameter {arg}")]
 	ParseBool { arg: &'static str, value: String },
-	#[error(
-		"Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})"
-	)]
+	#[error("Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})")]
 	ParseUid { arg: &'static str, value: String, source: base64::DecodeError },
 	#[error("Invalid value \"{value}\" for parameter {arg}")]
 	InvalidValue { arg: &'static str, value: String },
 }
 
 pub trait InMessageTrait {
-	fn new(
-		logger: &Logger, header: &InHeader, args: CommandParser,
-	) -> Result<Self>
+	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self>
 	where Self: Sized;
 }
 

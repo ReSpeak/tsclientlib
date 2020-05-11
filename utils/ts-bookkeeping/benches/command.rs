@@ -11,65 +11,40 @@ const LONG_CMD: &[u8] = b"channellist cid=2 cpid=0 channel_name=Trusted\\sChanne
 
 fn get_logger() -> Logger {
 	let decorator = slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
-	let drain =
-		Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
+	let drain = Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
 
 	Logger::root(drain, o!())
 }
 
 fn parse(b: &mut Bencher, cmd: &[u8]) {
 	let logger = get_logger();
-	let header = OutPacket::new_with_dir(
-		Direction::S2C,
-		Flags::empty(),
-		PacketType::Command,
-	);
+	let header = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Command);
 
 	b.iter(|| InMessage::new(&logger, &header.header(), cmd).unwrap());
 }
 
 fn write(b: &mut Bencher, cmd: &[u8]) {
 	let logger = get_logger();
-	let header = OutPacket::new_with_dir(
-		Direction::S2C,
-		Flags::empty(),
-		PacketType::Command,
-	);
+	let header = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Command);
 	let msg = InMessage::new(&logger, &header.header(), cmd).unwrap();
 	match msg {
 		InMessage::ClientLeftView(msg) => {
 			let out_part = msg.iter().next().unwrap().as_out();
-			b.iter(|| {
-				s2c::OutClientLeftViewMessage::new(&mut iter::once(
-					out_part.clone(),
-				))
-			});
+			b.iter(|| s2c::OutClientLeftViewMessage::new(&mut iter::once(out_part.clone())));
 		}
 		InMessage::ChannelList(msg) => {
 			let out_part = msg.iter().next().unwrap().as_out();
-			b.iter(|| {
-				s2c::OutChannelListMessage::new(&mut iter::once(
-					out_part.clone(),
-				))
-			});
+			b.iter(|| s2c::OutChannelListMessage::new(&mut iter::once(out_part.clone())));
 		}
 		_ => unreachable!("This command type is not supported in this test"),
 	}
 }
 
-fn parse_short(c: &mut Criterion) {
-	c.bench_function("parse short", |b| parse(b, SHORT_CMD));
-}
-fn parse_long(c: &mut Criterion) {
-	c.bench_function("parse long", |b| parse(b, LONG_CMD));
-}
+fn parse_short(c: &mut Criterion) { c.bench_function("parse short", |b| parse(b, SHORT_CMD)); }
+fn parse_long(c: &mut Criterion) { c.bench_function("parse long", |b| parse(b, LONG_CMD)); }
 
-fn write_short(c: &mut Criterion) {
-	c.bench_function("write short", |b| write(b, SHORT_CMD));
-}
-fn write_long(c: &mut Criterion) {
-	c.bench_function("write long", |b| write(b, LONG_CMD));
-}
+fn write_short(c: &mut Criterion) { c.bench_function("write short", |b| write(b, SHORT_CMD)); }
+fn write_long(c: &mut Criterion) { c.bench_function("write long", |b| write(b, LONG_CMD)); }
 
 criterion_group!(benches, parse_short, parse_long, write_short, write_long);
 criterion_main!(benches);

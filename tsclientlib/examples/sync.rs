@@ -4,9 +4,7 @@ use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
 use tsclientlib::sync::SyncConnection;
-use tsclientlib::{
-	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
-};
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]

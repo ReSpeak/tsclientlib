@@ -18,16 +18,12 @@ fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {
 	logger.new(o!("to" => to_s, "dir" => in_s))
 }
 
-pub fn log_udp_packet<P: Debug>(
-	logger: &Logger, is_client: bool, incoming: bool, packet: &P,
-) {
+pub fn log_udp_packet<P: Debug>(logger: &Logger, is_client: bool, incoming: bool, packet: &P) {
 	let logger = prepare_logger(logger, is_client, incoming);
 	debug!(logger, "UdpPacket"; "header" => ?packet);
 }
 
-pub fn log_out_udp_packet(
-	logger: &Logger, is_client: bool, incoming: bool, packet: &OutUdpPacket,
-) {
+pub fn log_out_udp_packet(logger: &Logger, is_client: bool, incoming: bool, packet: &OutUdpPacket) {
 	let logger = prepare_logger(logger, is_client, incoming);
 	debug!(logger, "UdpPacket";
 		"generation" => packet.generation_id(),
@@ -35,9 +31,7 @@ pub fn log_out_udp_packet(
 	);
 }
 
-pub fn log_packet<P: Debug>(
-	logger: &Logger, is_client: bool, incoming: bool, packet: &P,
-) {
+pub fn log_packet<P: Debug>(logger: &Logger, is_client: bool, incoming: bool, packet: &P) {
 	// packet.header.c_id is not set for newly created packets so we cannot
 	// detect if a packet is incoming or not.
 	let logger = prepare_logger(logger, is_client, incoming);
@@ -45,10 +39,8 @@ pub fn log_packet<P: Debug>(
 }
 
 pub fn log_command(
-	logger: &Logger, is_client: bool, incoming: bool, p_type: PacketType,
-	cmd: &str,
-)
-{
+	logger: &Logger, is_client: bool, incoming: bool, p_type: PacketType, cmd: &str,
+) {
 	// packet.header.c_id is not set for newly created packets so we cannot
 	// detect if a packet is incoming or not.
 	let logger = prepare_logger(logger, is_client, incoming);

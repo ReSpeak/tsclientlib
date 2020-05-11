@@ -4,9 +4,7 @@ use slog::{error, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{
-	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
-};
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -65,9 +63,7 @@ async fn real_main() -> Result<()> {
 
 				let r = con
 					.events()
-					.try_filter(|e| {
-						future::ready(matches!(e, StreamItem::ConEvents(_)))
-					})
+					.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
 					.next()
 					.await;
 				if let Some(Err(e)) = r {
@@ -76,8 +72,7 @@ async fn real_main() -> Result<()> {
 				}
 
 				// Wait some time
-				let mut events =
-					con.events().try_filter(|_| future::ready(false));
+				let mut events = con.events().try_filter(|_| future::ready(false));
 				tokio::select! {
 					_ = &mut time::delay_for(Duration::from_secs(15)) => {}
 					_ = events.next() => {

@@ -126,9 +126,7 @@ impl EccKeyPubP256 {
 	pub fn from_short(data: Vec<u8>) -> Self { Self(data) }
 
 	/// From base64 encoded tomcrypt key.
-	pub fn from_ts(data: &str) -> Result<Self> {
-		Self::from_tomcrypt(&base64::decode(data)?)
-	}
+	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
 
 	/// Decodes the public key from an ASN.1 DER object how tomcrypt stores it.
 	///
@@ -147,10 +145,8 @@ impl EccKeyPubP256 {
 				if *len != 1 || content[0] & 0x80 != 0 {
 					return Err(Error::UnexpectedPrivateKey);
 				}
-				if let (
-					Some(ASN1Block::Integer(_, x)),
-					Some(ASN1Block::Integer(_, y)),
-				) = (blocks.get(2), blocks.get(3))
+				if let (Some(ASN1Block::Integer(_, x)), Some(ASN1Block::Integer(_, y))) =
+					(blocks.get(2), blocks.get(3))
 				{
 					// Store as uncompressed coordinates:
 					// 0x04
@@ -173,15 +169,12 @@ impl EccKeyPubP256 {
 	}
 
 	/// Convert to base64 encoded public tomcrypt key.
-	pub fn to_ts(&self) -> Result<String> {
-		Ok(base64::encode(&self.to_tomcrypt()?))
-	}
+	pub fn to_ts(&self) -> Result<String> { Ok(base64::encode(&self.to_tomcrypt()?)) }
 
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
 		let pub_len = (self.0.len() - 1) / 2;
 		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &self.0[1..=pub_len]);
-		let pubkey_y =
-			BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
+		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
 
 		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0]),
@@ -201,19 +194,14 @@ impl EccKeyPubP256 {
 	///
 	/// returns sha1(ts encoded key)
 	pub fn get_uid_no_base64(&self) -> Result<Vec<u8>> {
-		let hash = digest::digest(
-			&digest::SHA1_FOR_LEGACY_USE_ONLY,
-			self.to_ts()?.as_bytes(),
-		);
+		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, self.to_ts()?.as_bytes());
 		Ok(hash.as_ref().to_vec())
 	}
 
 	/// Compute the uid of this key.
 	///
 	/// Uid = base64(sha1(ts encoded key))
-	pub fn get_uid(&self) -> Result<String> {
-		Ok(base64::encode(&self.get_uid_no_base64()?))
-	}
+	pub fn get_uid(&self) -> Result<String> { Ok(base64::encode(&self.get_uid_no_base64()?)) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let key = ring::signature::UnparsedPublicKey::new(
@@ -295,9 +283,7 @@ impl EccKeyPrivP256 {
 	pub fn to_short(&self) -> &[u8] { &self.0 }
 
 	/// From base64 encoded tomcrypt key.
-	pub fn from_ts(data: &str) -> Result<Self> {
-		Self::from_tomcrypt(&base64::decode(data)?)
-	}
+	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
 
 	/// From the key representation which is used to store identities in the
 	/// TeamSpeak configuration file.
@@ -316,14 +302,8 @@ impl EccKeyPrivP256 {
 		}
 		// Hash everything until the first 0 byte, starting after the first 20
 		// bytes.
-		let pos = data[20..]
-			.iter()
-			.position(|b| *b == b'\0')
-			.unwrap_or(data.len() - 20);
-		let hash = digest::digest(
-			&digest::SHA1_FOR_LEGACY_USE_ONLY,
-			&data[20..20 + pos],
-		);
+		let pos = data[20..].iter().position(|b| *b == b'\0').unwrap_or(data.len() - 20);
+		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
 		let hash = hash.as_ref();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
@@ -379,9 +359,7 @@ impl EccKeyPrivP256 {
 	}
 
 	/// Convert to base64 encoded private tomcrypt key.
-	pub fn to_ts(&self) -> Result<String> {
-		Ok(base64::encode(&self.to_tomcrypt()?))
-	}
+	pub fn to_ts(&self) -> Result<String> { Ok(base64::encode(&self.to_tomcrypt()?)) }
 
 	/// Store as obfuscated TeamSpeak identity.
 	pub fn to_ts_obfuscated(&self) -> Result<String> {
@@ -394,14 +372,8 @@ impl EccKeyPrivP256 {
 
 		// Hash everything until the first 0 byte, starting after the first 20
 		// bytes.
-		let pos = data[20..]
-			.iter()
-			.position(|b| *b == b'\0')
-			.unwrap_or(data.len() - 20);
-		let hash = digest::digest(
-			&digest::SHA1_FOR_LEGACY_USE_ONLY,
-			&data[20..20 + pos],
-		);
+		let pos = data[20..].iter().position(|b| *b == b'\0').unwrap_or(data.len() - 20);
+		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
 		let hash = hash.as_ref();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
@@ -413,10 +385,8 @@ impl EccKeyPrivP256 {
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
 		let pubkey_bin = self.to_pub().0;
 		let pub_len = (pubkey_bin.len() - 1) / 2;
-		let pubkey_x =
-			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
-		let pubkey_y =
-			BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
+		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
+		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
 
 		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0);
 
@@ -443,8 +413,8 @@ impl EccKeyPrivP256 {
 		use ring::ec::keys::Seed;
 		use ring::ec::suite_b::ecdh;
 
-		let seed = Seed::from_p256_bytes(Input::from(&self.0))
-			.map_err(|_| Error::ParsePublicKeyFailed)?;
+		let seed =
+			Seed::from_p256_bytes(Input::from(&self.0)).map_err(|_| Error::ParsePublicKeyFailed)?;
 		let mut res = vec![0; 32];
 		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))
 			.map_err(|_| Error::KeyExchangeFailed)?;
@@ -464,15 +434,11 @@ impl EccKeyPrivP256 {
 }
 
 impl<'a> Into<EccKeyPubP256> for &'a EccKeyPrivP256 {
-	fn into(self) -> EccKeyPubP256 {
-		EccKeyPubP256(self.to_ring().public_key().as_ref().to_vec())
-	}
+	fn into(self) -> EccKeyPubP256 { EccKeyPubP256(self.to_ring().public_key().as_ref().to_vec()) }
 }
 
 impl EccKeyPubEd25519 {
-	pub fn from_bytes(data: [u8; 32]) -> Self {
-		EccKeyPubEd25519(CompressedEdwardsY(data))
-	}
+	pub fn from_bytes(data: [u8; 32]) -> Self { EccKeyPubEd25519(CompressedEdwardsY(data)) }
 
 	pub fn from_base64(data: &str) -> Result<Self> {
 		let decoded = base64::decode(data)?;
@@ -509,9 +475,7 @@ impl EccKeyPrivEd25519 {
 	pub fn to_base64(&self) -> String { base64::encode(self.0.as_bytes()) }
 
 	/// This has to be the private key, the other one has to be the public key.
-	pub fn create_shared_secret(
-		&self, pub_key: &EdwardsPoint,
-	) -> Result<[u8; 32]> {
+	pub fn create_shared_secret(&self, pub_key: &EdwardsPoint) -> Result<[u8; 32]> {
 		let res = pub_key * self.0;
 		Ok(res.compress().0)
 	}
@@ -521,9 +485,7 @@ impl EccKeyPrivEd25519 {
 
 impl<'a> Into<EccKeyPubEd25519> for &'a EccKeyPrivEd25519 {
 	fn into(self) -> EccKeyPubEd25519 {
-		EccKeyPubEd25519(
-			(&constants::ED25519_BASEPOINT_TABLE * &self.0).compress(),
-		)
+		EccKeyPubEd25519((&constants::ED25519_BASEPOINT_TABLE * &self.0).compress())
 	}
 }
 
@@ -536,9 +498,7 @@ mod tests {
 		nmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI";
 
 	#[test]
-	fn parse_p256_priv_key() {
-		EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
-	}
+	fn parse_p256_priv_key() { EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap(); }
 
 	#[test]
 	fn p256_ecdh() {
@@ -580,9 +540,6 @@ mod tests {
 
 	#[test]
 	fn parse_ed25519_pub_key() {
-		EccKeyPubEd25519::from_base64(
-			"zQ3irtRjRVCafjz9j2iz3HVVsp3M7HPNGHUPmTgSQIo=",
-		)
-		.unwrap();
+		EccKeyPubEd25519::from_base64("zQ3irtRjRVCafjz9j2iz3HVVsp3M7HPNGHUPmTgSQIo=").unwrap();
 	}
 }

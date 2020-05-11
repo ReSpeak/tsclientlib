@@ -11,16 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{Error, HexSlice, Result};
 
 #[derive(
-	Clone,
-	Copy,
-	Debug,
-	Deserialize,
-	Eq,
-	FromPrimitive,
-	Hash,
-	PartialEq,
-	ToPrimitive,
-	Serialize,
+	Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, ToPrimitive, Serialize,
 )]
 #[repr(u8)]
 pub enum PacketType {
@@ -56,12 +47,8 @@ impl PacketType {
 	pub fn is_command(self) -> bool {
 		self == PacketType::Command || self == PacketType::CommandLow
 	}
-	pub fn is_ack(self) -> bool {
-		self == PacketType::Ack || self == PacketType::AckLow
-	}
-	pub fn is_voice(self) -> bool {
-		self == PacketType::Voice || self == PacketType::VoiceWhisper
-	}
+	pub fn is_ack(self) -> bool { self == PacketType::Ack || self == PacketType::AckLow }
+	pub fn is_voice(self) -> bool { self == PacketType::Voice || self == PacketType::VoiceWhisper }
 }
 
 #[repr(u8)]
@@ -192,16 +179,8 @@ pub enum C2SInitData<'a> {
 
 #[derive(Clone)]
 pub enum S2CInitData<'a> {
-	Init1 {
-		random1: &'a [u8; 16],
-		random0_r: &'a [u8; 4],
-	},
-	Init3 {
-		x: &'a [u8; 64],
-		n: &'a [u8; 64],
-		level: u32,
-		random2: &'a [u8; 100],
-	},
+	Init1 { random1: &'a [u8; 16], random0_r: &'a [u8; 4] },
+	Init3 { x: &'a [u8; 64], n: &'a [u8; 64], level: u32, random2: &'a [u8; 100] },
 }
 
 #[derive(Clone, Debug)]
@@ -286,11 +265,8 @@ impl<'a> InPacket<'a> {
 	/// Do some sanity checks before creating the object.
 	#[inline]
 	pub fn try_new(direction: Direction, data: &'a [u8]) -> Result<Self> {
-		let header_len = if direction == Direction::S2C {
-			crate::S2C_HEADER_LEN
-		} else {
-			crate::C2S_HEADER_LEN
-		};
+		let header_len =
+			if direction == Direction::S2C { crate::S2C_HEADER_LEN } else { crate::C2S_HEADER_LEN };
 		if data.len() < header_len {
 			return Err(Error::PacketTooShort(data.len()));
 		}
@@ -325,17 +301,17 @@ impl<'a> InPacket<'a> {
 	pub fn ack_packet(&self) -> Result<Option<u16>> {
 		let p_type = self.header().packet_type();
 		if p_type.is_ack() {
-			Ok(Some(self.content().read_be().map_err(|_| {
-				Error::PacketContentTooShort(self.content().len())
-			})?))
+			Ok(Some(
+				self.content()
+					.read_be()
+					.map_err(|_| Error::PacketContentTooShort(self.content().len()))?,
+			))
 		} else if p_type == PacketType::Init {
 			if self.header.direction == Direction::S2C {
 				Ok(Some(
 					self.content
 						.get(0)
-						.ok_or_else(|| {
-							Error::PacketContentTooShort(self.content().len())
-						})
+						.ok_or_else(|| Error::PacketContentTooShort(self.content().len()))
 						.and_then(|i| match u16::from(*i) {
 							1 => Ok(0),
 							3 => Ok(2),
@@ -346,9 +322,7 @@ impl<'a> InPacket<'a> {
 				Ok(self
 					.content
 					.get(4)
-					.ok_or_else(|| {
-						Error::PacketContentTooShort(self.content().len())
-					})
+					.ok_or_else(|| Error::PacketContentTooShort(self.content().len()))
 					.and_then(|i| match u16::from(*i) {
 						0 => Ok(None),
 						2 => Ok(Some(1)),
@@ -365,20 +339,13 @@ impl<'a> InPacket<'a> {
 	pub fn into_audio(self) -> Result<InAudio<'a>> {
 		let p_type = self.header().packet_type();
 		let newprotocol = self.header().flags().contains(Flags::NEWPROTOCOL);
-		let data = AudioData::parse(
-			p_type,
-			newprotocol,
-			self.header.direction,
-			self.content,
-		)?;
+		let data = AudioData::parse(p_type, newprotocol, self.header.direction, self.content)?;
 
 		Ok(InAudio { packet: self, data })
 	}
 
 	/// Put this packet into a command packet.
-	pub fn into_command(self) -> Result<InCommand<'a>> {
-		Ok(InCommand { packet: self })
-	}
+	pub fn into_command(self) -> Result<InCommand<'a>> { Ok(InCommand { packet: self }) }
 
 	pub fn into_s2cinit(self) -> Result<InS2CInit<'a>> {
 		if self.header.direction != Direction::S2C {
@@ -499,10 +466,7 @@ impl fmt::Debug for InPacket<'_> {
 					write!(f, ", {:?}", packet)?;
 				}
 			}
-			PacketType::Ping
-			| PacketType::Pong
-			| PacketType::Ack
-			| PacketType::AckLow => {
+			PacketType::Ping | PacketType::Pong | PacketType::Ack | PacketType::AckLow => {
 				success = true;
 				if !self.content().is_empty() {
 					write!(f, ", 0x")?;
@@ -527,11 +491,7 @@ impl fmt::Debug for InPacket<'_> {
 		}
 
 		if !success {
-			write!(
-				f,
-				", failed to parse, content: {})",
-				HexSlice(self.content())
-			)?;
+			write!(f, ", failed to parse, content: {})", HexSlice(self.content()))?;
 		}
 
 		write!(f, ")")?;
@@ -541,12 +501,7 @@ impl fmt::Debug for InPacket<'_> {
 
 impl fmt::Debug for InUdpPacket<'_> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(
-			f,
-			"Packet({:?}, content: {})",
-			self.0.header(),
-			HexSlice(self.0.content())
-		)?;
+		write!(f, "Packet({:?}, content: {})", self.0.header(), HexSlice(self.0.content()))?;
 		Ok(())
 	}
 }
@@ -578,20 +533,15 @@ impl fmt::Debug for InHeader<'_> {
 impl<'a> InHeader<'a> {
 	#[inline]
 	pub fn new(direction: Direction, data: &'a [u8]) -> Self {
-		let header_len = if direction == Direction::S2C {
-			crate::S2C_HEADER_LEN
-		} else {
-			crate::C2S_HEADER_LEN
-		};
+		let header_len =
+			if direction == Direction::S2C { crate::S2C_HEADER_LEN } else { crate::C2S_HEADER_LEN };
 
 		Self { direction, data: &data[..header_len] }
 	}
 
 	/// The offset to the packet type.
 	#[inline]
-	fn get_off(&self) -> usize {
-		if self.direction == Direction::S2C { 10 } else { 12 }
-	}
+	fn get_off(&self) -> usize { if self.direction == Direction::S2C { 10 } else { 12 } }
 
 	#[inline]
 	pub fn direction(&self) -> Direction { self.direction }
@@ -612,9 +562,7 @@ impl<'a> InHeader<'a> {
 	}
 
 	#[inline]
-	pub fn flags(&self) -> Flags {
-		Flags::from_bits(self.data[self.get_off()] & 0xf0).unwrap()
-	}
+	pub fn flags(&self) -> Flags { Flags::from_bits(self.data[self.get_off()] & 0xf0).unwrap() }
 
 	#[inline]
 	pub fn packet_type(&self) -> PacketType {
@@ -666,9 +614,7 @@ impl<'a> fmt::Debug for S2CInitData<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
 			S2CInitData::Init1 { .. } => write!(f, "Init1"),
-			S2CInitData::Init3 { level, .. } => {
-				write!(f, "Init3(level: {})", level)
-			}
+			S2CInitData::Init3 { level, .. } => write!(f, "Init3(level: {})", level),
 		}
 	}
 }
@@ -680,10 +626,8 @@ impl<'a> InCommand<'a> {
 
 impl<'a> AudioData<'a> {
 	pub fn parse(
-		p_type: PacketType, newprotocol: bool, dir: Direction,
-		content: &'a [u8],
-	) -> Result<Self>
-	{
+		p_type: PacketType, newprotocol: bool, dir: Direction, content: &'a [u8],
+	) -> Result<Self> {
 		let id = (&content[..]).read_be()?;
 		if p_type == PacketType::Voice {
 			if dir == Direction::S2C {
@@ -723,8 +667,8 @@ impl<'a> AudioData<'a> {
 			if content.len() < 3 {
 				return Err(Error::PacketContentTooShort(content.len()));
 			}
-			let codec = CodecType::from_u8(content[2])
-				.ok_or_else(|| Error::InvalidCodec(content[4]))?;
+			let codec =
+				CodecType::from_u8(content[2]).ok_or_else(|| Error::InvalidCodec(content[4]))?;
 			if newprotocol {
 				if content.len() < 14 {
 					return Err(Error::PacketContentTooShort(content.len()));
@@ -857,13 +801,7 @@ impl fmt::Debug for InAudio<'_> {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match &self.data {
 			AudioData::C2S { id, codec, data } => {
-				write!(
-					f,
-					"Audio(id: {}, {:?}, {})",
-					id,
-					codec,
-					HexSlice(data)
-				)?;
+				write!(f, "Audio(id: {}, {:?}, {})", id, codec, HexSlice(data))?;
 			}
 			AudioData::C2SWhisper { id, codec, channels, clients, data } => {
 				write!(
@@ -876,18 +814,10 @@ impl fmt::Debug for InAudio<'_> {
 					HexSlice(data)
 				)?;
 			}
-			AudioData::C2SWhisperNew {
-				id,
-				codec,
-				whisper_type,
-				target,
-				target_id,
-				data,
-			} => {
+			AudioData::C2SWhisperNew { id, codec, whisper_type, target, target_id, data } => {
 				write!(
 					f,
-					"WhisperNew(id: {}, {:?}, type: {}, target: {}, \
-					 target_id: {}, {})",
+					"WhisperNew(id: {}, {:?}, type: {}, target: {}, target_id: {}, {})",
 					id,
 					codec,
 					whisper_type,
@@ -897,24 +827,10 @@ impl fmt::Debug for InAudio<'_> {
 				)?;
 			}
 			AudioData::S2C { id, from, codec, data } => {
-				write!(
-					f,
-					"Audio(id: {}, from: {}, {:?}, {})",
-					id,
-					from,
-					codec,
-					HexSlice(data)
-				)?;
+				write!(f, "Audio(id: {}, from: {}, {:?}, {})", id, from, codec, HexSlice(data))?;
 			}
 			AudioData::S2CWhisper { id, from, codec, data } => {
-				write!(
-					f,
-					"Whisper(id: {}, from: {}, {:?}, {})",
-					id,
-					from,
-					codec,
-					HexSlice(data)
-				)?;
+				write!(f, "Whisper(id: {}, from: {}, {:?}, {})", id, from, codec, HexSlice(data))?;
 			}
 		}
 
@@ -925,12 +841,9 @@ impl fmt::Debug for InAudio<'_> {
 impl OutPacket {
 	#[inline]
 	pub fn new(
-		mac: [u8; 8], packet_id: u16, client_id: Option<u16>, flags: Flags,
-		packet_type: PacketType,
-	) -> Self
-	{
-		let dir =
-			if client_id.is_some() { Direction::C2S } else { Direction::S2C };
+		mac: [u8; 8], packet_id: u16, client_id: Option<u16>, flags: Flags, packet_type: PacketType,
+	) -> Self {
+		let dir = if client_id.is_some() { Direction::C2S } else { Direction::S2C };
 		let mut res = Self::new_with_dir(dir, flags, packet_type);
 		res.data[..8].copy_from_slice(&mac);
 		res.packet_id(packet_id);
@@ -942,17 +855,12 @@ impl OutPacket {
 
 	/// Fill packet with known data. The rest gets filled by `packet_codec`.
 	#[inline]
-	pub fn new_with_dir(
-		dir: Direction, flags: Flags, packet_type: PacketType,
-	) -> Self {
-		let data = vec![
-			0;
-			if dir == Direction::S2C {
-				crate::S2C_HEADER_LEN
-			} else {
-				crate::C2S_HEADER_LEN
-			}
-		];
+	pub fn new_with_dir(dir: Direction, flags: Flags, packet_type: PacketType) -> Self {
+		let data =
+			vec![
+				0;
+				if dir == Direction::S2C { crate::S2C_HEADER_LEN } else { crate::C2S_HEADER_LEN }
+			];
 		let mut res = Self { dir, data };
 		res.flags(flags);
 		res.packet_type(packet_type);
@@ -960,20 +868,14 @@ impl OutPacket {
 	}
 
 	#[inline]
-	pub fn new_from_data(dir: Direction, data: Vec<u8>) -> Self {
-		Self { dir, data }
-	}
+	pub fn new_from_data(dir: Direction, data: Vec<u8>) -> Self { Self { dir, data } }
 
 	#[inline]
 	pub fn into_vec(self) -> Vec<u8> { self.data }
 
 	#[inline]
 	fn content_offset(&self) -> usize {
-		if self.dir == Direction::S2C {
-			crate::S2C_HEADER_LEN
-		} else {
-			crate::C2S_HEADER_LEN
-		}
+		if self.dir == Direction::S2C { crate::S2C_HEADER_LEN } else { crate::C2S_HEADER_LEN }
 	}
 
 	#[inline]
@@ -990,9 +892,7 @@ impl OutPacket {
 	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
-	pub fn header(&self) -> InHeader {
-		InHeader { direction: self.dir, data: self.header_bytes() }
-	}
+	pub fn header(&self) -> InHeader { InHeader { direction: self.dir, data: self.header_bytes() } }
 	#[inline]
 	pub fn header_bytes(&self) -> &[u8] { &self.data[..self.content_offset()] }
 	#[inline]
@@ -1027,9 +927,7 @@ impl OutPacket {
 
 impl OutUdpPacket {
 	#[inline]
-	pub fn new(generation_id: u32, data: OutPacket) -> Self {
-		Self { generation_id, data }
-	}
+	pub fn new(generation_id: u32, data: OutPacket) -> Self { Self { generation_id, data } }
 
 	#[inline]
 	pub fn generation_id(&self) -> u32 { self.generation_id }
@@ -1078,11 +976,8 @@ impl io::Write for EscapedWriter<'_> {
 
 impl OutCommand {
 	#[inline]
-	pub fn new(
-		dir: Direction, flags: Flags, p_type: PacketType, name: &str,
-	) -> Self {
-		let mut res =
-			Self(OutPacket::new_with_dir(dir, Flags::empty(), p_type));
+	pub fn new(dir: Direction, flags: Flags, p_type: PacketType, name: &str) -> Self {
+		let mut res = Self(OutPacket::new_with_dir(dir, Flags::empty(), p_type));
 		res.0.flags(flags);
 		res.0.data.extend_from_slice(name.as_bytes());
 		res
@@ -1091,9 +986,7 @@ impl OutCommand {
 	/// For binary arguments. The value will still be escaped.
 	#[inline]
 	pub fn write_bin_arg(&mut self, name: &str, value: &[u8]) {
-		if self.0.content().last() != Some(&b'|')
-			&& !self.0.content().is_empty()
-		{
+		if self.0.content().last() != Some(&b'|') && !self.0.content().is_empty() {
 			self.0.data.push(b' ');
 		}
 		self.0.data.extend_from_slice(name.as_bytes());
@@ -1106,9 +999,7 @@ impl OutCommand {
 	/// The value will be formatted and escaped.
 	#[inline]
 	pub fn write_arg(&mut self, name: &str, value: &dyn fmt::Display) {
-		if self.0.content().last() != Some(&b'|')
-			&& !self.0.content().is_empty()
-		{
+		if self.0.content().last() != Some(&b'|') && !self.0.content().is_empty() {
 			self.0.data.push(b' ');
 		}
 		self.0.data.extend_from_slice(name.as_bytes());
@@ -1130,11 +1021,7 @@ impl OutCommand {
 
 impl OutC2SInit0 {
 	pub fn new(version: u32, timestamp: u32, random0: [u8; 4]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(
-			Direction::C2S,
-			Flags::empty(),
-			PacketType::Init,
-		);
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1149,14 +1036,8 @@ impl OutC2SInit0 {
 }
 
 impl OutC2SInit2 {
-	pub fn new(
-		version: u32, random1: &[u8; 16], random0_r: [u8; 4],
-	) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(
-			Direction::C2S,
-			Flags::empty(),
-			PacketType::Init,
-		);
+	pub fn new(version: u32, random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1170,16 +1051,11 @@ impl OutC2SInit2 {
 
 impl OutC2SInit4 {
 	pub fn new(
-		version: u32, x: &[u8; 64], n: &[u8; 64], level: u32,
-		random2: &[u8; 100], y: &[u8; 64], alpha: &[u8], omega: &[u8],
-		ip: &str,
+		version: u32, x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100], y: &[u8; 64],
+		alpha: &[u8], omega: &[u8], ip: &str,
 	) -> OutPacket
 	{
-		let mut res = OutPacket::new_with_dir(
-			Direction::C2S,
-			Flags::empty(),
-			PacketType::Init,
-		);
+		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1208,11 +1084,7 @@ impl OutC2SInit4 {
 
 impl OutS2CInit1 {
 	pub fn new(random1: &[u8; 16], random0_r: [u8; 4]) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(
-			Direction::S2C,
-			Flags::empty(),
-			PacketType::Init,
-		);
+		let mut res = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1224,14 +1096,8 @@ impl OutS2CInit1 {
 }
 
 impl OutS2CInit3 {
-	pub fn new(
-		x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100],
-	) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(
-			Direction::S2C,
-			Flags::empty(),
-			PacketType::Init,
-		);
+	pub fn new(x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100]) -> OutPacket {
+		let mut res = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);
 		let content = res.data_mut();
@@ -1246,9 +1112,7 @@ impl OutS2CInit3 {
 
 impl OutAck {
 	/// `for_type` is the packet type which gets acknowledged, so e.g. `Command`.
-	pub fn new(
-		dir: Direction, for_type: PacketType, packet_id: u16,
-	) -> OutPacket {
+	pub fn new(dir: Direction, for_type: PacketType, packet_id: u16) -> OutPacket {
 		let p_type = if for_type == PacketType::Command {
 			PacketType::Ack
 		} else if for_type == PacketType::CommandLow {
@@ -1268,11 +1132,7 @@ impl OutAck {
 
 impl OutAudio {
 	pub fn new(data: &AudioData) -> OutPacket {
-		let mut res = OutPacket::new_with_dir(
-			data.direction(),
-			data.flags(),
-			data.packet_type(),
-		);
+		let mut res = OutPacket::new_with_dir(data.direction(), data.flags(), data.packet_type());
 		let content = res.data_mut();
 
 		content.write_be(data.id()).unwrap();
@@ -1281,9 +1141,7 @@ impl OutAudio {
 				content.write_be(codec.to_u8().unwrap()).unwrap();
 				content.extend_from_slice(data);
 			}
-			AudioData::C2SWhisper {
-				codec, channels, clients, data, ..
-			} => {
+			AudioData::C2SWhisper { codec, channels, clients, data, .. } => {
 				content.write_be(codec.to_u8().unwrap()).unwrap();
 				content.write_be(channels.len() as u8).unwrap();
 				content.write_be(clients.len() as u8).unwrap();
@@ -1296,14 +1154,7 @@ impl OutAudio {
 				}
 				content.extend_from_slice(data);
 			}
-			AudioData::C2SWhisperNew {
-				codec,
-				whisper_type,
-				target,
-				target_id,
-				data,
-				..
-			} => {
+			AudioData::C2SWhisperNew { codec, whisper_type, target, target_id, data, .. } => {
 				content.write_be(codec.to_u8().unwrap()).unwrap();
 				content.write_be(whisper_type.to_u8().unwrap()).unwrap();
 				content.write_be(*target).unwrap();
@@ -1335,11 +1186,7 @@ mod tests {
 
 	#[test]
 	fn test_audio_c2s() {
-		let data = AudioData::C2S {
-			codec: CodecType::OpusVoice,
-			id: 0x1234,
-			data: &[1, 2, 3],
-		};
+		let data = AudioData::C2S { codec: CodecType::OpusVoice, id: 0x1234, data: &[1, 2, 3] };
 		test_audio_roundtrip(Direction::C2S, &data);
 	}
 

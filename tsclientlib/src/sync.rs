@@ -89,14 +89,9 @@ pub struct SyncConnection {
 	commands: HashMap<super::MessageHandle, oneshot::Sender<Result<()>>>,
 	connects: Vec<oneshot::Sender<Result<()>>>,
 	disconnects: Vec<oneshot::Sender<Result<()>>>,
-	downloads: HashMap<
-		super::FileTransferHandle,
-		oneshot::Sender<Result<super::FileDownloadResult>>,
-	>,
-	uploads: HashMap<
-		super::FileTransferHandle,
-		oneshot::Sender<Result<super::FileUploadResult>>,
-	>,
+	downloads:
+		HashMap<super::FileTransferHandle, oneshot::Sender<Result<super::FileDownloadResult>>>,
+	uploads: HashMap<super::FileTransferHandle, oneshot::Sender<Result<super::FileUploadResult>>>,
 }
 
 impl From<super::Connection> for SyncConnection {
@@ -129,9 +124,7 @@ impl DerefMut for SyncConnection {
 
 impl Stream for SyncConnection {
 	type Item = Result<SyncStreamItem>;
-	fn poll_next(
-		mut self: Pin<&mut Self>, ctx: &mut Context,
-	) -> Poll<Option<Self::Item>> {
+	fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
 		loop {
 			if let Poll::Ready(msg) = self.recv.poll_next_unpin(ctx) {
 				if let Some(msg) = msg {
@@ -214,10 +207,7 @@ impl Stream for SyncConnection {
 					}
 					continue;
 				} else {
-					error!(
-						self.con.logger,
-						"Message stream ended unexpectedly"
-					);
+					error!(self.con.logger, "Message stream ended unexpectedly");
 				}
 			}
 			break;
@@ -248,10 +238,7 @@ impl Stream for SyncConnection {
 							if let Some(send) = self.commands.remove(&handle) {
 								let _ = send.send(res.map_err(|e| e.into()));
 							} else {
-								info!(
-									self.con.logger,
-									"Got untracked message result"
-								);
+								info!(self.con.logger, "Got untracked message result");
 							}
 							continue;
 						}
@@ -259,10 +246,7 @@ impl Stream for SyncConnection {
 							if let Some(send) = self.downloads.remove(&handle) {
 								let _ = send.send(Ok(res));
 							} else {
-								info!(
-									self.con.logger,
-									"Got untracked download"
-								);
+								info!(self.con.logger, "Got untracked download");
 							}
 							continue;
 						}
@@ -277,15 +261,10 @@ impl Stream for SyncConnection {
 						StreamItem::FileTransferFailed(handle, res) => {
 							if let Some(send) = self.downloads.remove(&handle) {
 								let _ = send.send(Err(res));
-							} else if let Some(send) =
-								self.uploads.remove(&handle)
-							{
+							} else if let Some(send) = self.uploads.remove(&handle) {
 								let _ = send.send(Err(res));
 							} else {
-								info!(
-									self.con.logger,
-									"Got untracked file transfer"
-								);
+								info!(self.con.logger, "Got untracked file transfer");
 							}
 							continue;
 						}
@@ -425,8 +404,8 @@ impl SyncConnectionHandle {
 	/// let download = handle.download_file(ChannelId(0), format!("/icon_{}", id), None, None);
 	/// ```
 	pub async fn download_file(
-		&mut self, channel_id: ChannelId, path: String,
-		channel_password: Option<String>, seek_position: Option<u64>,
+		&mut self, channel_id: ChannelId, path: String, channel_password: Option<String>,
+		seek_position: Option<u64>,
 	) -> Result<super::FileDownloadResult>
 	{
 		let (send, recv) = oneshot::channel();
@@ -458,9 +437,8 @@ impl SyncConnectionHandle {
 	/// let upload = handle.upload_file(ChannelId(0), "/avatar".to_string(), None, size, true, false);
 	/// ```
 	pub async fn upload_file(
-		&mut self, channel_id: ChannelId, path: String,
-		channel_password: Option<String>, size: u64, overwrite: bool,
-		resume: bool,
+		&mut self, channel_id: ChannelId, path: String, channel_password: Option<String>,
+		size: u64, overwrite: bool, resume: bool,
 	) -> Result<super::FileUploadResult>
 	{
 		let (send, recv) = oneshot::channel();

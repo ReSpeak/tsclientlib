@@ -90,12 +90,10 @@ impl LicenseKey {
 
 	pub fn get_pub(&self) -> Result<EdwardsPoint> {
 		match *self {
-			LicenseKey::Public(ref k) => k.0.decompress().ok_or_else(|| {
-				format_err!("Cannot uncompress public key").into()
-			}),
-			LicenseKey::Private(ref k) => {
-				Ok(&constants::ED25519_BASEPOINT_TABLE * &k.0)
+			LicenseKey::Public(ref k) => {
+				k.0.decompress().ok_or_else(|| format_err!("Cannot uncompress public key").into())
 			}
+			LicenseKey::Private(ref k) => Ok(&constants::ED25519_BASEPOINT_TABLE * &k.0),
 		}
 	}
 }
@@ -118,17 +116,11 @@ impl Licenses {
 	/// Parse a license but ignore expired licenses.
 	///
 	/// This is useful for tests but should not be used otherwise.
-	pub fn parse_ignore_expired(data: &[u8]) -> Result<Self> {
-		Self::parse_internal(data, false)
-	}
+	pub fn parse_ignore_expired(data: &[u8]) -> Result<Self> { Self::parse_internal(data, false) }
 
-	pub fn parse(data: &[u8]) -> Result<Self> {
-		Self::parse_internal(data, true)
-	}
+	pub fn parse(data: &[u8]) -> Result<Self> { Self::parse_internal(data, true) }
 
-	pub fn parse_internal(
-		mut data: &[u8], check_expired: bool,
-	) -> Result<Self> {
+	pub fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
 		let version = data[0];
 		if version != 0 && version != 1 {
 			return Err(format_err!("Unsupported version").into());
@@ -157,12 +149,8 @@ impl Licenses {
 			}
 			if let Some((start, end)) = bounds {
 				// The inner license must not have wider bounds
-				if license.not_valid_before < start
-					|| license.not_valid_after > end
-				{
-					return Err(
-						format_err!("Invalid license time bounds").into()
-					);
+				if license.not_valid_before < start || license.not_valid_after > end {
+					return Err(format_err!("Invalid license time bounds").into());
 				}
 			}
 			bounds = Some((license.not_valid_before, license.not_valid_after));
@@ -185,7 +173,9 @@ impl Licenses {
 	}
 
 	pub fn derive_public_key(&self, root: EccKeyPubEd25519) -> Result<EdwardsPoint> {
-		let mut last_round = root.0.decompress()
+		let mut last_round = root
+			.0
+			.decompress()
 			.ok_or_else(|| format_err!("Invalid root public key for license"))?;
 		for l in &self.blocks {
 			//let derived_key = last_round.compress().0;
@@ -244,9 +234,7 @@ impl License {
 			return Err(format_err!("License too short").into());
 		}
 		if data[0] != 0 {
-			return Err(
-				format_err!("Wrong key kind {} in license", data[0]).into()
-			);
+			return Err(format_err!("Wrong key kind {} in license", data[0]).into());
 		}
 
 		let mut key_data = [0; 32];
@@ -259,66 +247,38 @@ impl License {
 			0 => {
 				let license_data: u32 = (&data[42..]).read_be()?;
 				if license_data > 0x7f {
-					return Err(format_err!(
-						"Invalid data in intermediate license"
-					)
-					.into());
+					return Err(format_err!("Invalid data in intermediate license").into());
 				}
 
-				let len = if let Some(len) =
-					data[46..].iter().position(|&b| b == 0)
-				{
+				let len = if let Some(len) = data[46..].iter().position(|&b| b == 0) {
 					len
 				} else {
-					return Err(
-						format_err!("Non-null-terminated string").into()
-					);
+					return Err(format_err!("Non-null-terminated string").into());
 				};
 				let issuer = str::from_utf8(&data[46..46 + len])?.to_string();
-				(
-					InnerLicense::Intermediate {
-						issuer,
-						data: license_data as u8,
-					},
-					5 + len,
-				)
+				(InnerLicense::Intermediate { issuer, data: license_data as u8 }, 5 + len)
 			}
 			2 => {
 				if data.len() < 47 {
 					return Err(format_err!("License too short").into());
 				}
-				let license_type =
-					LicenseType::from_u8(data[42]).ok_or_else(|| {
-						format_err!("Unknown license type {}", data[42])
-					})?;
+				let license_type = LicenseType::from_u8(data[42])
+					.ok_or_else(|| format_err!("Unknown license type {}", data[42]))?;
 				let license_data: u32 = (&data[43..]).read_be()?;
-				let len = if let Some(len) =
-					data[47..].iter().position(|&b| b == 0)
-				{
+				let len = if let Some(len) = data[47..].iter().position(|&b| b == 0) {
 					len
 				} else {
-					return Err(
-						format_err!("Non-null-terminated string").into()
-					);
+					return Err(format_err!("Non-null-terminated string").into());
 				};
 				if data.len() < 47 + len {
 					return Err(format_err!("License too short").into());
 				}
 				let issuer = str::from_utf8(&data[47..47 + len])?.to_string();
-				(
-					InnerLicense::Server {
-						issuer,
-						license_type,
-						data: license_data,
-					},
-					6 + len,
-				)
+				(InnerLicense::Server { issuer, license_type, data: license_data }, 6 + len)
 			}
 			32 => (InnerLicense::Ephemeral, 0),
 			i => {
-				return Err(
-					format_err!("Invalid license block type {}", i).into()
-				);
+				return Err(format_err!("Invalid license block type {}", i).into());
 			}
 		};
 
@@ -350,12 +310,8 @@ impl License {
 		// Type
 		w.write_be(self.inner.type_id())?;
 
-		w.write_be(
-			(self.not_valid_before.timestamp() - TIMESTAMP_OFFSET) as u32,
-		)?;
-		w.write_be(
-			(self.not_valid_after.timestamp() - TIMESTAMP_OFFSET) as u32,
-		)?;
+		w.write_be((self.not_valid_before.timestamp() - TIMESTAMP_OFFSET) as u32)?;
+		w.write_be((self.not_valid_after.timestamp() - TIMESTAMP_OFFSET) as u32)?;
 
 		match self.inner {
 			InnerLicense::Intermediate { ref issuer, data } => {
@@ -393,9 +349,7 @@ impl License {
 		Scalar::from_bytes_mod_order(hash_key)
 	}
 
-	pub fn derive_public_key(
-		&self, parent_key: &EdwardsPoint,
-	) -> Result<EdwardsPoint> {
+	pub fn derive_public_key(&self, parent_key: &EdwardsPoint) -> Result<EdwardsPoint> {
 		let hash_key = self.get_hash_key();
 		let pub_key = self.key.get_pub()?;
 		Ok(pub_key * hash_key + parent_key)
@@ -408,9 +362,7 @@ impl License {
 	/// # Arguments
 	///
 	/// `parent_key`: The resulting private key of the previous block.
-	pub fn derive_private_key(
-		&self, parent_key: &EccKeyPrivEd25519,
-	) -> Result<EccKeyPrivEd25519> {
+	pub fn derive_private_key(&self, parent_key: &EccKeyPrivEd25519) -> Result<EccKeyPrivEd25519> {
 		let priv_key = if let LicenseKey::Private(ref k) = self.key {
 			&k.0
 		} else {
@@ -468,13 +420,13 @@ mod tests {
 	#[test]
 	fn derive_public_key() {
 		let licenses = Licenses::parse_ignore_expired(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==").unwrap()).unwrap();
-		let derived_key = licenses.derive_public_key(
-			EccKeyPubEd25519::from_bytes(crate::ROOT_KEY)).unwrap();
+		let derived_key =
+			licenses.derive_public_key(EccKeyPubEd25519::from_bytes(crate::ROOT_KEY)).unwrap();
 
 		let expected_key = [
-			0x40, 0xe9, 0x50, 0xc4, 0x61, 0xba, 0x18, 0x3a, 0x1e, 0xb7, 0xcb,
-			0xb1, 0x9a, 0xc3, 0xd8, 0xd9, 0xc4, 0xd5, 0x24, 0xdb, 0x38, 0xf7,
-			0x2d, 0x3d, 0x66, 0x75, 0x77, 0x2a, 0xc5, 0x9c, 0xc5, 0xc6,
+			0x40, 0xe9, 0x50, 0xc4, 0x61, 0xba, 0x18, 0x3a, 0x1e, 0xb7, 0xcb, 0xb1, 0x9a, 0xc3,
+			0xd8, 0xd9, 0xc4, 0xd5, 0x24, 0xdb, 0x38, 0xf7, 0x2d, 0x3d, 0x66, 0x75, 0x77, 0x2a,
+			0xc5, 0x9c, 0xc5, 0xc6,
 		];
 		let derived_key = derived_key.compress().0;
 		//println!("Derived key: {:?}", ::utils::HexSlice((&derived_key) as &[u8]));

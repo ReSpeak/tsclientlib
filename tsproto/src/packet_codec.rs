@@ -51,38 +51,29 @@ impl PacketCodec {
 		let p_type = packet.header().packet_type();
 		let type_i = p_type.to_usize().unwrap();
 		let id = packet.header().packet_id();
-		let (in_recv_win, gen_id, cur_next, limit) =
-			con.in_receive_window(p_type, id);
+		let (in_recv_win, gen_id, cur_next, limit) = con.in_receive_window(p_type, id);
 
 		if let Some(params) = &con.params {
 			if p_type == PacketType::Init {
-				con.stream_items.push_back(StreamItem::Error(
-					BasicError::UnexpectedInitPacket.into(),
-				));
+				con.stream_items
+					.push_back(StreamItem::Error(BasicError::UnexpectedInitPacket.into()));
 				return Ok(());
 			}
 			if !con.is_client {
 				let c_id = packet.header().client_id().unwrap();
 				// Accept any client id for the first few acks
-				let is_first_ack =
-					gen_id == 0 && id <= 3 && p_type == PacketType::Ack;
+				let is_first_ack = gen_id == 0 && id <= 3 && p_type == PacketType::Ack;
 				if c_id != params.c_id && !is_first_ack {
-					con.stream_items.push_back(StreamItem::Error(
-						BasicError::WrongClientId(c_id).into(),
-					));
+					con.stream_items
+						.push_back(StreamItem::Error(BasicError::WrongClientId(c_id).into()));
 					return Ok(());
 				}
 			}
 		}
 
 		// Ignore range for acks and audio packets
-		if [
-			PacketType::Ack,
-			PacketType::AckLow,
-			PacketType::Voice,
-			PacketType::VoiceWhisper,
-		]
-		.contains(&p_type)
+		if [PacketType::Ack, PacketType::AckLow, PacketType::Voice, PacketType::VoiceWhisper]
+			.contains(&p_type)
 			|| in_recv_win
 		{
 			if !packet.header().flags().contains(Flags::UNENCRYPTED) {
@@ -94,19 +85,13 @@ impl PacketCodec {
 
 				// If it is the first ack packet of a client, try to fake
 				// decrypt it.
-				let new_content = if (p_type == PacketType::Ack
-					&& id <= 1 && con.is_client)
+				let new_content = if (p_type == PacketType::Ack && id <= 1 && con.is_client)
 					|| con.params.is_none()
 				{
 					match algs::decrypt_fake(&packet).or_else(|_| {
 						if let Some(params) = &mut con.params {
 							// Decrypt the packet
-							algs::decrypt(
-								&packet,
-								gen_id,
-								&params.shared_iv,
-								&mut params.key_cache,
-							)
+							algs::decrypt(&packet, gen_id, &params.shared_iv, &mut params.key_cache)
 						} else {
 							// Failed to fake decrypt the packet
 							Err(BasicError::WrongMac {
@@ -118,8 +103,7 @@ impl PacketCodec {
 					}) {
 						Ok(r) => r,
 						Err(e) => {
-							con.stream_items
-								.push_back(StreamItem::Error(e.into()));
+							con.stream_items.push_back(StreamItem::Error(e.into()));
 							return Ok(());
 						}
 					}
@@ -134,20 +118,15 @@ impl PacketCodec {
 						) {
 							Ok(r) => r,
 							Err(e) => {
-								con.stream_items
-									.push_back(StreamItem::Error(e.into()));
+								con.stream_items.push_back(StreamItem::Error(e.into()));
 								return Ok(());
 							}
 						}
 					} else {
 						// Failed to fake decrypt the packet
 						con.stream_items.push_back(StreamItem::Error(
-							BasicError::WrongMac {
-								p_type,
-								generation_id: gen_id,
-								packet_id: id,
-							}
-							.into(),
+							BasicError::WrongMac { p_type, generation_id: gen_id, packet_id: id }
+								.into(),
 						));
 						return Ok(());
 					}
@@ -157,9 +136,8 @@ impl PacketCodec {
 				(&mut packet_data[start..]).copy_from_slice(&new_content);
 			} else if algs::must_encrypt(p_type) {
 				// Check if it is ok for the packet to be unencrypted
-				con.stream_items.push_back(StreamItem::Error(
-					BasicError::UnallowedUnencryptedPacket.into(),
-				));
+				con.stream_items
+					.push_back(StreamItem::Error(BasicError::UnallowedUnencryptedPacket.into()));
 				return Ok(());
 			}
 
@@ -168,8 +146,7 @@ impl PacketCodec {
 				PacketType::Command | PacketType::CommandLow => {
 					ack = true;
 
-					let commands =
-						Self::handle_command_packet(con, packet_data)?;
+					let commands = Self::handle_command_packet(con, packet_data)?;
 
 					// Be careful with command packets, they are guaranteed to
 					// be in the right order now.
@@ -183,43 +160,19 @@ impl PacketCodec {
 							Ok(c) => {
 								// initivexpand2 is the ack for the last init packet
 								if con.is_client
-									&& c.data()
-										.packet()
-										.content()
-										.starts_with(b"initivexpand2 ")
+									&& c.data().packet().content().starts_with(b"initivexpand2 ")
 								{
-									Resender::ack_packet(
-										con,
-										cx,
-										PacketType::Init,
-										4,
-									);
+									Resender::ack_packet(con, cx, PacketType::Init, 4);
 								} else if con.is_client
-									&& c.data()
-										.packet()
-										.content()
-										.starts_with(b"initserver ")
+									&& c.data().packet().content().starts_with(b"initserver ")
 								{
 									// initserver acks clientinit
-									Resender::ack_packet(
-										con,
-										cx,
-										PacketType::Command,
-										2,
-									);
+									Resender::ack_packet(con, cx, PacketType::Command, 2);
 								} else if !con.is_client
-									&& c.data()
-										.packet()
-										.content()
-										.starts_with(b"clientek ")
+									&& c.data().packet().content().starts_with(b"clientek ")
 								{
 									// clientek acks initivexpand2
-									Resender::ack_packet(
-										con,
-										cx,
-										PacketType::Command,
-										0,
-									);
+									Resender::ack_packet(con, cx, PacketType::Command, 0);
 								}
 								StreamItem::Command(c)
 							}
@@ -236,10 +189,8 @@ impl PacketCodec {
 					let in_ids = &mut con.codec.incoming_p_ids;
 					if p_type != PacketType::Init {
 						let (id, next_gen) = id.overflowing_add(1);
-						let generation_id =
-							if next_gen { gen_id + 1 } else { gen_id };
-						in_ids[type_i] =
-							PartialPacketId { generation_id, packet_id: id };
+						let generation_id = if next_gen { gen_id + 1 } else { gen_id };
+						in_ids[type_i] = PartialPacketId { generation_id, packet_id: id };
 					}
 
 					match packet.ack_packet() {
@@ -256,8 +207,7 @@ impl PacketCodec {
 						}
 						Ok(None) => {}
 						Err(e) => {
-							con.stream_items
-								.push_back(StreamItem::Error(e.into()));
+							con.stream_items.push_back(StreamItem::Error(e.into()));
 							return Ok(());
 						}
 					}
@@ -267,12 +217,10 @@ impl PacketCodec {
 					con.send_event(&event);
 
 					if p_type.is_voice() {
-						con.stream_items.push_back(
-							match InAudioBuf::try_new(dir, packet_data) {
-								Ok(r) => StreamItem::Audio(r),
-								Err(e) => StreamItem::Error(e.into()),
-							},
-						);
+						con.stream_items.push_back(match InAudioBuf::try_new(dir, packet_data) {
+							Ok(r) => StreamItem::Audio(r),
+							Err(e) => StreamItem::Error(e.into()),
+						});
 					} else if p_type == PacketType::Init {
 						con.stream_items.push_back(if con.is_client {
 							match InS2CInitBuf::try_new(dir, packet_data) {
@@ -290,18 +238,11 @@ impl PacketCodec {
 			}
 		} else {
 			// Send an ack for the case when it was lost
-			if p_type == PacketType::Command || p_type == PacketType::CommandLow
-			{
+			if p_type == PacketType::Command || p_type == PacketType::CommandLow {
 				ack = true;
 			}
 			con.stream_items.push_back(StreamItem::Error(
-				BasicError::NotInReceiveWindow {
-					id,
-					next: cur_next,
-					limit,
-					p_type,
-				}
-				.into(),
+				BasicError::NotInReceiveWindow { id, next: cur_next, limit, p_type }.into(),
 			));
 		}
 
@@ -367,10 +308,9 @@ impl PacketCodec {
 						frag_queue.extend_from_slice(packet.content());
 						None
 					} else {
-						return Err(BasicError::MaxLengthExceeded(
-							String::from("fragment queue"),
-						)
-						.into());
+						return Err(
+							BasicError::MaxLengthExceeded(String::from("fragment queue")).into()
+						);
 					}
 				} else {
 					// Decompress
@@ -392,9 +332,8 @@ impl PacketCodec {
 
 				// Check if there are following packets in the receive queue.
 				id = id.wrapping_add(1);
-				if let Some(pos) = r_queue
-					.iter()
-					.position(|p| InHeader::new(dir, p).packet_id() == id)
+				if let Some(pos) =
+					r_queue.iter().position(|p| InHeader::new(dir, p).packet_id() == id)
 				{
 					packet_data = r_queue.remove(pos);
 					packet = InPacket::new(dir, &packet_data);
@@ -417,24 +356,17 @@ impl PacketCodec {
 				r_queue.push(packet_data);
 				Ok(vec![])
 			} else {
-				Err(BasicError::MaxLengthExceeded(String::from(
-					"command queue",
-				))
-				.into())
+				Err(BasicError::MaxLengthExceeded(String::from("command queue")).into())
 			}
 		}
 	}
 
-	pub fn encode_packet(
-		con: &mut Connection, mut packet: OutPacket,
-	) -> Result<Vec<OutUdpPacket>> {
+	pub fn encode_packet(con: &mut Connection, mut packet: OutPacket) -> Result<Vec<OutUdpPacket>> {
 		let p_type = packet.header().packet_type();
 		let type_i = p_type.to_usize().unwrap();
 
 		// TODO Needed, commands should set their own flag?
-		if (p_type == PacketType::Command || p_type == PacketType::CommandLow)
-			&& con.is_client
-		{
+		if (p_type == PacketType::Command || p_type == PacketType::CommandLow) && con.is_client {
 			// Set newprotocol flag
 			packet.flags(packet.header().flags() | Flags::NEWPROTOCOL);
 		}
@@ -464,8 +396,7 @@ impl PacketCodec {
 		let should_encrypt;
 		let c_id;
 		if let Some(params) = con.params.as_mut() {
-			should_encrypt =
-				algs::should_encrypt(p_type, params.voice_encryption);
+			should_encrypt = algs::should_encrypt(p_type, params.voice_encryption);
 			c_id = params.c_id;
 		} else {
 			should_encrypt = algs::should_encrypt(p_type, false);
@@ -488,15 +419,11 @@ impl PacketCodec {
 		}
 
 		// Compress and split packet
-		let packets = if p_type == PacketType::Command
-			|| p_type == PacketType::CommandLow
-		{
+		let packets = if p_type == PacketType::Command || p_type == PacketType::CommandLow {
 			algs::compress_and_split(con.is_client, packet)
 		} else {
 			// Set the inner packet id for voice packets
-			if con.is_client
-				&& (p_type == PacketType::Voice
-					|| p_type == PacketType::VoiceWhisper)
+			if con.is_client && (p_type == PacketType::Voice || p_type == PacketType::VoiceWhisper)
 			{
 				(&mut packet.content_mut()[..2])
 					.write_be(con.codec.outgoing_p_ids[type_i].packet_id)
@@ -513,8 +440,7 @@ impl PacketCodec {
 				let p_id = if p_type == PacketType::Init {
 					PartialPacketId { generation_id: 0, packet_id: 0 }
 				} else {
-					packet
-						.packet_id(con.codec.outgoing_p_ids[type_i].packet_id);
+					packet.packet_id(con.codec.outgoing_p_ids[type_i].packet_id);
 					con.codec.outgoing_p_ids[type_i]
 				};
 

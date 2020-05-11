@@ -11,10 +11,7 @@ use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
 #[derive(Template)]
 #[TemplatePath = "build/Events.tt"]
 #[derive(Debug)]
-pub struct EventDeclarations<'a>(
-	&'a BookDeclarations,
-	&'a MessagesToBookDeclarations<'a>,
-);
+pub struct EventDeclarations<'a>(&'a BookDeclarations, &'a MessagesToBookDeclarations<'a>);
 
 impl<'a> Deref for EventDeclarations<'a> {
 	type Target = BookDeclarations;
@@ -47,11 +44,6 @@ fn get_ids(structs: &[Struct], struc: &Struct) -> String {
 	res
 }
 
-pub fn get_properties<'a>(
-	structs: &'a [Struct], s: &'a Struct,
-) -> Vec<&'a Property> {
-	s.properties
-		.iter()
-		.filter(|p| !structs.iter().any(|s| s.name == p.type_s))
-		.collect()
+pub fn get_properties<'a>(structs: &'a [Struct], s: &'a Struct) -> Vec<&'a Property> {
+	s.properties.iter().filter(|p| !structs.iter().any(|s| s.name == p.type_s)).collect()
 }

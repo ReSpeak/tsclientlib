@@ -134,19 +134,13 @@ impl Socket for UdpSocket {
 
 impl Default for CachedKey {
 	fn default() -> Self {
-		CachedKey {
-			generation_id: u32::max_value(),
-			key: [0; 16].into(),
-			nonce: [0; 16].into(),
-		}
+		CachedKey { generation_id: u32::max_value(), key: [0; 16].into(), nonce: [0; 16].into() }
 	}
 }
 
 impl ConnectedParams {
 	/// Fills the parameters for a connection with their default state.
-	pub fn new(
-		public_key: EccKeyPubP256, shared_iv: [u8; 64], shared_mac: [u8; 8],
-	) -> Self {
+	pub fn new(public_key: EccKeyPubP256, shared_iv: [u8; 64], shared_mac: [u8; 8]) -> Self {
 		Self {
 			c_id: 0,
 			voice_encryption: true,
@@ -160,14 +154,10 @@ impl ConnectedParams {
 
 impl Connection {
 	pub fn new(
-		is_client: bool, logger: Logger, address: SocketAddr,
-		udp_socket: Box<dyn Socket + Send>,
-	) -> Self
-	{
-		let logger = logger.new(
-			o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),
-				"remote_addr" => address.to_string()),
-		);
+		is_client: bool, logger: Logger, address: SocketAddr, udp_socket: Box<dyn Socket + Send>,
+	) -> Self {
+		let logger = logger.new(o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),
+				"remote_addr" => address.to_string()));
 
 		let mut res = Self {
 			is_client,
@@ -202,9 +192,7 @@ impl Connection {
 	/// 1. The generation of the packet
 	/// 1. The minimum accepted packet id
 	/// 1. The maximum accepted packet id
-	pub(crate) fn in_receive_window(
-		&self, p_type: PacketType, p_id: u16,
-	) -> (bool, u32, u16, u16) {
+	pub(crate) fn in_receive_window(&self, p_type: PacketType, p_id: u16) -> (bool, u32, u16, u16) {
 		if p_type == PacketType::Init {
 			return (true, 0, 0, 0);
 		}
@@ -251,9 +239,7 @@ impl Connection {
 		Ok(())
 	}
 
-	fn poll_incoming_udp_packet(
-		&mut self, cx: &mut Context,
-	) -> Poll<Result<StreamItem>> {
+	fn poll_incoming_udp_packet(&mut self, cx: &mut Context) -> Poll<Result<StreamItem>> {
 		if self.acks_to_send.len() >= UDP_SINK_CAPACITY {
 			return Poll::Pending;
 		}
@@ -266,8 +252,7 @@ impl Connection {
 
 			match self.udp_socket.poll_recv_from(cx, &mut self.udp_buffer) {
 				Poll::Ready(Ok((size, addr))) => {
-					let mut udp_buffer =
-						mem::replace(&mut self.udp_buffer, Vec::new());
+					let mut udp_buffer = mem::replace(&mut self.udp_buffer, Vec::new());
 					udp_buffer.truncate(size);
 					match self.handle_udp_packet(cx, udp_buffer, addr) {
 						Ok(()) => {
@@ -320,9 +305,7 @@ impl Connection {
 	/// Try to send an ack packet.
 	///
 	/// If it does not work, add it to the ack queue.
-	pub(crate) fn send_ack_packet(
-		&mut self, cx: &mut Context, packet: OutPacket,
-	) -> Result<()> {
+	pub(crate) fn send_ack_packet(&mut self, cx: &mut Context, packet: OutPacket) -> Result<()> {
 		self.send_event(&Event::SendPacket(&packet));
 		let mut udp_packets = PacketCodec::encode_packet(self, packet)?;
 		assert_eq!(
@@ -384,9 +367,8 @@ impl Connection {
 	}
 
 	pub fn static_poll_send_udp_packet(
-		udp_socket: &dyn Socket, address: &SocketAddr,
-		event_listeners: &[EventListener], cx: &mut Context,
-		packet: &OutUdpPacket,
+		udp_socket: &dyn Socket, address: &SocketAddr, event_listeners: &[EventListener],
+		cx: &mut Context, packet: &OutUdpPacket,
 	) -> Poll<Result<()>>
 	{
 		let data = packet.data().data();
@@ -399,9 +381,7 @@ impl Connection {
 				}
 
 				if size != data.len() {
-					Poll::Ready(Err(format_err!(
-						"Failed to send whole udp packet"
-					)))
+					Poll::Ready(Err(format_err!("Failed to send whole udp packet")))
 				} else {
 					Poll::Ready(Ok(()))
 				}
@@ -423,9 +403,7 @@ impl Connection {
 /// 3. Use the resender to send ping packets if necessary
 impl Stream for Connection {
 	type Item = Result<StreamItem>;
-	fn poll_next(
-		mut self: Pin<&mut Self>, cx: &mut Context,
-	) -> Poll<Option<Self::Item>> {
+	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		if let Err(e) = self.poll_send_acks(cx) {
 			return Poll::Ready(Some(Err(e)));
 		}

@@ -34,18 +34,9 @@ impl TsToAudio {
 		let logger = logger.new(o!("pipeline" => "ts-to-audio"));
 		let data = Arc::new(Mutex::new(AudioHandler::new(logger.clone())));
 
-		let device = Self::open_playback(
-			logger.clone(),
-			&audio_subsystem,
-			data.clone(),
-		)?;
+		let device = Self::open_playback(logger.clone(), &audio_subsystem, data.clone())?;
 
-		let res = Arc::new(Mutex::new(Self {
-			logger,
-			audio_subsystem,
-			device,
-			data,
-		}));
+		let res = Arc::new(Mutex::new(Self { logger, audio_subsystem, device, data }));
 
 		Self::start(res.clone(), local_set);
 
@@ -53,10 +44,8 @@ impl TsToAudio {
 	}
 
 	fn open_playback(
-		logger: Logger, audio_subsystem: &AudioSubsystem,
-		data: Arc<Mutex<AudioHandler>>,
-	) -> Result<AudioDevice<SdlCallback>>
-	{
+		logger: Logger, audio_subsystem: &AudioSubsystem, data: Arc<Mutex<AudioHandler>>,
+	) -> Result<AudioDevice<SdlCallback>> {
 		let desired_spec = AudioSpecDesired {
 			freq: Some(48000),
 			channels: Some(2),
@@ -74,49 +63,39 @@ impl TsToAudio {
 	}
 
 	fn start(t2a: Arc<Mutex<Self>>, local_set: &LocalSet) {
-		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(
-			move |_| {
-				let mut t2a = t2a.lock().unwrap();
+		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(move |_| {
+			let mut t2a = t2a.lock().unwrap();
 
-				if t2a.device.status() == AudioStatus::Stopped {
-					// Try to reconnect to audio
-					match Self::open_playback(
-						t2a.logger.clone(),
-						&t2a.audio_subsystem,
-						t2a.data.clone(),
-					) {
-						Ok(d) => {
-							t2a.device = d;
-							debug!(
-								t2a.logger,
-								"Reconnected to playback device"
-							);
-						}
-						Err(e) => {
-							error!(t2a.logger, "Failed to open playback device"; "error" => ?e);
-						}
-					};
-				}
+			if t2a.device.status() == AudioStatus::Stopped {
+				// Try to reconnect to audio
+				match Self::open_playback(
+					t2a.logger.clone(),
+					&t2a.audio_subsystem,
+					t2a.data.clone(),
+				) {
+					Ok(d) => {
+						t2a.device = d;
+						debug!(t2a.logger, "Reconnected to playback device");
+					}
+					Err(e) => {
+						error!(t2a.logger, "Failed to open playback device"; "error" => ?e);
+					}
+				};
+			}
 
-				let data_empty =
-					t2a.data.lock().unwrap().get_queues().is_empty();
-				if t2a.device.status() == AudioStatus::Paused && !data_empty {
-					debug!(t2a.logger, "Resuming playback");
-					t2a.device.resume();
-				} else if t2a.device.status() == AudioStatus::Playing
-					&& data_empty
-				{
-					debug!(t2a.logger, "Pausing playback");
-					t2a.device.pause();
-				}
-				future::ready(())
-			},
-		));
+			let data_empty = t2a.data.lock().unwrap().get_queues().is_empty();
+			if t2a.device.status() == AudioStatus::Paused && !data_empty {
+				debug!(t2a.logger, "Resuming playback");
+				t2a.device.resume();
+			} else if t2a.device.status() == AudioStatus::Playing && data_empty {
+				debug!(t2a.logger, "Pausing playback");
+				t2a.device.pause();
+			}
+			future::ready(())
+		}));
 	}
 
-	pub(crate) fn play_packet(
-		&mut self, id: Id, packet: InAudioBuf,
-	) -> Result<()> {
+	pub(crate) fn play_packet(&mut self, id: Id, packet: InAudioBuf) -> Result<()> {
 		let mut data = self.data.lock().unwrap();
 		data.handle_packet(id, packet)?;
 

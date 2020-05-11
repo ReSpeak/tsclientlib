@@ -7,10 +7,8 @@ use crate::book::{BookDeclarations, Property, Struct};
 use crate::messages::{Field, Message, MessageDeclarations};
 use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(
-	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/MessagesToBook.toml"
-));
+pub const DATA_STR: &str =
+	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/MessagesToBook.toml"));
 
 lazy_static! {
 	pub static ref DATA: MessagesToBookDeclarations<'static> = {
@@ -213,9 +211,7 @@ struct RuleProperty {
 impl RuleProperty {
 	fn is_valid(&self) -> bool {
 		if self.from.is_some() {
-			self.to.is_some()
-				&& self.function.is_none()
-				&& self.tolist.is_none()
+			self.to.is_some() && self.function.is_none() && self.tolist.is_none()
 		} else {
 			self.from.is_none()
 				&& self.to.is_none()
@@ -236,18 +232,14 @@ impl FromStr for RuleOp {
 		} else if s == "update" {
 			Ok(RuleOp::Update)
 		} else {
-			Err("Cannot parse operation, needs to be add, remove or update"
-				.to_string())
+			Err("Cannot parse operation, needs to be add, remove or update".to_string())
 		}
 	}
 }
 
 // the in rust callable name (in PascalCase) from the field
 fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
-	*msg_fields
-		.iter()
-		.find(|f| f.pretty == name)
-		.expect(&format!("Cannot find field '{}'", name))
+	*msg_fields.iter().find(|f| f.pretty == name).expect(&format!("Cannot find field '{}'", name))
 }
 
 impl<'a> RuleKind<'a> {

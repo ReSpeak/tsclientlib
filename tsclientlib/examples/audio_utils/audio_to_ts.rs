@@ -3,9 +3,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::{format_err, Result};
 use audiopus::coder::Encoder;
 use futures::prelude::*;
-use sdl2::audio::{
-	AudioCallback, AudioDevice, AudioSpec, AudioSpecDesired, AudioStatus,
-};
+use sdl2::audio::{AudioCallback, AudioDevice, AudioSpec, AudioSpecDesired, AudioStatus};
 use sdl2::AudioSubsystem;
 use slog::{debug, error, o, Logger};
 use tokio::sync::mpsc;
@@ -43,12 +41,8 @@ impl AudioToTs {
 		let listener = Arc::new(Mutex::new(Default::default()));
 		let volume = Arc::new(Mutex::new(1.0));
 
-		let device = Self::open_capture(
-			logger.clone(),
-			&audio_subsystem,
-			listener.clone(),
-			volume.clone(),
-		)?;
+		let device =
+			Self::open_capture(logger.clone(), &audio_subsystem, listener.clone(), volume.clone())?;
 
 		let res = Arc::new(Mutex::new(Self {
 			logger,
@@ -67,8 +61,7 @@ impl AudioToTs {
 
 	fn open_capture(
 		logger: Logger, audio_subsystem: &AudioSubsystem,
-		listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
-		volume: Arc<Mutex<f32>>,
+		listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>, volume: Arc<Mutex<f32>>,
 	) -> Result<AudioDevice<SdlCallback>>
 	{
 		let desired_spec = AudioSpecDesired {
@@ -109,9 +102,7 @@ impl AudioToTs {
 		*listener = Some(sender);
 	}
 
-	pub fn set_volume(&mut self, volume: f32) {
-		*self.volume.lock().unwrap() = volume;
-	}
+	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock().unwrap() = volume; }
 
 	pub fn set_playing(&mut self, playing: bool) {
 		if playing {
@@ -123,32 +114,30 @@ impl AudioToTs {
 	}
 
 	fn start(a2t: Arc<Mutex<Self>>, local_set: &LocalSet) {
-		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(
-			move |_| {
-				let mut a2t = a2t.lock().unwrap();
-				if a2t.device.status() == AudioStatus::Stopped {
-					// Try to reconnect to audio
-					match Self::open_capture(
-						a2t.logger.clone(),
-						&a2t.audio_subsystem,
-						a2t.listener.clone(),
-						a2t.volume.clone(),
-					) {
-						Ok(d) => {
-							a2t.device = d;
-							debug!(a2t.logger, "Reconnected to capture device");
-							if a2t.is_playing {
-								a2t.device.resume();
-							}
+		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(move |_| {
+			let mut a2t = a2t.lock().unwrap();
+			if a2t.device.status() == AudioStatus::Stopped {
+				// Try to reconnect to audio
+				match Self::open_capture(
+					a2t.logger.clone(),
+					&a2t.audio_subsystem,
+					a2t.listener.clone(),
+					a2t.volume.clone(),
+				) {
+					Ok(d) => {
+						a2t.device = d;
+						debug!(a2t.logger, "Reconnected to capture device");
+						if a2t.is_playing {
+							a2t.device.resume();
 						}
-						Err(e) => {
-							error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
-						}
-					};
-				}
-				future::ready(())
-			},
-		));
+					}
+					Err(e) => {
+						error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
+					}
+				};
+			}
+			future::ready(())
+		}));
 	}
 }
 
@@ -174,19 +163,14 @@ impl AudioCallback for SdlCallback {
 				} else {
 					CodecType::OpusMusic
 				};
-				let packet = OutAudio::new(&AudioData::C2S {
-					id: 0,
-					codec,
-					data: &self.opus_output[..len],
-				});
+				let packet =
+					OutAudio::new(&AudioData::C2S { id: 0, codec, data: &self.opus_output[..len] });
 
 				// Write into packet sink
 				let mut listener = self.listener.lock().unwrap();
 				if let Some(lis) = &mut *listener {
 					match lis.try_send(packet) {
-						Err(mpsc::error::TrySendError::Closed(_)) => {
-							*listener = None
-						}
+						Err(mpsc::error::TrySendError::Closed(_)) => *listener = None,
 						_ => {}
 					}
 				}

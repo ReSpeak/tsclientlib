@@ -6,18 +6,13 @@ use tsproto_packets::packets::{Direction, Flags, OutPacket, PacketType};
 
 pub(crate) fn get_logger() -> Logger {
 	let decorator = slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
-	let drain =
-		Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
+	let drain = Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
 
 	slog::Logger::root(drain, o!())
 }
 
 fn parse_msg(msg: &str) -> InMessage {
-	let header = OutPacket::new_with_dir(
-		Direction::S2C,
-		Flags::empty(),
-		PacketType::Command,
-	);
+	let header = OutPacket::new_with_dir(Direction::S2C, Flags::empty(), PacketType::Command);
 
 	let logger = get_logger();
 

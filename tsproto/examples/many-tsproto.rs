@@ -44,14 +44,10 @@ async fn real_main() -> Result<()> {
 			let args = args.clone();
 			let logger = logger.clone();
 			tokio::spawn(async move {
-				let mut con = create_client(
-					args.local_address,
-					args.address,
-					logger.clone(),
-					args.verbose,
-				)
-				.await
-				.unwrap();
+				let mut con =
+					create_client(args.local_address, args.address, logger.clone(), args.verbose)
+						.await
+						.unwrap();
 
 				// Connect
 				connect(&mut con).await.unwrap();

@@ -3,10 +3,8 @@ use std::collections::HashMap;
 use crate::*;
 use lazy_static::lazy_static;
 
-pub const DATA_STR: &str = include_str!(concat!(
-	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/Versions.csv"
-));
+pub const DATA_STR: &str =
+	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Versions.csv"));
 
 lazy_static! {
 	pub static ref DATA: Versions = {

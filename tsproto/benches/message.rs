@@ -1,7 +1,5 @@
 use anyhow::Error;
-use criterion::{
-	criterion_group, criterion_main, Bencher, Benchmark, Criterion,
-};
+use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
 use slog::info;
 use tsproto_packets::packets::*;
 
@@ -17,9 +15,7 @@ fn send_messages(b: &mut Bencher) {
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
 	let mut con = rt
 		.block_on(async move {
-			let mut con =
-				create_client(local_address, address, logger.clone(), 0)
-					.await?;
+			let mut con = create_client(local_address, address, logger.clone(), 0).await?;
 
 			info!(logger, "Connecting");
 			connect(&mut con).await?;
@@ -32,14 +28,13 @@ fn send_messages(b: &mut Bencher) {
 	let mut last_id = None;
 	b.iter(|| {
 		let text = format!("Hello {}", i);
-		let packet =
-			OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-				Direction::C2S,
-				PacketType::Command,
-				"sendtextmessage",
-				vec![("targetmode", "3"), ("msg", &text)].into_iter(),
-				std::iter::empty(),
-			);
+		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
+			Direction::C2S,
+			PacketType::Command,
+			"sendtextmessage",
+			vec![("targetmode", "3"), ("msg", &text)].into_iter(),
+			std::iter::empty(),
+		);
 		i += 1;
 
 		rt.block_on(async {
@@ -68,10 +63,7 @@ fn send_messages(b: &mut Bencher) {
 }
 
 fn bench_message(c: &mut Criterion) {
-	c.bench(
-		"message",
-		Benchmark::new("message", send_messages).sample_size(200),
-	);
+	c.bench("message", Benchmark::new("message", send_messages).sample_size(200));
 }
 
 criterion_group!(benches, bench_message);

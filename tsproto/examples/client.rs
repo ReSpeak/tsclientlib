@@ -36,13 +36,8 @@ async fn real_main() -> Result<()> {
 	let args = Args::from_args();
 	let logger = create_logger();
 
-	let mut con = create_client(
-		args.local_address,
-		args.address,
-		logger.clone(),
-		args.verbose,
-	)
-	.await?;
+	let mut con =
+		create_client(args.local_address, args.address, logger.clone(), args.verbose).await?;
 
 	// Connect
 	connect(&mut con).await?;
@@ -58,12 +53,8 @@ async fn real_main() -> Result<()> {
 	info!(logger, "Waited");
 
 	// Send packet
-	let mut cmd = OutCommand::new(
-		Direction::C2S,
-		Flags::empty(),
-		PacketType::Command,
-		"sendtextmessage",
-	);
+	let mut cmd =
+		OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "sendtextmessage");
 	cmd.write_arg("targetmode", &3);
 	cmd.write_arg("msg", &"Hello");
 	let id = con.send_packet(cmd.into_packet())?;

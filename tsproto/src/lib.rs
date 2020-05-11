@@ -34,9 +34,7 @@ use algorithms as algs;
 // The build environment of tsproto.
 git_testament::git_testament!(TESTAMENT);
 #[doc(hidden)]
-pub fn get_testament() -> &'static git_testament::GitTestament<'static> {
-	&TESTAMENT
-}
+pub fn get_testament() -> &'static git_testament::GitTestament<'static> { &TESTAMENT }
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -65,9 +63,8 @@ const FAKE_NONCE: [u8; 16] = *b"m\\firewall32.cpl";
 
 /// The root key in the TeamSpeak license system.
 pub const ROOT_KEY: [u8; 32] = [
-	0xcd, 0x0d, 0xe2, 0xae, 0xd4, 0x63, 0x45, 0x50, 0x9a, 0x7e, 0x3c, 0xfd,
-	0x8f, 0x68, 0xb3, 0xdc, 0x75, 0x55, 0xb2, 0x9d, 0xcc, 0xec, 0x73, 0xcd,
-	0x18, 0x75, 0x0f, 0x99, 0x38, 0x12, 0x40, 0x8a,
+	0xcd, 0x0d, 0xe2, 0xae, 0xd4, 0x63, 0x45, 0x50, 0x9a, 0x7e, 0x3c, 0xfd, 0x8f, 0x68, 0xb3, 0xdc,
+	0x75, 0x55, 0xb2, 0x9d, 0xcc, 0xec, 0x73, 0xcd, 0x18, 0x75, 0x0f, 0x99, 0x38, 0x12, 0x40, 0x8a,
 ];
 
 /// The maximum amount of ack pachets that a connection intermediately stores.
@@ -96,16 +93,8 @@ pub enum BasicError {
 	#[error(transparent)]
 	Utf8(#[from] std::str::Utf8Error),
 
-	#[error(
-		"Packet {id} not in receive window [{next};{limit}) for type \
-		 {p_type:?}"
-	)]
-	NotInReceiveWindow {
-		id: u16,
-		next: u16,
-		limit: u16,
-		p_type: packets::PacketType,
-	},
+	#[error("Packet {id} not in receive window [{next};{limit}) for type {p_type:?}")]
+	NotInReceiveWindow { id: u16, next: u16, limit: u16, p_type: packets::PacketType },
 	#[error("Got unallowed unencrypted packet")]
 	UnallowedUnencryptedPacket,
 	#[error("Got unexpected init packet")]
@@ -122,10 +111,7 @@ pub enum BasicError {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Identity {
-	#[serde(
-		serialize_with = "serialize_id_key",
-		deserialize_with = "deserialize_id_key"
-	)]
+	#[serde(serialize_with = "serialize_id_key", deserialize_with = "deserialize_id_key")]
 	key: EccKeyPrivP256,
 	/// The `client_key_offest`/counter for hash cash.
 	counter: u64,
@@ -142,12 +128,9 @@ impl<'de> Visitor<'de> for IdKeyVisitor {
 		write!(f, "a P256 private ecc key")
 	}
 
-	fn visit_str<E: serde::de::Error>(
-		self, s: &str,
-	) -> std::result::Result<Self::Value, E> {
-		EccKeyPrivP256::import_str(s).map_err(|_| {
-			serde::de::Error::invalid_value(Unexpected::Str(s), &self)
-		})
+	fn visit_str<E: serde::de::Error>(self, s: &str) -> std::result::Result<Self::Value, E> {
+		EccKeyPrivP256::import_str(s)
+			.map_err(|_| serde::de::Error::invalid_value(Unexpected::Str(s), &self))
 	}
 }
 
@@ -177,9 +160,7 @@ impl Identity {
 	}
 
 	#[inline]
-	pub fn new_with_max_counter(
-		key: EccKeyPrivP256, counter: u64, max_counter: u64,
-	) -> Self {
+	pub fn new_with_max_counter(key: EccKeyPrivP256, counter: u64, max_counter: u64) -> Self {
 		Self { key, counter, max_counter }
 	}
 
@@ -209,9 +190,7 @@ impl Identity {
 	#[inline]
 	pub fn set_counter(&mut self, counter: u64) { self.counter = counter; }
 	#[inline]
-	pub fn set_max_counter(&mut self, max_counter: u64) {
-		self.max_counter = max_counter;
-	}
+	pub fn set_max_counter(&mut self, max_counter: u64) { self.max_counter = max_counter; }
 
 	/// Compute the current hash cash level.
 	#[inline]
@@ -224,9 +203,7 @@ impl Identity {
 	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
 		let omega = self.key.to_pub().to_ts()?;
 		let mut offset = self.max_counter;
-		while offset < u64::max_value()
-			&& algs::get_hash_cash_level(&omega, offset) < target
-		{
+		while offset < u64::max_value() && algs::get_hash_cash_level(&omega, offset) < target {
 			offset += 1;
 		}
 		self.counter = offset;

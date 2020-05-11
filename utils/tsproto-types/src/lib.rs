@@ -128,18 +128,12 @@ pub struct InvokerRef<'a> {
 
 impl Invoker {
 	pub fn as_ref(&self) -> InvokerRef {
-		InvokerRef {
-			name: &self.name,
-			id: self.id,
-			uid: self.uid.as_ref().map(|u| u.as_ref()),
-		}
+		InvokerRef { name: &self.name, id: self.id, uid: self.uid.as_ref().map(|u| u.as_ref()) }
 	}
 }
 
 impl fmt::Display for ClientId {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
-	}
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.0) }
 }
 impl fmt::Display for Uid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -147,22 +141,14 @@ impl fmt::Display for Uid {
 	}
 }
 impl fmt::Display for ClientDbId {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
-	}
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.0) }
 }
 impl fmt::Display for ChannelId {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
-	}
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.0) }
 }
 impl fmt::Display for ServerGroupId {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
-	}
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.0) }
 }
 impl fmt::Display for ChannelGroupId {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", self.0)
-	}
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, "{}", self.0) }
 }

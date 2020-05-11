@@ -10,9 +10,7 @@ use tsproto_structs::*;
 #[derive(Template)]
 #[TemplatePath = "build/BookToMessages.tt"]
 #[derive(Debug)]
-pub struct BookToMessagesDeclarations<'a>(
-	&'a book_to_messages::BookToMessagesDeclarations<'a>,
-);
+pub struct BookToMessagesDeclarations<'a>(&'a book_to_messages::BookToMessagesDeclarations<'a>);
 
 impl<'a> Deref for BookToMessagesDeclarations<'a> {
 	type Target = book_to_messages::BookToMessagesDeclarations<'a>;
@@ -48,11 +46,10 @@ fn get_to_list(to: &[&Field]) -> String {
 /// The prefix is written before from, if from is a mapped argument
 fn rule_has_to(r: &RuleKind, field: &Field) -> bool {
 	match r {
-		RuleKind::Map { to, .. } | RuleKind::ArgumentMap { to, .. } => {
-			to == &field
+		RuleKind::Map { to, .. } | RuleKind::ArgumentMap { to, .. } => to == &field,
+		RuleKind::ArgumentFunction { to, .. } | RuleKind::Function { to, .. } => {
+			to.contains(&field)
 		}
-		RuleKind::ArgumentFunction { to, .. }
-		| RuleKind::Function { to, .. } => to.contains(&field),
 	}
 }
 
@@ -75,16 +72,12 @@ fn find_rule<'a>(
 
 fn get_arguments(r: &RuleKind) -> String {
 	match r {
-		RuleKind::Map { .. } | RuleKind::Function { .. } => format!(
-			"{}: {}",
-			r.from_name().to_snake_case(),
-			r.from().get_rust_type(true)
-		),
-		RuleKind::ArgumentMap { from, to } => format!(
-			"{}: {}",
-			from.to_snake_case(),
-			convert_type(&to.type_s, true)
-		),
+		RuleKind::Map { .. } | RuleKind::Function { .. } => {
+			format!("{}: {}", r.from_name().to_snake_case(), r.from().get_rust_type(true))
+		}
+		RuleKind::ArgumentMap { from, to } => {
+			format!("{}: {}", from.to_snake_case(), convert_type(&to.type_s, true))
+		}
 		RuleKind::ArgumentFunction { from, type_s, .. } => {
 			format!("{}: {}", from.to_snake_case(), convert_type(type_s, true))
 		}

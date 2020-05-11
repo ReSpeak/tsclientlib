@@ -6,9 +6,7 @@ use crate::Result;
 pub fn is_global_ip(ip: &IpAddr) -> bool {
 	if !ip.is_unspecified() && !ip.is_loopback() && !ip.is_multicast() {
 		match *ip {
-			IpAddr::V4(ref ip) => {
-				!ip.is_broadcast() && !ip.is_link_local() && !ip.is_private()
-			}
+			IpAddr::V4(ref ip) => !ip.is_broadcast() && !ip.is_link_local() && !ip.is_private(),
 			IpAddr::V6(_) => true,
 		}
 	} else {

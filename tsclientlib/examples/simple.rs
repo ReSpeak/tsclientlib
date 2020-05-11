@@ -3,9 +3,7 @@ use futures::prelude::*;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{
-	ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem,
-};
+use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -54,10 +52,7 @@ async fn real_main() -> Result<()> {
 		r?;
 	}
 
-	println!(
-		"Server welcome message: {}",
-		sanitize(&con.get_state()?.server.welcome_message)
-	);
+	println!("Server welcome message: {}", sanitize(&con.get_state()?.server.welcome_message));
 
 	// Wait some time
 	let mut events = con.events().try_filter(|_| future::ready(false));
@@ -81,11 +76,8 @@ fn sanitize(s: &str) -> String {
 	s.chars()
 		.filter(|c| {
 			c.is_alphanumeric()
-				|| [
-					' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')',
-					'[', ']', '{', '}',
-				]
-				.contains(c)
+				|| [' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')', '[', ']', '{', '}']
+					.contains(c)
 		})
 		.collect()
 }

@@ -4,14 +4,11 @@ use serde::Deserialize;
 
 use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(
-	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/Messages.toml"
-));
+pub const DATA_STR: &str =
+	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Messages.toml"));
 
 lazy_static! {
-	pub static ref DATA: MessageDeclarations =
-		toml::from_str(DATA_STR).unwrap();
+	pub static ref DATA: MessageDeclarations = toml::from_str(DATA_STR).unwrap();
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -23,15 +20,11 @@ pub struct MessageDeclarations {
 
 impl MessageDeclarations {
 	pub fn get_message_opt(&self, name: &str) -> Option<&Message> {
-		self.msg_group
-			.iter()
-			.flat_map(|g| g.msg.iter())
-			.find(|m| m.name == name)
+		self.msg_group.iter().flat_map(|g| g.msg.iter()).find(|m| m.name == name)
 	}
 
 	pub fn get_message(&self, name: &str) -> &Message {
-		self.get_message_opt(name)
-			.unwrap_or_else(|| panic!("Cannot find message {}", name))
+		self.get_message_opt(name).unwrap_or_else(|| panic!("Cannot find message {}", name))
 	}
 
 	pub fn get_message_group(&self, msg: &Message) -> &MessageGroup {
@@ -116,13 +109,9 @@ impl Field {
 	}
 
 	/// Returns if this field is optional in the message.
-	pub fn is_opt(&self, msg: &Message) -> bool {
-		!msg.attributes.iter().any(|a| *a == self.map)
-	}
+	pub fn is_opt(&self, msg: &Message) -> bool { !msg.attributes.iter().any(|a| *a == self.map) }
 
-	pub fn is_array(&self) -> bool {
-		self.modifier.as_ref().map(|s| s == "array").unwrap_or(false)
-	}
+	pub fn is_array(&self) -> bool { self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) }
 
 	pub fn get_as_ref(&self, a: &str) -> String {
 		let res = self.get_rust_type(a, true);

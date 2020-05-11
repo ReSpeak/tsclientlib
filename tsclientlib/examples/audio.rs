@@ -5,10 +5,7 @@ use structopt::StructOpt;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 
-use tsclientlib::{
-	ClientId, ConnectOptions, Connection, DisconnectOptions, Identity,
-	StreamItem,
-};
+use tsclientlib::{ClientId, ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 use tsproto_packets::packets::AudioData;
 
 mod audio_utils;
@@ -93,9 +90,7 @@ async fn real_main() -> Result<()> {
 				let from = ClientId(match packet.data().data() {
 					AudioData::S2C { from, .. } => *from,
 					AudioData::S2CWhisper { from, .. } => *from,
-					_ => panic!(
-						"Can only handle S2C packets but got a C2S packet"
-					),
+					_ => panic!("Can only handle S2C packets but got a C2S packet"),
 				});
 				let mut t2a = t2a.lock().unwrap();
 				if let Err(e) = t2a.play_packet((con_id, from), packet) {

@@ -114,9 +114,7 @@ pub struct AudioHandler<Id: Clone + Debug + Eq + Hash + PartialEq = ClientId> {
 }
 
 impl<T: Copy + Default + Ord> SlidingWindowMinimum<T> {
-	fn new(size: u8) -> Self {
-		Self { size, queue: Default::default(), cur_time: 0 }
-	}
+	fn new(size: u8) -> Self { Self { size, queue: Default::default(), cur_time: 0 } }
 
 	fn push(&mut self, value: T) {
 		while self.queue.back().map(|(_, s)| *s >= value).unwrap_or_default() {
@@ -135,9 +133,7 @@ impl<T: Copy + Default + Ord> SlidingWindowMinimum<T> {
 		self.cur_time = self.cur_time.wrapping_add(1);
 	}
 
-	fn get_min(&self) -> T {
-		self.queue.front().map(|(_, s)| *s).unwrap_or_default()
-	}
+	fn get_min(&self) -> T { self.queue.front().map(|(_, s)| *s).unwrap_or_default() }
 }
 
 impl AudioQueue {
@@ -162,12 +158,8 @@ impl AudioQueue {
 			last_packet_samples,
 			packet_loss_num: 0,
 			buffering_samples: 0,
-			last_buffer_size_min: SlidingWindowMinimum::new(
-				LAST_BUFFER_SIZE_COUNT,
-			),
-			last_buffer_size_max: SlidingWindowMinimum::<Reverse<u8>>::new(
-				LAST_BUFFER_SIZE_COUNT,
-			),
+			last_buffer_size_min: SlidingWindowMinimum::new(LAST_BUFFER_SIZE_COUNT),
+			last_buffer_size_max: SlidingWindowMinimum::<Reverse<u8>>::new(LAST_BUFFER_SIZE_COUNT),
 			buffered_for_samples: 0,
 		};
 		res.add_buffer_size(0);
@@ -205,8 +197,7 @@ impl AudioQueue {
 			// End of stream
 			samples = 0;
 		} else {
-			samples =
-				packet::nb_samples(packet.data().data().data(), SAMPLE_RATE)?;
+			samples = packet::nb_samples(packet.data().data().data(), SAMPLE_RATE)?;
 			if samples > MAX_BUFFER_SIZE {
 				bail!("Packet has too many samples");
 			}
@@ -215,11 +206,7 @@ impl AudioQueue {
 		let id = packet.data().data().id();
 		let packet = QueuePacket { packet, samples, id };
 		if id.wrapping_sub(self.next_id) > MAX_BUFFER_PACKETS as u16 {
-			bail!(
-				"Audio packet is too late, dropping (wanted {}, got {})",
-				self.next_id,
-				id
-			);
+			bail!("Audio packet is too late, dropping (wanted {}, got {})", self.next_id, id);
 		}
 
 		// Put into first spot where the id is smaller
@@ -229,9 +216,7 @@ impl AudioQueue {
 				.iter()
 				.enumerate()
 				.rev()
-				.take_while(|(_, p)| {
-					p.id.wrapping_sub(id) <= MAX_BUFFER_PACKETS as u16
-				})
+				.take_while(|(_, p)| p.id.wrapping_sub(id) <= MAX_BUFFER_PACKETS as u16)
 				.count();
 		// Check for duplicate packet
 		if let Some(p) = self.packet_buffer.get(i) {
@@ -241,18 +226,13 @@ impl AudioQueue {
 		}
 
 		trace!(self.logger, "Insert packet {} at {}", id, i);
-		let last_id = self
-			.packet_buffer
-			.back()
-			.map(|p| p.id.wrapping_add(1))
-			.unwrap_or(id);
+		let last_id = self.packet_buffer.back().map(|p| p.id.wrapping_add(1)).unwrap_or(id);
 		if last_id <= id {
-			self.buffering_samples =
-				self.buffering_samples.saturating_sub(samples);
+			self.buffering_samples = self.buffering_samples.saturating_sub(samples);
 			// Reduce buffering counter by lost packets if there are some
-			self.buffering_samples = self.buffering_samples.saturating_sub(
-				usize::from(id - last_id) * self.last_packet_samples,
-			);
+			self.buffering_samples = self
+				.buffering_samples
+				.saturating_sub(usize::from(id - last_id) * self.last_packet_samples);
 		}
 
 		self.packet_buffer_samples += packet.samples;
@@ -261,9 +241,7 @@ impl AudioQueue {
 		Ok(())
 	}
 
-	fn decode_packet(
-		&mut self, packet: Option<&QueuePacket>, fec: bool,
-	) -> Result<()> {
+	fn decode_packet(&mut self, packet: Option<&QueuePacket>, fec: bool) -> Result<()> {
 		trace!(self.logger, "Decoding packet"; "has_packet" => packet.is_some(),
 			"fec" => fec);
 		let packet_data;
@@ -271,8 +249,7 @@ impl AudioQueue {
 		if let Some(p) = packet {
 			packet_data = Some(p.packet.data().data().data());
 			len = p.samples;
-			self.whispering =
-				matches!(p.packet.data().data(), AudioData::S2CWhisper { .. });
+			self.whispering = matches!(p.packet.data().data(), AudioData::S2CWhisper { .. });
 		} else {
 			packet_data = None;
 			len = self.last_packet_samples;
@@ -282,14 +259,8 @@ impl AudioQueue {
 		self.decoded_buffer.resize(self.decoded_pos + len * CHANNEL_NUM, 0.0);
 		let len = self
 			.decoder
-			.decode_float(
-				packet_data,
-				&mut self.decoded_buffer[self.decoded_pos..],
-				fec,
-			)
-			.map_err(|e| {
-				format_err!("Opus decode failed ({}) (packet: {:?})", e, packet)
-			})?;
+			.decode_float(packet_data, &mut self.decoded_buffer[self.decoded_pos..], fec)
+			.map_err(|e| format_err!("Opus decode failed ({}) (packet: {:?})", e, packet))?;
 		self.last_packet_samples = len;
 		self.decoded_buffer.truncate(self.decoded_pos + len * CHANNEL_NUM);
 		self.decoded_pos += len * CHANNEL_NUM;
@@ -366,8 +337,7 @@ impl AudioQueue {
 				self.next_id = self.next_id.wrapping_add(1);
 				if packet.id != cur_id {
 					debug_assert!(
-						packet.id.wrapping_sub(cur_id)
-							< MAX_BUFFER_PACKETS as u16,
+						packet.id.wrapping_sub(cur_id) < MAX_BUFFER_PACKETS as u16,
 						"Invalid packet queue state: {} < {}",
 						packet.id,
 						cur_id
@@ -414,8 +384,7 @@ impl AudioQueue {
 					.count();
 				let len = self.packet_buffer.len() - keep;
 				self.packet_buffer.drain(..len);
-				self.packet_buffer_samples =
-					self.packet_buffer.iter().map(|p| p.samples).sum();
+				self.packet_buffer_samples = self.packet_buffer.iter().map(|p| p.samples).sum();
 				if let Some(p) = self.packet_buffer.front() {
 					self.next_id = p.id;
 				}
@@ -425,8 +394,7 @@ impl AudioQueue {
 					"cur_packet_count" => self.packet_buffer.len(),
 					"last_packet_samples" => self.last_packet_samples,
 					"dev" => dev);
-				let start = self.decoded_buffer.len()
-					- self.last_packet_samples * CHANNEL_NUM;
+				let start = self.decoded_buffer.len() - self.last_packet_samples * CHANNEL_NUM;
 				for i in 0..(self.last_packet_samples / SPEED_CHANGE_STEPS) {
 					let i = start + i * (SPEED_CHANGE_STEPS - 1) * CHANNEL_NUM;
 					self.decoded_buffer.drain(i..(i + CHANNEL_NUM));
@@ -448,9 +416,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	pub fn reset(&mut self) { self.queues.clear(); }
 
 	pub fn get_queues(&self) -> &HashMap<Id, AudioQueue> { &self.queues }
-	pub fn get_mut_queues(&mut self) -> &mut HashMap<Id, AudioQueue> {
-		&mut self.queues
-	}
+	pub fn get_mut_queues(&mut self) -> &mut HashMap<Id, AudioQueue> { &mut self.queues }
 
 	/// `buf` is not cleared before filling it.
 	///
@@ -492,9 +458,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	/// Add a packet to the audio queue.
 	///
 	/// If a new client started talking, returns the id of this client.
-	pub fn handle_packet(
-		&mut self, id: Id, packet: InAudioBuf,
-	) -> Result<Option<Id>> {
+	pub fn handle_packet(&mut self, id: Id, packet: InAudioBuf) -> Result<Option<Id>> {
 		let empty = packet.data().data().data().len() <= 1;
 		let codec = packet.data().data().codec();
 		if codec != CodecType::OpusMusic && codec != CodecType::OpusVoice {
@@ -510,10 +474,8 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 			}
 
 			trace!(self.logger, "Adding talker");
-			let mut queue = AudioQueue::new(
-				self.logger.new(o!("client" => format!("{:?}", id))),
-				packet,
-			)?;
+			let mut queue =
+				AudioQueue::new(self.logger.new(o!("client" => format!("{:?}", id))), packet)?;
 			if !self.queues.is_empty() {
 				// Update avg_buffer_samples
 				self.avg_buffer_samples = USUAL_FRAME_SIZE
@@ -554,10 +516,8 @@ mod test {
 	}
 
 	fn create_logger() -> Logger {
-		let decorator =
-			slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
-		let drain =
-			Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
+		let decorator = slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
+		let drain = Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
 
 		slog::Logger::root(drain, o!())
 	}
@@ -569,14 +529,9 @@ mod test {
 		let mut buf = vec![0.0; 48_000 / 100 * 2];
 
 		// Sometimes, TS sends short, non-opus packets
-		let packet = OutAudio::new(&AudioData::S2C {
-			id: 30,
-			codec: CodecType::OpusMusic,
-			from: 0,
-			data,
-		});
-		let input =
-			InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
+		let packet =
+			OutAudio::new(&AudioData::S2C { id: 30, codec: CodecType::OpusMusic, from: 0, data });
+		let input = InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
 		handler.handle_packet(id, input)?;
 
 		handler.fill_buffer(&mut buf);
@@ -619,15 +574,9 @@ mod test {
 						from: 0,
 						data: &opus_output[..len],
 					});
-					let input =
-						InAudioBuf::try_new(Direction::S2C, packet.into_vec())
-							.unwrap();
+					let input = InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
 					if handler.handle_packet(id, input).is_ok() != success {
-						bail!(
-							"handle_packet returned {:?} but expected {:?}",
-							!success,
-							success
-						);
+						bail!("handle_packet returned {:?} but expected {:?}", !success, success);
 					}
 				}
 				SimulateAction::ReceiveRaw(i, data) => {
@@ -637,24 +586,16 @@ mod test {
 						from: 0,
 						data: &data,
 					});
-					let input =
-						InAudioBuf::try_new(Direction::S2C, packet.into_vec())
-							.unwrap();
+					let input = InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
 					let _ = handler.handle_packet(id, input);
 				}
 				SimulateAction::FillBuffer(size, expect) => {
 					let mut buf = vec![0.0; size * 2]; // Stereo
-					let cur_packet_id = handler
-						.queues
-						.get(&id)
-						.and_then(|q| q.packet_buffer.front())
-						.map(|p| p.id);
+					let cur_packet_id =
+						handler.queues.get(&id).and_then(|q| q.packet_buffer.front()).map(|p| p.id);
 					handler.fill_buffer(&mut buf);
-					let next_packet_id = handler
-						.queues
-						.get(&id)
-						.and_then(|q| q.packet_buffer.front())
-						.map(|p| p.id);
+					let next_packet_id =
+						handler.queues.get(&id).and_then(|q| q.packet_buffer.front()).map(|p| p.id);
 
 					if expect.is_some() {
 						assert_eq!(expect, cur_packet_id);
@@ -701,13 +642,7 @@ mod test {
 		for (i, (val, min)) in data.iter().enumerate() {
 			println!("{:?}", window);
 			window.push(*val);
-			assert_eq!(
-				window.get_min(),
-				*min,
-				"Failed in iteration {} ({:?})",
-				i,
-				window
-			);
+			assert_eq!(window.get_min(), *min, "Failed in iteration {} ({:?})", i, window);
 		}
 	}
 
@@ -738,8 +673,7 @@ mod test {
 				from: 0,
 				data: &[0, 0, 0, 0, 0, 0, 0],
 			});
-			let input =
-				InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
+			let input = InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
 			handler.handle_packet(id, input).unwrap();
 
 			if i > 5 {
@@ -763,8 +697,7 @@ mod test {
 				from: 0,
 				data: &p,
 			});
-			let input =
-				InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
+			let input = InAudioBuf::try_new(Direction::S2C, packet.into_vec()).unwrap();
 			let _ = handler.handle_packet(id, input);
 
 			handler.fill_buffer(&mut buf);
@@ -813,9 +746,7 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		simulate(a)
 	}
 
@@ -840,9 +771,7 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		simulate(a)
 	}
 
@@ -867,9 +796,7 @@ mod test {
 		for _ in 0..10 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		for i in 27339..27349 {
 			a.push(SimulateAction::ReceivePacket(i, true));
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
@@ -877,9 +804,7 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		simulate(a)
 	}
 
@@ -894,9 +819,7 @@ mod test {
 		for _ in 0..4 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		simulate(a)
 	}
 
@@ -908,9 +831,7 @@ mod test {
 		for _ in 0..8 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		simulate(a)
 	}
 
@@ -922,9 +843,7 @@ mod test {
 		for _ in 0..7 {
 			a.push(SimulateAction::FillBuffer(USUAL_FRAME_SIZE, None));
 		}
-		a.push(SimulateAction::Check(Box::new(|h| {
-			assert!(h.queues.is_empty())
-		})));
+		a.push(SimulateAction::Check(Box::new(|h| assert!(h.queues.is_empty()))));
 		simulate(a)
 	}
 }

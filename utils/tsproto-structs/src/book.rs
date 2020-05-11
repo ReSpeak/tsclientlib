@@ -4,10 +4,8 @@ use serde::Deserialize;
 
 use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(
-	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/Book.toml"
-));
+pub const DATA_STR: &str =
+	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Book.toml"));
 
 lazy_static! {
 	pub static ref DATA: BookDeclarations = toml::from_str(DATA_STR).unwrap();
@@ -92,12 +90,8 @@ pub struct Property {
 }
 
 impl Property {
-	pub fn get_get(&self, struc: &Struct) -> bool {
-		self.get.unwrap_or_else(|| struc.accessor.get)
-	}
-	pub fn get_set(&self, struc: &Struct) -> bool {
-		self.set.unwrap_or_else(|| struc.accessor.set)
-	}
+	pub fn get_get(&self, struc: &Struct) -> bool { self.get.unwrap_or_else(|| struc.accessor.get) }
+	pub fn get_set(&self, struc: &Struct) -> bool { self.set.unwrap_or_else(|| struc.accessor.set) }
 	pub fn get_rust_type(&self, is_ref: bool) -> String {
 		let mut res = convert_type(&self.type_s, is_ref);
 
@@ -122,12 +116,8 @@ impl Property {
 		}
 	}
 
-	pub fn is_array(&self) -> bool {
-		self.modifier.as_ref().map(|s| s == "array").unwrap_or(false)
-	}
-	pub fn is_map(&self) -> bool {
-		self.modifier.as_ref().map(|s| s == "map").unwrap_or(false)
-	}
+	pub fn is_array(&self) -> bool { self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) }
+	pub fn is_map(&self) -> bool { self.modifier.as_ref().map(|s| s == "map").unwrap_or(false) }
 
 	pub fn get_as_ref(&self) -> String {
 		let res = self.get_rust_type(true);
@@ -163,11 +153,7 @@ impl<'a> PropId<'a> {
 				if struc.name == id.struct_name {
 					id.prop.to_snake_case()
 				} else {
-					format!(
-						"{}_{}",
-						id.struct_name.to_snake_case(),
-						id.prop.to_snake_case(),
-					)
+					format!("{}_{}", id.struct_name.to_snake_case(), id.prop.to_snake_case(),)
 				}
 			}
 		}

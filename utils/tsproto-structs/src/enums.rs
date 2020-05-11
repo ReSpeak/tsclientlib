@@ -1,10 +1,8 @@
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
-pub const DATA_STR: &str = include_str!(concat!(
-	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/Enums.toml"
-));
+pub const DATA_STR: &str =
+	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Enums.toml"));
 
 lazy_static! {
 	pub static ref DATA: Enums = toml::from_str(DATA_STR).unwrap();
@@ -44,8 +42,7 @@ impl Enum {
 		let mut value: u64 = 0;
 		for v in &self.variants {
 			if let Some(v) = v.value {
-				leading_zeros =
-					std::cmp::min(leading_zeros, value.leading_zeros());
+				leading_zeros = std::cmp::min(leading_zeros, value.leading_zeros());
 				value = v;
 			} else {
 				value += 1;

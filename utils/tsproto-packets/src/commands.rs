@@ -105,10 +105,7 @@ impl<'a> Iterator for CommandParser<'a> {
 		let value_end = self.index;
 		Some(CommandItem::Argument(CommandArgument {
 			name: &self.data[name_start..name_end],
-			value: CommandArgumentValue {
-				raw: &self.data[value_start..value_end],
-				escapes,
-			},
+			value: CommandArgumentValue { raw: &self.data[value_start..value_end], escapes },
 		}))
 	}
 }
@@ -148,11 +145,7 @@ impl<'a> CommandArgumentValue<'a> {
 
 	pub fn get_raw(&self) -> &'a [u8] { self.raw }
 	pub fn get(&self) -> Cow<'a, [u8]> {
-		if self.escapes == 0 {
-			Cow::Borrowed(self.raw)
-		} else {
-			Cow::Owned(self.unescape())
-		}
+		if self.escapes == 0 { Cow::Borrowed(self.raw) } else { Cow::Owned(self.unescape()) }
 	}
 
 	pub fn get_str(&self) -> Result<Cow<'a, str>> {
@@ -183,12 +176,8 @@ mod tests {
 		let (name, parser) = CommandParser::new(data);
 		let name = str::from_utf8(name).unwrap();
 
-		let mut out_command = OutCommand::new(
-			Direction::S2C,
-			Flags::empty(),
-			PacketType::Command,
-			name,
-		);
+		let mut out_command =
+			OutCommand::new(Direction::S2C, Flags::empty(), PacketType::Command, name);
 
 		println!("\nParsing {}", str::from_utf8(data).unwrap());
 		for item in parser {

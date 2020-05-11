@@ -21,27 +21,16 @@ fn write(b: &mut Bencher, cmd: &[u8]) {
 			PacketType::Command,
 			command.name,
 			command.static_args.iter().map(|(k, v)| (*k, v.as_ref())),
-			command
-				.list_args
-				.iter()
-				.map(|i| i.iter().map(|(k, v)| (*k, v.as_ref()))),
+			command.list_args.iter().map(|i| i.iter().map(|(k, v)| (*k, v.as_ref()))),
 		)
 	});
 }
 
-fn parse_short(c: &mut Criterion) {
-	c.bench_function("parse short", |b| parse(b, SHORT_CMD));
-}
-fn parse_long(c: &mut Criterion) {
-	c.bench_function("parse long", |b| parse(b, LONG_CMD));
-}
+fn parse_short(c: &mut Criterion) { c.bench_function("parse short", |b| parse(b, SHORT_CMD)); }
+fn parse_long(c: &mut Criterion) { c.bench_function("parse long", |b| parse(b, LONG_CMD)); }
 
-fn write_short(c: &mut Criterion) {
-	c.bench_function("write short", |b| write(b, SHORT_CMD));
-}
-fn write_long(c: &mut Criterion) {
-	c.bench_function("write long", |b| write(b, LONG_CMD));
-}
+fn write_short(c: &mut Criterion) { c.bench_function("write short", |b| write(b, SHORT_CMD)); }
+fn write_long(c: &mut Criterion) { c.bench_function("write long", |b| write(b, LONG_CMD)); }
 
 criterion_group!(benches, parse_short, parse_long, write_short, write_long,);
 criterion_main!(benches);

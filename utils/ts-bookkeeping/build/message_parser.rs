@@ -57,15 +57,15 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			field.pretty
 		),
 		"bool" => format!(
-			"match val {{ \"0\" => false, \"1\" => true, _ => \
-			 Err(ParseError::ParseBool {{
+			"match val {{ \"0\" => false, \"1\" => true, _ => Err(ParseError::ParseBool {{
 				arg: \"{}\",
 				value: val.to_string(),
 			}})? }}",
 			field.pretty
 		),
-		"Uid" => "Uid(if let Ok(uid) = base64::decode(val) { uid } \
-			else { val.as_bytes().to_vec() })".into(),
+		"Uid" => "Uid(if let Ok(uid) = base64::decode(val) { uid } else { val.as_bytes().to_vec() \
+		          })"
+		.into(),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
 		"IconHash" => format!(
@@ -80,8 +80,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 		}})?)",
 			field.pretty
 		),
-		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
-		| "ChannelGroupId" => format!(
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId" => format!(
 			"{}(val.parse().map_err(|e| ParseError::ParseInt {{
 				arg: \"{}\",
 				value: val.to_string(),
@@ -147,8 +146,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 		"Duration" => {
 			if field.type_s == "DurationSeconds" {
 				format!(
-					"let val = val.parse::<i64>().map_err(|e| \
-					 ParseError::ParseInt {{
+					"let val = val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
 					source: e,
@@ -162,8 +160,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				)
 			} else if field.type_s == "DurationMilliseconds" {
 				format!(
-					"Duration::milliseconds(val.parse::<i64>().map_err(|e| \
-					 ParseError::ParseInt {{
+					"Duration::milliseconds(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
 					arg: \"{}\",
 					value: val.to_string(),
 					source: e,
@@ -183,10 +180,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				}})?)",
 			field.pretty
 		),
-		_ => panic!(
-			"Unknown type '{}' when trying to deserialize {:?}",
-			rust_type, field
-		),
+		_ => panic!("Unknown type '{}' when trying to deserialize {:?}", rust_type, field),
 	};
 	if res.contains('\n') { indent(&res, 2) } else { res }
 }
@@ -222,29 +216,22 @@ pub fn generate_serializer(field: &Field, name: &str, is_ref: bool) -> String {
 	}
 }
 
-pub fn single_value_serializer(
-	field: &Field, rust_type: &str, name: &str, is_ref: bool,
-) -> String {
+pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_ref: bool) -> String {
 	let ref_amp = if is_ref { "" } else { "&" };
 	let ref_star = if is_ref { "*" } else { "" };
 	match rust_type {
-		"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32"
-		| "f64" | "String" | "IpAddr" | "SocketAddr" => {
-			format!("{}{}", ref_amp, name)
-		}
-		"bool" => {
-			format!("if {}{} {{ &\"1\" }} else {{ &\"0\" }}", ref_star, name)
-		}
+		"i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64" | "String"
+		| "IpAddr" | "SocketAddr" => format!("{}{}", ref_amp, name),
+		"bool" => format!("if {}{} {{ &\"1\" }} else {{ &\"0\" }}", ref_star, name),
 		"&str" => name.to_string(),
 		"UidRef" | "Uid" => format!(
-			"&if {1}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") \
-			 }}
+			"&if {1}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") }}
 			else {{ Cow::<str>::Owned(base64::encode({0}{1}.0)) }}",
 			if rust_type == "Uid" { "&" } else { "" },
 			name,
 		),
-		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId"
-		| "ChannelGroupId" | "IconHash" => format!("&{}.0", name),
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId"
+		| "IconHash" => format!("&{}.0", name),
 		"ClientType" => format!(
 			"match {} {{
 				ClientType::Normal => &\"0\",
@@ -267,9 +254,7 @@ pub fn single_value_serializer(
 		| "TokenType"
 		| "PluginTargetMode"
 		| "Error" => format!("&{}.to_u32().unwrap()", name),
-		"ChannelPermissionHint" | "ClientPermissionHint" => {
-			format!("&{}.bits()", name)
-		}
+		"ChannelPermissionHint" | "ClientPermissionHint" => format!("&{}.bits()", name),
 		"Duration" => {
 			if field.type_s == "DurationSeconds" {
 				format!("&{}.whole_seconds()", name)

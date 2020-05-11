@@ -13,9 +13,7 @@ use crate::events::get_rust_type;
 #[derive(Template)]
 #[TemplatePath = "build/MessagesToBook.tt"]
 #[derive(Debug)]
-pub struct MessagesToBookDeclarations<'a>(
-	&'a messages_to_book::MessagesToBookDeclarations<'a>,
-);
+pub struct MessagesToBookDeclarations<'a>(&'a messages_to_book::MessagesToBookDeclarations<'a>);
 
 impl<'a> Deref for MessagesToBookDeclarations<'a> {
 	type Target = messages_to_book::MessagesToBookDeclarations<'a>;
@@ -44,13 +42,7 @@ fn gen_return_match(to: &[&Property]) -> String {
 	if to.len() == 1 {
 		to[0].name.to_snake_case()
 	} else {
-		format!(
-			"({})",
-			to.iter()
-				.map(|p| p.name.to_snake_case())
-				.collect::<Vec<_>>()
-				.join(", ")
-		)
+		format!("({})", to.iter().map(|p| p.name.to_snake_case()).collect::<Vec<_>>().join(", "))
 	}
 }
 

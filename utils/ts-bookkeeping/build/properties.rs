@@ -11,10 +11,7 @@ use crate::events::{get_properties, get_rust_type};
 #[derive(Template)]
 #[TemplatePath = "build/Properties.tt"]
 #[derive(Debug)]
-pub struct Properties<'a>(
-	&'a BookDeclarations,
-	&'a MessagesToBookDeclarations<'a>,
-);
+pub struct Properties<'a>(&'a BookDeclarations, &'a MessagesToBookDeclarations<'a>);
 
 impl Default for Properties<'static> {
 	fn default() -> Self { Properties(&DATA, &messages_to_book::DATA) }

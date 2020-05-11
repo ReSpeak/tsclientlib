@@ -4,10 +4,7 @@ use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
 use tsclientlib::data::{self, Channel, Client};
-use tsclientlib::{
-	ChannelId, ConnectOptions, Connection, DisconnectOptions, Identity,
-	StreamItem,
-};
+use tsclientlib::{ChannelId, ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -26,9 +23,7 @@ struct Args {
 }
 
 /// `channels` have to be ordered.
-fn print_channels(
-	clients: &[&Client], channels: &[&Channel], parent: ChannelId, depth: usize,
-) {
+fn print_channels(clients: &[&Client], channels: &[&Channel], parent: ChannelId, depth: usize) {
 	let indention = "  ".repeat(depth);
 	for channel in channels {
 		if channel.parent == parent {

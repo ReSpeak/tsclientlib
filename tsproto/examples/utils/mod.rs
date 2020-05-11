@@ -17,10 +17,8 @@ pub fn create_logger() -> Logger {
 }
 
 pub async fn create_client(
-	local_address: SocketAddr, remote_address: SocketAddr, logger: Logger,
-	verbose: u8,
-) -> Result<Client>
-{
+	local_address: SocketAddr, remote_address: SocketAddr, logger: Logger, verbose: u8,
+) -> Result<Client> {
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::import_str(
 		"MG0DAgeAAgEgAiAIXJBlj1hQbaH0Eq0DuLlCmH8bl+veTAO2+\
@@ -28,8 +26,7 @@ pub async fn create_client(
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	let udp_socket = UdpSocket::bind(local_address).await?;
-	let mut con =
-		Client::new(logger, remote_address, Box::new(udp_socket), private_key);
+	let mut con = Client::new(logger, remote_address, Box::new(udp_socket), private_key);
 
 	if verbose >= 1 {
 		tsproto::log::add_logger(con.logger.clone(), verbose - 1, &mut con)
@@ -65,12 +62,8 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 
 	// Create clientinit packet
 	let offset = offset.to_string();
-	let mut cmd = OutCommand::new(
-		Direction::C2S,
-		Flags::empty(),
-		PacketType::Command,
-		"clientinit",
-	);
+	let mut cmd =
+		OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "clientinit");
 	cmd.write_arg("client_nickname", &"Bot");
 	cmd.write_arg("client_version", &"3.?.? [Build: 5680278000]");
 	cmd.write_arg("client_platform", &"Linux");
@@ -81,16 +74,15 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 	cmd.write_arg("client_default_channel_password", &"");
 	cmd.write_arg("client_server_password", &"");
 	cmd.write_arg("client_meta_data", &"");
-	cmd.write_arg("client_version_sign",
-		&"Hjd+N58Gv3ENhoKmGYy2bNRBsNNgm5kpiaQWxOj5HN2DXttG6REjymSwJtpJ8muC2gSwRuZi0R+8Laan5ts5CQ==");
+	cmd.write_arg(
+		"client_version_sign",
+		&"Hjd+N58Gv3ENhoKmGYy2bNRBsNNgm5kpiaQWxOj5HN2DXttG6REjymSwJtpJ8muC2gSwRuZi0R+8Laan5ts5CQ==",
+	);
 	cmd.write_arg("client_nickname_phonetic", &"");
 	cmd.write_arg("client_key_offset", &offset);
 	cmd.write_arg("client_default_token", &"");
 	cmd.write_arg("client_badges", &"Overwolf=0");
-	cmd.write_arg(
-		"hwid",
-		&"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc",
-	);
+	cmd.write_arg("hwid", &"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc");
 
 	con.send_packet(cmd.into_packet())?;
 	Ok(con
@@ -106,12 +98,8 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 }
 
 pub async fn disconnect(con: &mut Client) -> Result<()> {
-	let mut cmd = OutCommand::new(
-		Direction::C2S,
-		Flags::empty(),
-		PacketType::Command,
-		"clientdisconnect",
-	);
+	let mut cmd =
+		OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "clientdisconnect");
 	cmd.write_arg("reasonid", &8);
 	cmd.write_arg("reasonmsg", &"Bye");
 

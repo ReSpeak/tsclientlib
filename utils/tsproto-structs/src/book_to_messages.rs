@@ -7,10 +7,8 @@ use crate::book::{BookDeclarations, Property, Struct};
 use crate::messages::{Field, Message, MessageDeclarations};
 use crate::*;
 
-pub const DATA_STR: &str = include_str!(concat!(
-	env!("CARGO_MANIFEST_DIR"),
-	"/declarations/BookToMessages.toml"
-));
+pub const DATA_STR: &str =
+	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/BookToMessages.toml"));
 
 lazy_static! {
 	pub static ref DATA: BookToMessagesDeclarations<'static> = {
@@ -186,25 +184,10 @@ pub struct Event<'a> {
 
 #[derive(Debug)]
 pub enum RuleKind<'a> {
-	Map {
-		from: &'a Property,
-		to: &'a Field,
-	},
-	ArgumentMap {
-		from: String,
-		to: &'a Field,
-	},
-	Function {
-		from: Option<&'a Property>,
-		name: String,
-		to: Vec<&'a Field>,
-	},
-	ArgumentFunction {
-		from: String,
-		type_s: String,
-		name: String,
-		to: Vec<&'a Field>,
-	},
+	Map { from: &'a Property, to: &'a Field },
+	ArgumentMap { from: String, to: &'a Field },
+	Function { from: Option<&'a Property>, name: String, to: Vec<&'a Field> },
+	ArgumentFunction { from: String, type_s: String, name: String, to: Vec<&'a Field> },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -271,18 +254,14 @@ impl FromStr for RuleOp {
 		} else if s == "update" {
 			Ok(RuleOp::Update)
 		} else {
-			Err("Cannot parse operation, needs to be add, remove or update"
-				.to_string())
+			Err("Cannot parse operation, needs to be add, remove or update".to_string())
 		}
 	}
 }
 
 // the in rust callable name (in PascalCase) from the field
 fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
-	*msg_fields
-		.iter()
-		.find(|f| f.pretty == name)
-		.expect(&format!("Cannot find field '{}'", name))
+	*msg_fields.iter().find(|f| f.pretty == name).expect(&format!("Cannot find field '{}'", name))
 }
 
 impl<'a> RuleKind<'a> {
@@ -291,11 +270,7 @@ impl<'a> RuleKind<'a> {
 			RuleKind::Map { from, .. } => &from.name,
 			RuleKind::ArgumentMap { from, .. } => &from,
 			RuleKind::Function { from, name, .. } => {
-				&from
-					.unwrap_or_else(|| {
-						panic!("From not set for function {}", name)
-					})
-					.name
+				&from.unwrap_or_else(|| panic!("From not set for function {}", name)).name
 			}
 			RuleKind::ArgumentFunction { from, .. } => &from,
 		}
@@ -305,12 +280,9 @@ impl<'a> RuleKind<'a> {
 		match self {
 			RuleKind::Map { from, .. } => from,
 			RuleKind::Function { from, name, .. } => {
-				from.unwrap_or_else(|| {
-					panic!("From not set for function {}", name)
-				})
+				from.unwrap_or_else(|| panic!("From not set for function {}", name))
 			}
-			RuleKind::ArgumentMap { .. }
-			| RuleKind::ArgumentFunction { .. } => {
+			RuleKind::ArgumentMap { .. } | RuleKind::ArgumentFunction { .. } => {
 				panic!("From is not a property for argument functions")
 			}
 		}

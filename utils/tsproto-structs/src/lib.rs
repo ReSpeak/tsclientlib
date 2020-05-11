@@ -103,9 +103,7 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 }
 
 /// Prepend `/// ` to each line of a string.
-pub fn doc_comment(s: &str) -> String {
-	s.lines().map(|l| format!("/// {}\n", l)).collect()
-}
+pub fn doc_comment(s: &str) -> String { s.lines().map(|l| format!("/// {}\n", l)).collect() }
 
 /// Indent a string by a given count using tabs.
 pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
@@ -114,12 +112,7 @@ pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
 	let mut result = String::with_capacity(sref.len() + line_count * count * 4);
 	for l in sref.lines() {
 		if !l.is_empty() {
-			result.push_str(
-				std::iter::repeat("\t")
-					.take(count)
-					.collect::<String>()
-					.as_str(),
-			);
+			result.push_str(std::iter::repeat("\t").take(count).collect::<String>().as_str());
 		}
 		result.push_str(l);
 		result.push('\n');

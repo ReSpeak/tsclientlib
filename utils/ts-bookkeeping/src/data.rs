@@ -24,11 +24,7 @@ macro_rules! max_clients {
 	($msg:ident) => {{
 		if $msg.is_max_clients_unlimited.unwrap_or_default() {
 			Some(MaxClients::Unlimited)
-		} else if $msg
-			.max_clients
-			.map(|i| i >= 0 && i <= u16::MAX as i32)
-			.unwrap_or_default()
-			{
+		} else if $msg.max_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or_default() {
 			Some(MaxClients::Limited($msg.max_clients.unwrap() as u16))
 		} else {
 			// Max clients is less than zero or too high so ignore it
@@ -94,9 +90,7 @@ impl Connection {
 		}
 	}
 
-	pub fn handle_command(
-		&mut self, logger: &Logger, msg: &s2c::InMessage,
-	) -> Result<Vec<Event>> {
+	pub fn handle_command(&mut self, logger: &Logger, msg: &s2c::InMessage) -> Result<Vec<Event>> {
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
 		let (mut handled, mut events) = self.handle_command_generated(msg)?;
@@ -106,27 +100,20 @@ impl Connection {
 				for msg in msg.iter() {
 					let target = match msg.target {
 						TextMessageTargetMode::Server => MessageTarget::Server,
-						TextMessageTargetMode::Channel => {
-							MessageTarget::Channel
-						}
+						TextMessageTargetMode::Channel => MessageTarget::Channel,
 						TextMessageTargetMode::Client => {
-							let client =
-								if let Some(client) = msg.target_client_id {
-									client
-								} else {
-									return Err(format_err!(
-										"Target client id missing for a \
-										 client text message"
-									)
-									.into());
-								};
+							let client = if let Some(client) = msg.target_client_id {
+								client
+							} else {
+								return Err(format_err!(
+									"Target client id missing for a client text message"
+								)
+								.into());
+							};
 							MessageTarget::Client(client)
 						}
 						TextMessageTargetMode::Unknown => {
-							return Err(format_err!(
-								"Unknown TextMessageTargetMode"
-							)
-							.into());
+							return Err(format_err!("Unknown TextMessageTargetMode").into());
 						}
 					};
 					events.push(Event::Message {
@@ -167,8 +154,7 @@ impl Connection {
 			// If we know this client and the name change, adjust the name.
 			if let Ok(client) = self.get_mut_client(invoker.id) {
 				if client.name != invoker.name {
-					let old =
-						mem::replace(&mut client.name, invoker.name.clone());
+					let old = mem::replace(&mut client.name, invoker.name.clone());
 					events.push(Event::PropertyChanged {
 						id: PropertyId::ClientName(client.id),
 						old: PropertyValue::String(old),
@@ -189,9 +175,7 @@ impl Connection {
 	fn get_mut_server(&mut self) -> Result<&mut Server> { Ok(&mut self.server) }
 
 	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
-		self.groups.get(&group).ok_or_else(|| {
-			format_err!("ServerGroup {} not found", group).into()
-		})
+		self.groups.get(&group).ok_or_else(|| format_err!("ServerGroup {} not found", group).into())
 	}
 	fn add_server_group(
 		&mut self, group: ServerGroupId, r: ServerGroup, _: &mut Vec<Event>,
@@ -216,9 +200,7 @@ impl Connection {
 	fn get_connection(&self) -> Result<&Connection> { Ok(&self) }
 
 	fn get_client(&self, client: ClientId) -> Result<&Client> {
-		self.clients
-			.get(&client)
-			.ok_or_else(|| format_err!("Client {} not found", client).into())
+		self.clients.get(&client).ok_or_else(|| format_err!("Client {} not found", client).into())
 	}
 	fn get_mut_client(&mut self, client: ClientId) -> Result<&mut Client> {
 		self.clients
@@ -230,28 +212,22 @@ impl Connection {
 	) -> Result<Option<Client>> {
 		Ok(self.clients.insert(client, r))
 	}
-	fn remove_client(
-		&mut self, client: ClientId, _: &mut Vec<Event>,
-	) -> Result<Option<Client>> {
+	fn remove_client(&mut self, client: ClientId, _: &mut Vec<Event>) -> Result<Option<Client>> {
 		Ok(self.clients.remove(&client))
 	}
 
-	fn get_connection_client_data(
-		&self, client: ClientId,
-	) -> Result<&ConnectionClientData> {
+	fn get_connection_client_data(&self, client: ClientId) -> Result<&ConnectionClientData> {
 		if let Some(c) = self.clients.get(&client) {
-			c.connection_data.as_ref().ok_or_else(|| {
-				format_err!("Client {} has no connection data", client).into()
-			})
+			c.connection_data
+				.as_ref()
+				.ok_or_else(|| format_err!("Client {} has no connection data", client).into())
 		} else {
 			Err(format_err!("Client {} not found", client).into())
 		}
 	}
 	fn add_connection_client_data(
-		&mut self, client: ClientId, r: ConnectionClientData,
-		_: &mut Vec<Event>,
-	) -> Result<Option<ConnectionClientData>>
-	{
+		&mut self, client: ClientId, r: ConnectionClientData, _: &mut Vec<Event>,
+	) -> Result<Option<ConnectionClientData>> {
 		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
@@ -259,13 +235,11 @@ impl Connection {
 		}
 	}
 
-	fn get_optional_client_data(
-		&self, client: ClientId,
-	) -> Result<&OptionalClientData> {
+	fn get_optional_client_data(&self, client: ClientId) -> Result<&OptionalClientData> {
 		if let Some(c) = self.clients.get(&client) {
-			c.optional_data.as_ref().ok_or_else(|| {
-				format_err!("Client {} has no optional data", client).into()
-			})
+			c.optional_data
+				.as_ref()
+				.ok_or_else(|| format_err!("Client {} has no optional data", client).into())
 		} else {
 			Err(format_err!("Client {} not found", client).into())
 		}
@@ -297,13 +271,11 @@ impl Connection {
 		Ok(old)
 	}
 
-	fn get_optional_channel_data(
-		&self, channel: ChannelId,
-	) -> Result<&OptionalChannelData> {
+	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<&OptionalChannelData> {
 		if let Some(c) = self.channels.get(&channel) {
-			c.optional_data.as_ref().ok_or_else(|| {
-				format_err!("Channel {} has no optional data", channel).into()
-			})
+			c.optional_data
+				.as_ref()
+				.ok_or_else(|| format_err!("Channel {} has no optional data", channel).into())
 		} else {
 			Err(format_err!("Channel {} not found", channel).into())
 		}
@@ -315,12 +287,8 @@ impl Connection {
 
 	// Backing functions for MessageToBook declarations
 
-	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> {
-		Ok(false)
-	}
-	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> {
-		Ok(None)
-	}
+	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> { Ok(false) }
+	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> { Ok(None) }
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
@@ -331,10 +299,7 @@ impl Connection {
 			Some(MaxClients::Unlimited)
 		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
-		} else if msg
-			.max_family_clients
-			.map(|i| i >= 0 && i <= u16::MAX as i32)
-			.unwrap_or_default()
+		} else if msg.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or_default()
 		{
 			Some(MaxClients::Limited(msg.max_family_clients.unwrap() as u16))
 		} else {
@@ -344,32 +309,24 @@ impl Connection {
 		Ok((ch, ch_fam))
 	}
 	fn max_clients_ce_fun(
-		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
 		let channel = self.get_mut_channel(channel_id)?;
 
 		let ch = max_clients!(msg);
 		if let Some(ch) = ch {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelMaxClients(channel_id),
-				old: PropertyValue::OptionMaxClients(
-					channel.max_clients.take(),
-				),
+				old: PropertyValue::OptionMaxClients(channel.max_clients.take()),
 				invoker: msg.get_invoker(),
 			});
 			channel.max_clients = Some(ch);
 		}
-		let ch_fam = if msg.is_max_family_clients_unlimited.unwrap_or_default()
-		{
+		let ch_fam = if msg.is_max_family_clients_unlimited.unwrap_or_default() {
 			Some(MaxClients::Unlimited)
 		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
-		} else if msg
-			.max_family_clients
-			.map(|i| i >= 0 && i <= u16::MAX as i32)
-			.unwrap_or_default()
+		} else if msg.max_family_clients.map(|i| i >= 0 && i <= u16::MAX as i32).unwrap_or_default()
 		{
 			Some(MaxClients::Limited(msg.max_family_clients.unwrap() as u16))
 		} else {
@@ -379,9 +336,7 @@ impl Connection {
 		if let Some(ch_fam) = ch_fam {
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ChannelMaxFamilyClients(channel_id),
-				old: PropertyValue::OptionMaxClients(
-					channel.max_family_clients.take(),
-				),
+				old: PropertyValue::OptionMaxClients(channel.max_family_clients.take()),
 				invoker: msg.get_invoker(),
 			});
 			channel.max_family_clients = Some(ch_fam);
@@ -428,10 +383,8 @@ impl Connection {
 	}
 
 	fn channel_type_ce_fun(
-		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
 		let channel = self.get_mut_channel(channel_id)?;
 
 		let typ = if let Some(perm) = msg.is_permanent {
@@ -480,10 +433,8 @@ impl Connection {
 	}
 
 	fn away_cu_fun(
-		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
 		let client = self.get_mut_client(client_id)?;
 
 		let away = if msg.is_away.unwrap_or_default() {
@@ -514,29 +465,22 @@ impl Connection {
 	}
 
 	fn talk_power_cu_fun(
-		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+		&mut self, client_id: ClientId, msg: &s2c::InClientUpdatedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
 		if let Some(talk_request) = msg.talk_power_request_time {
 			let client = self.get_mut_client(client_id)?;
 
 			let talk_request = if talk_request.timestamp() > 0 {
 				Some(TalkPowerRequest {
 					time: talk_request,
-					message: msg
-						.talk_power_request_message
-						.clone()
-						.unwrap_or_else(String::new),
+					message: msg.talk_power_request_message.clone().unwrap_or_else(String::new),
 				})
 			} else {
 				None
 			};
 			events.push(Event::PropertyChanged {
 				id: PropertyId::ClientTalkPowerRequest(client_id),
-				old: PropertyValue::OptionTalkPowerRequest(
-					client.talk_power_request.take(),
-				),
+				old: PropertyValue::OptionTalkPowerRequest(client.talk_power_request.take()),
 				invoker: msg.get_invoker(),
 			});
 			client.talk_power_request = talk_request;
@@ -555,10 +499,8 @@ impl Connection {
 	}
 
 	fn channel_subscribe_fun(
-		&mut self, channel_id: ChannelId, _: &s2c::InChannelSubscribedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+		&mut self, channel_id: ChannelId, _: &s2c::InChannelSubscribedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
 		let channel = self.get_mut_channel(channel_id)?;
 		events.push(Event::PropertyChanged {
 			id: PropertyId::ChannelSubscribed(channel_id),
@@ -583,13 +525,11 @@ impl Connection {
 		channel.subscribed = false;
 
 		// Remove all known clients from this channel
-		let remove_clients =
-			self.clients
-				.values()
-				.filter_map(|c| {
-					if c.channel == channel_id { Some(c.id) } else { None }
-				})
-				.collect::<Vec<_>>();
+		let remove_clients = self
+			.clients
+			.values()
+			.filter_map(|c| if c.channel == channel_id { Some(c.id) } else { None })
+			.collect::<Vec<_>>();
 		for id in remove_clients {
 			events.push(Event::PropertyRemoved {
 				id: PropertyId::Client(id),
@@ -601,10 +541,8 @@ impl Connection {
 	}
 
 	fn channel_order_remove(
-		&mut self, channel_id: ChannelId, channel_order: ChannelId,
-		events: &mut Vec<Event>,
-	)
-	{
+		&mut self, channel_id: ChannelId, channel_order: ChannelId, events: &mut Vec<Event>,
+	) {
 		// [ C:7 | O:_ ]
 		// [ C:5 | O:7 ] ─>X
 		// [ C:_ | O:5 ]     (Upd: O -> 7)
@@ -624,8 +562,8 @@ impl Connection {
 	}
 
 	fn channel_order_insert(
-		&mut self, channel_id: ChannelId, channel_order: ChannelId,
-		channel_parent: ChannelId, events: &mut Vec<Event>,
+		&mut self, channel_id: ChannelId, channel_order: ChannelId, channel_parent: ChannelId,
+		events: &mut Vec<Event>,
 	)
 	{
 		// [ C:7 | O:_ ]
@@ -634,10 +572,7 @@ impl Connection {
 		//
 		// Also work for the first channel, the order will be 0.
 		self.channels.values_mut().any(|c| {
-			if c.order == channel_order
-				&& c.parent == channel_parent
-				&& c.id != channel_id
-			{
+			if c.order == channel_order && c.parent == channel_parent && c.id != channel_id {
 				events.push(Event::PropertyChanged {
 					id: PropertyId::ChannelOrder(c.id),
 					old: PropertyValue::ChannelId(c.order),
@@ -654,44 +589,25 @@ impl Connection {
 	fn channel_order_cc_fun(
 		&mut self, msg: &s2c::InChannelCreatedPart, events: &mut Vec<Event>,
 	) -> Result<ChannelId> {
-		self.channel_order_insert(
-			msg.channel_id,
-			msg.order,
-			msg.parent_id,
-			events,
-		);
+		self.channel_order_insert(msg.channel_id, msg.order, msg.parent_id, events);
 		Ok(msg.order)
 	}
 
 	fn channel_order_ce_fun(
-		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
-		self.channel_order_move_fun(
-			channel_id,
-			msg.order,
-			msg.parent_id,
-			events,
-		)
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelEditedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
+		self.channel_order_move_fun(channel_id, msg.order, msg.parent_id, events)
 	}
 
 	fn channel_order_cm_fun(
-		&mut self, channel_id: ChannelId, msg: &s2c::InChannelMovedPart,
-		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
-		self.channel_order_move_fun(
-			channel_id,
-			Some(msg.order),
-			Some(msg.parent_id),
-			events,
-		)
+		&mut self, channel_id: ChannelId, msg: &s2c::InChannelMovedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
+		self.channel_order_move_fun(channel_id, Some(msg.order), Some(msg.parent_id), events)
 	}
 
 	fn channel_order_move_fun(
-		&mut self, channel_id: ChannelId, new_order: Option<ChannelId>,
-		parent: Option<ChannelId>, events: &mut Vec<Event>,
+		&mut self, channel_id: ChannelId, new_order: Option<ChannelId>, parent: Option<ChannelId>,
+		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
 		let old_order;
@@ -710,12 +626,7 @@ impl Connection {
 			}
 		}
 		self.channel_order_remove(channel_id, old_order, events);
-		self.channel_order_insert(
-			channel_id,
-			new_order.unwrap_or(old_order),
-			new_parent,
-			events,
-		);
+		self.channel_order_insert(channel_id, new_order.unwrap_or(old_order), new_parent, events);
 		Ok(())
 	}
 
@@ -835,9 +746,7 @@ impl<'a> ChannelOptions<'a> {
 		self
 	}
 
-	pub fn max_family_clients(
-		mut self, max_family_clients: MaxClients,
-	) -> Self {
+	pub fn max_family_clients(mut self, max_family_clients: MaxClients) -> Self {
 		self.max_family_clients = Some(max_family_clients);
 		self
 	}
@@ -871,75 +780,66 @@ impl<'a> ChannelOptions<'a> {
 
 impl Server {
 	pub fn add_channel(&self, options: ChannelOptions) -> OutCommand {
-		let inherits_max_family_clients =
-			options.max_family_clients.as_ref().and_then(|m| {
-				if let MaxClients::Inherited = m { Some(true) } else { None }
-			});
-		let is_max_family_clients_unlimited =
-			options.max_family_clients.as_ref().and_then(|m| {
-				if let MaxClients::Unlimited = m { Some(true) } else { None }
-			});
-		let max_family_clients =
-			options.max_family_clients.as_ref().and_then(|m| {
-				if let MaxClients::Limited(n) = m {
-					Some(*n as i32)
-				} else {
-					None
-				}
-			});
-		let is_max_clients_unlimited =
-			options.max_clients.as_ref().and_then(|m| {
-				if let MaxClients::Unlimited = m { Some(true) } else { None }
-			});
-		let max_clients = options.max_clients.as_ref().and_then(|m| {
-			if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None }
-		});
+		let inherits_max_family_clients = options
+			.max_family_clients
+			.as_ref()
+			.and_then(|m| if let MaxClients::Inherited = m { Some(true) } else { None });
+		let is_max_family_clients_unlimited = options
+			.max_family_clients
+			.as_ref()
+			.and_then(|m| if let MaxClients::Unlimited = m { Some(true) } else { None });
+		let max_family_clients = options
+			.max_family_clients
+			.as_ref()
+			.and_then(|m| if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None });
+		let is_max_clients_unlimited = options
+			.max_clients
+			.as_ref()
+			.and_then(|m| if let MaxClients::Unlimited = m { Some(true) } else { None });
+		let max_clients = options
+			.max_clients
+			.as_ref()
+			.and_then(|m| if let MaxClients::Limited(n) = m { Some(*n as i32) } else { None });
 
-		let is_permanent = options.channel_type.as_ref().and_then(|t| {
-			if *t == ChannelType::Permanent { Some(true) } else { None }
-		});
-		let is_semi_permanent = options.channel_type.as_ref().and_then(|t| {
-			if *t == ChannelType::SemiPermanent { Some(true) } else { None }
-		});
+		let is_permanent = options
+			.channel_type
+			.as_ref()
+			.and_then(|t| if *t == ChannelType::Permanent { Some(true) } else { None });
+		let is_semi_permanent = options
+			.channel_type
+			.as_ref()
+			.and_then(|t| if *t == ChannelType::SemiPermanent { Some(true) } else { None });
 
-		c2s::OutChannelCreateMessage::new(&mut iter::once(
-			c2s::OutChannelCreatePart {
-				name: options.name,
-				description: options.description,
-				parent_id: options.parent_id,
-				codec: options.codec,
-				codec_quality: options.codec_quality,
-				delete_delay: options.delete_delay,
-				has_password: if options.password.is_some() {
-					Some(true)
-				} else {
-					None
-				},
-				is_default: if options.is_default { Some(true) } else { None },
-				inherits_max_family_clients,
-				is_max_family_clients_unlimited,
-				is_max_clients_unlimited,
-				is_permanent,
-				is_semi_permanent,
-				max_family_clients,
-				max_clients,
-				is_unencrypted: options.is_unencrypted,
-				order: options.order,
-				password: options.password,
-				phonetic_name: options.phonetic_name,
-				topic: options.topic,
-			},
-		))
+		c2s::OutChannelCreateMessage::new(&mut iter::once(c2s::OutChannelCreatePart {
+			name: options.name,
+			description: options.description,
+			parent_id: options.parent_id,
+			codec: options.codec,
+			codec_quality: options.codec_quality,
+			delete_delay: options.delete_delay,
+			has_password: if options.password.is_some() { Some(true) } else { None },
+			is_default: if options.is_default { Some(true) } else { None },
+			inherits_max_family_clients,
+			is_max_family_clients_unlimited,
+			is_max_clients_unlimited,
+			is_permanent,
+			is_semi_permanent,
+			max_family_clients,
+			max_clients,
+			is_unencrypted: options.is_unencrypted,
+			order: options.order,
+			password: options.password,
+			phonetic_name: options.phonetic_name,
+			topic: options.topic,
+		}))
 	}
 
 	pub fn send_textmessage(&self, message: &str) -> OutCommand {
-		c2s::OutSendTextMessageMessage::new(&mut iter::once(
-			c2s::OutSendTextMessagePart {
-				target: TextMessageTargetMode::Server,
-				target_client_id: None,
-				message,
-			},
-		))
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
+			target: TextMessageTargetMode::Server,
+			target_client_id: None,
+			message,
+		}))
 	}
 
 	/// Subscribe or unsubscribe from all channels.
@@ -953,46 +853,40 @@ impl Server {
 }
 
 impl Connection {
-	pub fn send_message(
-		&self, target: MessageTarget, message: &str,
-	) -> OutCommand {
+	pub fn send_message(&self, target: MessageTarget, message: &str) -> OutCommand {
 		match target {
-			MessageTarget::Server => c2s::OutSendTextMessageMessage::new(
-				&mut iter::once(c2s::OutSendTextMessagePart {
+			MessageTarget::Server => {
+				c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Server,
 					target_client_id: None,
 					message,
-				}),
-			),
-			MessageTarget::Channel => c2s::OutSendTextMessageMessage::new(
-				&mut iter::once(c2s::OutSendTextMessagePart {
+				}))
+			}
+			MessageTarget::Channel => {
+				c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Channel,
 					target_client_id: None,
 					message,
-				}),
-			),
-			MessageTarget::Client(id) => c2s::OutSendTextMessageMessage::new(
-				&mut iter::once(c2s::OutSendTextMessagePart {
+				}))
+			}
+			MessageTarget::Client(id) => {
+				c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Client,
 					target_client_id: Some(id),
 					message,
-				}),
-			),
-			MessageTarget::Poke(id) => {
-				c2s::OutClientPokeRequestMessage::new(&mut iter::once(
-					c2s::OutClientPokeRequestPart { client_id: id, message },
-				))
+				}))
 			}
+			MessageTarget::Poke(id) => c2s::OutClientPokeRequestMessage::new(&mut iter::once(
+				c2s::OutClientPokeRequestPart { client_id: id, message },
+			)),
 		}
 	}
 
 	pub fn disconnect(&self, options: crate::DisconnectOptions) -> OutCommand {
-		c2s::OutDisconnectMessage::new(&mut iter::once(
-			c2s::OutDisconnectPart {
-				reason: options.reason,
-				reason_message: options.message.as_ref().map(|m| m.as_str()),
-			},
-		))
+		c2s::OutDisconnectMessage::new(&mut iter::once(c2s::OutDisconnectPart {
+			reason: options.reason,
+			reason_message: options.message.as_ref().map(|m| m.as_str()),
+		}))
 	}
 }
 
@@ -1016,18 +910,17 @@ impl Client {
 	/// ```*/
 
 	pub fn send_textmessage(&self, message: &str) -> OutCommand {
-		c2s::OutSendTextMessageMessage::new(&mut iter::once(
-			c2s::OutSendTextMessagePart {
-				target: TextMessageTargetMode::Client,
-				target_client_id: Some(self.id),
-				message,
-			},
-		))
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
+			target: TextMessageTargetMode::Client,
+			target_client_id: Some(self.id),
+			message,
+		}))
 	}
 
 	pub fn poke(&self, message: &str) -> OutCommand {
-		c2s::OutClientPokeRequestMessage::new(&mut iter::once(
-			c2s::OutClientPokeRequestPart { client_id: self.id, message },
-		))
+		c2s::OutClientPokeRequestMessage::new(&mut iter::once(c2s::OutClientPokeRequestPart {
+			client_id: self.id,
+			message,
+		}))
 	}
 }

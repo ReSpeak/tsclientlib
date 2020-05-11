@@ -52,9 +52,7 @@ async fn real_main() -> Result<()> {
 	handle.wait_until_connected().await?;
 
 	let welcome_message = handle
-		.with_connection(|con| {
-			Result::<_>::Ok(con.get_state()?.server.welcome_message.clone())
-		})
+		.with_connection(|con| Result::<_>::Ok(con.get_state()?.server.welcome_message.clone()))
 		.await??;
 	println!("Server welcome message: {}", sanitize(&welcome_message));
 
@@ -72,11 +70,8 @@ fn sanitize(s: &str) -> String {
 	s.chars()
 		.filter(|c| {
 			c.is_alphanumeric()
-				|| [
-					' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')',
-					'[', ']', '{', '}',
-				]
-				.contains(c)
+				|| [' ', '\t', '.', ':', '-', '_', '"', '\'', '/', '(', ')', '[', ']', '{', '}']
+					.contains(c)
 		})
 		.collect()
 }

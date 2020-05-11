@@ -34,8 +34,7 @@ pub(crate) fn start(logger: Logger, local_set: &LocalSet) -> Result<AudioData> {
 		video_subsystem.enable_screen_saver();
 	}
 
-	let ts2a =
-		TsToAudio::new(logger.clone(), audio_subsystem.clone(), local_set)?;
+	let ts2a = TsToAudio::new(logger.clone(), audio_subsystem.clone(), local_set)?;
 	let a2ts = AudioToTs::new(logger.clone(), audio_subsystem, local_set)?;
 
 	Ok(AudioData { a2ts, ts2a })

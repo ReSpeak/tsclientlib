@@ -5,9 +5,8 @@ use time::{Duration, OffsetDateTime};
 use tsproto_types::crypto::EccKeyPubP256;
 
 use crate::data::{
-	Channel, Client, Connection, ConnectionClientData, ConnectionServerData,
-	File, OptionalChannelData, OptionalClientData, OptionalServerData, Server,
-	ServerGroup,
+	Channel, Client, Connection, ConnectionClientData, ConnectionServerData, File,
+	OptionalChannelData, OptionalClientData, OptionalServerData, Server, ServerGroup,
 };
 use crate::*;
 
@@ -29,11 +28,7 @@ pub enum Event {
 	/// The second tuple item holds the old value of the changed attribute.
 	///
 	/// E.g. a client changes its nickname or switches to another channel.
-	PropertyChanged {
-		id: PropertyId,
-		old: PropertyValue,
-		invoker: Option<Invoker>,
-	},
+	PropertyChanged { id: PropertyId, old: PropertyValue, invoker: Option<Invoker> },
 	/// The object with this id was removed.
 	///
 	/// The object is not accessible anymore in the connection data structure,
@@ -41,11 +36,7 @@ pub enum Event {
 	///
 	/// This happens when a client leaves the server (including our own client)
 	/// or a channel is removed.
-	PropertyRemoved {
-		id: PropertyId,
-		old: PropertyValue,
-		invoker: Option<Invoker>,
-	},
+	PropertyRemoved { id: PropertyId, old: PropertyValue, invoker: Option<Invoker> },
 
 	/// All channels are available and we can subscribe them now.
 	ChannelListFinished,
