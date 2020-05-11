@@ -542,6 +542,7 @@ impl Connection {
 					return Ok((client, data));
 				}
 				Ok(msg) => {
+					// TODO Save instead of drop
 					warn!(logger, "Expected initserver, dropping command"; "message" => ?msg);
 				}
 				Err(e) => {

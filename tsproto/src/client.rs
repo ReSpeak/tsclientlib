@@ -19,7 +19,7 @@ use slog::{info, warn, Level, Logger};
 use time::OffsetDateTime;
 use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
-use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubP256};
+use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPrivP256, EccKeyPubEd25519, EccKeyPubP256};
 
 use crate::algorithms as algs;
 use crate::connection::{ConnectedParams, Connection, Socket, StreamItem};
@@ -328,6 +328,7 @@ impl Client {
 			let mut server_key = None;
 			let mut proof = None;
 			let mut ot = false;
+			let mut root = None;
 			for item in args {
 				match item {
 					CommandItem::NextCommand => {
@@ -347,6 +348,16 @@ impl Client {
 							proof = Some(base64::decode(&arg.value().get())?)
 						}
 						b"ot" => ot = arg.value().get_raw() == b"1",
+						b"root" => {
+							let data = base64::decode(&arg.value().get())?;
+							let mut data2 = [0; 32];
+							if data.len() != 32 {
+								bail!("Got root for initivexpand2, but length {} != 32",
+									data.len());
+							}
+							data2.copy_from_slice(&data);
+							root = Some(EccKeyPubEd25519::from_bytes(data2));
+						}
 						_ => {}
 					},
 				}
@@ -366,6 +377,7 @@ impl Client {
 			let beta_vec = beta_vec.unwrap();
 			let server_key = server_key.unwrap();
 			let proof = proof.unwrap();
+			let root = root.unwrap_or_else(|| EccKeyPubEd25519::from_bytes(crate::ROOT_KEY));
 
 			// Check signature of l (proof)
 			server_key.clone().verify(&l, &proof)?;
@@ -380,7 +392,7 @@ impl Client {
 			// Parse license argument
 			let licenses = Licenses::parse(&l)?;
 			// Ephemeral key of server
-			let server_ek = licenses.derive_public_key()?;
+			let server_ek = licenses.derive_public_key(root)?;
 
 			// Create own ephemeral key
 			let ek = EccKeyPrivEd25519::create()?;

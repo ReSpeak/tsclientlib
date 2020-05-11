@@ -64,17 +64,8 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}})? }}",
 			field.pretty
 		),
-		"Uid" => format!(
-			"Uid(if val == \"ServerAdmin\" {{ val.as_bytes().to_vec() }} else \
-			 {{
-			base64::decode(val).map_err(|e| ParseError::ParseUid {{
-				arg: \"{}\",
-				value: val.to_string(),
-				source: e,
-			}})?
-		}})",
-			field.pretty
-		),
+		"Uid" => "Uid(if let Ok(uid) = base64::decode(val) { uid } \
+			else { val.as_bytes().to_vec() })".into(),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
 		"IconHash" => format!(

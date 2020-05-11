@@ -327,6 +327,7 @@ mod tests {
 	use crate::license::Licenses;
 	use crate::packets::PacketType;
 	use crate::utils;
+	use tsproto_types::crypto::EccKeyPubEd25519;
 
 	#[test]
 	fn test_fake_crypt() {
@@ -360,13 +361,13 @@ mod tests {
 	}
 
 	#[test]
-	#[should_panic]
 	fn shared_iv31() {
-		let licenses = Licenses::parse(&base64::decode("AQA1hUFJiiSs\
+		let licenses = Licenses::parse_ignore_expired(&base64::decode("AQA1hUFJiiSs\
 			0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
 			4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==")
 			.unwrap()).unwrap();
-		let derived_key = licenses.derive_public_key().unwrap();
+		let derived_key = licenses.derive_public_key(
+			EccKeyPubEd25519::from_bytes(crate::ROOT_KEY)).unwrap();
 
 		let client_ek = [
 			0xb0, 0x4e, 0xa1, 0xd9, 0x5c, 0x72, 0x64, 0xdf, 0x0d, 0xe8, 0xb3,

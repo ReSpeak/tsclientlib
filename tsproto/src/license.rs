@@ -5,7 +5,7 @@ use std::str;
 
 use anyhow::format_err;
 use curve25519_dalek::constants;
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
@@ -184,9 +184,9 @@ impl Licenses {
 		Ok(())
 	}
 
-	pub fn derive_public_key(&self) -> Result<EdwardsPoint> {
-		let mut last_round =
-			CompressedEdwardsY(crate::ROOT_KEY).decompress().unwrap();
+	pub fn derive_public_key(&self, root: EccKeyPubEd25519) -> Result<EdwardsPoint> {
+		let mut last_round = root.0.decompress()
+			.ok_or_else(|| format_err!("Invalid root public key for license"))?;
 		for l in &self.blocks {
 			//let derived_key = last_round.compress().0;
 			//println!("Got key: {:?}", ::utils::HexSlice((&derived_key) as &[u8]));
@@ -442,17 +442,22 @@ mod tests {
 	use base64;
 
 	#[test]
-	#[should_panic]
 	fn parse_standard_license() {
-		Licenses::parse(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
+		Licenses::parse_ignore_expired(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
 			Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAACiIBip9hQaK6P3QhwOJs/BkPn0i\
 			oyIDPaNgzJ6M8x0kiAJf4hxCYAxMQ==").unwrap()).unwrap();
 	}
 
 	#[test]
-	#[should_panic]
+	fn parse_standard_license_expired() {
+		assert!(Licenses::parse(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
+			Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAACiIBip9hQaK6P3QhwOJs/BkPn0i\
+			oyIDPaNgzJ6M8x0kiAJf4hxCYAxMQ==").unwrap()).is_err());
+	}
+
+	#[test]
 	fn parse_aal_license() {
-		Licenses::parse(&base64::decode("AQCvbHFTQDY/terPeilrp/ECU9xCH5U3xC92lY\
+		Licenses::parse_ignore_expired(&base64::decode("AQCvbHFTQDY/terPeilrp/ECU9xCH5U3xC92lY\
 			TNaY/0KQAJFueAazbsgAAAACVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAABhl9gwla/UJ\
 			p2Eszst9TRVXO/PeE6a6d+CTI6Pg7OEVgAJc5CrL4Nh8gAAACRUZWFtU3BlYWsgc3lz\
 			dGVtcyBHbWJIAACvTQIgpv6zmLZq3znh7ygmOSokGFkFjz4bTigrOnetrgIJdIIACdS\
@@ -461,10 +466,10 @@ mod tests {
 	}
 
 	#[test]
-	#[should_panic]
 	fn derive_public_key() {
-		let licenses = Licenses::parse(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==").unwrap()).unwrap();
-		let derived_key = licenses.derive_public_key().unwrap();
+		let licenses = Licenses::parse_ignore_expired(&base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==").unwrap()).unwrap();
+		let derived_key = licenses.derive_public_key(
+			EccKeyPubEd25519::from_bytes(crate::ROOT_KEY)).unwrap();
 
 		let expected_key = [
 			0x40, 0xe9, 0x50, 0xc4, 0x61, 0xba, 0x18, 0x3a, 0x1e, 0xb7, 0xcb,
