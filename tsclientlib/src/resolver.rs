@@ -412,7 +412,8 @@ mod test {
 	async fn resolve_localhost() {
 		let logger = get_logger();
 		let res: Vec<_> = resolve(logger, "127.0.0.1".into()).map(|r| r.unwrap()).collect().await;
-		assert_eq!(res.as_slice(), &[format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()]);
+		let addr = format!("127.0.0.1:{}", DEFAULT_PORT).parse::<SocketAddr>().unwrap();
+		assert_eq!(res.as_slice(), &[addr]);
 	}
 
 	#[tokio::test]
