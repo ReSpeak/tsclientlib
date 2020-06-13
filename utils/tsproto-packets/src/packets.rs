@@ -47,7 +47,9 @@ impl PacketType {
 	pub fn is_command(self) -> bool {
 		self == PacketType::Command || self == PacketType::CommandLow
 	}
-	pub fn is_ack(self) -> bool { self == PacketType::Ack || self == PacketType::AckLow }
+	pub fn is_ack(self) -> bool {
+		self == PacketType::Ack || self == PacketType::AckLow || self == PacketType::Pong
+	}
 	pub fn is_voice(self) -> bool { self == PacketType::Voice || self == PacketType::VoiceWhisper }
 }
 

@@ -200,6 +200,8 @@ impl PacketCodec {
 								PacketType::Command
 							} else if p_type == PacketType::AckLow {
 								PacketType::CommandLow
+							} else if p_type == PacketType::Pong {
+								PacketType::Ping
 							} else {
 								p_type
 							};

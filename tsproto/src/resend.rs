@@ -4,7 +4,6 @@ use std::convert::From;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Sub};
-use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use anyhow::bail;
@@ -28,6 +27,8 @@ use crate::{Result, UDP_SINK_CAPACITY};
 const BETA: f32 = 0.7;
 /// Increase over w_max after roughly 5 packets (C=0.2 needs seven packets).
 const C: f32 = 0.5;
+/// Store that many pings, if all of them get lost, it is a timeout.
+const PING_COUNT: usize = 30;
 
 /// Events to inform a resender of the current state of a connection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -72,6 +73,13 @@ struct SendRecord {
 	pub packet: OutUdpPacket,
 }
 
+#[derive(Debug)]
+struct Ping {
+	id: PartialPacketId,
+	/// When the ping packet was sent.
+	sent: Instant,
+}
+
 /// Resend command and init packets until the other side acknowledges them.
 #[derive(Debug)]
 pub struct Resender {
@@ -90,6 +98,8 @@ pub struct Resender {
 	send_queue_indices: [PartialPacketId; 3],
 	config: ResendConfig,
 	state: ResenderState,
+	/// A list of the last sent pings that were not yet acknowledged.
+	last_pings: Vec<Ping>,
 
 	// Congestion control
 	/// The maximum send window before the last reduction.
@@ -175,6 +185,16 @@ impl Sub<u16> for PartialPacketId {
 	}
 }
 
+impl Sub<PartialPacketId> for PartialPacketId {
+	type Output = i64;
+	fn sub(self, rhs: Self) -> Self::Output {
+		let gen_diff = i64::from(self.generation_id) - i64::from(rhs.generation_id);
+		let id_diff = i64::from(self.packet_id) - i64::from(rhs.packet_id);
+
+		gen_diff * i64::from(u16::MAX) + id_diff
+	}
+}
+
 impl PartialOrd for PacketId {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
 		if self.packet_type == other.packet_type { Some(self.part.cmp(&other.part)) } else { None }
@@ -246,6 +266,7 @@ impl Default for Resender {
 			send_queue_indices: Default::default(),
 			config: Default::default(),
 			state: ResenderState::Connecting,
+			last_pings: Default::default(),
 
 			w_max: UDP_SINK_CAPACITY as u16,
 			last_loss: now,
@@ -271,6 +292,11 @@ impl Resender {
 	}
 
 	pub fn ack_packet(con: &mut Connection, cx: &mut Context, p_type: PacketType, p_id: u16) {
+		if p_type == PacketType::Ping {
+			Self::ack_ping(con, p_id);
+			return;
+		}
+
 		// Remove from ordered queue
 		let queue = &mut con.resender.full_send_queue[Self::packet_type_to_index(p_type)];
 		let mut queue_iter = queue.iter();
@@ -313,6 +339,14 @@ impl Resender {
 				// send queue.
 				cx.waker().wake_by_ref();
 			}
+		}
+	}
+
+	pub fn ack_ping(con: &mut Connection, p_id: u16) {
+		if let Ok(i) = con.resender.last_pings.binary_search_by_key(&p_id, |p| p.id.packet_id) {
+			let ping = con.resender.last_pings.remove(i);
+			let now = Instant::now();
+			con.resender.update_srtt(now - ping.sent);
 		}
 	}
 
@@ -554,12 +588,56 @@ impl Resender {
 			}
 
 			con.resender.state_timeout.reset(con.resender.last_send + timeout);
-			if let Poll::Ready(()) = Pin::new(&mut con.resender.state_timeout).poll(cx) {
+			if let Poll::Ready(()) = con.resender.state_timeout.poll_unpin(cx) {
 				bail!("Connection timed out");
 			}
 		}
 
-		// TODO Send ping packets if needed
+		if con.resender.full_send_queue.iter().any(|q| !q.is_empty()) {
+			// There are packets in queue, we don't need to send pings
+			return Ok(());
+		}
+
+		loop {
+			let now = Instant::now();
+			let ping_secs = 1;
+			let mut next_ping = con.resender.last_receive + Duration::from_secs(ping_secs);
+			if let Some(p) = con.resender.last_pings.last() {
+				if p.sent > con.resender.last_receive {
+					next_ping = p.sent + Duration::from_secs(ping_secs);
+				} else {
+					// We received a packet, clear the ping queue
+					con.resender.last_pings.clear();
+				}
+			}
+			con.resender.ping_timeout.reset(next_ping);
+
+			if let Poll::Ready(()) = con.resender.ping_timeout.poll_unpin(cx) {
+				// Check for timeouts
+				if con.resender.last_pings.len() >= PING_COUNT {
+					let diff = con.resender.last_pings.last().unwrap().id
+						- con.resender.last_pings.first().unwrap().id;
+					// We did not receive a pong in between the last pings
+					if diff as usize == con.resender.last_pings.len() - 1 {
+						bail!("Connection timed out");
+					}
+				}
+
+				// Send ping
+				let dir = if con.is_client { Direction::C2S } else { Direction::S2C };
+				let packet = OutPacket::new_with_dir(dir, Flags::empty(), PacketType::Ping);
+				let p_id = con.send_packet(packet)?;
+				con.resender.last_pings.push(Ping {
+					id: p_id.part,
+					sent: now,
+				});
+				if con.resender.last_pings.len() > PING_COUNT {
+					con.resender.last_pings.remove(0);
+				}
+			} else {
+				break
+			}
+		}
 		Ok(())
 	}
 }
