@@ -437,17 +437,32 @@ impl Connection {
 	) -> Result<()> {
 		let client = self.get_mut_client(client_id)?;
 
-		let away = if msg.is_away.unwrap_or_default() {
-			Some(msg.away_message.clone().unwrap_or_else(String::new))
-		} else {
-			None
-		};
-		events.push(Event::PropertyChanged {
-			id: PropertyId::ClientAwayMessage(client_id),
-			old: PropertyValue::OptionString(client.away_message.take()),
-			invoker: msg.get_invoker(),
-		});
-		client.away_message = away;
+		if let Some(is_away) = msg.is_away {
+			if is_away != client.away_message.is_some() {
+				let away = if is_away {
+					Some(msg.away_message.clone().unwrap_or_else(String::new))
+				} else {
+					None
+				};
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ClientAwayMessage(client_id),
+					old: PropertyValue::OptionString(client.away_message.take()),
+					invoker: msg.get_invoker(),
+				});
+				client.away_message = away;
+			}
+		} else if let Some(away_message) = &msg.away_message {
+			if let Some(cur_msg) = &client.away_message {
+				if away_message != cur_msg {
+					events.push(Event::PropertyChanged {
+						id: PropertyId::ClientAwayMessage(client_id),
+						old: PropertyValue::OptionString(client.away_message.take()),
+						invoker: msg.get_invoker(),
+					});
+					client.away_message = Some(away_message.clone());
+				}
+			}
+		}
 		Ok(())
 	}
 
