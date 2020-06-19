@@ -10,7 +10,7 @@ use tsproto_packets::packets::OutCommand;
 use tsproto_types::crypto::EccKeyPubP256;
 use tsproto_types::*;
 
-use crate::events::{Event, PropertyId, PropertyValue, PropertyValueRef};
+use crate::events::{Event, ExtraInfo, PropertyId, PropertyValue, PropertyValueRef};
 use crate::messages::s2c::InMessage;
 use crate::messages::{c2s, s2c};
 use crate::{MessageTarget, Result};
@@ -159,6 +159,9 @@ impl Connection {
 						id: PropertyId::ClientName(client.id),
 						old: PropertyValue::String(old),
 						invoker: None,
+						extra: ExtraInfo {
+							reason: None,
+						},
 					});
 				}
 			}
@@ -319,6 +322,9 @@ impl Connection {
 				id: PropertyId::ChannelMaxClients(channel_id),
 				old: PropertyValue::OptionMaxClients(channel.max_clients.take()),
 				invoker: msg.get_invoker(),
+				extra: ExtraInfo {
+					reason: Some(msg.reason),
+				},
 			});
 			channel.max_clients = Some(ch);
 		}
@@ -338,6 +344,9 @@ impl Connection {
 				id: PropertyId::ChannelMaxFamilyClients(channel_id),
 				old: PropertyValue::OptionMaxClients(channel.max_family_clients.take()),
 				invoker: msg.get_invoker(),
+				extra: ExtraInfo {
+					reason: Some(msg.reason),
+				},
 			});
 			channel.max_family_clients = Some(ch_fam);
 		}
@@ -398,6 +407,9 @@ impl Connection {
 			id: PropertyId::ChannelChannelType(channel_id),
 			old: PropertyValue::ChannelType(channel.channel_type),
 			invoker: msg.get_invoker(),
+			extra: ExtraInfo {
+				reason: Some(msg.reason),
+			},
 		});
 		channel.channel_type = typ;
 		Ok(())
@@ -448,6 +460,9 @@ impl Connection {
 					id: PropertyId::ClientAwayMessage(client_id),
 					old: PropertyValue::OptionString(client.away_message.take()),
 					invoker: msg.get_invoker(),
+					extra: ExtraInfo {
+						reason: None,
+					},
 				});
 				client.away_message = away;
 			}
@@ -458,6 +473,9 @@ impl Connection {
 						id: PropertyId::ClientAwayMessage(client_id),
 						old: PropertyValue::OptionString(client.away_message.take()),
 						invoker: msg.get_invoker(),
+						extra: ExtraInfo {
+							reason: None,
+						},
 					});
 					client.away_message = Some(away_message.clone());
 				}
@@ -497,6 +515,9 @@ impl Connection {
 				id: PropertyId::ClientTalkPowerRequest(client_id),
 				old: PropertyValue::OptionTalkPowerRequest(client.talk_power_request.take()),
 				invoker: msg.get_invoker(),
+				extra: ExtraInfo {
+					reason: None,
+				},
 			});
 			client.talk_power_request = talk_request;
 		}
@@ -521,6 +542,9 @@ impl Connection {
 			id: PropertyId::ChannelSubscribed(channel_id),
 			old: PropertyValue::Bool(channel.subscribed),
 			invoker: None,
+			extra: ExtraInfo {
+				reason: None,
+			},
 		});
 		channel.subscribed = true;
 		Ok(())
@@ -536,6 +560,9 @@ impl Connection {
 			id: PropertyId::ChannelSubscribed(channel_id),
 			old: PropertyValue::Bool(channel.subscribed),
 			invoker: None,
+			extra: ExtraInfo {
+				reason: None,
+			},
 		});
 		channel.subscribed = false;
 
@@ -550,6 +577,9 @@ impl Connection {
 				id: PropertyId::Client(id),
 				old: PropertyValue::Client(self.clients.remove(&id).unwrap()),
 				invoker: None,
+				extra: ExtraInfo {
+					reason: None,
+				},
 			});
 		}
 		Ok(())
@@ -567,6 +597,9 @@ impl Connection {
 					id: PropertyId::ChannelOrder(c.id),
 					old: PropertyValue::ChannelId(c.order),
 					invoker: None,
+					extra: ExtraInfo {
+						reason: None,
+					},
 				});
 				c.order = channel_order;
 				true
@@ -592,6 +625,9 @@ impl Connection {
 					id: PropertyId::ChannelOrder(c.id),
 					old: PropertyValue::ChannelId(c.order),
 					invoker: None,
+					extra: ExtraInfo {
+						reason: None,
+					},
 				});
 				c.order = channel_id;
 				true
@@ -636,6 +672,9 @@ impl Connection {
 					id: PropertyId::ChannelOrder(channel.id),
 					old: PropertyValue::ChannelId(channel.order),
 					invoker: None,
+					extra: ExtraInfo {
+						reason: None,
+					},
 				});
 				channel.order = order;
 			}

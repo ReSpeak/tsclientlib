@@ -778,6 +778,7 @@ impl Connection {
 						events::Event::PropertyAdded {
 							id: events::PropertyId::Server,
 							invoker: None,
+							extra: Default::default(),
 						},
 					]))))
 				}

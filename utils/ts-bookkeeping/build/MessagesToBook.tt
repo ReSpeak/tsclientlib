@@ -13,6 +13,9 @@ fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, 
 						events.push(Event::PropertyAdded {
 							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
 							invoker: invoker.clone(),
+							extra: ExtraInfo {
+								reason,
+							},
 						});
 					}
 
@@ -22,6 +25,9 @@ fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, 
 							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, i),
 							old: PropertyValue::<#= type_s #>(i),
 							invoker: invoker.clone(),
+							extra: ExtraInfo {
+								reason,
+							},
 						});
 					}
 <#
@@ -41,6 +47,14 @@ impl Connection {
 			InMessage::<#= msg_name #>(m) => for m in m.iter() {
 				#[allow(unused_variables)]
 				let invoker = m.get_invoker();
+				#[allow(unused_variables)]
+				<# if event.msg.attributes.iter().any(|a| a == "reasonid") { #>
+				let reason = Some(m.reason);
+				<# } else if event.msg.attributes.iter().any(|a| a == "reasonid?") { #>
+				let reason = m.reason;
+				<# } else { #>
+				let reason: Option<Reason> = None;
+				<# } #>
 
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", book_name.to_snake_case());
@@ -58,6 +72,9 @@ impl Connection {
 					id: PropertyId::<#= book_name #><#= ids2 #>,
 					old: PropertyValue::<#= book_name #>(old),
 					invoker: invoker.clone(),
+					extra: ExtraInfo {
+						reason,
+					},
 				});
 			<# } else if event.op == RuleOp::Update { #>
 				<# // Update the object
@@ -89,6 +106,9 @@ impl Connection {
 					id: <#= get_property_id(event, to, from) #>,
 					old: <#= get_property(to, "old") #>,
 					invoker: invoker.clone(),
+					extra: ExtraInfo {
+						reason,
+					},
 				});
 									<# } else if from_opt { #>
 				if let Some(val) = &m.<#= from.get_rust_name() #> {
@@ -104,6 +124,9 @@ impl Connection {
 						id: <#= get_property_id(event, to, from) #>,
 						old: <#= get_property(to, "old") #>,
 						invoker: invoker.clone(),
+						extra: ExtraInfo {
+							reason,
+						},
 					});
 				<# } #>
 				}
@@ -115,6 +138,9 @@ impl Connection {
 					id: <#= get_property_id(event, to, from) #>,
 					old: <#= get_property(to, "old") #>,
 					invoker: invoker.clone(),
+					extra: ExtraInfo {
+						reason,
+					},
 				});
 								<# }
 								}
@@ -124,6 +150,9 @@ impl Connection {
 				events.push(Event::PropertyAdded {
 					id: <#= get_property_id(event, to, from) #>,
 					invoker: invoker.clone(),
+					extra: ExtraInfo {
+						reason,
+					},
 				})
 								<# }
 								RuleOp::Remove => { #>
@@ -134,6 +163,9 @@ impl Connection {
 						id: <#= get_property_id(event, to, from) #>,
 						old: <#= get_property(to, "old") #>,
 						invoker: invoker.clone(),
+						extra: ExtraInfo {
+							reason,
+						},
 					});
 				}
 								<# }
@@ -195,6 +227,9 @@ impl Connection {
 				events.push(Event::PropertyAdded {
 					id: PropertyId::<#= book_name #><#= ids2 #>,
 					invoker: invoker.clone(),
+					extra: ExtraInfo {
+						reason,
+					},
 				});
 			<# } #>
 			}

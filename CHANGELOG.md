@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🔓 Add `channel`, `channel_password` and (server-)`password` to `ConnectOptions`
 - 📂 Filetransfer: Download and upload files from and to TeamSpeak servers
 - Most structs can be serialized with `serde` now
+- `Reason` to events that support it, that allows distinguishing between client joins and subscription events
 
 ### ℹ Changed
 - ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 0.2 for `async`/`await` support

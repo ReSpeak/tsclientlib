@@ -12,6 +12,15 @@ use crate::*;
 
 include!(concat!(env!("OUT_DIR"), "/events.rs"));
 
+/// Additional data for some events.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[non_exhaustive]
+pub struct ExtraInfo {
+	/// Set for e.g. new clients to distinguish if they joined or are made available because we
+	/// subscribed to a channel.
+	pub reason: Option<Reason>,
+}
+
 /// An event gets fired when something in the data structure of a connection
 /// changes or something happens like we receive a text message or get poked.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -22,13 +31,18 @@ pub enum Event {
 	///
 	/// Like a client gets assigned a new server group or a new client joins the
 	/// server.
-	PropertyAdded { id: PropertyId, invoker: Option<Invoker> },
+	PropertyAdded { id: PropertyId, invoker: Option<Invoker>, extra: ExtraInfo },
 	/// The attribute with this id has changed.
 	///
 	/// The second tuple item holds the old value of the changed attribute.
 	///
 	/// E.g. a client changes its nickname or switches to another channel.
-	PropertyChanged { id: PropertyId, old: PropertyValue, invoker: Option<Invoker> },
+	PropertyChanged {
+		id: PropertyId,
+		old: PropertyValue,
+		invoker: Option<Invoker>,
+		extra: ExtraInfo,
+	},
 	/// The object with this id was removed.
 	///
 	/// The object is not accessible anymore in the connection data structure,
@@ -36,7 +50,12 @@ pub enum Event {
 	///
 	/// This happens when a client leaves the server (including our own client)
 	/// or a channel is removed.
-	PropertyRemoved { id: PropertyId, old: PropertyValue, invoker: Option<Invoker> },
+	PropertyRemoved {
+		id: PropertyId,
+		old: PropertyValue,
+		invoker: Option<Invoker>,
+		extra: ExtraInfo,
+	},
 
 	/// All channels are available and we can subscribe them now.
 	ChannelListFinished,
