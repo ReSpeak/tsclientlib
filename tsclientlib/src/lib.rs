@@ -12,6 +12,7 @@
 // Needed for futures on windows.
 #![recursion_limit = "128"]
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -442,7 +443,7 @@ impl Connection {
 			client_key_offset: counter,
 			phonetic_name: "",
 			default_token: "",
-			hardware_id: "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc",
+			hardware_id: &options.hardware_id,
 			badges: None,
 			signed_badges: None,
 			integrations: None,
@@ -1045,6 +1046,7 @@ pub struct ConnectOptions {
 	identity: Option<Identity>,
 	name: String,
 	version: Version,
+	hardware_id: Cow<'static, str>,
 	channel: Option<String>,
 	channel_password: Option<String>,
 	password: Option<String>,
@@ -1074,6 +1076,7 @@ impl ConnectOptions {
 			identity: None,
 			name: String::from("TeamSpeakUser"),
 			version: Version::Windows_3_X_X__1,
+			hardware_id: "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc".into(),
 			channel: None,
 			channel_password: None,
 			password: None,
@@ -1122,6 +1125,16 @@ impl ConnectOptions {
 	#[inline]
 	pub fn version(mut self, version: Version) -> Self {
 		self.version = version;
+		self
+	}
+
+	/// The hardware ID (HWID) of the client.
+	///
+	/// # Default
+	/// `923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc`
+	#[inline]
+	pub fn hardware_id<S: Into<Cow<'static, str>>>(mut self, hwid: S) -> Self {
+		self.hardware_id = hwid.into();
 		self
 	}
 
@@ -1240,6 +1253,8 @@ impl ConnectOptions {
 	pub fn get_name(&self) -> &str { &self.name }
 	#[inline]
 	pub fn get_version(&self) -> &Version { &self.version }
+	#[inline]
+	pub fn get_hardware_id(&self) -> &str { &self.hardware_id }
 	#[inline]
 	pub fn get_channel(&self) -> Option<&str> { self.channel.as_ref().map(|s| s.as_str()) }
 	#[inline]
