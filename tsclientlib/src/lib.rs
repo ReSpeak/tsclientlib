@@ -12,6 +12,7 @@
 // Needed for futures on windows.
 #![recursion_limit = "128"]
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -423,15 +424,6 @@ impl Connection {
 		let client_version = options.version.get_version_string();
 		let client_platform = options.version.get_platform();
 		let client_version_sign = base64::encode(options.version.get_signature());
-		let default_channel = options.channel.as_ref().map(|s| s.as_str()).unwrap_or_default();
-		let default_channel_password =
-			options.channel_password.as_ref().map(|s| s.as_str()).unwrap_or_default();
-		let password = options.password.as_ref().map(|s| s.as_str()).unwrap_or_default();
-		let hardware_id = options
-			.hardware_id
-			.as_ref()
-			.map(|s| s.as_str())
-			.unwrap_or(ConnectOptions::DEFAULT_HARDWARE_ID);
 
 		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
 			name: &options.name,
@@ -439,15 +431,19 @@ impl Connection {
 			client_platform: &client_platform,
 			input_hardware_enabled: true,
 			output_hardware_enabled: true,
-			default_channel: &default_channel,
-			default_channel_password: &default_channel_password,
-			password: &password,
+			default_channel: options.channel.as_ref().map(AsRef::as_ref).unwrap_or_default(),
+			default_channel_password: options
+				.channel_password
+				.as_ref()
+				.map(AsRef::as_ref)
+				.unwrap_or_default(),
+			password: options.password.as_ref().map(AsRef::as_ref).unwrap_or_default(),
 			metadata: "",
 			client_version_sign: &client_version_sign,
 			client_key_offset: counter,
 			phonetic_name: "",
 			default_token: "",
-			hardware_id,
+			hardware_id: &options.hardware_id,
 			badges: None,
 			signed_badges: None,
 			integrations: None,
@@ -1039,8 +1035,8 @@ impl ConnectedConnection {
 /// ```
 /// # use tsclientlib::{Connection, ConnectOptions};
 /// let config = ConnectOptions::new("localhost")
-///     .name("MyUser".to_string())
-///     .channel("Default Channel/Nested".to_string());
+///     .name("MyUser")
+///     .channel("Default Channel/Nested");
 ///
 /// let con = Connection::new(config);
 /// ```
@@ -1049,12 +1045,12 @@ pub struct ConnectOptions {
 	address: ServerAddress,
 	local_address: Option<SocketAddr>,
 	identity: Option<Identity>,
-	name: String,
+	name: Cow<'static, str>,
 	version: Version,
-	hardware_id: Option<String>,
-	channel: Option<String>,
-	channel_password: Option<String>,
-	password: Option<String>,
+	hardware_id: Cow<'static, str>,
+	channel: Option<Cow<'static, str>>,
+	channel_password: Option<Cow<'static, str>>,
+	password: Option<Cow<'static, str>>,
 	logger: Option<Logger>,
 	log_commands: bool,
 	log_packets: bool,
@@ -1062,10 +1058,6 @@ pub struct ConnectOptions {
 }
 
 impl ConnectOptions {
-	/// Default hardware ID used by this library.
-	pub const DEFAULT_HARDWARE_ID: &'static str =
-		"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc";
-
 	/// Start creating the configuration of a new connection.
 	///
 	/// # Arguments
@@ -1083,9 +1075,9 @@ impl ConnectOptions {
 			address: address.into(),
 			local_address: None,
 			identity: None,
-			name: String::from("TeamSpeakUser"),
+			name: "TeamSpeakUser".into(),
 			version: Version::Windows_3_X_X__1,
-			hardware_id: None,
+			hardware_id: "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc".into(),
 			channel: None,
 			channel_password: None,
 			password: None,
@@ -1122,8 +1114,8 @@ impl ConnectOptions {
 	/// # Default
 	/// `TeamSpeakUser`
 	#[inline]
-	pub fn name(mut self, name: String) -> Self {
-		self.name = name;
+	pub fn name<S: Into<Cow<'static, str>>>(mut self, name: S) -> Self {
+		self.name = name.into();
 		self
 	}
 
@@ -1142,8 +1134,8 @@ impl ConnectOptions {
 	/// # Default
 	/// `923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc`
 	#[inline]
-	pub fn hardware_id<S: Into<String>>(mut self, hwid: S) -> Self {
-		self.hardware_id = Some(hwid.into());
+	pub fn hardware_id<S: Into<Cow<'static, str>>>(mut self, hwid: S) -> Self {
+		self.hardware_id = hwid.into();
 		self
 	}
 
@@ -1152,18 +1144,18 @@ impl ConnectOptions {
 	/// # Example
 	/// ```
 	/// # use tsclientlib::ConnectOptions;
-	/// let opts = ConnectOptions::new("localhost").channel("Default Channel".to_string());
+	/// let opts = ConnectOptions::new("localhost").channel("Default Channel");
 	/// ```
 	///
 	/// Connecting to a channel further down in the hierarchy.
 	/// ```
 	/// # use tsclientlib::ConnectOptions;
 	/// let opts = ConnectOptions::new("localhost")
-	///		.channel("Default Channel/Nested".to_string());
+	///		.channel("Default Channel/Nested");
 	/// ```
 	#[inline]
-	pub fn channel(mut self, channel: String) -> Self {
-		self.channel = Some(channel);
+	pub fn channel<S: Into<Cow<'static, str>>>(mut self, path: S) -> Self {
+		self.channel = Some(path.into());
 		self
 	}
 
@@ -1178,7 +1170,7 @@ impl ConnectOptions {
 	/// ```
 	#[inline]
 	pub fn channel_id(mut self, channel: ChannelId) -> Self {
-		self.channel = Some(format!("/{}", channel.0));
+		self.channel = Some(format!("/{}", channel.0).into());
 		self
 	}
 
@@ -1188,12 +1180,12 @@ impl ConnectOptions {
 	/// ```
 	/// # use tsclientlib::ConnectOptions;
 	/// let opts = ConnectOptions::new("localhost")
-	///     .channel("Secret Channel".to_string())
-	///     .channel_password("My secret password".to_string());
+	///     .channel("Secret Channel")
+	///     .channel_password("My secret password");
 	/// ```
 	#[inline]
-	pub fn channel_password(mut self, channel_password: String) -> Self {
-		self.channel_password = Some(channel_password);
+	pub fn channel_password<S: Into<Cow<'static, str>>>(mut self, pwd: S) -> Self {
+		self.channel_password = Some(pwd.into());
 		self
 	}
 
@@ -1202,11 +1194,11 @@ impl ConnectOptions {
 	/// # Example
 	/// ```
 	/// # use tsclientlib::ConnectOptions;
-	/// let opts = ConnectOptions::new("localhost").password("My secret password".to_string());
+	/// let opts = ConnectOptions::new("localhost").password("My secret password");
 	/// ```
 	#[inline]
-	pub fn password(mut self, password: String) -> Self {
-		self.password = Some(password);
+	pub fn password<S: Into<Cow<'static, str>>>(mut self, pwd: S) -> Self {
+		self.password = Some(pwd.into());
 		self
 	}
 
@@ -1263,17 +1255,15 @@ impl ConnectOptions {
 	#[inline]
 	pub fn get_version(&self) -> &Version { &self.version }
 	#[inline]
-	pub fn get_hardware_id(&self) -> &str {
-		self.hardware_id.as_ref().map(|s| s.as_str()).unwrap_or(Self::DEFAULT_HARDWARE_ID)
-	}
+	pub fn get_hardware_id(&self) -> &str { &self.hardware_id }
 	#[inline]
-	pub fn get_channel(&self) -> Option<&str> { self.channel.as_ref().map(|s| s.as_str()) }
+	pub fn get_channel(&self) -> Option<&str> { self.channel.as_ref().map(AsRef::as_ref) }
 	#[inline]
 	pub fn get_channel_password(&self) -> Option<&str> {
-		self.channel_password.as_ref().map(|s| s.as_str())
+		self.channel_password.as_ref().map(AsRef::as_ref)
 	}
 	#[inline]
-	pub fn get_password(&self) -> Option<&str> { self.password.as_ref().map(|s| s.as_str()) }
+	pub fn get_password(&self) -> Option<&str> { self.password.as_ref().map(AsRef::as_ref) }
 	#[inline]
 	pub fn get_logger(&self) -> Option<&Logger> { self.logger.as_ref() }
 	#[inline]
