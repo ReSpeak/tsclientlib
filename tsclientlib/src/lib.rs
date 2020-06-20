@@ -427,6 +427,11 @@ impl Connection {
 		let default_channel_password =
 			options.channel_password.as_ref().map(|s| s.as_str()).unwrap_or_default();
 		let password = options.password.as_ref().map(|s| s.as_str()).unwrap_or_default();
+		let hardware_id = options
+			.hardware_id
+			.as_ref()
+			.map(|s| s.as_str())
+			.unwrap_or(ConnectOptions::DEFAULT_HARDWARE_ID);
 
 		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
 			name: &options.name,
@@ -442,7 +447,7 @@ impl Connection {
 			client_key_offset: counter,
 			phonetic_name: "",
 			default_token: "",
-			hardware_id: "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc",
+			hardware_id,
 			badges: None,
 			signed_badges: None,
 			integrations: None,
@@ -1046,6 +1051,7 @@ pub struct ConnectOptions {
 	identity: Option<Identity>,
 	name: String,
 	version: Version,
+	hardware_id: Option<String>,
 	channel: Option<String>,
 	channel_password: Option<String>,
 	password: Option<String>,
@@ -1056,6 +1062,10 @@ pub struct ConnectOptions {
 }
 
 impl ConnectOptions {
+	/// Default hardware ID used by this library.
+	pub const DEFAULT_HARDWARE_ID: &'static str =
+		"923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc";
+
 	/// Start creating the configuration of a new connection.
 	///
 	/// # Arguments
@@ -1075,6 +1085,7 @@ impl ConnectOptions {
 			identity: None,
 			name: String::from("TeamSpeakUser"),
 			version: Version::Windows_3_X_X__1,
+			hardware_id: None,
 			channel: None,
 			channel_password: None,
 			password: None,
@@ -1123,6 +1134,16 @@ impl ConnectOptions {
 	#[inline]
 	pub fn version(mut self, version: Version) -> Self {
 		self.version = version;
+		self
+	}
+
+	/// The hardware ID (HWID) of the client.
+	///
+	/// # Default
+	/// `923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc`
+	#[inline]
+	pub fn hardware_id<S: Into<String>>(mut self, hwid: S) -> Self {
+		self.hardware_id = Some(hwid.into());
 		self
 	}
 
@@ -1241,6 +1262,10 @@ impl ConnectOptions {
 	pub fn get_name(&self) -> &str { &self.name }
 	#[inline]
 	pub fn get_version(&self) -> &Version { &self.version }
+	#[inline]
+	pub fn get_hardware_id(&self) -> &str {
+		self.hardware_id.as_ref().map(|s| s.as_str()).unwrap_or(Self::DEFAULT_HARDWARE_ID)
+	}
 	#[inline]
 	pub fn get_channel(&self) -> Option<&str> { self.channel.as_ref().map(|s| s.as_str()) }
 	#[inline]
