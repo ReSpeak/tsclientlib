@@ -8,7 +8,6 @@ build = "build/build.rs"
 autobenches = false
 
 [dependencies]
-anyhow = "1"
 base64 = "0.12"
 derive_more = "0.99"
 num-traits = "0.2"

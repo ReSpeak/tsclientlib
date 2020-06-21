@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::{iter, mem, u16};
 
-use anyhow::format_err;
 use serde::{Deserialize, Serialize};
 use slog::{debug, Logger};
 use time::{Duration, OffsetDateTime};
@@ -13,7 +12,7 @@ use tsproto_types::*;
 use crate::events::{Event, ExtraInfo, PropertyId, PropertyValue, PropertyValueRef};
 use crate::messages::s2c::InMessage;
 use crate::messages::{c2s, s2c};
-use crate::{MessageTarget, Result};
+use crate::{Error, MessageTarget, Result};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
@@ -105,15 +104,12 @@ impl Connection {
 							let client = if let Some(client) = msg.target_client_id {
 								client
 							} else {
-								return Err(format_err!(
-									"Target client id missing for a client text message"
-								)
-								.into());
+								return Err(Error::MessageWithoutTargetClientId);
 							};
 							MessageTarget::Client(client)
 						}
 						TextMessageTargetMode::Unknown => {
-							return Err(format_err!("Unknown TextMessageTargetMode").into());
+							return Err(Error::UnknownTextMessageTargetMode);
 						}
 					};
 					events.push(Event::Message {
@@ -159,9 +155,7 @@ impl Connection {
 						id: PropertyId::ClientName(client.id),
 						old: PropertyValue::String(old),
 						invoker: None,
-						extra: ExtraInfo {
-							reason: None,
-						},
+						extra: ExtraInfo { reason: None },
 					});
 				}
 			}
@@ -178,7 +172,7 @@ impl Connection {
 	fn get_mut_server(&mut self) -> Result<&mut Server> { Ok(&mut self.server) }
 
 	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
-		self.groups.get(&group).ok_or_else(|| format_err!("ServerGroup {} not found", group).into())
+		self.groups.get(&group).ok_or_else(|| Error::NotFound("ServerGroup", group.to_string()))
 	}
 	fn add_server_group(
 		&mut self, group: ServerGroupId, r: ServerGroup, _: &mut Vec<Event>,
@@ -187,28 +181,20 @@ impl Connection {
 	}
 
 	fn get_optional_server_data(&self) -> Result<&OptionalServerData> {
-		self.server
-			.optional_data
-			.as_ref()
-			.ok_or_else(|| format_err!("Server has no optional data").into())
+		self.server.optional_data.as_ref().ok_or(Error::None)
 	}
 
 	fn get_connection_server_data(&self) -> Result<&ConnectionServerData> {
-		self.server
-			.connection_data
-			.as_ref()
-			.ok_or_else(|| format_err!("Server has no connection data").into())
+		self.server.connection_data.as_ref().ok_or(Error::None)
 	}
 
 	fn get_connection(&self) -> Result<&Connection> { Ok(&self) }
 
 	fn get_client(&self, client: ClientId) -> Result<&Client> {
-		self.clients.get(&client).ok_or_else(|| format_err!("Client {} not found", client).into())
+		self.clients.get(&client).ok_or_else(|| Error::NotFound("Client", client.to_string()))
 	}
 	fn get_mut_client(&mut self, client: ClientId) -> Result<&mut Client> {
-		self.clients
-			.get_mut(&client)
-			.ok_or_else(|| format_err!("Client {} not found", client).into())
+		self.clients.get_mut(&client).ok_or_else(|| Error::NotFound("Client", client.to_string()))
 	}
 	fn add_client(
 		&mut self, client: ClientId, r: Client, _: &mut Vec<Event>,
@@ -221,11 +207,9 @@ impl Connection {
 
 	fn get_connection_client_data(&self, client: ClientId) -> Result<&ConnectionClientData> {
 		if let Some(c) = self.clients.get(&client) {
-			c.connection_data
-				.as_ref()
-				.ok_or_else(|| format_err!("Client {} has no connection data", client).into())
+			c.connection_data.as_ref().ok_or(Error::None)
 		} else {
-			Err(format_err!("Client {} not found", client).into())
+			Err(Error::NotFound("Client", client.to_string()))
 		}
 	}
 	fn add_connection_client_data(
@@ -234,29 +218,25 @@ impl Connection {
 		if let Some(client) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut client.connection_data, Some(r)))
 		} else {
-			Err(format_err!("Client {} not found", client).into())
+			Err(Error::NotFound("Client", client.to_string()))
 		}
 	}
 
 	fn get_optional_client_data(&self, client: ClientId) -> Result<&OptionalClientData> {
 		if let Some(c) = self.clients.get(&client) {
-			c.optional_data
-				.as_ref()
-				.ok_or_else(|| format_err!("Client {} has no optional data", client).into())
+			c.optional_data.as_ref().ok_or(Error::None)
 		} else {
-			Err(format_err!("Client {} not found", client).into())
+			Err(Error::NotFound("Client", client.to_string()))
 		}
 	}
 
 	fn get_channel(&self, channel: ChannelId) -> Result<&Channel> {
-		self.channels
-			.get(&channel)
-			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
+		self.channels.get(&channel).ok_or_else(|| Error::NotFound("Channel", channel.to_string()))
 	}
 	fn get_mut_channel(&mut self, channel: ChannelId) -> Result<&mut Channel> {
 		self.channels
 			.get_mut(&channel)
-			.ok_or_else(|| format_err!("Channel {} not found", channel).into())
+			.ok_or_else(|| Error::NotFound("Channel", channel.to_string()))
 	}
 	fn add_channel(
 		&mut self, channel: ChannelId, r: Channel, events: &mut Vec<Event>,
@@ -276,11 +256,9 @@ impl Connection {
 
 	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<&OptionalChannelData> {
 		if let Some(c) = self.channels.get(&channel) {
-			c.optional_data
-				.as_ref()
-				.ok_or_else(|| format_err!("Channel {} has no optional data", channel).into())
+			c.optional_data.as_ref().ok_or(Error::None)
 		} else {
-			Err(format_err!("Channel {} not found", channel).into())
+			Err(Error::NotFound("Channel", channel.to_string()))
 		}
 	}
 
@@ -322,9 +300,7 @@ impl Connection {
 				id: PropertyId::ChannelMaxClients(channel_id),
 				old: PropertyValue::OptionMaxClients(channel.max_clients.take()),
 				invoker: msg.get_invoker(),
-				extra: ExtraInfo {
-					reason: Some(msg.reason),
-				},
+				extra: ExtraInfo { reason: Some(msg.reason) },
 			});
 			channel.max_clients = Some(ch);
 		}
@@ -344,9 +320,7 @@ impl Connection {
 				id: PropertyId::ChannelMaxFamilyClients(channel_id),
 				old: PropertyValue::OptionMaxClients(channel.max_family_clients.take()),
 				invoker: msg.get_invoker(),
-				extra: ExtraInfo {
-					reason: Some(msg.reason),
-				},
+				extra: ExtraInfo { reason: Some(msg.reason) },
 			});
 			channel.max_family_clients = Some(ch_fam);
 		}
@@ -407,9 +381,7 @@ impl Connection {
 			id: PropertyId::ChannelChannelType(channel_id),
 			old: PropertyValue::ChannelType(channel.channel_type),
 			invoker: msg.get_invoker(),
-			extra: ExtraInfo {
-				reason: Some(msg.reason),
-			},
+			extra: ExtraInfo { reason: Some(msg.reason) },
 		});
 		channel.channel_type = typ;
 		Ok(())
@@ -460,9 +432,7 @@ impl Connection {
 					id: PropertyId::ClientAwayMessage(client_id),
 					old: PropertyValue::OptionString(client.away_message.take()),
 					invoker: msg.get_invoker(),
-					extra: ExtraInfo {
-						reason: None,
-					},
+					extra: ExtraInfo { reason: None },
 				});
 				client.away_message = away;
 			}
@@ -473,9 +443,7 @@ impl Connection {
 						id: PropertyId::ClientAwayMessage(client_id),
 						old: PropertyValue::OptionString(client.away_message.take()),
 						invoker: msg.get_invoker(),
-						extra: ExtraInfo {
-							reason: None,
-						},
+						extra: ExtraInfo { reason: None },
 					});
 					client.away_message = Some(away_message.clone());
 				}
@@ -515,9 +483,7 @@ impl Connection {
 				id: PropertyId::ClientTalkPowerRequest(client_id),
 				old: PropertyValue::OptionTalkPowerRequest(client.talk_power_request.take()),
 				invoker: msg.get_invoker(),
-				extra: ExtraInfo {
-					reason: None,
-				},
+				extra: ExtraInfo { reason: None },
 			});
 			client.talk_power_request = talk_request;
 		}
@@ -528,7 +494,7 @@ impl Connection {
 		&self, msg: &s2c::InClientConnectionInfoPart, _: &mut Vec<Event>,
 	) -> Result<Option<SocketAddr>> {
 		if !msg.ip.is_empty() {
-			Ok(Some(SocketAddr::new(msg.ip.parse()?, msg.port)))
+			Ok(Some(SocketAddr::new(msg.ip.parse().map_err(Error::InvalidConnectionIp)?, msg.port)))
 		} else {
 			Ok(None)
 		}
@@ -542,9 +508,7 @@ impl Connection {
 			id: PropertyId::ChannelSubscribed(channel_id),
 			old: PropertyValue::Bool(channel.subscribed),
 			invoker: None,
-			extra: ExtraInfo {
-				reason: None,
-			},
+			extra: ExtraInfo { reason: None },
 		});
 		channel.subscribed = true;
 		Ok(())
@@ -560,9 +524,7 @@ impl Connection {
 			id: PropertyId::ChannelSubscribed(channel_id),
 			old: PropertyValue::Bool(channel.subscribed),
 			invoker: None,
-			extra: ExtraInfo {
-				reason: None,
-			},
+			extra: ExtraInfo { reason: None },
 		});
 		channel.subscribed = false;
 
@@ -577,9 +539,7 @@ impl Connection {
 				id: PropertyId::Client(id),
 				old: PropertyValue::Client(self.clients.remove(&id).unwrap()),
 				invoker: None,
-				extra: ExtraInfo {
-					reason: None,
-				},
+				extra: ExtraInfo { reason: None },
 			});
 		}
 		Ok(())
@@ -597,9 +557,7 @@ impl Connection {
 					id: PropertyId::ChannelOrder(c.id),
 					old: PropertyValue::ChannelId(c.order),
 					invoker: None,
-					extra: ExtraInfo {
-						reason: None,
-					},
+					extra: ExtraInfo { reason: None },
 				});
 				c.order = channel_order;
 				true
@@ -625,9 +583,7 @@ impl Connection {
 					id: PropertyId::ChannelOrder(c.id),
 					old: PropertyValue::ChannelId(c.order),
 					invoker: None,
-					extra: ExtraInfo {
-						reason: None,
-					},
+					extra: ExtraInfo { reason: None },
 				});
 				c.order = channel_id;
 				true
@@ -672,9 +628,7 @@ impl Connection {
 					id: PropertyId::ChannelOrder(channel.id),
 					old: PropertyValue::ChannelId(channel.order),
 					invoker: None,
-					extra: ExtraInfo {
-						reason: None,
-					},
+					extra: ExtraInfo { reason: None },
 				});
 				channel.order = order;
 			}

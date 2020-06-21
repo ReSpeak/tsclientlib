@@ -1,8 +1,8 @@
 use std::fmt;
 use std::net::{IpAddr, SocketAddr};
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub mod data;
 pub mod events;
@@ -18,6 +18,25 @@ pub use tsproto_types::{
 	MaxClients, Permission, PermissionType, PluginTargetMode, Reason, ServerGroupId,
 	TalkPowerRequest, TextMessageTargetMode, TokenType, Uid, UidRef,
 };
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum Error {
+	#[error("Target client id missing for a client text message")]
+	MessageWithoutTargetClientId,
+	#[error("Unknown TextMessageTargetMode")]
+	UnknownTextMessageTargetMode,
+	#[error("{0} {1} not found")]
+	NotFound(&'static str, String),
+	#[error("{0} should be removed but does not exist")]
+	RemoveNotFound(&'static str),
+	#[error("Value is None")]
+	None,
+	#[error("Failed to parse connection ip: {0}")]
+	InvalidConnectionIp(#[source] std::net::AddrParseError),
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ServerAddress {

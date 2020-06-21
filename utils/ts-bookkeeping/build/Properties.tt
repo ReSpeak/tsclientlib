@@ -37,12 +37,12 @@ impl Connection {
 				p.name.to_snake_case() #><#
 				if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) {
 					#>.get(*m)
-				.ok_or_else(|| format_err!("<#= p.name #> {} not found", m))?<#
+				.ok_or_else(|| Error::NotFound("<#= p.name #>", m.to_string()))?<#
 				} else if p.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
 					#>.iter()<#
 					if p.type_s != "str" { #>.cloned().find(|i| i == m)<#
 					} else { #>.find(|i| *i == m)<# } #>
-				.ok_or_else(|| format_err!("<#= p.name #> {} not found", m))?<#
+				.ok_or_else(|| Error::NotFound("<#= p.name #>", m.to_string()))?<#
 				}
 
 				if p.opt && (p.type_s == "str" || p.type_s == "Uid") {
