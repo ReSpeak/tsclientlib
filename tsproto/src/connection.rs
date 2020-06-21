@@ -203,8 +203,10 @@ impl Connection {
 			|| (next_gen && (p_id >= cur_next || p_id < limit));
 		let gen_id = if in_recv_win {
 			if next_gen && p_id < limit { gen + 1 } else { gen }
+		} else if p_id < cur_next {
+			gen
 		} else {
-			if p_id < cur_next { gen } else { gen - 1 }
+			gen - 1
 		};
 
 		(in_recv_win, gen_id, cur_next, limit)

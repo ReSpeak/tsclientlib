@@ -123,7 +123,7 @@ impl Property {
 		let res = self.get_rust_type(true);
 
 		let append;
-		if res.contains("&") || res.contains("Uid") {
+		if res.contains('&') || res.contains("Uid") {
 			if self.opt {
 				append = ".as_ref().map(|f| f.as_ref())";
 			} else if self.is_array() {
@@ -161,7 +161,7 @@ impl<'a> PropId<'a> {
 
 	pub fn get_doc(&self) -> Option<&str> {
 		match *self {
-			PropId::Prop(p) => p.doc.as_ref().map(|s| s.as_str()),
+			PropId::Prop(p) => p.doc.as_deref(),
 			PropId::Id(_) => None,
 		}
 	}

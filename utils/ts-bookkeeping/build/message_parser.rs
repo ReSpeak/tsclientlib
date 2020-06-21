@@ -57,10 +57,10 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			field.pretty
 		),
 		"bool" => format!(
-			"match val {{ \"0\" => false, \"1\" => true, _ => Err(ParseError::ParseBool {{
+			"match val {{ \"0\" => false, \"1\" => true, _ => return Err(ParseError::ParseBool {{
 				arg: \"{}\",
 				value: val.to_string(),
-			}})? }}",
+			}}), }}",
 			field.pretty
 		),
 		"Uid" => "Uid(if let Ok(uid) = base64::decode(val) { uid } else { val.as_bytes().to_vec() \

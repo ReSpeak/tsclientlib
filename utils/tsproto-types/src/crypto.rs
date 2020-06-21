@@ -2,7 +2,6 @@
 use std::{cmp, fmt, str};
 
 use arrayref::array_ref;
-use base64;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -158,13 +157,13 @@ impl EccKeyPubP256 {
 					data.extend_from_slice(&y.to_bytes_be().1);
 					Ok(EccKeyPubP256(data))
 				} else {
-					return Err(Error::PublicKeyNotFound);
+					Err(Error::PublicKeyNotFound)
 				}
 			} else {
-				return Err(Error::ExpectedBitString);
+				Err(Error::ExpectedBitString)
 			}
 		} else {
-			return Err(Error::ExpectedSequence);
+			Err(Error::ExpectedSequence)
 		}
 	}
 
@@ -343,18 +342,18 @@ impl EccKeyPrivP256 {
 					if let Some(ASN1Block::Integer(_, i)) = blocks.get(4) {
 						Self::from_short(i.to_bytes_be().1)
 					} else {
-						return Err(Error::NoPrivateKey);
+						Err(Error::NoPrivateKey)
 					}
 				} else if let Some(ASN1Block::Integer(_, i)) = blocks.get(2) {
 					Self::from_short(i.to_bytes_be().1)
 				} else {
-					return Err(Error::NoPrivateKey);
+					Err(Error::NoPrivateKey)
 				}
 			} else {
-				return Err(Error::ExpectedBitString);
+				Err(Error::ExpectedBitString)
 			}
 		} else {
-			return Err(Error::ExpectedSequence);
+			Err(Error::ExpectedSequence)
 		}
 	}
 

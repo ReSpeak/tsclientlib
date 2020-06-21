@@ -483,11 +483,9 @@ impl fmt::Debug for InPacket<'_> {
 						success = true;
 						write!(f, ", {:?}", packet.data)?;
 					}
-				} else {
-					if let Ok(packet) = self.clone().into_s2cinit() {
-						success = true;
-						write!(f, ", {:?}", packet.data)?;
-					}
+				} else if let Ok(packet) = self.clone().into_s2cinit() {
+					success = true;
+					write!(f, ", {:?}", packet.data)?;
 				}
 			}
 		}

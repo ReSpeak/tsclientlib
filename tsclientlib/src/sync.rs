@@ -167,7 +167,7 @@ impl Stream for SyncConnection {
 							let handle = match self.con.download_file(
 								channel_id,
 								&path,
-								channel_password.as_ref().map(|s| s.as_str()),
+								channel_password.as_deref(),
 								seek_position,
 							) {
 								Ok(r) => r,
@@ -190,7 +190,7 @@ impl Stream for SyncConnection {
 							let handle = match self.con.upload_file(
 								channel_id,
 								&path,
-								channel_password.as_ref().map(|s| s.as_str()),
+								channel_password.as_deref(),
 								size,
 								overwrite,
 								resume,

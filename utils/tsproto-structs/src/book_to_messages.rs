@@ -51,7 +51,7 @@ lazy_static! {
 
 					if p.function.is_some() {
 						if p.type_s.is_some() {
-							let rule = RuleKind::ArgumentFunction {
+							RuleKind::ArgumentFunction {
 								type_s: p.type_s.unwrap(),
 								from: p.from.unwrap(),
 								name: p.function.unwrap(),
@@ -59,10 +59,9 @@ lazy_static! {
 									.into_iter()
 									.map(|p| find_field(&p, &msg_fields))
 									.collect(),
-							};
-							rule
+							}
 						} else {
-							let rule = RuleKind::Function {
+							RuleKind::Function {
 								from: p.from.as_ref().map(|p|
 									find_prop(p, book_struct)
 									.unwrap_or_else(|| panic!("No such (nested) \
@@ -72,23 +71,20 @@ lazy_static! {
 									.into_iter()
 									.map(|p| find_field(&p, &msg_fields))
 									.collect(),
-							};
-							rule
+							}
+						}
+					} else if let Some(prop) = find_prop(
+						p.from.as_ref().unwrap(),
+						book_struct,
+					) {
+						RuleKind::Map {
+							from: prop,
+							to: find_field(&p.to.unwrap(), &msg_fields),
 						}
 					} else {
-						if let Some(prop) = find_prop(
-							p.from.as_ref().unwrap(),
-							book_struct,
-						) {
-							RuleKind::Map {
-								from: prop,
-								to: find_field(&p.to.unwrap(), &msg_fields),
-							}
-						} else {
-							RuleKind::ArgumentMap {
-								from: p.from.unwrap(),
-								to: find_field(&p.to.unwrap(), &msg_fields),
-							}
+						RuleKind::ArgumentMap {
+							from: p.from.unwrap(),
+							to: find_field(&p.to.unwrap(), &msg_fields),
 						}
 					}
 				};
@@ -261,7 +257,10 @@ impl FromStr for RuleOp {
 
 // the in rust callable name (in PascalCase) from the field
 fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
-	*msg_fields.iter().find(|f| f.pretty == name).expect(&format!("Cannot find field '{}'", name))
+	*msg_fields
+		.iter()
+		.find(|f| f.pretty == name)
+		.unwrap_or_else(|| panic!("Cannot find field '{}'", name))
 }
 
 impl<'a> RuleKind<'a> {

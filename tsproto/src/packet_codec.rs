@@ -97,34 +97,27 @@ impl PacketCodec {
 					}) {
 						Ok(r) => r,
 						Err(e) => {
-							con.stream_items.push_back(StreamItem::Error(e.into()));
+							con.stream_items.push_back(StreamItem::Error(e));
+							return Ok(());
+						}
+					}
+				} else if let Some(params) = &mut con.params {
+					// Decrypt the packet
+					match algs::decrypt(&packet, gen_id, &params.shared_iv, &mut params.key_cache) {
+						Ok(r) => r,
+						Err(e) => {
+							con.stream_items.push_back(StreamItem::Error(e));
 							return Ok(());
 						}
 					}
 				} else {
-					if let Some(params) = &mut con.params {
-						// Decrypt the packet
-						match algs::decrypt(
-							&packet,
-							gen_id,
-							&params.shared_iv,
-							&mut params.key_cache,
-						) {
-							Ok(r) => r,
-							Err(e) => {
-								con.stream_items.push_back(StreamItem::Error(e.into()));
-								return Ok(());
-							}
-						}
-					} else {
-						// Failed to fake decrypt the packet
-						con.stream_items.push_back(StreamItem::Error(Error::WrongMac {
-							p_type,
-							generation_id: gen_id,
-							packet_id: id,
-						}));
-						return Ok(());
-					}
+					// Failed to fake decrypt the packet
+					con.stream_items.push_back(StreamItem::Error(Error::WrongMac {
+						p_type,
+						generation_id: gen_id,
+						packet_id: id,
+					}));
+					return Ok(());
 				};
 
 				let start = packet.header().data().len();

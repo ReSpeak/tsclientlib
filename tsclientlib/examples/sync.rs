@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use futures::prelude::*;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};

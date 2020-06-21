@@ -64,14 +64,13 @@ lazy_static! {
 							};
 
 							if p.function.is_some() {
-								let rule = RuleKind::Function {
+								RuleKind::Function {
 									name: p.function.unwrap(),
 									to: p.tolist.unwrap()
 										.into_iter()
 										.map(|p| find_prop(p, book_struct))
 										.collect(),
-								};
-								rule
+								}
 							} else {
 								RuleKind::Map {
 									from: find_field(
@@ -104,13 +103,10 @@ lazy_static! {
 
 				let mut used_props = vec![];
 				for rule in &ev.rules {
-					match rule {
-						RuleKind::Function { to, .. } => {
-							for p in to {
-								used_props.push(p.name.clone());
-							}
+					if let RuleKind::Function { to, .. } = rule {
+						for p in to {
+							used_props.push(p.name.clone());
 						}
-						_ => {}
 					}
 				}
 
@@ -239,7 +235,10 @@ impl FromStr for RuleOp {
 
 // the in rust callable name (in PascalCase) from the field
 fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
-	*msg_fields.iter().find(|f| f.pretty == name).expect(&format!("Cannot find field '{}'", name))
+	*msg_fields
+		.iter()
+		.find(|f| f.pretty == name)
+		.unwrap_or_else(|| panic!("Cannot find field '{}'", name))
 }
 
 impl<'a> RuleKind<'a> {

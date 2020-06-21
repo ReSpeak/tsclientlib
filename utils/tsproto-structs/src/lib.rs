@@ -61,7 +61,7 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 		let inner = &t[..(t.len() - 1)];
 		return format!("Option<{}>", convert_type(inner, is_ref));
 	}
-	if t.ends_with("T") {
+	if t.ends_with('T') {
 		return convert_type(&t[..(t.len() - 1)], is_ref);
 	}
 
@@ -81,8 +81,6 @@ pub fn convert_type(t: &str, is_ref: bool) -> String {
 		String::from("i64")
 	} else if t == "ulong" {
 		String::from("u64")
-	} else if t == "ushort" {
-		String::from("u16")
 	} else if t == "DateTime" {
 		String::from("OffsetDateTime")
 	} else if t.starts_with("Duration") {

@@ -117,7 +117,7 @@ impl Field {
 		let res = self.get_rust_type(a, true);
 
 		let append;
-		if res.contains("&") || res.contains("Uid") {
+		if res.contains('&') || res.contains("Uid") {
 			if a.ends_with('?') {
 				append = ".as_ref().map(|f| f.as_ref())";
 			} else if self.is_array() {

@@ -315,7 +315,7 @@ impl Resender {
 				let id = PacketId { packet_type: p_type, part: p_id - 1 };
 				con.stream_items.push_back(StreamItem::AckPacket(id));
 
-				first.clone()
+				*first
 			} else {
 				PartialPacketId {
 					generation_id: if p_id < first.packet_id {
@@ -393,7 +393,7 @@ impl Resender {
 	/// Fill up to the send window size.
 	fn fill_up_send_queue(&mut self) {
 		let get_skip_closure = |i: usize| {
-			let start = self.send_queue_indices[i].clone();
+			let start = self.send_queue_indices[i];
 			move |r: &&SendRecord| r.id.id.part < start
 		};
 		let mut iters = [
@@ -436,7 +436,7 @@ impl Resender {
 	///
 	/// The CUBIC congestion control window.
 	fn get_window(&self) -> u16 {
-		let time = self.no_congestion_since.unwrap_or_else(|| Instant::now()) - self.last_loss;
+		let time = self.no_congestion_since.unwrap_or_else(Instant::now) - self.last_loss;
 		let res = C
 			* (time.as_secs_f32() - (self.w_max as f32 * BETA / C).powf(1.0 / 3.0)).powf(3.0)
 			+ self.w_max as f32;
@@ -467,7 +467,7 @@ impl Resender {
 		};
 
 		let i = Self::packet_type_to_index(rec.id.id.packet_type);
-		con.resender.full_send_queue[i].insert(rec.id.id.part.clone(), rec);
+		con.resender.full_send_queue[i].insert(rec.id.id.part, rec);
 		con.resender.fill_up_send_queue();
 	}
 
@@ -557,7 +557,7 @@ impl Resender {
 					if rec.tries != 1 {
 						drop(rec);
 						// Double srtt on packet loss
-						con.resender.config.srtt = con.resender.config.srtt * 2;
+						con.resender.config.srtt *= 2;
 						if con.resender.config.srtt > timeout {
 							con.resender.config.srtt = timeout;
 						}

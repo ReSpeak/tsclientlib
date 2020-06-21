@@ -418,7 +418,7 @@ impl Connection {
 				}
 			}
 		}
-		Err(Error::ConnectionFailed { address: options.address.to_string(), errors }.into())
+		Err(Error::ConnectionFailed { address: options.address.to_string(), errors })
 	}
 
 	async fn connect_to(
@@ -503,7 +503,7 @@ impl Connection {
 		.await
 		{
 			Ok(r) => r,
-			Err(_) => Err(Error::InitserverTimeout.into()),
+			Err(_) => Err(Error::InitserverTimeout),
 		}
 	}
 
@@ -537,7 +537,7 @@ impl Connection {
 						let params = if let Some(r) = &client.params {
 							r
 						} else {
-							return Err(Error::InitserverParamsMissing.into());
+							return Err(Error::InitserverParamsMissing);
 						};
 
 						params.public_key.clone()
@@ -1188,7 +1188,7 @@ impl ConnectOptions {
 	/// ```
 	/// # use tsclientlib::ConnectOptions;
 	/// let opts = ConnectOptions::new("localhost")
-	///		.channel("Default Channel/Nested");
+	///     .channel("Default Channel/Nested");
 	/// ```
 	#[inline]
 	pub fn channel<S: Into<Cow<'static, str>>>(mut self, path: S) -> Self {

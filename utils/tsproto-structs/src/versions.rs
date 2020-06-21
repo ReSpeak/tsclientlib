@@ -51,7 +51,7 @@ impl Version {
 		for num in ver.split('.') {
 			if num != "?" {
 				res.push('_');
-				res.push_str(&format!("{}", num));
+				res.push_str(&num.to_string());
 			} else {
 				res.push('_');
 				res.push('X');

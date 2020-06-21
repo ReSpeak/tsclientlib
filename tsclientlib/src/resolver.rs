@@ -142,9 +142,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 
 	// Try to get the address of a tsdns server by an SRV record
 	let addr2 = addr.clone();
-	let address2 = address.clone();
 	let logger2 = logger.clone();
-	let port2 = port.clone();
 	let res = res.chain(
 		stream::once(async move {
 			let resolver = create_resolver(&logger2).await?;
@@ -156,11 +154,11 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 			let name = name.trim_to(2);
 			// Pick the first srv record of the first server that answers
 			Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)).and_then(move |srv| {
-				let address2 = address2.clone();
+				let address = address.clone();
 				async move {
 					// Got tsdns server
-					let mut addr = resolve_tsdns(srv, &address2).await?;
-					if let Some(port) = port2 {
+					let mut addr = resolve_tsdns(srv, &address).await?;
+					if let Some(port) = port {
 						// Overwrite port if it was specified
 						addr.set_port(port);
 					}
@@ -172,10 +170,9 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	);
 
 	// Interpret as normal address and resolve with system resolver
-	let addr2 = addr.clone();
 	let res = res.chain(
 		stream::once(async move {
-			let res = net::lookup_host((addr2.as_str(), port.unwrap_or(DEFAULT_PORT)))
+			let res = net::lookup_host((addr.as_str(), port.unwrap_or(DEFAULT_PORT)))
 				.await
 				.map_err(Error::ResolveHost)?
 				.map(Ok)
@@ -233,7 +230,7 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 						.next()
 						.ok_or(Error::InvalidIp6Address)?,
 				));
-			} else if pos_bracket == address.len() - 1 && address.chars().next() == Some('[') {
+			} else if pos_bracket == address.len() - 1 && address.starts_with('[') {
 				// IPv6 address
 				return Ok(ParseIpResult::Addr(
 					std::net::ToSocketAddrs::to_socket_addrs(&(

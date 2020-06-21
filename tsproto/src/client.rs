@@ -437,7 +437,7 @@ impl Client {
 			let root = root.unwrap_or_else(|| EccKeyPubEd25519::from_bytes(crate::ROOT_KEY));
 
 			// Check signature of l (proof)
-			server_key.clone().verify(&l, &proof).map_err(Error::InvalidSignature)?;
+			server_key.verify(&l, &proof).map_err(Error::InvalidSignature)?;
 
 			if beta_vec.len() != 54 {
 				return Err(Error::InvalidBetaLength(beta_vec.len()));
@@ -565,8 +565,8 @@ impl Client {
 						CommandItem::NextCommand => {
 							return Err(Error::MultipleCommands("initserver"));
 						}
-						CommandItem::Argument(arg) => match arg.name() {
-							b"aclid" => {
+						CommandItem::Argument(arg) => {
+							if arg.name() == b"aclid" {
 								c_id = Some(
 									arg.value()
 										.get_parse::<tsproto_packets::Error, u16>()
@@ -579,8 +579,7 @@ impl Client {
 								);
 								break;
 							}
-							_ => {}
-						},
+						}
 					}
 				}
 
@@ -603,8 +602,8 @@ impl Client {
 				for item in args {
 					match item {
 						CommandItem::NextCommand => {}
-						CommandItem::Argument(arg) => match arg.name() {
-							b"clid" => {
+						CommandItem::Argument(arg) => {
+							if arg.name() == b"clid" {
 								let c_id = arg
 									.value()
 									.get_parse::<tsproto_packets::Error, u16>()
@@ -613,8 +612,7 @@ impl Client {
 								})?;
 								own_client |= c_id == params.c_id;
 							}
-							_ => {}
-						},
+						}
 					}
 				}
 
@@ -639,29 +637,30 @@ impl Client {
 						_ => {}
 					},
 					CommandItem::NextCommand => {
-						if is_getversion && sender.is_some() {
-							let sender: u16 = sender.unwrap();
-							let mut version = format!(
-								"{} {}",
-								env!("CARGO_PKG_NAME"),
-								git_testament::render_testament!(crate::TESTAMENT),
-							);
-							#[cfg(debug_assertions)]
-							version.push_str(" (Debug)");
-							#[cfg(not(debug_assertions))]
-							version.push_str(" (Release)");
+						if let Some(sender) = sender {
+							if is_getversion {
+								let mut version = format!(
+									"{} {}",
+									env!("CARGO_PKG_NAME"),
+									git_testament::render_testament!(crate::TESTAMENT),
+								);
+								#[cfg(debug_assertions)]
+								version.push_str(" (Debug)");
+								#[cfg(not(debug_assertions))]
+								version.push_str(" (Release)");
 
-							let mut cmd = OutCommand::new(
-								Direction::C2S,
-								Flags::empty(),
-								PacketType::Command,
-								"plugincmd",
-							);
-							cmd.write_arg("name", &"getversion");
-							cmd.write_arg("data", &version);
-							cmd.write_arg("targetmode", &2);
-							cmd.write_arg("target", &sender);
-							self.send_packet(cmd.into_packet())?;
+								let mut cmd = OutCommand::new(
+									Direction::C2S,
+									Flags::empty(),
+									PacketType::Command,
+									"plugincmd",
+								);
+								cmd.write_arg("name", &"getversion");
+								cmd.write_arg("data", &version);
+								cmd.write_arg("targetmode", &2);
+								cmd.write_arg("target", &sender);
+								self.send_packet(cmd.into_packet())?;
+							}
 						}
 					}
 				}
