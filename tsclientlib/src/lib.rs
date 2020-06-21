@@ -14,15 +14,14 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::iter;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
-use std::{iter, result};
 
-use anyhow::{bail, format_err, Error, Result};
 use futures::prelude::*;
-use slog::{debug, info, o, trace, warn, Drain, Logger};
+use slog::{debug, info, o, warn, Drain, Logger};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::{TcpStream, UdpSocket};
@@ -53,10 +52,65 @@ mod tests;
 pub use ts_bookkeeping::*;
 pub use tsproto::Identity;
 
+/// Wait this time for initserver, in seconds.
+const INITSERVER_TIMEOUT: u64 = 5;
+
+type Result<T> = std::result::Result<T, Error>;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MessageHandle(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FileTransferHandle(pub u16);
+
+// TODO Sort
+#[derive(Debug, Error)]
+pub enum Error {
+	/// A command return an error.
+	#[error(transparent)]
+	CommandError(#[from] tsproto_types::errors::Error),
+	#[error("File transfer failed: {0}")]
+	FileTransferIo(#[source] std::io::Error),
+	#[error("The server needs an identity of level {0}, please increase your identity level")]
+	IdentityLevel(u8),
+	#[error(
+		"The server requested an identity of level {needed}, but we already have level {have}"
+	)]
+	IdentityLevelCorrupted { needed: u8, have: u8 },
+	#[error("Failed to increase identity level: {0}")]
+	IdentityLevelIncreaseFailed(#[source] tsproto::Error),
+	#[error("Failed to increase identity level: Thread died")]
+	IdentityLevelIncreaseFailedThread,
+	#[error("Failed to create identity: {0}")]
+	IdentityCreate(#[source] tsproto::Error),
+	/// The connection is currently not connected to a server but is in the process of connecting.
+	#[error("Currently not connected")]
+	NotConnected,
+	#[error("Failed to connect: {0}")]
+	Connect(#[source] tsproto::client::Error),
+	#[error("Server refused connection: {0}")]
+	ConnectTs(#[source] tsproto_types::errors::Error),
+	#[error("Failed to send clientinit: {0}")]
+	SendClientinit(#[source] tsproto::client::Error),
+	#[error("Failed to send packet: {0}")]
+	SendPacket(#[source] tsproto::client::Error),
+	#[error("Timeout while waiting for initserver")]
+	InitserverTimeout,
+	#[error("Failed to receive initserver: {0}")]
+	InitserverWait(#[source] tsproto::client::Error),
+	#[error("Failed to parse initserver: {0}")]
+	InitserverParse(#[source] ts_bookkeeping::messages::ParseError),
+	#[error("We should be connected but the connection params do not exist")]
+	InitserverParamsMissing,
+	/// The connection was destroyed.
+	#[error("Connection does not exist anymore")]
+	ConnectionGone,
+	#[error("Failed to connect to server at {address:?}: {errors:?}")]
+	ConnectionFailed { address: String, errors: Vec<Error> },
+	#[error("Failed to resolve address: {0}")]
+	ResolveAddress(#[source] resolver::Error),
+	#[error("Io error: {0}")]
+	Io(#[source] tokio::io::Error),
+}
 
 /// The result of a download request.
 ///
@@ -122,7 +176,7 @@ pub enum StreamItem {
 	///
 	/// [`MessageHandle`]: struct.MessageHandle.html
 	/// [`Connection::send_command`]: struct.Connection.html#method.send_command
-	MessageResult(MessageHandle, result::Result<(), TsError>),
+	MessageResult(MessageHandle, std::result::Result<(), TsError>),
 	/// A file download succeeded. This event contains the `TcpStream` where the
 	/// file can be downloaded.
 	///
@@ -180,15 +234,10 @@ struct ConnectedConnection {
 }
 
 enum ConnectionState {
-	Connecting(
-		future::BoxFuture<
-			'static,
-			result::Result<(client::Client, data::Connection), ConnectError>,
-		>,
-	),
+	Connecting(future::BoxFuture<'static, Result<(client::Client, data::Connection)>>),
 	IdentityLevelIncreasing {
 		/// We get the improved identity here.
-		recv: oneshot::Receiver<Result<Identity>>,
+		recv: oneshot::Receiver<std::result::Result<Identity, tsproto::Error>>,
 		state: Arc<Mutex<IdentityIncreaseLevelState>>,
 	},
 	Connected {
@@ -205,20 +254,6 @@ enum IdentityIncreaseLevelState {
 	Computing,
 	/// Set to this state to cancel the computation.
 	Canceled,
-}
-
-/// Internalt connect error.
-///
-/// `IdentityLevelIncrease` is used to signal that the connection failed because
-/// of a too low identity level.
-#[derive(Debug, Error)]
-enum ConnectError {
-	#[error("Need to increase the identity level to {0}")]
-	IdentityLevelIncrease(u8),
-	#[error("{0}")]
-	TsError(TsError),
-	#[error(transparent)]
-	Other(#[from] anyhow::Error),
 }
 
 /// The main type of this crate, which represents a connection to a server.
@@ -315,15 +350,22 @@ impl Connection {
 		let logger = logger.new(o!("addr" => options.address.to_string()));
 
 		let mut stream_items = VecDeque::new();
-		options.identity = Some(options.identity.take().map(Ok).unwrap_or_else(|| {
-			// Create new ECDH key
-			let id = Identity::create();
-			if id.is_ok() {
-				// Send event
-				stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
-			}
-			id
-		})?);
+		options.identity = Some(
+			options
+				.identity
+				.take()
+				.map(Ok)
+				.unwrap_or_else(|| {
+					// Create new ECDH key
+					let id = Identity::create();
+					if id.is_ok() {
+						// Send event
+						stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
+					}
+					id
+				})
+				.map_err(Error::IdentityCreate)?,
+		);
 
 		// Try all addresses
 		let fut = Self::connect(logger.clone(), options.clone());
@@ -352,7 +394,7 @@ impl Connection {
 
 	async fn connect(
 		logger: Logger, options: ConnectOptions,
-	) -> result::Result<(client::Client, data::Connection), ConnectError> {
+	) -> Result<(client::Client, data::Connection)> {
 		let resolved = match &options.address {
 			ServerAddress::SocketAddr(a) => stream::once(future::ok(*a)).left_stream(),
 			ServerAddress::Other(s) => resolver::resolve(logger.clone(), s.into()).right_stream(),
@@ -360,29 +402,28 @@ impl Connection {
 		pin_utils::pin_mut!(resolved);
 		let mut resolved: Pin<_> = resolved;
 
+		let mut errors = Vec::new();
 		while let Some(addr) = resolved.next().await {
-			let addr = addr?;
+			let addr = addr.map_err(Error::ResolveAddress)?;
 			match Self::connect_to(&logger, &options, addr).await {
 				Ok(res) => return Ok(res),
-				Err(ConnectError::Other(e)) => {
-					trace!(logger, "Connecting failed, trying next address";
-						"error" => ?e);
-					info!(logger, "Connecting failed, trying next address";
-						"error" => %e);
-				}
-				Err(e) => {
+				Err(e @ Error::IdentityLevel(_)) | Err(e @ Error::ConnectTs(_)) => {
 					// Either increase identity level or the server refused us
 					return Err(e);
 				}
+				Err(e) => {
+					info!(logger, "Connecting failed, trying next address";
+						"error" => %e);
+					errors.push(e);
+				}
 			}
 		}
-		Err(format_err!("Failed to connect to server, address {:?} did not work", options.address)
-			.into())
+		Err(Error::ConnectionFailed { address: options.address.to_string(), errors }.into())
 	}
 
 	async fn connect_to(
 		logger: &Logger, options: &ConnectOptions, addr: SocketAddr,
-	) -> result::Result<(client::Client, data::Connection), ConnectError> {
+	) -> Result<(client::Client, data::Connection)> {
 		let counter = options.identity.as_ref().unwrap().counter();
 		let socket = Box::new(
 			UdpSocket::bind(options.local_address.unwrap_or_else(|| {
@@ -393,7 +434,7 @@ impl Connection {
 				}
 			}))
 			.await
-			.map_err(Error::from)?,
+			.map_err(Error::Io)?,
 		);
 		let mut client = client::Client::new(
 			logger.clone(),
@@ -418,7 +459,7 @@ impl Connection {
 
 		// Create a connection
 		debug!(logger, "Connecting"; "address" => %addr);
-		client.connect().await.map_err(Error::from)?;
+		client.connect().await.map_err(Error::Connect)?;
 
 		// Create clientinit packet
 		let client_version = options.version.get_version_string();
@@ -453,25 +494,31 @@ impl Connection {
 			security_hash: None,
 		}));
 
-		client.send_packet(packet.into_packet())?;
+		client.send_packet(packet.into_packet()).map_err(Error::SendClientinit)?;
 
-		match time::timeout(time::Duration::from_secs(5), Self::wait_initserver(logger, client))
-			.await
+		match time::timeout(
+			time::Duration::from_secs(INITSERVER_TIMEOUT),
+			Self::wait_initserver(logger, client),
+		)
+		.await
 		{
 			Ok(r) => r,
-			Err(_) => Err(format_err!("Timeout while waiting for initserver").into()),
+			Err(_) => Err(Error::InitserverTimeout.into()),
 		}
 	}
 
 	async fn wait_initserver(
 		logger: &Logger, mut client: client::Client,
-	) -> result::Result<(client::Client, data::Connection), ConnectError> {
+	) -> Result<(client::Client, data::Connection)> {
 		// Wait until we received the initserver packet.
 		loop {
-			let cmd = client.filter_commands(|_, cmd| Ok(Some(cmd))).await.map_err(Error::from)?;
+			let cmd = client
+				.filter_commands(|_, cmd| Ok(Some(cmd)))
+				.await
+				.map_err(Error::InitserverWait)?;
 			let msg =
 				InMessage::new(logger, cmd.data().packet().header(), cmd.data().packet().content())
-					.map_err(Error::from);
+					.map_err(Error::InitserverParse);
 
 			match msg {
 				Ok(InMessage::CommandError(e)) => {
@@ -480,20 +527,17 @@ impl Connection {
 						if let Some(needed) =
 							e.extra_message.as_ref().and_then(|m| m.parse::<u8>().ok())
 						{
-							return Err(ConnectError::IdentityLevelIncrease(needed));
+							return Err(Error::IdentityLevel(needed));
 						}
 					}
-					return Err(ConnectError::TsError(e.id));
+					return Err(Error::ConnectTs(e.id));
 				}
 				Ok(InMessage::InitServer(initserver)) => {
 					let public_key = {
 						let params = if let Some(r) = &client.params {
 							r
 						} else {
-							return Err(format_err!(
-								"We should be connected but the connection params do not exist"
-							)
-							.into());
+							return Err(Error::InitserverParamsMissing.into());
 						};
 
 						params.public_key.clone()
@@ -519,20 +563,13 @@ impl Connection {
 	/// connecting again.
 	fn increase_identity_level(&mut self, needed: u8) -> Result<()> {
 		if needed > 20 {
-			bail!(
-				"The server needs an identity of level {}, please increase your identity level",
-				needed
-			);
+			return Err(Error::IdentityLevel(needed));
 		}
 
 		let identity = self.options.identity.as_ref().unwrap().clone();
-		let level = identity.level()?;
+		let level = identity.level().map_err(Error::IdentityLevelIncreaseFailed)?;
 		if level >= needed {
-			bail!(
-				"The server requested an identity of level {}, but we already have level {}",
-				needed,
-				level
-			);
+			return Err(Error::IdentityLevelCorrupted { needed, have: level });
 		}
 
 		// Increase identity level
@@ -570,7 +607,7 @@ impl Connection {
 		if let ConnectionState::Connected { con, .. } = &self.state {
 			Ok(&con.client)
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -582,7 +619,7 @@ impl Connection {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			Ok(&mut con.client)
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -593,7 +630,7 @@ impl Connection {
 			if let Some(params) = &c.params {
 				Ok(params.public_key.clone())
 			} else {
-				bail!("Currently not connected");
+				Err(Error::NotConnected)
 			}
 		})
 	}
@@ -605,7 +642,7 @@ impl Connection {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.send_command(packet)
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -616,7 +653,7 @@ impl Connection {
 		if let ConnectionState::Connected { book, .. } = &self.state {
 			Ok(book)
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -630,7 +667,7 @@ impl Connection {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			Ok(facades::ConnectionMut { connection: con, inner: book })
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -692,7 +729,7 @@ impl Connection {
 	pub fn disconnect(&mut self, options: DisconnectOptions) -> Result<()> {
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			let packet = book.disconnect(options);
-			con.client.send_packet(packet.into_packet())?;
+			con.client.send_packet(packet.into_packet()).map_err(Error::SendPacket)?;
 		}
 		Ok(())
 	}
@@ -719,7 +756,7 @@ impl Connection {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.download_file(channel_id, path, channel_password, seek_position)
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -746,7 +783,7 @@ impl Connection {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.upload_file(channel_id, path, channel_password, size, overwrite, resume)
 		} else {
-			bail!("Currently not connected");
+			Err(Error::NotConnected)
 		}
 	}
 
@@ -757,16 +794,13 @@ impl Connection {
 		match &mut self.state {
 			ConnectionState::Connecting(fut) => match fut.poll_unpin(cx) {
 				Poll::Pending => Poll::Pending,
-				Poll::Ready(Err(ConnectError::Other(e))) => Poll::Ready(Some(Err(e))),
-				Poll::Ready(Err(ConnectError::TsError(e))) => {
-					Poll::Ready(Some(Err(ConnectError::TsError(e).into())))
-				}
-				Poll::Ready(Err(ConnectError::IdentityLevelIncrease(level))) => {
+				Poll::Ready(Err(Error::IdentityLevel(level))) => {
 					if let Err(e) = self.increase_identity_level(level) {
 						return Poll::Ready(Some(Err(e)));
 					}
 					Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreasing(level))))
 				}
+				Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
 				Poll::Ready(Ok((client, book))) => {
 					let con = ConnectedConnection {
 						client,
@@ -786,14 +820,12 @@ impl Connection {
 			},
 			ConnectionState::IdentityLevelIncreasing { recv, .. } => match recv.poll_unpin(cx) {
 				Poll::Pending => Poll::Pending,
-				Poll::Ready(Err(e)) => Poll::Ready(Some(Err(format_err!(
-					"Failed to receive increased identity level ({:?})",
-					e
-				)))),
-				Poll::Ready(Ok(Err(e))) => Poll::Ready(Some(Err(format_err!(
-					"Failed to increase identity level ({:?})",
-					e
-				)))),
+				Poll::Ready(Err(_)) => {
+					Poll::Ready(Some(Err(Error::IdentityLevelIncreaseFailedThread)))
+				}
+				Poll::Ready(Ok(Err(e))) => {
+					Poll::Ready(Some(Err(Error::IdentityLevelIncreaseFailed(e))))
+				}
 				Poll::Ready(Ok(Ok(identity))) => {
 					self.options.identity = Some(identity);
 					let fut = Self::connect(self.logger.clone(), self.options.clone());
@@ -918,9 +950,10 @@ impl ConnectedConnection {
 				let fut = Box::new(async move {
 					let addr = addr;
 					let key = key;
-					let mut stream = TcpStream::connect(&addr).await?;
-					stream.write_all(key.as_bytes()).await?;
-					stream.flush().await?;
+					let mut stream =
+						TcpStream::connect(&addr).await.map_err(Error::FileTransferIo)?;
+					stream.write_all(key.as_bytes()).await.map_err(Error::FileTransferIo)?;
+					stream.flush().await.map_err(Error::FileTransferIo)?;
 					Ok(stream)
 				})
 				.map(move |res| match res {
@@ -943,9 +976,10 @@ impl ConnectedConnection {
 				let fut = Box::new(async move {
 					let addr = addr;
 					let key = key;
-					let mut stream = TcpStream::connect(&addr).await?;
-					stream.write_all(key.as_bytes()).await?;
-					stream.flush().await?;
+					let mut stream =
+						TcpStream::connect(&addr).await.map_err(Error::FileTransferIo)?;
+					stream.write_all(key.as_bytes()).await.map_err(Error::FileTransferIo)?;
+					stream.flush().await.map_err(Error::FileTransferIo)?;
 					Ok(stream)
 				})
 				.map(move |res| match res {
@@ -982,7 +1016,10 @@ impl ConnectedConnection {
 		let code = self.cur_return_code;
 		self.cur_return_code += 1;
 		packet.write_arg("return_code", &code);
-		self.client.send_packet(packet.into_packet()).map(|_| MessageHandle(code))
+		self.client
+			.send_packet(packet.into_packet())
+			.map(|_| MessageHandle(code))
+			.map_err(Error::SendPacket)
 	}
 
 	fn download_file(

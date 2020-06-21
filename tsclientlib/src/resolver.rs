@@ -5,12 +5,12 @@
 use std::net::SocketAddr;
 use std::str::{self, FromStr};
 
-use anyhow::{bail, format_err, Result};
 use futures::prelude::*;
 use itertools::Itertools;
 use rand::rngs::OsRng;
 use rand::Rng;
 use slog::{debug, o, warn, Logger};
+use thiserror::Error;
 use tokio::net::{self, TcpStream};
 use tokio::prelude::*;
 use tokio::time::Duration;
@@ -23,6 +23,48 @@ const DNS_PREFIX_UDP: &str = "_ts3._udp.";
 const NICKNAME_LOOKUP_ADDRESS: &str = "https://named.myteamspeak.com/lookup";
 /// Wait this amount of seconds before giving up.
 const TIMEOUT_SECONDS: u64 = 10;
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Error)]
+pub enum Error {
+	#[error("Failed to create system resolver ({system}) and fallback resolver ({fallback})")]
+	CreateResolver {
+		#[source]
+		system: trust_dns_resolver::error::ResolveError,
+		fallback: trust_dns_resolver::error::ResolveError,
+	},
+	#[error("Failed to parse domain {0:?}: {1}")]
+	InvalidDomain(String, #[source] trust_dns_proto::error::ProtoError),
+	#[error("Invalid IPv4 address")]
+	InvalidIp4Address,
+	#[error("Invalid IPv6 address")]
+	InvalidIp6Address,
+	#[error("Invalid IP address")]
+	InvalidIpAddress,
+	#[error("Not a valid nickname")]
+	InvalidNickname,
+	#[error("Failed to parse port: {0}")]
+	InvalidPort(#[source] std::num::ParseIntError),
+	#[error("Failed to contact {0} server: {1}")]
+	Io(&'static str, #[source] std::io::Error),
+	#[error("Failed to parse url: {0}")]
+	NicknameParseUrl(#[source] url::ParseError),
+	#[error("Failed to resolve nickname: {0}")]
+	NicknameResolve(#[source] reqwest::Error),
+	#[error("Found no SRV entry")]
+	NoSrvEntry,
+	#[error("Failed to resolve hostname: {0}")]
+	ResolveHost(#[source] tokio::io::Error),
+	#[error("Failed to get SRV record")]
+	SrvLookup(#[source] trust_dns_resolver::error::ResolveError),
+	#[error("tsdns did not return an ip address but {0:?}")]
+	TsdnsAddressInvalidResponse(String),
+	#[error("tsdns server does not know the address")]
+	TsdnsAddressNotFound,
+	#[error("Failed to parse tsdns response: {0}")]
+	TsdnsParseResponse(#[source] std::str::Utf8Error),
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum ParseIpResult<'a> {
@@ -76,7 +118,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 			})
 			.left_stream()
 	} else {
-		stream::once(future::err(format_err!("Not a valid nickname"))).right_stream()
+		stream::once(future::err(Error::InvalidNickname)).right_stream()
 	};
 
 	// The system config does not yet work on android:
@@ -88,10 +130,9 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 			let resolver = create_resolver(&logger2).await?;
 
 			// Try to get the address by an SRV record
-			let prefix = Name::from_str(DNS_PREFIX_UDP)
-				.map_err(|e| format_err!("Canot parse udp domain prefix ({:?})", e))?;
+			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Canot parse udp domain prefix");
 			let mut name =
-				Name::from_str(&addr2).map_err(|e| format_err!("Cannot parse domain ({:?})", e))?;
+				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
 			name.set_fqdn(true);
 
 			Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)))
@@ -107,8 +148,9 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	let res = res.chain(
 		stream::once(async move {
 			let resolver = create_resolver(&logger2).await?;
-			let prefix = Name::from_str(DNS_PREFIX_TCP)?;
-			let mut name = Name::from_str(&addr2)?;
+			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Canot parse udp domain prefix");
+			let mut name =
+				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
 			name.set_fqdn(true);
 
 			let name = name.trim_to(2);
@@ -134,7 +176,8 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	let res = res.chain(
 		stream::once(async move {
 			let res = net::lookup_host((addr2.as_str(), port.unwrap_or(DEFAULT_PORT)))
-				.await?
+				.await
+				.map_err(Error::ResolveHost)?
 				.map(Ok)
 				.collect::<Vec<_>>();
 			Result::<_>::Ok(stream::iter(res))
@@ -156,7 +199,9 @@ async fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
 			warn!(logger, "Failed to use system dns resolver config";
 				"error" => ?e);
 			// Fallback
-			Ok(TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), Default::default()).await?)
+			Ok(TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), Default::default())
+				.await
+				.map_err(|e2| Error::CreateResolver { system: e, fallback: e2 })?)
 		}
 	}
 }
@@ -173,18 +218,20 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 			if addr.chars().all(|c| c.is_digit(10) || c == '.') {
 				// IPv4 address
 				return Ok(ParseIpResult::Addr(
-					std::net::ToSocketAddrs::to_socket_addrs(address)?
+					std::net::ToSocketAddrs::to_socket_addrs(address)
+						.map_err(|_| Error::InvalidIp4Address)?
 						.next()
-						.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?,
+						.ok_or(Error::InvalidIp4Address)?,
 				));
 			}
 		} else if let Some(pos_bracket) = address.rfind(']') {
 			if pos_bracket < pos {
 				// IPv6 address and port
 				return Ok(ParseIpResult::Addr(
-					std::net::ToSocketAddrs::to_socket_addrs(address)?
+					std::net::ToSocketAddrs::to_socket_addrs(address)
+						.map_err(|_| Error::InvalidIp6Address)?
 						.next()
-						.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
+						.ok_or(Error::InvalidIp6Address)?,
 				));
 			} else if pos_bracket == address.len() - 1 && address.chars().next() == Some('[') {
 				// IPv6 address
@@ -192,32 +239,33 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 					std::net::ToSocketAddrs::to_socket_addrs(&(
 						&address[1..pos_bracket],
 						DEFAULT_PORT,
-					))?
+					))
+					.map_err(|_| Error::InvalidIp6Address)?
 					.next()
-					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
+					.ok_or(Error::InvalidIp6Address)?,
 				));
 			} else {
-				return Err(format_err!("Invalid ip address").into());
+				return Err(Error::InvalidIpAddress);
 			}
 		} else {
 			// IPv6 address
 			return Ok(ParseIpResult::Addr(
-				std::net::ToSocketAddrs::to_socket_addrs(&(address, DEFAULT_PORT))?
+				std::net::ToSocketAddrs::to_socket_addrs(&(address, DEFAULT_PORT))
+					.map_err(|_| Error::InvalidIp6Address)?
 					.next()
-					.ok_or_else(|| format_err!("Cannot parse IPv6 address"))?,
+					.ok_or(Error::InvalidIp6Address)?,
 			));
 		}
 	} else if address.chars().all(|c| c.is_digit(10) || c == '.') {
 		// IPv4 address
 		return Ok(ParseIpResult::Addr(
-			std::net::ToSocketAddrs::to_socket_addrs(&(address, DEFAULT_PORT))?
+			std::net::ToSocketAddrs::to_socket_addrs(&(address, DEFAULT_PORT))
+				.map_err(|_| Error::InvalidIp4Address)?
 				.next()
-				.ok_or_else(|| format_err!("Cannot parse IPv4 address"))?,
+				.ok_or(Error::InvalidIp4Address)?,
 		));
 	}
-	let port = if let Some(port) =
-		port.map(|p| p.parse().map_err(|e| format_err!("Cannot parse port ({:?})", e)))
-	{
+	let port = if let Some(port) = port.map(|p| p.parse().map_err(Error::InvalidPort)) {
 		Some(port?)
 	} else {
 		None
@@ -229,8 +277,16 @@ pub fn resolve_nickname(nickname: String) -> impl Stream<Item = Result<SocketAdd
 	stream::once(async {
 		let nickname = nickname;
 		let url =
-			reqwest::Url::parse_with_params(NICKNAME_LOOKUP_ADDRESS, Some(("name", &nickname)))?;
-		let body = reqwest::get(url).await?.error_for_status()?.text().await?;
+			reqwest::Url::parse_with_params(NICKNAME_LOOKUP_ADDRESS, Some(("name", &nickname)))
+				.map_err(Error::NicknameParseUrl)?;
+		let body = reqwest::get(url)
+			.await
+			.map_err(Error::NicknameResolve)?
+			.error_for_status()
+			.map_err(Error::NicknameResolve)?
+			.text()
+			.await
+			.map_err(Error::NicknameResolve)?;
 		let addrs = body
 			.split(&['\r', '\n'][..])
 			.filter(|s| !s.is_empty())
@@ -244,7 +300,8 @@ pub fn resolve_nickname(nickname: String) -> impl Stream<Item = Result<SocketAdd
 						ParseIpResult::Addr(a) => Ok(stream::once(future::ok(a)).left_stream()),
 						ParseIpResult::Other(a, p) => {
 							let addrs = net::lookup_host((a, p.unwrap_or(DEFAULT_PORT)))
-								.await?
+								.await
+								.map_err(Error::ResolveHost)?
 								.collect::<Vec<_>>();
 							Ok(stream::iter(addrs).map(Result::<_>::Ok).right_stream())
 						}
@@ -257,29 +314,29 @@ pub fn resolve_nickname(nickname: String) -> impl Stream<Item = Result<SocketAdd
 }
 
 pub async fn resolve_tsdns<A: net::ToSocketAddrs>(server: A, addr: &str) -> Result<SocketAddr> {
-	let mut stream = TcpStream::connect(server).await?;
-	stream.write_all(addr.as_bytes()).await?;
+	let mut stream = TcpStream::connect(server).await.map_err(|e| Error::Io("tsdns", e))?;
+	stream.write_all(addr.as_bytes()).await.map_err(|e| Error::Io("tsdns", e))?;
 	let mut data = Vec::new();
-	stream.read_to_end(&mut data).await?;
+	stream.read_to_end(&mut data).await.map_err(|e| Error::Io("tsdns", e))?;
 
-	let addr = str::from_utf8(&data)?;
+	let addr = str::from_utf8(&data).map_err(Error::TsdnsParseResponse)?;
 	if addr.starts_with("404") {
-		bail!("tsdns server does not know the address");
+		return Err(Error::TsdnsAddressNotFound);
 	}
 	match parse_ip(addr)? {
 		ParseIpResult::Addr(a) => Ok(a),
-		_ => bail!("tsdns did not return an ip address"),
+		_ => Err(Error::TsdnsAddressInvalidResponse(addr.to_string())),
 	}
 }
 
 fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = Result<SocketAddr>> {
 	stream::once(async {
-		let lookup = resolver.srv_lookup(addr).await?;
+		let lookup = resolver.srv_lookup(addr).await.map_err(Error::SrvLookup)?;
 		let mut entries = Vec::new();
 		let mut max_prio = if let Some(e) = lookup.iter().next() {
 			e.priority()
 		} else {
-			return Result::<_>::Err(format_err!("Found no SRV entry").into());
+			return Err(Error::NoSrvEntry);
 		};
 
 		// Move all SRV records into entries and only retain the ones with
@@ -341,7 +398,11 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 		drop(resolver);
 		Ok(stream::iter(res)
 			.and_then(|(e, port)| async move {
-				let res = net::lookup_host((e.as_str(), port)).await?.map(Ok).collect::<Vec<_>>();
+				let res = net::lookup_host((e.as_str(), port))
+					.await
+					.map_err(Error::ResolveHost)?
+					.map(Ok)
+					.collect::<Vec<_>>();
 				Ok(stream::iter(res))
 			})
 			.try_flatten())

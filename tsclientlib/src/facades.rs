@@ -2,11 +2,10 @@
 use std::net::IpAddr;
 use std::ops::Deref;
 
-use anyhow::Result;
 use ts_bookkeeping::data::*;
 use ts_bookkeeping::*;
 
-use crate::{ConnectedConnection, MessageHandle, MessageTarget};
+use crate::{ConnectedConnection, MessageHandle, MessageTarget, Result};
 
 include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/facades.rs"));

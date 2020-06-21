@@ -30,7 +30,6 @@ audio = ["audiopus"]
 bundled = ["sdl2/bundled"]
 
 [dependencies]
-anyhow = "1"
 audiopus = { version = "0.2", optional = true }
 base64 = "0.12"
 futures = "0.3"
@@ -52,6 +51,7 @@ ts-bookkeeping = { path = "../utils/ts-bookkeeping" }
 tsproto = { path = "../tsproto", version = "=0.1.0" }
 tsproto-packets = { path = "../utils/tsproto-packets" }
 tsproto-types = { path = "../utils/tsproto-types" }
+url = "2"
 
 [dependencies.slog]
 version = "2"
@@ -63,6 +63,7 @@ t4rust-derive = "0.2"
 tsproto-structs = { path = "../utils/tsproto-structs", version = "=0.1.0" }
 
 [dev-dependencies]
+anyhow = "1"
 audiopus = "0.2"
 quickcheck = "0.9"
 quickcheck_macros = "0.9"

@@ -13,10 +13,10 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::Hash;
 
-use anyhow::{bail, format_err, Result};
 use audiopus::coder::Decoder;
 use audiopus::{packet, Channels, SampleRate};
 use slog::{debug, o, trace, warn, Logger};
+use thiserror::Error;
 use tsproto_packets::packets::{AudioData, CodecType, InAudioBuf};
 
 use crate::ClientId;
@@ -41,6 +41,32 @@ const SPEED_CHANGE_STEPS: usize = 100;
 /// Use 48 kHz, 20 ms frames (50 per second) and mono data (1 channel).
 /// This means 1920 samples and 7.5 kiB.
 const USUAL_FRAME_SIZE: usize = 48000 / 50;
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, Error)]
+pub enum Error {
+	#[error("Failed to create opus decoder: {0}")]
+	CreateDecoder(#[source] audiopus::Error),
+	#[error("Opus decode failed: {error} (packet: {packet:?})")]
+	Decode {
+		#[source]
+		error: audiopus::Error,
+		packet: Option<Vec<u8>>,
+	},
+	#[error("Get duplicate packet id {0}")]
+	Duplicate(u16),
+	#[error("Failed to get packet samples: {0}")]
+	GetPacketSample(#[source] audiopus::Error),
+	#[error("Audio queue is full, dropping")]
+	QueueFull,
+	#[error("Audio packet is too late, dropping (wanted {wanted}, got {got})")]
+	TooLate { wanted: u16, got: u16 },
+	#[error("Packet has too many samples")]
+	TooManySamples,
+	#[error("Only opus audio is supported, ignoring {0:?}")]
+	UnsupportedCodec(CodecType),
+}
 
 #[derive(Clone, Debug)]
 struct SlidingWindowMinimum<T: Copy + Default + Ord> {
@@ -139,15 +165,16 @@ impl<T: Copy + Default + Ord> SlidingWindowMinimum<T> {
 impl AudioQueue {
 	fn new(logger: Logger, packet: InAudioBuf) -> Result<Self> {
 		let data = packet.data().data();
-		let last_packet_samples = packet::nb_samples(data.data(), SAMPLE_RATE)?;
+		let last_packet_samples =
+			packet::nb_samples(data.data(), SAMPLE_RATE).map_err(Error::GetPacketSample)?;
 		if last_packet_samples > MAX_BUFFER_SIZE {
-			bail!("Packet has too many samples");
+			return Err(Error::TooManySamples);
 		}
 
 		let last_packet_samples = last_packet_samples * CHANNEL_NUM;
 		let mut res = Self {
 			logger,
-			decoder: Decoder::new(SAMPLE_RATE, CHANNELS)?,
+			decoder: Decoder::new(SAMPLE_RATE, CHANNELS).map_err(Error::CreateDecoder)?,
 			volume: 1.0,
 			next_id: data.id(),
 			whispering: false,
@@ -190,23 +217,24 @@ impl AudioQueue {
 
 	fn add_packet(&mut self, packet: InAudioBuf) -> Result<()> {
 		if self.packet_buffer.len() >= MAX_BUFFER_PACKETS {
-			bail!("Audio queue is full, dropping");
+			return Err(Error::QueueFull);
 		}
 		let samples;
 		if packet.data().data().data().len() <= 1 {
 			// End of stream
 			samples = 0;
 		} else {
-			samples = packet::nb_samples(packet.data().data().data(), SAMPLE_RATE)?;
+			samples = packet::nb_samples(packet.data().data().data(), SAMPLE_RATE)
+				.map_err(Error::GetPacketSample)?;
 			if samples > MAX_BUFFER_SIZE {
-				bail!("Packet has too many samples");
+				return Err(Error::TooManySamples);
 			}
 		}
 
 		let id = packet.data().data().id();
 		let packet = QueuePacket { packet, samples, id };
 		if id.wrapping_sub(self.next_id) > MAX_BUFFER_PACKETS as u16 {
-			bail!("Audio packet is too late, dropping (wanted {}, got {})", self.next_id, id);
+			return Err(Error::TooLate { wanted: self.next_id, got: id });
 		}
 
 		// Put into first spot where the id is smaller
@@ -221,7 +249,7 @@ impl AudioQueue {
 		// Check for duplicate packet
 		if let Some(p) = self.packet_buffer.get(i) {
 			if p.id == packet.id {
-				bail!("Got duplicate packet id {}", p.id);
+				return Err(Error::Duplicate(p.id));
 			}
 		}
 
@@ -260,7 +288,10 @@ impl AudioQueue {
 		let len = self
 			.decoder
 			.decode_float(packet_data, &mut self.decoded_buffer[self.decoded_pos..], fec)
-			.map_err(|e| format_err!("Opus decode failed ({}) (packet: {:?})", e, packet))?;
+			.map_err(|e| Error::Decode {
+				error: e,
+				packet: packet.map(|p| p.packet.raw_data().to_vec()),
+			})?;
 		self.last_packet_samples = len;
 		self.decoded_buffer.truncate(self.decoded_pos + len * CHANNEL_NUM);
 		self.decoded_pos += len * CHANNEL_NUM;
@@ -462,7 +493,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 		let empty = packet.data().data().data().len() <= 1;
 		let codec = packet.data().data().codec();
 		if codec != CodecType::OpusMusic && codec != CodecType::OpusVoice {
-			bail!("Can only handle opus audio but got {:?}", codec);
+			return Err(Error::UnsupportedCodec(codec));
 		}
 
 		if let Some(queue) = self.queues.get_mut(&id) {
@@ -496,6 +527,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 mod test {
 	use std::sync::Mutex;
 
+	use anyhow::{bail, Result};
 	use audiopus::coder::Encoder;
 	use slog::{o, Drain};
 	use tsproto_packets::packets::{Direction, OutAudio};

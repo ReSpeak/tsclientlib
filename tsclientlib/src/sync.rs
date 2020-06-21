@@ -7,7 +7,6 @@ use std::ops::{Deref, DerefMut};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use anyhow::{format_err, Result};
 use futures::prelude::*;
 use slog::{error, info};
 use tokio::sync::{mpsc, oneshot};
@@ -17,7 +16,7 @@ use tsproto_packets::packets::InAudioBuf;
 #[cfg(feature = "unstable")]
 use tsproto_packets::packets::OutCommand;
 
-use crate::{events, DisconnectOptions, StreamItem};
+use crate::{events, DisconnectOptions, Error, Result, StreamItem};
 
 enum SyncConMessage {
 	RunFn(Box<dyn FnOnce(&mut SyncConnection) + Send>),
@@ -306,8 +305,8 @@ impl SyncConnectionHandle {
 				let _ = send.send(f(con));
 			})))
 			.await
-			.map_err(|_| format_err!("Connection has gone"))?;
-		Ok(recv.await?)
+			.map_err(|_| Error::ConnectionGone)?;
+		Ok(recv.await.map_err(|_| Error::ConnectionGone)?)
 	}
 
 	/// Adds a `return_code` to the command and returns if the corresponding
@@ -318,8 +317,8 @@ impl SyncConnectionHandle {
 		self.send
 			.send(SyncConMessage::SendCommand(arg, send))
 			.await
-			.map_err(|_| format_err!("Connection has gone"))?;
-		Ok(recv.await??)
+			.map_err(|_| Error::ConnectionGone)?;
+		recv.await.map_err(|_| Error::ConnectionGone)?
 	}
 
 	/// This future resolves once the connection is connected to the server.
@@ -328,8 +327,8 @@ impl SyncConnectionHandle {
 		self.send
 			.send(SyncConMessage::WaitConnected(send))
 			.await
-			.map_err(|_| format_err!("Connection has gone"))?;
-		Ok(recv.await??)
+			.map_err(|_| Error::ConnectionGone)?;
+		recv.await.map_err(|_| Error::ConnectionGone)?
 	}
 
 	/// Disconnect from the server.
@@ -386,8 +385,8 @@ impl SyncConnectionHandle {
 		self.send
 			.send(SyncConMessage::Disconnect(arg, send))
 			.await
-			.map_err(|_| format_err!("Connection has gone"))?;
-		Ok(recv.await??)
+			.map_err(|_| Error::ConnectionGone)?;
+		recv.await.map_err(|_| Error::ConnectionGone)?
 	}
 
 	/// Download a file from a channel of the connected TeamSpeak server.
@@ -418,8 +417,8 @@ impl SyncConnectionHandle {
 				send,
 			})
 			.await
-			.map_err(|_| format_err!("Connection has gone"))?;
-		Ok(recv.await??)
+			.map_err(|_| Error::ConnectionGone)?;
+		recv.await.map_err(|_| Error::ConnectionGone)?
 	}
 
 	/// Upload a file to a channel of the connected TeamSpeak server.
@@ -453,7 +452,7 @@ impl SyncConnectionHandle {
 				send,
 			})
 			.await
-			.map_err(|_| format_err!("Connection has gone"))?;
-		Ok(recv.await??)
+			.map_err(|_| Error::ConnectionGone)?;
+		recv.await.map_err(|_| Error::ConnectionGone)?
 	}
 }

@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 🚀 Many performance improvements
 	- New command parser, 2×–2.5× faster than the old one
 	- New command serializer, 2× faster than the old one
-- Switched error handling library from `failure` to `anyhow` and `thiserror`
+- Switched error handling library from `failure` to `thiserror`
 
 ### ❌ Removed
 - The `ConnectionManager` in `tsproto` was removed
