@@ -21,7 +21,6 @@ travis-ci = { repository = "ReSpeak/tsclientlib" }
 
 [dependencies]
 aes = "0.3"
-anyhow = "1"
 base64 = "0.11"
 bitflags = "1"
 omnom = "3"
@@ -47,9 +46,10 @@ tokio = { version = "0.2", features = ["dns", "macros", "sync", "tcp", "time", "
 tsproto-packets = { path = "../utils/tsproto-packets" }
 tsproto-types = { path = "../utils/tsproto-types" }
 untrusted = "0.7"
-quicklz = "0.2"
+quicklz = "0.3"
 
 [dev-dependencies]
+anyhow = "1"
 criterion = "0.3"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "0.2", features = ["rt-threaded", "signal"] }

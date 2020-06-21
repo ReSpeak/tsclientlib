@@ -12,8 +12,8 @@
 //! [tsclientlib README](https://github.com/ReSpeak/tsclientlib).
 
 use std::fmt;
+use std::num::ParseIntError;
 
-use anyhow::Error;
 use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -73,26 +73,12 @@ pub const ROOT_KEY: [u8; 32] = [
 /// connection.
 const UDP_SINK_CAPACITY: usize = 50;
 
+// TODO Sort
 #[derive(Error, Debug)]
 #[non_exhaustive]
-pub enum BasicError {
-	#[error(transparent)]
-	Base64(#[from] base64::DecodeError),
-	#[error(transparent)]
-	Crypto(#[from] tsproto_types::crypto::Error),
-	#[error(transparent)]
-	Io(#[from] std::io::Error),
-	#[error(transparent)]
-	ParseInt(#[from] std::num::ParseIntError),
-	#[error("{0}")]
-	Quicklz(quicklz::Error),
-	#[error(transparent)]
-	Rand(#[from] rand::Error),
-	#[error(transparent)]
-	TsprotoPackets(#[from] tsproto_packets::Error),
-	#[error(transparent)]
-	Utf8(#[from] std::str::Utf8Error),
-
+pub enum Error {
+	#[error("Network error: {0}")]
+	Network(#[source] std::io::Error),
 	#[error("Packet {id} not in receive window [{next};{limit}) for type {p_type:?}")]
 	NotInReceiveWindow { id: u16, next: u16, limit: u16, p_type: packets::PacketType },
 	#[error("Got unallowed unencrypted packet")]
@@ -101,12 +87,26 @@ pub enum BasicError {
 	UnexpectedInitPacket,
 	#[error("Packet has wrong client id {0}")]
 	WrongClientId(u16),
+	#[error("Received udp packet from wrong address")]
+	WrongAddress,
 	#[error("{p_type:?} Packet {generation_id}:{packet_id} has a wrong mac")]
 	WrongMac { p_type: packets::PacketType, generation_id: u32, packet_id: u16 },
 	#[error("Maximum length exceeded for {0}")]
-	MaxLengthExceeded(String),
+	MaxLengthExceeded(&'static str),
+	#[error("Failed to parse int: {0}")]
+	InvalidHex(#[source] ParseIntError),
+	#[error("Failed to decompress packet: {0}")]
+	DecompressPacket(#[source] quicklz::Error),
+	#[error("Failed to parse {0} packet: {1}")]
+	PacketParse(&'static str, #[source] tsproto_packets::Error),
+	#[error("Failed to create ack packet: {0}")]
+	CreateAck(#[source] tsproto_packets::Error),
 	#[error(transparent)]
-	Other(#[from] Error),
+	IdentityCrypto(tsproto_types::crypto::Error),
+	#[error("Failed to compute cryptographic parameters: {0}")]
+	ComputeIv(#[source] tsproto_types::crypto::Error),
+	#[error("Connection timed out: {0}")]
+	Timeout(&'static str),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -149,7 +149,7 @@ fn deserialize_id_key<'de, D: Deserializer<'de>>(
 impl Identity {
 	#[inline]
 	pub fn create() -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::create()?, 0);
+		let mut res = Self::new(EccKeyPrivP256::create().map_err(Error::IdentityCrypto)?, 0);
 		res.upgrade_level(8)?;
 		Ok(res)
 	}
@@ -166,14 +166,14 @@ impl Identity {
 
 	#[inline]
 	pub fn new_from_str(key: &str) -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::import_str(key)?, 0);
+		let mut res = Self::new(EccKeyPrivP256::import_str(key).map_err(Error::IdentityCrypto)?, 0);
 		res.upgrade_level(8)?;
 		Ok(res)
 	}
 
 	#[inline]
 	pub fn new_from_bytes(key: &[u8]) -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::import(key)?, 0);
+		let mut res = Self::new(EccKeyPrivP256::import(key).map_err(Error::IdentityCrypto)?, 0);
 		res.upgrade_level(8)?;
 		Ok(res)
 	}
@@ -195,13 +195,13 @@ impl Identity {
 	/// Compute the current hash cash level.
 	#[inline]
 	pub fn level(&self) -> Result<u8> {
-		let omega = self.key.to_pub().to_ts()?;
+		let omega = self.key.to_pub().to_ts().map_err(Error::IdentityCrypto)?;
 		Ok(algs::get_hash_cash_level(&omega, self.counter))
 	}
 
 	/// Compute a better hash cash level.
 	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
-		let omega = self.key.to_pub().to_ts()?;
+		let omega = self.key.to_pub().to_ts().map_err(Error::IdentityCrypto)?;
 		let mut offset = self.max_counter;
 		while offset < u64::max_value() && algs::get_hash_cash_level(&omega, offset) < target {
 			offset += 1;

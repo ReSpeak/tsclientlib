@@ -4,7 +4,6 @@ use std::pin::Pin;
 use std::str;
 use std::task::{Context, Poll};
 
-use anyhow::{bail, Error};
 use futures::prelude::*;
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
@@ -16,6 +15,7 @@ use rug::integer::Order;
 #[cfg(feature = "rug")]
 use rug::Integer;
 use slog::{info, warn, Level, Logger};
+use thiserror::Error;
 use time::OffsetDateTime;
 use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
@@ -25,7 +25,58 @@ use crate::algorithms as algs;
 use crate::connection::{ConnectedParams, Connection, Socket, StreamItem};
 use crate::license::Licenses;
 use crate::resend::{PacketId, ResenderState};
-use crate::Result;
+
+type Result<T> = std::result::Result<T, Error>;
+
+// TODO Sort
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum Error {
+	#[error(transparent)]
+	TsProto(#[from] crate::Error),
+	#[error("Failed to solve RSA puzzle")]
+	RsaPuzzle,
+	#[error("Expected {0} but got {1}")]
+	UnexpectedPacket(&'static str, String),
+	#[error("Requested RSA puzzle level {0} is too high")]
+	RsaPuzzleTooHighLevel(u32),
+	#[error("Invalid packet: {0}")]
+	InvalidPacket(&'static str),
+	#[error("Invalid packet: Got multiple {0} in one packet")]
+	MultipleCommands(&'static str),
+	#[error("Invalid packet: initivexpand2 command has wrong arguments")]
+	InvalidInitivexpand2,
+	#[error("Cannot parse base64 argument {0}: {1}")]
+	InvalidBase64Arg(&'static str, #[source] base64::DecodeError),
+	#[error("Invalid packet: Got root for initivexpand2, but length {0} != 32")]
+	InvalidRootKeyLength(usize),
+	#[error("Invalid packet: Incorrect beta length in initivexpand2 {0} != 54")]
+	InvalidBetaLength(usize),
+	#[error("Invalid packet: Cannot parse omega as string: {0}")]
+	InvalidOmegaString(#[source] tsproto_packets::Error),
+	#[error("Invalid packet: Cannot parse omega as key: {0}")]
+	InvalidOmegaKey(#[source] tsproto_types::crypto::Error),
+	#[error("Got no ot=1, the server is probably outdated")]
+	OutdatedServer,
+	#[error("The server license signature is invalid: {0}")]
+	InvalidSignature(#[source] tsproto_types::crypto::Error),
+	#[error("Failed to parse license: {0}")]
+	ParseLicense(#[source] crate::license::Error),
+	#[error("Failed to create key: {0}")]
+	CreateKey(#[source] tsproto_types::crypto::Error),
+	#[error("Failed to sign ephemeral key: {0}")]
+	SignKey(#[source] tsproto_types::crypto::Error),
+	#[error("Failed to serialize key: {0}")]
+	SerializeKey(#[source] tsproto_types::crypto::Error),
+	#[error("Connection ended unexpectedly")]
+	ConnectionEnd,
+	#[error("Got invalid client id {0:?}: {1}")]
+	InvalidClientId(Vec<u8>, #[source] tsproto_packets::Error),
+	#[error("Got initserver without accepted client id")]
+	NoClientId,
+	#[error("Got initserver, but we have not yet a full connection")]
+	EarlyInitserver,
+}
 
 pub struct Client {
 	con: Connection,
@@ -186,7 +237,7 @@ impl Client {
 			let this = &mut **self;
 			this.resender.set_state(&this.logger, ResenderState::Disconnecting);
 		}
-		self.con.send_packet(packet)
+		Ok(self.con.send_packet(packet)?)
 	}
 
 	pub async fn connect(&mut self) -> Result<()> {
@@ -213,7 +264,12 @@ impl Client {
 					// Send next init packet
 					self.send_packet(OutC2SInit2::new(timestamp, random1, **random0_r))?;
 				}
-				_ => bail!("Unexpected init packet, needs Init1"),
+				_ => {
+					return Err(Error::UnexpectedPacket(
+						"Init1",
+						format!("{:?}", init1.data().packet().header().packet_type()),
+					));
+				}
 			}
 		}
 
@@ -228,7 +284,7 @@ impl Client {
 					// Use Montgomery Reduction
 					if level > 10_000_000 {
 						// Reject too high exponents
-						bail!("Requested level {} is too high", level);
+						return Err(Error::RsaPuzzleTooHighLevel(level));
 					}
 
 					// Create clientinitiv
@@ -257,9 +313,7 @@ impl Client {
 						let n = Integer::from_digits(&n[..], Order::Msf);
 						let x = Integer::from_digits(&x[..], Order::Msf);
 						e.set_bit(level, true);
-						let y = x
-							.pow_mod(&e, &n)
-							.map_err(|_| format_err!("Failed to solve RSA puzzle"))?;
+						let y = x.pow_mod(&e, &n).map_err(|_| Error::RsaPuzzle)?;
 						let mut yi = [0; 64];
 						y.write_digits(&mut yi, Order::Msf);
 						yi
@@ -282,7 +336,8 @@ impl Client {
 					// Create the command string
 					// omega is an ASN.1-DER encoded public key from
 					// the ECDH parameters.
-					let omega = self.private_key.to_pub().to_tomcrypt()?;
+					let omega =
+						self.private_key.to_pub().to_tomcrypt().map_err(Error::SerializeKey)?;
 					let ip = if crate::utils::is_global_ip(&ip) {
 						ip.to_string()
 					} else {
@@ -294,7 +349,12 @@ impl Client {
 						timestamp, &x, &n, level, &random2, &y, &alpha, &omega, &ip,
 					))?;
 				}
-				_ => bail!("Unexpected init packet, needs Init3"),
+				_ => {
+					return Err(Error::UnexpectedPacket(
+						"Init3",
+						format!("{:?}", init3.data().packet().header().packet_type()),
+					));
+				}
 			}
 		}
 
@@ -304,7 +364,10 @@ impl Client {
 
 			let (name, args) = CommandParser::new(command.data().packet().content());
 			if name != b"initivexpand2" {
-				bail!("Expected initivexpand2 but got {:?}", str::from_utf8(name));
+				return Err(Error::UnexpectedPacket(
+					"initivexpand2",
+					format!("{:?}", str::from_utf8(name)),
+				));
 			}
 
 			let mut l = None;
@@ -315,23 +378,43 @@ impl Client {
 			let mut root = None;
 			for item in args {
 				match item {
-					CommandItem::NextCommand => bail!("Got multiple initivexpand2s in one packet"),
+					CommandItem::NextCommand => {
+						return Err(Error::MultipleCommands("initivexpand2"));
+					}
 					CommandItem::Argument(arg) => match arg.name() {
-						b"l" => l = Some(base64::decode(&arg.value().get())?),
-						b"beta" => beta_vec = Some(base64::decode(&arg.value().get())?),
-						b"omega" => {
-							server_key = Some(EccKeyPubP256::from_ts(&arg.value().get_str()?)?)
+						b"l" => {
+							l = Some(
+								base64::decode(&arg.value().get())
+									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
+							)
 						}
-						b"proof" => proof = Some(base64::decode(&arg.value().get())?),
+						b"beta" => {
+							beta_vec = Some(
+								base64::decode(&arg.value().get())
+									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
+							)
+						}
+						b"omega" => {
+							server_key = Some(
+								EccKeyPubP256::from_ts(
+									&arg.value().get_str().map_err(Error::InvalidOmegaString)?,
+								)
+								.map_err(Error::InvalidOmegaKey)?,
+							)
+						}
+						b"proof" => {
+							proof = Some(
+								base64::decode(&arg.value().get())
+									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
+							)
+						}
 						b"ot" => ot = arg.value().get_raw() == b"1",
 						b"root" => {
-							let data = base64::decode(&arg.value().get())?;
+							let data = base64::decode(&arg.value().get())
+								.map_err(|e| Error::InvalidBase64Arg("root", e))?;
 							let mut data2 = [0; 32];
 							if data.len() != 32 {
-								bail!(
-									"Got root for initivexpand2, but length {} != 32",
-									data.len()
-								);
+								return Err(Error::InvalidRootKeyLength(data.len()));
 							}
 							data2.copy_from_slice(&data);
 							root = Some(EccKeyPubEd25519::from_bytes(data2));
@@ -342,10 +425,10 @@ impl Client {
 			}
 
 			if !ot {
-				bail!("Got no ot=1, probably the server is outdated");
+				return Err(Error::OutdatedServer);
 			}
 			if l.is_none() || beta_vec.is_none() || server_key.is_none() || proof.is_none() {
-				bail!("initivexpand2 command has wrong arguments");
+				return Err(Error::InvalidInitivexpand2);
 			}
 			let l = l.unwrap();
 			let beta_vec = beta_vec.unwrap();
@@ -354,22 +437,22 @@ impl Client {
 			let root = root.unwrap_or_else(|| EccKeyPubEd25519::from_bytes(crate::ROOT_KEY));
 
 			// Check signature of l (proof)
-			server_key.clone().verify(&l, &proof)?;
+			server_key.clone().verify(&l, &proof).map_err(Error::InvalidSignature)?;
 
 			if beta_vec.len() != 54 {
-				bail!("Incorrect beta length: {} != 54", beta_vec.len());
+				return Err(Error::InvalidBetaLength(beta_vec.len()));
 			}
 
 			let mut beta = [0; 54];
 			beta.copy_from_slice(&beta_vec);
 
 			// Parse license argument
-			let licenses = Licenses::parse(&l)?;
+			let licenses = Licenses::parse(&l).map_err(Error::ParseLicense)?;
 			// Ephemeral key of server
-			let server_ek = licenses.derive_public_key(root)?;
+			let server_ek = licenses.derive_public_key(root).map_err(Error::ParseLicense)?;
 
 			// Create own ephemeral key
-			let ek = EccKeyPrivEd25519::create()?;
+			let ek = EccKeyPrivEd25519::create().map_err(Error::CreateKey)?;
 
 			let (iv, mac) = algs::compute_iv_mac(&alpha, &beta, &ek, &server_ek)?;
 			self.con.params = Some(ConnectedParams::new(server_key, iv, mac));
@@ -382,7 +465,7 @@ impl Client {
 			let mut all = Vec::with_capacity(32 + 54);
 			all.extend_from_slice(ek_pub.0.as_bytes());
 			all.extend_from_slice(&beta);
-			let proof = self.private_key.clone().sign(&all)?;
+			let proof = self.private_key.clone().sign(&all).map_err(Error::SignKey)?;
 			let proof_s = base64::encode(&proof);
 
 			// Send clientek
@@ -404,7 +487,7 @@ impl Client {
 		loop {
 			let item = self.next().await;
 			match item {
-				None => bail!("Connection ended before a matching item was found"),
+				None => return Err(Error::ConnectionEnd),
 				Some(r) => {
 					if let Some(r) = filter(self, r?)? {
 						return Ok(r);
@@ -421,7 +504,7 @@ impl Client {
 		loop {
 			let item = self.next().await;
 			match item {
-				None => bail!("Connection ended before a matching item was found"),
+				None => return Err(Error::ConnectionEnd),
 				Some(Err(e)) => return Err(e),
 				Some(Ok(StreamItem::Error(e))) => {
 					warn!(self.logger, "Got connection error"; "error" => %e);
@@ -479,10 +562,21 @@ impl Client {
 				let mut c_id = None;
 				for item in args {
 					match item {
-						CommandItem::NextCommand => bail!("Got multiple initservers in one packet"),
+						CommandItem::NextCommand => {
+							return Err(Error::MultipleCommands("initserver"));
+						}
 						CommandItem::Argument(arg) => match arg.name() {
 							b"aclid" => {
-								c_id = Some(arg.value().get_parse::<Error, u16>()?);
+								c_id = Some(
+									arg.value()
+										.get_parse::<tsproto_packets::Error, u16>()
+										.map_err(|e| {
+											Error::InvalidClientId(
+												arg.value().get_raw().to_vec(),
+												e,
+											)
+										})?,
+								);
 								break;
 							}
 							_ => {}
@@ -493,10 +587,10 @@ impl Client {
 				if let Some(c_id) = c_id {
 					params.c_id = c_id;
 				} else {
-					bail!("Got initserver without aclid");
+					return Err(Error::NoClientId);
 				}
 			} else {
-				bail!("Got initserver, but we have not yet a full connection");
+				return Err(Error::EarlyInitserver);
 			}
 
 			// Notify the resender that we are connected
@@ -511,7 +605,12 @@ impl Client {
 						CommandItem::NextCommand => {}
 						CommandItem::Argument(arg) => match arg.name() {
 							b"clid" => {
-								let c_id = arg.value().get_parse::<Error, u16>()?;
+								let c_id = arg
+									.value()
+									.get_parse::<tsproto_packets::Error, u16>()
+									.map_err(|e| {
+									Error::InvalidClientId(arg.value().get_raw().to_vec(), e)
+								})?;
 								own_client |= c_id == params.c_id;
 							}
 							_ => {}
@@ -533,7 +632,7 @@ impl Client {
 					CommandItem::Argument(arg) => match arg.name() {
 						b"name" => is_getversion = arg.value().get_raw() == b"getversion",
 						b"invokerid" => {
-							if let Ok(id) = arg.value().get_parse::<Error, _>() {
+							if let Ok(id) = arg.value().get_parse::<tsproto_packets::Error, _>() {
 								sender = Some(id);
 							}
 						}
@@ -597,7 +696,10 @@ impl Stream for Client {
 						Ok(None) => {}
 					}
 				}
-				r => return r,
+				Poll::Ready(Some(Err(e))) => return Poll::Ready(Some(Err(e.into()))),
+				Poll::Ready(Some(Ok(r))) => return Poll::Ready(Some(Ok(r))),
+				Poll::Ready(None) => return Poll::Ready(None),
+				Poll::Pending => return Poll::Pending,
 			}
 		}
 	}
@@ -611,6 +713,7 @@ mod tests {
 	use std::sync::{Arc, Mutex};
 	use std::task::Waker;
 
+	use anyhow::{bail, Result};
 	use num_traits::ToPrimitive;
 	use slog::{debug, o, Drain};
 	use tokio::sync::oneshot;

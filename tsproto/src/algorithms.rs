@@ -12,10 +12,8 @@ use ring::digest;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 
 use crate::connection::CachedKey;
-use crate::BasicError;
+use crate::{Error, Result};
 use tsproto_packets::packets::*;
-
-type Result<T> = std::result::Result<T, BasicError>;
 
 pub fn must_encrypt(t: PacketType) -> bool {
 	match t {
@@ -185,7 +183,7 @@ pub fn decrypt_key_nonce(
 	let mut content = packet.content().to_vec();
 	eax::Eax::<aes::Aes128>::decrypt(key, nonce, &meta, &mut content, header.mac())
 		.map(|()| content)
-		.map_err(|_| BasicError::WrongMac {
+		.map_err(|_| Error::WrongMac {
 			p_type: header.packet_type(),
 			generation_id: 0,
 			packet_id: header.packet_id(),
@@ -209,8 +207,8 @@ pub fn decrypt(
 		cache,
 	);
 	decrypt_key_nonce(packet, &key, &nonce).map_err(|e| {
-		if let BasicError::WrongMac { p_type, packet_id, .. } = e {
-			BasicError::WrongMac { p_type, generation_id, packet_id }
+		if let Error::WrongMac { p_type, packet_id, .. } = e {
+			Error::WrongMac { p_type, generation_id, packet_id }
 		} else {
 			e
 		}
@@ -221,7 +219,7 @@ pub fn decrypt(
 pub fn compute_iv_mac(
 	alpha: &[u8; 10], beta: &[u8; 54], our_key: &EccKeyPrivEd25519, other_key: &EdwardsPoint,
 ) -> Result<([u8; 64], [u8; 8])> {
-	let shared_secret = our_key.create_shared_secret(other_key)?;
+	let shared_secret = our_key.create_shared_secret(other_key).map_err(Error::ComputeIv)?;
 	let mut shared_iv = [0; 64];
 	shared_iv.copy_from_slice(digest::digest(&digest::SHA512, &shared_secret).as_ref());
 	for i in 0..10 {
@@ -238,7 +236,7 @@ pub fn compute_iv_mac(
 }
 
 pub fn hash_cash(key: &EccKeyPubP256, level: u8) -> Result<u64> {
-	let omega = key.to_ts()?;
+	let omega = key.to_ts().map_err(Error::IdentityCrypto)?;
 	let mut offset = 0;
 	while offset < u64::MAX && get_hash_cash_level(&omega, offset) < level {
 		offset += 1;

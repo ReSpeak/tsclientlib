@@ -9,7 +9,7 @@ use tsproto_packets::packets::*;
 use crate::algorithms as algs;
 use crate::connection::{Connection, Event, StreamItem};
 use crate::resend::{PartialPacketId, Resender};
-use crate::{BasicError, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
+use crate::{Error, Result, MAX_FRAGMENTS_LENGTH, MAX_QUEUE_LEN};
 
 /// Encodes outgoing packets.
 ///
@@ -55,8 +55,7 @@ impl PacketCodec {
 
 		if let Some(params) = &con.params {
 			if p_type == PacketType::Init {
-				con.stream_items
-					.push_back(StreamItem::Error(BasicError::UnexpectedInitPacket.into()));
+				con.stream_items.push_back(StreamItem::Error(Error::UnexpectedInitPacket));
 				return Ok(());
 			}
 			if !con.is_client {
@@ -64,8 +63,7 @@ impl PacketCodec {
 				// Accept any client id for the first few acks
 				let is_first_ack = gen_id == 0 && id <= 3 && p_type == PacketType::Ack;
 				if c_id != params.c_id && !is_first_ack {
-					con.stream_items
-						.push_back(StreamItem::Error(BasicError::WrongClientId(c_id).into()));
+					con.stream_items.push_back(StreamItem::Error(Error::WrongClientId(c_id)));
 					return Ok(());
 				}
 			}
@@ -94,11 +92,7 @@ impl PacketCodec {
 							algs::decrypt(&packet, gen_id, &params.shared_iv, &mut params.key_cache)
 						} else {
 							// Failed to fake decrypt the packet
-							Err(BasicError::WrongMac {
-								p_type,
-								generation_id: gen_id,
-								packet_id: id,
-							})
+							Err(Error::WrongMac { p_type, generation_id: gen_id, packet_id: id })
 						}
 					}) {
 						Ok(r) => r,
@@ -124,10 +118,11 @@ impl PacketCodec {
 						}
 					} else {
 						// Failed to fake decrypt the packet
-						con.stream_items.push_back(StreamItem::Error(
-							BasicError::WrongMac { p_type, generation_id: gen_id, packet_id: id }
-								.into(),
-						));
+						con.stream_items.push_back(StreamItem::Error(Error::WrongMac {
+							p_type,
+							generation_id: gen_id,
+							packet_id: id,
+						}));
 						return Ok(());
 					}
 				};
@@ -136,8 +131,7 @@ impl PacketCodec {
 				(&mut packet_data[start..]).copy_from_slice(&new_content);
 			} else if algs::must_encrypt(p_type) {
 				// Check if it is ok for the packet to be unencrypted
-				con.stream_items
-					.push_back(StreamItem::Error(BasicError::UnallowedUnencryptedPacket.into()));
+				con.stream_items.push_back(StreamItem::Error(Error::UnallowedUnencryptedPacket));
 				return Ok(());
 			}
 
@@ -176,7 +170,7 @@ impl PacketCodec {
 								}
 								StreamItem::Command(c)
 							}
-							Err(e) => return Err(e.into()),
+							Err(e) => return Err(Error::PacketParse("command", e)),
 						};
 						con.stream_items.push_back(item);
 					}
@@ -209,7 +203,7 @@ impl PacketCodec {
 						}
 						Ok(None) => {}
 						Err(e) => {
-							con.stream_items.push_back(StreamItem::Error(e.into()));
+							con.stream_items.push_back(StreamItem::Error(Error::CreateAck(e)));
 							return Ok(());
 						}
 					}
@@ -221,18 +215,18 @@ impl PacketCodec {
 					if p_type.is_voice() {
 						con.stream_items.push_back(match InAudioBuf::try_new(dir, packet_data) {
 							Ok(r) => StreamItem::Audio(r),
-							Err(e) => StreamItem::Error(e.into()),
+							Err(e) => StreamItem::Error(Error::PacketParse("audio", e)),
 						});
 					} else if p_type == PacketType::Init {
 						con.stream_items.push_back(if con.is_client {
 							match InS2CInitBuf::try_new(dir, packet_data) {
 								Ok(r) => StreamItem::S2CInit(r),
-								Err(e) => StreamItem::Error(e.into()),
+								Err(e) => StreamItem::Error(Error::PacketParse("s2cinit", e)),
 							}
 						} else {
 							match InC2SInitBuf::try_new(dir, packet_data) {
 								Ok(r) => StreamItem::C2SInit(r),
-								Err(e) => StreamItem::Error(e.into()),
+								Err(e) => StreamItem::Error(Error::PacketParse("c2sinit", e)),
 							}
 						});
 					}
@@ -243,9 +237,12 @@ impl PacketCodec {
 			if p_type == PacketType::Command || p_type == PacketType::CommandLow {
 				ack = true;
 			}
-			con.stream_items.push_back(StreamItem::Error(
-				BasicError::NotInReceiveWindow { id, next: cur_next, limit, p_type }.into(),
-			));
+			con.stream_items.push_back(StreamItem::Error(Error::NotInReceiveWindow {
+				id,
+				next: cur_next,
+				limit,
+				p_type,
+			}));
 		}
 
 		// Send ack
@@ -292,7 +289,7 @@ impl PacketCodec {
 								&mut Cursor::new(header.content()),
 								crate::MAX_DECOMPRESSED_SIZE,
 							)
-							.map_err(|e| BasicError::Quicklz(e))?;
+							.map_err(Error::DecompressPacket)?;
 							let start = header.header().data().len();
 							frag_queue.truncate(start);
 							frag_queue.extend_from_slice(&decompressed);
@@ -310,9 +307,7 @@ impl PacketCodec {
 						frag_queue.extend_from_slice(packet.content());
 						None
 					} else {
-						return Err(
-							BasicError::MaxLengthExceeded(String::from("fragment queue")).into()
-						);
+						return Err(Error::MaxLengthExceeded("fragment queue"));
 					}
 				} else {
 					// Decompress
@@ -321,7 +316,7 @@ impl PacketCodec {
 							&mut Cursor::new(packet.content()),
 							crate::MAX_DECOMPRESSED_SIZE,
 						)
-						.map_err(|e| BasicError::Quicklz(e))?;
+						.map_err(Error::DecompressPacket)?;
 						let start = packet.header().data().len();
 						packet_data.truncate(start);
 						packet_data.extend_from_slice(&decompressed);
@@ -358,7 +353,7 @@ impl PacketCodec {
 				r_queue.push(packet_data);
 				Ok(vec![])
 			} else {
-				Err(BasicError::MaxLengthExceeded(String::from("command queue")).into())
+				Err(Error::MaxLengthExceeded("command queue"))
 			}
 		}
 	}

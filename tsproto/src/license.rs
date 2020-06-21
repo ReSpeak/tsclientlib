@@ -3,7 +3,6 @@ use std::fmt;
 use std::io::prelude::*;
 use std::str;
 
-use anyhow::format_err;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
@@ -11,13 +10,59 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use ring::digest;
+use thiserror::Error;
 use time::OffsetDateTime;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 
-use crate::Result;
-
 pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
 
+type Result<T> = std::result::Result<T, Error>;
+
+// TODO Sort
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum Error {
+	#[error("Failed to serialize license: {0}")]
+	Serialize(#[source] std::io::Error),
+	#[error("Failed to deserialize license: {0}")]
+	Deserialize(#[source] std::io::Error),
+	#[error("Failed to deserialize license: {0}")]
+	DeserializeString(#[source] std::str::Utf8Error),
+	#[error("Non-null-terminated string")]
+	NonterminatedString,
+	#[error("Cannot uncompress license public key")]
+	InvalidPublicKey,
+	#[error("Unsupported license version {0}")]
+	UnsupportedVersion(u8),
+	#[error("Too many license blocks: {0}")]
+	TooManyBlocks(usize),
+	#[error("License is only valid between {start} and {end}")]
+	Expired { start: OffsetDateTime, end: OffsetDateTime },
+	#[error(
+		"License must not exceed bounds {outer_start} - {outer_end} but has {inner_start} - \
+		 {inner_end}"
+	)]
+	Bounds {
+		outer_start: OffsetDateTime,
+		outer_end: OffsetDateTime,
+		inner_start: OffsetDateTime,
+		inner_end: OffsetDateTime,
+	},
+	#[error("Invalid public root key for license")]
+	InvalidRootKey,
+	#[error("License too short")]
+	TooShort,
+	#[error("Wrong key kind {0} in license")]
+	WrongKeyKind(u8),
+	#[error("Invalid data {0:#x} in intermediate license")]
+	IntermediateInvalidData(u32),
+	#[error("License contains no private key")]
+	NoPrivateKey,
+	#[error("Unknown license type {0}")]
+	UnknownLicenseType(u8),
+	#[error("Unknown license block type {0}")]
+	UnknownBlockType(u8),
+}
 /// Either a public or a private key.
 #[derive(Debug, Clone)]
 pub enum LicenseKey {
@@ -90,9 +135,7 @@ impl LicenseKey {
 
 	pub fn get_pub(&self) -> Result<EdwardsPoint> {
 		match *self {
-			LicenseKey::Public(ref k) => {
-				k.0.decompress().ok_or_else(|| format_err!("Cannot uncompress public key").into())
-			}
+			LicenseKey::Public(ref k) => k.0.decompress().ok_or(Error::InvalidPublicKey),
 			LicenseKey::Private(ref k) => Ok(&constants::ED25519_BASEPOINT_TABLE * &k.0),
 		}
 	}
@@ -123,7 +166,7 @@ impl Licenses {
 	pub fn parse_internal(mut data: &[u8], check_expired: bool) -> Result<Self> {
 		let version = data[0];
 		if version != 0 && version != 1 {
-			return Err(format_err!("Unsupported version").into());
+			return Err(Error::UnsupportedVersion(version));
 		}
 		// Read licenses
 		let mut res = Licenses { blocks: Vec::new() };
@@ -134,7 +177,7 @@ impl Licenses {
 		while !data.is_empty() {
 			if res.blocks.len() >= 8 {
 				// Accept only 8 blocks
-				return Err(format_err!("Too many license blocks").into());
+				return Err(Error::TooManyBlocks(res.blocks.len()));
 			}
 
 			// Read next license
@@ -142,15 +185,26 @@ impl Licenses {
 
 			// Check if the certificate is valid
 			if license.not_valid_before > now && check_expired {
-				return Err(format_err!("License is not yet valid").into());
+				return Err(Error::Expired {
+					start: license.not_valid_before,
+					end: license.not_valid_after,
+				});
 			}
 			if license.not_valid_after < now && check_expired {
-				return Err(format_err!("License expired").into());
+				return Err(Error::Expired {
+					start: license.not_valid_before,
+					end: license.not_valid_after,
+				});
 			}
 			if let Some((start, end)) = bounds {
 				// The inner license must not have wider bounds
 				if license.not_valid_before < start || license.not_valid_after > end {
-					return Err(format_err!("Invalid license time bounds").into());
+					return Err(Error::Bounds {
+						outer_start: start,
+						outer_end: end,
+						inner_start: license.not_valid_before,
+						inner_end: license.not_valid_after,
+					});
 				}
 			}
 			bounds = Some((license.not_valid_before, license.not_valid_after));
@@ -163,7 +217,7 @@ impl Licenses {
 
 	pub fn write(&self, mut w: &mut dyn Write) -> Result<()> {
 		// Version
-		w.write_be(1u8)?;
+		w.write_be(1u8).map_err(Error::Serialize)?;
 
 		for l in &self.blocks {
 			l.write(w)?;
@@ -173,10 +227,7 @@ impl Licenses {
 	}
 
 	pub fn derive_public_key(&self, root: EccKeyPubEd25519) -> Result<EdwardsPoint> {
-		let mut last_round = root
-			.0
-			.decompress()
-			.ok_or_else(|| format_err!("Invalid root public key for license"))?;
+		let mut last_round = root.0.decompress().ok_or(Error::InvalidRootKey)?;
 		for l in &self.blocks {
 			//let derived_key = last_round.compress().0;
 			//println!("Got key: {:?}", ::utils::HexSlice((&derived_key) as &[u8]));
@@ -231,54 +282,58 @@ impl License {
 		const MIN_LEN: usize = 42;
 
 		if data.len() < MIN_LEN {
-			return Err(format_err!("License too short").into());
+			return Err(Error::TooShort);
 		}
 		if data[0] != 0 {
-			return Err(format_err!("Wrong key kind {} in license", data[0]).into());
+			return Err(Error::WrongKeyKind(data[0]));
 		}
 
 		let mut key_data = [0; 32];
 		key_data.copy_from_slice(&data[1..33]);
 
-		let before_ts: u32 = (&data[34..]).read_be()?;
-		let after_ts: u32 = (&data[38..]).read_be()?;
+		let before_ts: u32 = (&data[34..]).read_be().map_err(Error::Deserialize)?;
+		let after_ts: u32 = (&data[38..]).read_be().map_err(Error::Deserialize)?;
 
 		let (inner, extra_len) = match data[33] {
 			0 => {
-				let license_data: u32 = (&data[42..]).read_be()?;
+				let license_data: u32 = (&data[42..]).read_be().map_err(Error::Deserialize)?;
 				if license_data > 0x7f {
-					return Err(format_err!("Invalid data in intermediate license").into());
+					return Err(Error::IntermediateInvalidData(license_data));
 				}
 
 				let len = if let Some(len) = data[46..].iter().position(|&b| b == 0) {
 					len
 				} else {
-					return Err(format_err!("Non-null-terminated string").into());
+					return Err(Error::NonterminatedString);
 				};
-				let issuer = str::from_utf8(&data[46..46 + len])?.to_string();
+				let issuer = str::from_utf8(&data[46..46 + len])
+					.map_err(Error::DeserializeString)?
+					.to_string();
 				(InnerLicense::Intermediate { issuer, data: license_data as u8 }, 5 + len)
 			}
 			2 => {
 				if data.len() < 47 {
-					return Err(format_err!("License too short").into());
+					return Err(Error::TooShort);
 				}
-				let license_type = LicenseType::from_u8(data[42])
-					.ok_or_else(|| format_err!("Unknown license type {}", data[42]))?;
-				let license_data: u32 = (&data[43..]).read_be()?;
+				let license_type =
+					LicenseType::from_u8(data[42]).ok_or(Error::UnknownLicenseType(data[42]))?;
+				let license_data: u32 = (&data[43..]).read_be().map_err(Error::Deserialize)?;
 				let len = if let Some(len) = data[47..].iter().position(|&b| b == 0) {
 					len
 				} else {
-					return Err(format_err!("Non-null-terminated string").into());
+					return Err(Error::NonterminatedString);
 				};
 				if data.len() < 47 + len {
-					return Err(format_err!("License too short").into());
+					return Err(Error::TooShort);
 				}
-				let issuer = str::from_utf8(&data[47..47 + len])?.to_string();
+				let issuer = str::from_utf8(&data[47..47 + len])
+					.map_err(Error::DeserializeString)?
+					.to_string();
 				(InnerLicense::Server { issuer, license_type, data: license_data }, 6 + len)
 			}
 			32 => (InnerLicense::Ephemeral, 0),
 			i => {
-				return Err(format_err!("Invalid license block type {}", i).into());
+				return Err(Error::UnknownBlockType(i));
 			}
 		};
 
@@ -304,34 +359,36 @@ impl License {
 	}
 
 	pub fn write(&self, mut w: &mut dyn Write) -> Result<()> {
-		w.write_be(0u8)?;
+		w.write_be(0u8).map_err(Error::Serialize)?;
 		// Public key
-		w.write_all(self.key.get_pub_bytes().as_ref())?;
+		w.write_all(self.key.get_pub_bytes().as_ref()).map_err(Error::Serialize)?;
 		// Type
-		w.write_be(self.inner.type_id())?;
+		w.write_be(self.inner.type_id()).map_err(Error::Serialize)?;
 
-		w.write_be((self.not_valid_before.timestamp() - TIMESTAMP_OFFSET) as u32)?;
-		w.write_be((self.not_valid_after.timestamp() - TIMESTAMP_OFFSET) as u32)?;
+		w.write_be((self.not_valid_before.timestamp() - TIMESTAMP_OFFSET) as u32)
+			.map_err(Error::Serialize)?;
+		w.write_be((self.not_valid_after.timestamp() - TIMESTAMP_OFFSET) as u32)
+			.map_err(Error::Serialize)?;
 
 		match self.inner {
 			InnerLicense::Intermediate { ref issuer, data } => {
-				w.write_be(u32::from(data))?;
-				w.write_all(issuer.as_bytes())?;
-				w.write_be(0u8)?;
+				w.write_be(u32::from(data)).map_err(Error::Serialize)?;
+				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
+				w.write_be(0u8).map_err(Error::Serialize)?;
 			}
 			InnerLicense::Website { ref issuer } => {
-				w.write_all(issuer.as_bytes())?;
-				w.write_be(0u8)?;
+				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
+				w.write_be(0u8).map_err(Error::Serialize)?;
 			}
 			InnerLicense::Server { ref issuer, license_type, data } => {
-				w.write_be(license_type.to_u8().unwrap())?;
-				w.write_be(data)?;
-				w.write_all(issuer.as_bytes())?;
-				w.write_be(0u8)?;
+				w.write_be(license_type.to_u8().unwrap()).map_err(Error::Serialize)?;
+				w.write_be(data).map_err(Error::Serialize)?;
+				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
+				w.write_be(0u8).map_err(Error::Serialize)?;
 			}
 			InnerLicense::Code { ref issuer } => {
-				w.write_all(issuer.as_bytes())?;
-				w.write_be(0u8)?;
+				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
+				w.write_be(0u8).map_err(Error::Serialize)?;
 			}
 			InnerLicense::Ephemeral => {}
 		}
@@ -366,7 +423,7 @@ impl License {
 		let priv_key = if let LicenseKey::Private(ref k) = self.key {
 			&k.0
 		} else {
-			return Err(format_err!("License contains no private key").into());
+			return Err(Error::NoPrivateKey);
 		};
 		let hash_key = self.get_hash_key();
 		Ok(EccKeyPrivEd25519(priv_key * hash_key + parent_key.0))

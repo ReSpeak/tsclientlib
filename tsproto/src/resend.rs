@@ -6,7 +6,6 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Add, Sub};
 use std::task::{Context, Poll};
 
-use anyhow::bail;
 use futures::prelude::*;
 use num_traits::ToPrimitive;
 use slog::{info, warn, Logger};
@@ -14,7 +13,7 @@ use tokio::time::{Delay, Duration, Instant};
 use tsproto_packets::packets::*;
 
 use crate::connection::{Connection, StreamItem};
-use crate::{Result, UDP_SINK_CAPACITY};
+use crate::{Error, Result, UDP_SINK_CAPACITY};
 
 // TODO implement fast retransmit: 2 Acks received but earlier packet not acked -> retransmit
 // TODO implement slow start and redo slow start when send window reaches 1, also reset all tries then
@@ -522,7 +521,7 @@ impl Resender {
 			}
 
 			if now - full_rec.sent > timeout {
-				bail!("Connection timed out");
+				return Err(Error::Timeout("Packet was not acked"));
 			}
 
 			// Try to send this packet
@@ -584,12 +583,12 @@ impl Resender {
 
 		if con.resender.state == ResenderState::Disconnecting {
 			if now - con.resender.last_send >= timeout {
-				bail!("Connection timed out");
+				return Err(Error::Timeout("No disconnect ack received"));
 			}
 
 			con.resender.state_timeout.reset(con.resender.last_send + timeout);
 			if let Poll::Ready(()) = con.resender.state_timeout.poll_unpin(cx) {
-				bail!("Connection timed out");
+				return Err(Error::Timeout("No disconnect ack received"));
 			}
 		}
 
@@ -619,7 +618,7 @@ impl Resender {
 						- con.resender.last_pings.first().unwrap().id;
 					// We did not receive a pong in between the last pings
 					if diff as usize == con.resender.last_pings.len() - 1 {
-						bail!("Connection timed out");
+						return Err(Error::Timeout("Server did not respond to pings"));
 					}
 				}
 
@@ -627,15 +626,12 @@ impl Resender {
 				let dir = if con.is_client { Direction::C2S } else { Direction::S2C };
 				let packet = OutPacket::new_with_dir(dir, Flags::empty(), PacketType::Ping);
 				let p_id = con.send_packet(packet)?;
-				con.resender.last_pings.push(Ping {
-					id: p_id.part,
-					sent: now,
-				});
+				con.resender.last_pings.push(Ping { id: p_id.part, sent: now });
 				if con.resender.last_pings.len() > PING_COUNT {
 					con.resender.last_pings.remove(0);
 				}
 			} else {
-				break
+				break;
 			}
 		}
 		Ok(())

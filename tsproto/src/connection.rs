@@ -8,13 +8,11 @@ use std::u16;
 
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
-use anyhow::format_err;
 use futures::prelude::*;
 use num_traits::ToPrimitive;
 use slog::{o, Logger};
 use tokio::net::UdpSocket;
 use tsproto_packets::packets::*;
-use tsproto_packets::HexSlice;
 use tsproto_types::crypto::EccKeyPubP256;
 
 use crate::packet_codec::PacketCodec;
@@ -266,7 +264,7 @@ impl Connection {
 					}
 				}
 				// Udp socket closed
-				Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+				Poll::Ready(Err(e)) => return Poll::Ready(Err(Error::Network(e))),
 				Poll::Pending => return Poll::Pending,
 			}
 		}
@@ -276,9 +274,7 @@ impl Connection {
 		&mut self, cx: &mut Context, udp_buffer: Vec<u8>, addr: SocketAddr,
 	) -> Result<()> {
 		if addr != self.address {
-			self.stream_items.push_back(StreamItem::Error(format_err!(
-				"Received UDP packet from wrong address"
-			)));
+			self.stream_items.push_back(StreamItem::Error(Error::WrongAddress));
 			return Ok(());
 		}
 
@@ -286,10 +282,7 @@ impl Connection {
 		let packet = InUdpPacket(match InPacket::try_new(dir, &udp_buffer) {
 			Ok(r) => r,
 			Err(e) => {
-				let e: Error = e.into();
-				self.stream_items.push_back(StreamItem::Error(
-					e.context(format!("Buffer {}", HexSlice(&udp_buffer))),
-				));
+				self.stream_items.push_back(StreamItem::Error(Error::PacketParse("udp", e)));
 				return Ok(());
 			}
 		});
@@ -372,7 +365,7 @@ impl Connection {
 	) -> Poll<Result<()>>
 	{
 		let data = packet.data().data();
-		match udp_socket.poll_send_to(cx, data, address)? {
+		match udp_socket.poll_send_to(cx, data, address).map_err(Error::Network)? {
 			Poll::Pending => Poll::Pending,
 			Poll::Ready(size) => {
 				let event = Event::SendUdpPacket(&packet);
@@ -381,7 +374,10 @@ impl Connection {
 				}
 
 				if size != data.len() {
-					Poll::Ready(Err(format_err!("Failed to send whole udp packet")))
+					Poll::Ready(Err(Error::Network(std::io::Error::new(
+						std::io::ErrorKind::Other,
+						"Failed to send whole udp packet",
+					))))
 				} else {
 					Poll::Ready(Ok(()))
 				}
