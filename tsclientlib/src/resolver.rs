@@ -7,7 +7,6 @@ use std::str::{self, FromStr};
 
 use futures::prelude::*;
 use itertools::Itertools;
-use rand::rngs::OsRng;
 use rand::Rng;
 use slog::{debug, o, warn, Logger};
 use thiserror::Error;
@@ -370,7 +369,7 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 
 			while !entries.is_empty() {
 				let weight: u32 = entries.iter().map(|e| e.weight() as u32).sum();
-				let mut w = OsRng.gen_range(0, weight + 1);
+				let mut w = rand::thread_rng().gen_range(0, weight + 1);
 				if w == 0 {
 					// Pick the first entry with weight 0
 					if let Some(i) = entries.iter().position(|e| e.weight() == 0) {

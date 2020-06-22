@@ -247,7 +247,7 @@ impl Client {
 		let timestamp = now.timestamp() as u32;
 
 		// Random bytes
-		let random0 = rand::rngs::OsRng.gen::<[u8; 4]>();
+		let random0 = rand::thread_rng().gen::<[u8; 4]>();
 
 		// Wait for Init1
 		{
@@ -288,7 +288,7 @@ impl Client {
 					}
 
 					// Create clientinitiv
-					alpha = rand::rngs::OsRng.gen::<[u8; 10]>();
+					alpha = rand::thread_rng().gen::<[u8; 10]>();
 					// omega is an ASN.1-DER encoded public key from
 					// the ECDH parameters.
 
