@@ -132,7 +132,7 @@ impl AudioToTs {
 						}
 					}
 					Err(e) => {
-						error!(a2t.logger, "Failed to open capture device"; "error" => ?e);
+						error!(a2t.logger, "Failed to open capture device"; "error" => %e);
 					}
 				};
 			}
@@ -154,7 +154,7 @@ impl AudioCallback for SdlCallback {
 
 		match self.encoder.encode_float(buffer, &mut self.opus_output[..]) {
 			Err(e) => {
-				error!(self.logger, "Failed to encode opus"; "error" => ?e);
+				error!(self.logger, "Failed to encode opus"; "error" => %e);
 			}
 			Ok(len) => {
 				// Create packet

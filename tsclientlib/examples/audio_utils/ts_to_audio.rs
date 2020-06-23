@@ -78,7 +78,7 @@ impl TsToAudio {
 						debug!(t2a.logger, "Reconnected to playback device");
 					}
 					Err(e) => {
-						error!(t2a.logger, "Failed to open playback device"; "error" => ?e);
+						error!(t2a.logger, "Failed to open playback device"; "error" => %e);
 					}
 				};
 			}

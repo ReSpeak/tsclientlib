@@ -846,8 +846,7 @@ impl Connection {
 							break Poll::Ready(None);
 						}
 
-						warn!(self.logger, "Connection failed, reconnecting";
-							"error" => ?e);
+						warn!(self.logger, "Connection failed, reconnecting"; "error" => %e);
 						// Reconnect
 						// TODO Depending on reason
 						let fut = Self::connect(self.logger.clone(), self.options.clone());
@@ -924,8 +923,7 @@ impl ConnectedConnection {
 		) {
 			Ok(r) => r,
 			Err(e) => {
-				warn!(logger, "Failed to parse message";
-					"error" => ?e);
+				warn!(logger, "Failed to parse message"; "error" => %e);
 				return;
 			}
 		};
@@ -1001,7 +999,7 @@ impl ConnectedConnection {
 			let events = match book.handle_command(logger, &msg) {
 				Ok(r) => r,
 				Err(e) => {
-					warn!(logger, "Failed to handle message"; "error" => ?e);
+					warn!(logger, "Failed to handle message"; "error" => %e);
 					return;
 				}
 			};

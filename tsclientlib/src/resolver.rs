@@ -192,8 +192,7 @@ async fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
 	match TokioAsyncResolver::tokio_from_system_conf().await {
 		Ok(r) => Ok(r),
 		Err(e) => {
-			warn!(logger, "Failed to use system dns resolver config";
-				"error" => ?e);
+			warn!(logger, "Failed to use system dns resolver config"; "error" => %e);
 			// Fallback
 			Ok(TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), Default::default())
 				.await
