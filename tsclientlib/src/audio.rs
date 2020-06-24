@@ -451,10 +451,12 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 
 	/// `buf` is not cleared before filling it.
 	///
-	/// Returns the clients that are not talking anymore.
-	pub fn fill_buffer(&mut self, buf: &mut [f32]) -> Vec<Id> {
+	/// Returns the number of written frames into the `buf` and the clients that are not talking
+	/// anymore.
+	pub fn fill_buffer(&mut self, buf: &mut [f32]) -> (usize, Vec<Id>) {
 		trace!(self.logger, "Filling audio buffer"; "len" => buf.len());
 		let mut to_remove = Vec::new();
+		let mut written_len = 0;
 		for (id, queue) in self.queues.iter_mut() {
 			if queue.packet_loss_num >= MAX_PACKET_LOSSES {
 				debug!(self.logger, "Removing talker";
@@ -473,6 +475,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 					for i in 0..r.len() {
 						buf[i] += r[i] * vol;
 					}
+					written_len = written_len.max(r.len());
 					if is_end {
 						to_remove.push(id.clone());
 					}
@@ -483,7 +486,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 		for id in &to_remove {
 			self.queues.remove(&id);
 		}
-		to_remove
+		(written_len, to_remove)
 	}
 
 	/// Add a packet to the audio queue.
