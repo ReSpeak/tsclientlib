@@ -107,4 +107,9 @@ introduced in the 3.1 server).
 Thanks TeamSpeak for your software!
 
 ## License
-Licensed under the [Open Software License](LICENSE).
+Licensed under either of
+
+ * [Apache License, Version 2.0](LICENSE-APACHE)
+ * [MIT license](LICENSE-MIT)
+
+at your option.
