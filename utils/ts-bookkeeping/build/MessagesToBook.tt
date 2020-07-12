@@ -3,7 +3,7 @@
 /// Push into events the difference between two arrays.
 ///
 /// The old value is stored in a `Vec` in `old`, the `new` in the book.
-fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
+fn diff_array(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
 	let mut ids = get_id_args(event);
 	let type_s = get_rust_type(p);
 	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
@@ -24,6 +24,40 @@ fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, 
 						events.push(Event::PropertyRemoved {
 							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, i),
 							old: PropertyValue::<#= type_s #>(i),
+							invoker: invoker.clone(),
+							extra: ExtraInfo {
+								reason,
+							},
+						});
+					}
+<#
+	Ok(())
+}
+
+/// Push into events the difference between two sets.
+///
+/// The old value is stored in a `HashSet` in `old`, the `new` in the book.
+fn diff_set(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
+	let mut ids = get_id_args(event);
+	let type_s = get_rust_type(p);
+	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
+#>
+					// Added
+					for i in <#= new #>.difference(&old) {
+						events.push(Event::PropertyAdded {
+							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
+							invoker: invoker.clone(),
+							extra: ExtraInfo {
+								reason,
+							},
+						});
+					}
+
+					// Removed
+					for i in old.difference(&<#= new #>) {
+						events.push(Event::PropertyRemoved {
+							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
+							old: PropertyValue::<#= type_s #>(*i),
 							invoker: invoker.clone(),
 							extra: ExtraInfo {
 								reason,
@@ -109,15 +143,22 @@ impl Connection {
 						reason,
 					},
 				});
-									<# } else if from_opt { #>
+									<# } else if from_opt {
+										let transform_func = if to.is_set() {
+											".iter().cloned().collect()"
+										} else {
+											".clone()"
+										}; #>
 				if let Some(val) = &m.<#= from.get_rust_name() #> {
 									<# if to.opt { #>
-					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(val.clone()));
+					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(val<#= transform_func #>));
 									<# } else { #>
-					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, val.clone());
+					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, val<#= transform_func #>);
 									<# } #>
 				<# if from.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
-					diff(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
+					diff_array(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
+				} else if from.modifier.as_ref().map(|s| s == "set").unwrap_or(false) {
+					diff_set(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
 				} else { #>
 					events.push(Event::PropertyChanged {
 						id: <#= get_property_id(event, to, from) #>,
@@ -144,8 +185,12 @@ impl Connection {
 								<# }
 								}
 								// The field in the struct is a vector
-								RuleOp::Add => { #>
+								RuleOp::Add => {
+									if to.is_set() { #>
+				r.<#= to.name.to_snake_case() #>.insert(m.<#= from.get_rust_name() #>.clone());
+									<# } else { #>
 				r.<#= to.name.to_snake_case() #>.push(m.<#= from.get_rust_name() #>.clone());
+									<# } #>
 				events.push(Event::PropertyAdded {
 					id: <#= get_property_id(event, to, from) #>,
 					invoker: invoker.clone(),
@@ -154,10 +199,15 @@ impl Connection {
 					},
 				})
 								<# }
-								RuleOp::Remove => { #>
+								RuleOp::Remove => {
+									if to.is_set() { #>
+				if r.<#= to.name.to_snake_case() #>.remove(&m.<#= from.get_rust_name() #>) {
+					let old = m.<#= from.get_rust_name() #>;
+									<# } else { #>
 				// Find index and remove
 				if let Some(i) = r.<#= to.name.to_snake_case() #>.iter().position(|i| *i == m.<#= from.get_rust_name() #>) {
 					let old = r.<#= to.name.to_snake_case() #>.remove(i);
+									<# } #>
 					events.push(Event::PropertyRemoved {
 						id: <#= get_property_id(event, to, from) #>,
 						old: <#= get_property(to, "old") #>,
@@ -204,13 +254,18 @@ impl Connection {
 						if *op != RuleOp::Update {
 							panic!("Cannot add or remove when adding a new struct");
 						}
+						let transform_func = if to.is_set() {
+							".iter().cloned().collect()"
+						} else {
+							".clone()"
+						};
 						// to is optional, but from not
 						let from_opt = from.is_opt(&event.msg); #>
 					<#= to.name.to_snake_case() #>: <#
 						if to.opt && !from_opt {
-						#>Some(m.<#= from.get_rust_name() #>.clone()),<#
+						#>Some(m.<#= from.get_rust_name() #><#= transform_func #>),<#
 						} else {
-						#>m.<#= from.get_rust_name() #>.clone(),<# }
+						#>m.<#= from.get_rust_name() #><#= transform_func #>,<# }
 						#>
 					<# }
 				}

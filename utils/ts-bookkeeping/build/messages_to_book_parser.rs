@@ -56,7 +56,7 @@ fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
 		if !ids.is_empty() {
 			ids.push_str(", ");
 		}
-		if m == "map" || m == "array" {
+		if m == "map" || m == "array" || m == "set" {
 			ids.push_str(&format!("m.{}", from.get_rust_name()));
 		} else {
 			panic!("Unknown modifier {}", m);

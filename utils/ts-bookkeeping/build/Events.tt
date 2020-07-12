@@ -27,8 +27,8 @@ pub enum PropertyId {
 			if m == "map" {
 				// The key is part of the id
 				ids.push_str(p.key.as_ref().unwrap());
-			} else if m == "array" {
-				// Take the element itself as port of the id.
+			} else if m == "array" || m == "set" {
+				// Take the element itself as part of the id.
 				// It has to be copied but most of the times it is an id itself.
 				ids.push_str(&convert_type(&p.type_s, false));
 			} else {
