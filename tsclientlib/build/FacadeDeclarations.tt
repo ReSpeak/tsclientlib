@@ -31,7 +31,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 			&attr_name[..attr_name.len() - 1]
 		} else { &attr_name };
 		#>
-	pub fn get_<#= attr_name #>(&'a mut self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= p_struct.name #>Mut<'a>> {
+	pub fn get_<#= attr_name #><'b>(&'b mut self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= p_struct.name #>Mut<'b>> {
 		if let Some(inner) = self.inner.<#= pid.get_attr_name(&struc) #>.get(key) {
 			Some(<#= p_struct.name #>Mut {
 				connection: self.connection,
@@ -44,15 +44,15 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 	<# } else if p.modifier.is_none() {
 
 		if !p.opt { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> <#= p_struct.name #>Mut<'a> {
+	pub fn get_<#= pid.get_attr_name(&struc) #><'b>(&'b mut self) -> <#= p_struct.name #>Mut<'b> {
 		<#= p_struct.name #>Mut {
 			connection: self.connection,
 			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
 		}
 	}
 		<# } else { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> Option<<#= p_struct.name #>Mut<'a>> {
-		let con: &'a mut ConnectedConnection = self.connection;
+	pub fn get_<#= pid.get_attr_name(&struc) #><'b>(&'b mut self) -> Option<<#= p_struct.name #>Mut<'b>> {
+		let con: &'b mut ConnectedConnection = self.connection;
 		if let Some(inner) = &self.inner.<#= pid.get_attr_name(&struc) #> {
 			Some(<#= p_struct.name #>Mut {
 				connection: con,
@@ -84,7 +84,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 	} else { &attr_name };
 
 	if p.modifier.as_ref().map(|s| s == "map").unwrap_or(false) { #>
-	pub fn get_<#= attr_name #>(&'a mut self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= name #>Mut<'a>> {
+	pub fn get_<#= attr_name #><'b>(&'b mut self, key: &<#= p.key.as_ref().unwrap() #>) -> Option<<#= name #>Mut<'b>> {
 		if let Some(inner) = self.inner.<#= pid.get_attr_name(&struc) #>.get(key) {
 			Some(<#= name #>Mut {
 				connection: self.connection,
@@ -96,7 +96,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 		}
 	}
 	<# } else if p.modifier.as_ref().map(|s| s == "array").unwrap_or(false) { #>
-	pub fn get_<#= attr_name #>(&'a mut self, index: usize) -> Option<<#= name #>Mut<'a>> {
+	pub fn get_<#= attr_name #><'b>(&'b mut self, index: usize) -> Option<<#= name #>Mut<'b>> {
 		if let Some(inner) = self.inner.<#= pid.get_attr_name(&struc) #>.get(index) {
 			Some(<#= name #>Mut {
 				connection: self.connection,
@@ -110,7 +110,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 	<# } else if p.modifier.is_none() {
 
 		if !p.opt { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> <#= name #>Mut<'a> {
+	pub fn get_<#= pid.get_attr_name(&struc) #><'b>(&'b mut self) -> <#= name #>Mut<'b> {
 		<#= name #>Mut {
 			connection: self.connection,
 			inner: &self.inner.<#= pid.get_attr_name(&struc) #>,
@@ -118,7 +118,7 @@ for p in struc.properties.iter().filter(|p| p.get_get(struc)
 		}
 	}
 		<# } else { #>
-	pub fn get_<#= pid.get_attr_name(&struc) #>(&'a mut self) -> Option<<#= name #>Mut<'a>> {
+	pub fn get_<#= pid.get_attr_name(&struc) #><'b>(&'b mut self) -> Option<<#= name #>Mut<'b>> {
 		if let Some(inner) = &self.inner.<#= pid.get_attr_name(&struc) #> {
 			Some(<#= name #>Mut {
 				connection: self.connection,
