@@ -652,6 +652,45 @@ impl Client {
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
+impl Channel {
+	// Book to messages
+	fn password_flagged_b2m<'a>(&self, password: Option<&'a str>) -> (bool, &'a str) {
+		if let Some(password) = password {
+			(true, password)
+		} else {
+			(false, "")
+		}
+	}
+
+	fn channel_type_fun_b2m(&self, channel_type: ChannelType) -> (bool, bool) {
+		match channel_type {
+			ChannelType::Temporary => (false, false),
+			ChannelType::SemiPermanent => (true, false),
+			ChannelType::Permanent => (false, true),
+		}
+	}
+
+	fn max_clients_fun_b2m(&self, max_clients: MaxClients) -> (i32, bool) {
+		match max_clients {
+			MaxClients::Inherited => (0, false),
+			MaxClients::Unlimited => (0, true),
+			MaxClients::Limited(num) => (num.into(), false),
+		}
+	}
+
+	fn max_family_clients_fun_b2m(&self, max_clients: MaxClients) -> (i32, bool, bool) {
+		match max_clients {
+			MaxClients::Inherited => (0, false, true),
+			MaxClients::Unlimited => (0, true, false),
+			MaxClients::Limited(num) => (num.into(), false, false),
+		}
+	}
+
+	fn set_position_internal(&self, position: (ChannelId, ChannelId)) ->(ChannelId, ChannelId) {
+		position
+	}
+}
+
 // TODO ClientServerGroup?
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ClientServerGroup {

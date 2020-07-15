@@ -69,17 +69,3 @@ fn find_rule<'a>(
 	}
 	(false, None)
 }
-
-fn get_arguments(r: &RuleKind) -> String {
-	match r {
-		RuleKind::Map { .. } | RuleKind::Function { .. } => {
-			format!("{}: {}", r.from_name().to_snake_case(), r.from().get_rust_type(true))
-		}
-		RuleKind::ArgumentMap { from, to } => {
-			format!("{}: {}", from.to_snake_case(), convert_type(&to.type_s, true))
-		}
-		RuleKind::ArgumentFunction { from, type_s, .. } => {
-			format!("{}: {}", from.to_snake_case(), convert_type(type_s, true))
-		}
-	}
-}

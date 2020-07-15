@@ -6,7 +6,7 @@ for e in &self.0.decls {
 impl <#= e.book_struct.name #>Mut<'_> {
 <# for r in &e.rules { #>
 	pub fn set_<#= r.from_name().to_snake_case() #>(&mut self<#=
-		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> Result<MessageHandle> {
+		get_all_arguments(e, None) #>, <#= r.get_arguments() #>) -> Result<MessageHandle> {
 		self.connection.send_command(self.inner.set_<#= r.from_name().to_snake_case() #>(<#=
 			get_all_arguments_use(e, None) #><#= get_arguments_use(r) #>))
 	}

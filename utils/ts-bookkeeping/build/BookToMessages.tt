@@ -10,7 +10,7 @@ fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> Strin
 		match r {
 			RuleKind::ArgumentMap { .. } |
 			RuleKind::ArgumentFunction { .. } => {
-				let arg = get_arguments(r);
+				let arg = r.get_arguments();
 				if !arg.is_empty() {
 					args.push_str(", ");
 					args.push_str(&arg);
@@ -39,7 +39,14 @@ fn create_message(
 			let from = match found {
 				Some(RuleKind::Map { from, .. }) => {
 					let from_self = if from_rule { "" } else { "self." };
-					Some(format!("{}{}{}", from_self, from.name.to_snake_case(), from.get_as_ref()))
+					let mut from = (*from).clone();
+					from.opt = false;
+					let from_type = from.get_as_ref();
+					let mut from_type = from_type.as_str();
+					if from_type.starts_with("Option<") {
+						from_type = &from_type[7..(from_type.len() - 1)];
+					}
+					Some(format!("{}{}{}", from_self, from.name.to_snake_case(), from_type))
 				}
 				Some(found@RuleKind::ArgumentMap { .. }) => Some(found.from_name().to_snake_case()),
 				Some(RuleKind::Function { .. })
@@ -84,7 +91,7 @@ for e in &self.0.decls {
 impl <#= e.book_struct.name #> {
 <# for r in &e.rules { #>
 	pub fn set_<#= r.from_name().to_snake_case() #>(&self<#=
-		get_all_arguments(e, None) #>, <#= get_arguments(r) #>) -> OutCommand {
+		get_all_arguments(e, None) #>, <#= r.get_arguments() #>) -> OutCommand {
 		<# create_message(_fmt, e, Some(r), msg_group, &self.0.messages)?; #>
 	}
 

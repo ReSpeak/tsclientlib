@@ -1,5 +1,6 @@
 use std::str::FromStr;
 
+use heck::*;
 use lazy_static::lazy_static;
 use serde::Deserialize;
 
@@ -47,7 +48,7 @@ lazy_static! {
 
 				// Map RuleProperty to RuleKind
 				let to_rule_kind = |p: RuleProperty| {
-					assert!(p.is_valid());
+					p.assert_valid();
 
 					if p.function.is_some() {
 						if p.type_s.is_some() {
@@ -131,17 +132,16 @@ lazy_static! {
 						RuleKind::Function { to, .. } |
 						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
 					}) {
-						// Try to find matching property
-						// We don't automatically add methods for optional
-						// properties because we don't know in which case they
-						// are `None`.
+						// We ignore that properties are set as option. In all current cases, it
+						// makes no sense to set them to `None`, so we handle them the same way as
+						// non-optional properties.
 						if let Some(prop) = book
 							.get_struct(&ev.book_struct.name)
 							.properties
 							.iter()
-							.find(|p| !p.opt && p.name == field.pretty) {
+							.find(|p| p.name == field.pretty) {
 							if !ev.ids.iter().chain(ev.rules.iter())
-								.any(|i| i.from().name == prop.name) {
+								.any(|i| i.from_name() == prop.name) {
 								ev.rules.push(RuleKind::Map {
 									from: prop,
 									to: field,
@@ -224,18 +224,20 @@ struct RuleProperty {
 }
 
 impl RuleProperty {
-	fn is_valid(&self) -> bool {
-		if self.to.is_some() {
-			self.from.is_some()
-				&& self.function.is_none()
-				&& self.tolist.is_none()
-				&& self.type_s.is_none()
+	fn assert_valid(&self) {
+		if let Some(to) = &self.to {
+			assert!(self.from.is_some(), "to-property '{}' is invalid. It needs a 'from'", to);
+			assert!(self.function.is_none(), "to-property '{}' is invalid. It must not have a 'function'", to);
+			assert!(self.tolist.is_none(), "to-property '{}' is invalid. It must not have a 'tolist'", to);
+			assert!(self.type_s.is_none(), "to-property '{}' is invalid. It must not have a 'type'", to);
 		} else {
-			self.to.is_none()
-				&& self.function.is_some()
-				&& self.tolist.is_some()
-				// If the type is set, from must be set too
-				&& (self.type_s.is_none() || self.from.is_some())
+			if let Some(fun) = &self.function {
+				assert!(self.tolist.is_some(), "function-property '{}' is invalid. It needs 'tolist'", fun);
+				assert!(self.type_s.is_none() || self.from.is_some(), "function-property '{}' is invalid. If the type ({:?}) is set, from must be set too", fun, self.type_s);
+			} else {
+				panic!("Property is invalid. It needs either a 'to' or 'tolist'+'function'.\
+					Info: tolist={:?} type={:?} from={:?}", self.tolist, self.type_s, self.from);
+			}
 		}
 	}
 }
@@ -296,4 +298,25 @@ impl<'a> RuleKind<'a> {
 			false
 		}
 	}
+
+	pub fn get_arguments(&self) -> String {
+		match self {
+			RuleKind::Map { .. } => {
+				// TODO: MILD HACK !!!!
+				let mut rust_type = self.from().clone();
+				rust_type.opt = false;
+				format!("{}: {}", self.from_name().to_snake_case(), rust_type.get_rust_type(true))
+			}
+			RuleKind::Function { .. } => {
+				format!("{}: {}", self.from_name().to_snake_case(), self.from().get_rust_type(true))
+			}
+			RuleKind::ArgumentMap { from, to } => {
+				format!("{}: {}", from.to_snake_case(), convert_type(&to.type_s, true))
+			}
+			RuleKind::ArgumentFunction { from, type_s, .. } => {
+				format!("{}: {}", from.to_snake_case(), convert_type(type_s, true))
+			}
+		}
+	}
+
 }
