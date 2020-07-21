@@ -227,16 +227,41 @@ impl RuleProperty {
 	fn assert_valid(&self) {
 		if let Some(to) = &self.to {
 			assert!(self.from.is_some(), "to-property '{}' is invalid. It needs a 'from'", to);
-			assert!(self.function.is_none(), "to-property '{}' is invalid. It must not have a 'function'", to);
-			assert!(self.tolist.is_none(), "to-property '{}' is invalid. It must not have a 'tolist'", to);
-			assert!(self.type_s.is_none(), "to-property '{}' is invalid. It must not have a 'type'", to);
+			assert!(
+				self.function.is_none(),
+				"to-property '{}' is invalid. It must not have a 'function'",
+				to
+			);
+			assert!(
+				self.tolist.is_none(),
+				"to-property '{}' is invalid. It must not have a 'tolist'",
+				to
+			);
+			assert!(
+				self.type_s.is_none(),
+				"to-property '{}' is invalid. It must not have a 'type'",
+				to
+			);
 		} else {
 			if let Some(fun) = &self.function {
-				assert!(self.tolist.is_some(), "function-property '{}' is invalid. It needs 'tolist'", fun);
-				assert!(self.type_s.is_none() || self.from.is_some(), "function-property '{}' is invalid. If the type ({:?}) is set, from must be set too", fun, self.type_s);
+				assert!(
+					self.tolist.is_some(),
+					"function-property '{}' is invalid. It needs 'tolist'",
+					fun
+				);
+				assert!(
+					self.type_s.is_none() || self.from.is_some(),
+					"function-property '{}' is invalid. If the type ({:?}) is set, from must be \
+					 set too",
+					fun,
+					self.type_s
+				);
 			} else {
-				panic!("Property is invalid. It needs either a 'to' or 'tolist'+'function'.\
-					Info: tolist={:?} type={:?} from={:?}", self.tolist, self.type_s, self.from);
+				panic!(
+					"Property is invalid. It needs either a 'to' or 'tolist'+'function'.Info: \
+					 tolist={:?} type={:?} from={:?}",
+					self.tolist, self.type_s, self.from
+				);
 			}
 		}
 	}
@@ -279,9 +304,7 @@ impl<'a> RuleKind<'a> {
 
 	pub fn from_name_singular(&'a self) -> &'a str {
 		let name = self.from_name();
-		if name.ends_with('s') {
-			&name[..name.len() - 1]
-		} else { name }
+		if name.ends_with('s') { &name[..name.len() - 1] } else { name }
 	}
 
 	pub fn from(&self) -> &'a Property {
@@ -308,15 +331,9 @@ impl<'a> RuleKind<'a> {
 
 	pub fn get_type(&self) -> String {
 		match self {
-			RuleKind::Map { .. } | RuleKind::Function { .. } => {
-				self.from().get_rust_type(true)
-			}
-			RuleKind::ArgumentMap { to, .. } => {
-				convert_type(&to.type_s, true)
-			}
-			RuleKind::ArgumentFunction { type_s, .. } => {
-				convert_type(type_s, true)
-			}
+			RuleKind::Map { .. } | RuleKind::Function { .. } => self.from().get_rust_type(true),
+			RuleKind::ArgumentMap { to, .. } => convert_type(&to.type_s, true),
+			RuleKind::ArgumentFunction { type_s, .. } => convert_type(type_s, true),
 		}
 	}
 
@@ -343,17 +360,11 @@ impl<'a> RuleKind<'a> {
 
 impl<'a> Event<'a> {
 	/// The name of the change, could be a keyword.
-	pub fn get_small_name(&self) -> String {
-		self.msg.name.replace(&self.book_struct.name, "")
-	}
+	pub fn get_small_name(&self) -> String { self.msg.name.replace(&self.book_struct.name, "") }
 
 	/// The small name, not a keyword
 	pub fn get_change_name(&self) -> String {
 		let small_change_name = self.get_small_name();
-		if small_change_name == "Move" {
-			self.msg.name.clone()
-		} else {
-			small_change_name
-		}
+		if small_change_name == "Move" { self.msg.name.clone() } else { small_change_name }
 	}
 }

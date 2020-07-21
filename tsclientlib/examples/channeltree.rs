@@ -4,6 +4,7 @@ use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
 use tsclientlib::data::{self, Channel, Client};
+use tsclientlib::prelude::*;
 use tsclientlib::{ChannelId, ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
@@ -82,7 +83,7 @@ async fn real_main() -> Result<()> {
 		r?;
 	}
 
-	con.get_mut_state().unwrap().get_server().set_subscribed(true)?;
+	con.get_state().unwrap().server.set_subscribed(true).send(&mut con)?;
 
 	// Wait some time
 	let mut events = con.events().try_filter(|_| future::ready(false));
@@ -99,10 +100,13 @@ async fn real_main() -> Result<()> {
 
 	// Change name
 	{
-		let mut state = con.get_mut_state().unwrap();
+		let state = con.get_state().unwrap();
 		let name = state.clients[&state.own_client].name.clone();
-		state.set_name(&format!("{}1", name))?;
-		state.set_input_muted(true)?;
+		state
+			.client_update()
+			.set_input_muted(true)
+			.set_name(&format!("{}1", name))
+			.send(&mut con)?;
 	}
 
 	// Wait some time

@@ -3,6 +3,7 @@ use futures::prelude::*;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
+use tsclientlib::prelude::*;
 use tsclientlib::sync::SyncConnection;
 use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
 
@@ -57,9 +58,9 @@ async fn real_main() -> Result<()> {
 
 	tokio::spawn(sync_con.for_each(|_| future::ready(())));
 
-	con.with_connection(move |con| {
-		let mut state = con.get_mut_state()?;
-		state.get_server().send_textmessage("Hello there")?;
+	con.with_connection(move |mut con| {
+		let state = con.get_state()?;
+		state.server.send_textmessage("Hello there").send(&mut con)?;
 		Result::<_>::Ok(())
 	})
 	.await??;

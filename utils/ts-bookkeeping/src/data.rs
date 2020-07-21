@@ -658,11 +658,7 @@ impl Client {
 impl Channel {
 	// Book to messages
 	fn password_flagged_b2m<'a>(password: Option<&'a str>) -> (bool, &'a str) {
-		if let Some(password) = password {
-			(true, password)
-		} else {
-			(false, "")
-		}
+		if let Some(password) = password { (true, password) } else { (false, "") }
 	}
 
 	fn channel_type_fun_b2m(channel_type: ChannelType) -> (bool, bool) {
