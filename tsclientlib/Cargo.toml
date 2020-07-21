@@ -8,13 +8,11 @@ readme = "README.md"
 keywords = ["teamspeak3", "ts3", "voip"]
 categories = ["multimedia"]
 license = "MIT OR Apache-2.0"
-build = "build/build.rs"
 edition = "2018"
 include = [
 	"/Cargo.toml",
 	"/README.md",
 	"**/*.rs",
-	"/build/*.tt",
 ]
 
 [package.metadata.docs.rs]
@@ -56,11 +54,6 @@ url = "2"
 [dependencies.slog]
 version = "2"
 features = ["max_level_trace", "release_max_level_debug"]
-
-[build-dependencies]
-heck = "0.3"
-t4rust-derive = "0.2"
-tsproto-structs = { path = "../utils/tsproto-structs", version = "=0.1.0" }
 
 [dev-dependencies]
 anyhow = "1"

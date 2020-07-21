@@ -240,22 +240,13 @@ impl<'a, T> Iterator for InMessageIterator<'a, T> {
 <# for msg_group in &self.0.msg_group {
 	let defs = &msg_group.default;
 	for msg in &msg_group.msg {
-		let mut uses_lifetime = false;
-		for a in &msg.attributes {
-			let field = self.0.get_field(a);
-			let res = field.get_rust_type(a, true);
-			if res.contains("&") || res.contains("UidRef") {
-				uses_lifetime = true;
-				break;
-			}
-		}
+		let uses_lifetime = self.0.uses_lifetime(msg);
 		let has_attributes = msg_group.default.response || !msg.attributes.is_empty(); #>
 
 <# if has_attributes { #>
 #[derive(Clone, Debug)]
 pub struct Out<#= msg.name #>Part<# if uses_lifetime { #><'a><# } #> {
-<#
-for a in &msg.attributes {
+<# for a in &msg.attributes {
 	let field = self.0.get_field(a);
 	if field.get_rust_name() != field.ts { #>
 	/// `<#= field.ts #>` in TeamSpeak
@@ -265,6 +256,27 @@ for a in &msg.attributes {
 		res
 	} #>,
 <# } #>
+}
+
+<#
+let part_name = format!("Out{}Part{}", msg.name, if uses_lifetime { "<'a>" } else { "" });
+#>
+impl<<# if uses_lifetime { #>'a, <# } #>> OutMessage<# if msg_group.default.response { #>WithReturn<# } #>Trait for &mut dyn Iterator<Item=<#= part_name #>> {
+	fn to_packet(self<#
+		if msg_group.default.response { #>, return_code: Option<&str><# } #>) -> OutCommand
+	where Self: Sized {
+		Out<#= msg.name #>Message::new(self<#
+			if msg_group.default.response { #>, return_code<# } #>)
+	}
+}
+
+impl<<# if uses_lifetime { #>'a, <# } #>> OutMessage<# if msg_group.default.response { #>WithReturn<# } #>Trait for <#= part_name #> {
+	fn to_packet(self<#
+		if msg_group.default.response { #>, return_code: Option<&str><# } #>) -> OutCommand
+	where Self: Sized {
+		Out<#= msg.name #>Message::new(&mut std::iter::once(self)<#
+			if msg_group.default.response { #>, return_code<# } #>)
+	}
 }
 
 <# } #>

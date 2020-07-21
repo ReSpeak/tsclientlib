@@ -14,10 +14,15 @@ use crate::messages::s2c::InMessage;
 use crate::messages::{c2s, s2c};
 use crate::{Error, MessageTarget, Result};
 
-include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/m2bdecls.rs"));
 include!(concat!(env!("OUT_DIR"), "/structs.rs"));
 include!(concat!(env!("OUT_DIR"), "/properties.rs"));
+
+pub mod exts {
+	use super::*;
+
+	include!(concat!(env!("OUT_DIR"), "/b2mdecls.rs"));
+}
 
 macro_rules! max_clients {
 	($msg:ident) => {{
@@ -639,22 +644,20 @@ impl Connection {
 	}
 
 	// Book to messages
-	fn away_fun_b2m<'a>(&self, msg: Option<&'a str>) -> (bool, &'a str) {
+	fn away_fun_b2m<'a>(msg: Option<&'a str>) -> (bool, &'a str) {
 		if let Some(msg) = msg { (true, msg) } else { (false, "") }
 	}
 }
 
 impl Client {
 	// Book to messages
-	fn get_empty_string(&self) -> &str { "" }
-
-	fn password_b2m<'a>(&self, password: &'a str) -> &'a str { password }
+	fn password_b2m<'a>(password: &'a str) -> &'a str { password }
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
 impl Channel {
 	// Book to messages
-	fn password_flagged_b2m<'a>(&self, password: Option<&'a str>) -> (bool, &'a str) {
+	fn password_flagged_b2m<'a>(password: Option<&'a str>) -> (bool, &'a str) {
 		if let Some(password) = password {
 			(true, password)
 		} else {
@@ -662,7 +665,7 @@ impl Channel {
 		}
 	}
 
-	fn channel_type_fun_b2m(&self, channel_type: ChannelType) -> (bool, bool) {
+	fn channel_type_fun_b2m(channel_type: ChannelType) -> (bool, bool) {
 		match channel_type {
 			ChannelType::Temporary => (false, false),
 			ChannelType::SemiPermanent => (true, false),
@@ -670,7 +673,7 @@ impl Channel {
 		}
 	}
 
-	fn max_clients_fun_b2m(&self, max_clients: MaxClients) -> (i32, bool) {
+	fn max_clients_fun_b2m(max_clients: MaxClients) -> (i32, bool) {
 		match max_clients {
 			MaxClients::Inherited => (0, false),
 			MaxClients::Unlimited => (0, true),
@@ -678,7 +681,7 @@ impl Channel {
 		}
 	}
 
-	fn max_family_clients_fun_b2m(&self, max_clients: MaxClients) -> (i32, bool, bool) {
+	fn max_family_clients_fun_b2m(max_clients: MaxClients) -> (i32, bool, bool) {
 		match max_clients {
 			MaxClients::Inherited => (0, false, true),
 			MaxClients::Unlimited => (0, true, false),
@@ -686,9 +689,7 @@ impl Channel {
 		}
 	}
 
-	fn set_position_internal(&self, position: (ChannelId, ChannelId)) ->(ChannelId, ChannelId) {
-		position
-	}
+	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
 // TODO ClientServerGroup?

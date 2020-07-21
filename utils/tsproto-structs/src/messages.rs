@@ -48,6 +48,19 @@ impl MessageDeclarations {
 			panic!("Cannot find field {}", map);
 		}
 	}
+
+	pub fn uses_lifetime(&self, msg: &Message) -> bool {
+		let mut uses_lifetime = false;
+		for a in &msg.attributes {
+			let field = self.get_field(a);
+			let res = field.get_rust_type(a, true);
+			if res.contains("&") || res.contains("UidRef") {
+				uses_lifetime = true;
+				break;
+			}
+		}
+		uses_lifetime
+	}
 }
 
 #[derive(Deserialize, Debug, Clone, Eq, PartialEq)]

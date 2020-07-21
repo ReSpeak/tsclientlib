@@ -22,7 +22,8 @@ tsproto-types = { path = "../tsproto-types" }
 [build-dependencies]
 heck = "0.3"
 itertools = "0.9"
-t4rust-derive = "0.2"
+#t4rust-derive = "0.2"
+t4rust-derive = { path = "../../../t4rust" }
 tsproto-structs = { path = "../tsproto-structs", version = "=0.1.0" }
 
 [dev-dependencies]

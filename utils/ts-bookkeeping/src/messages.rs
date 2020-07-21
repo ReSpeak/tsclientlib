@@ -4,7 +4,7 @@ use slog::Logger;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 use tsproto_packets::commands::CommandParser;
-use tsproto_packets::packets::{Direction, InHeader, PacketType};
+use tsproto_packets::packets::{Direction, InHeader, OutCommand, PacketType};
 use tsproto_types::errors::Error;
 
 use crate::*;
@@ -53,6 +53,18 @@ pub enum ParseError {
 pub trait InMessageTrait {
 	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self>
 	where Self: Sized;
+}
+
+pub trait OutMessageTrait {
+	fn to_packet(self) -> OutCommand;
+}
+
+pub trait OutMessageWithReturnTrait {
+	fn to_packet(self, return_code: Option<&str>) -> OutCommand;
+}
+
+impl OutMessageTrait for OutCommand {
+	fn to_packet(self) -> OutCommand { self }
 }
 
 pub mod s2c {

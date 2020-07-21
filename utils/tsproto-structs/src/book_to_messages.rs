@@ -199,9 +199,9 @@ struct TomlStruct {
 	rule: Vec<Rule>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
-struct Rule {
+pub struct Rule {
 	from: String,
 	to: String,
 	operation: String,
@@ -211,9 +211,9 @@ struct Rule {
 	properties: Vec<RuleProperty>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
-struct RuleProperty {
+pub struct RuleProperty {
 	from: Option<String>,
 	to: Option<String>,
 
@@ -277,6 +277,13 @@ impl<'a> RuleKind<'a> {
 		}
 	}
 
+	pub fn from_name_singular(&'a self) -> &'a str {
+		let name = self.from_name();
+		if name.ends_with('s') {
+			&name[..name.len() - 1]
+		} else { name }
+	}
+
 	pub fn from(&self) -> &'a Property {
 		match self {
 			RuleKind::Map { from, .. } => from,
@@ -299,24 +306,54 @@ impl<'a> RuleKind<'a> {
 		}
 	}
 
-	pub fn get_arguments(&self) -> String {
+	pub fn get_type(&self) -> String {
+		match self {
+			RuleKind::Map { .. } | RuleKind::Function { .. } => {
+				self.from().get_rust_type(true)
+			}
+			RuleKind::ArgumentMap { to, .. } => {
+				convert_type(&to.type_s, true)
+			}
+			RuleKind::ArgumentFunction { type_s, .. } => {
+				convert_type(type_s, true)
+			}
+		}
+	}
+
+	pub fn get_type_no_option(&self) -> String {
 		match self {
 			RuleKind::Map { .. } => {
 				// TODO: MILD HACK !!!!
 				let mut rust_type = self.from().clone();
 				rust_type.opt = false;
-				format!("{}: {}", self.from_name().to_snake_case(), rust_type.get_rust_type(true))
+				rust_type.get_rust_type(true)
 			}
-			RuleKind::Function { .. } => {
-				format!("{}: {}", self.from_name().to_snake_case(), self.from().get_rust_type(true))
-			}
-			RuleKind::ArgumentMap { from, to } => {
-				format!("{}: {}", from.to_snake_case(), convert_type(&to.type_s, true))
-			}
-			RuleKind::ArgumentFunction { from, type_s, .. } => {
-				format!("{}: {}", from.to_snake_case(), convert_type(type_s, true))
-			}
+			_ => self.get_type(),
 		}
 	}
 
+	pub fn get_argument(&self) -> String {
+		format!("{}: {}", self.from_name().to_snake_case(), self.get_type())
+	}
+
+	pub fn get_argument_no_option(&self) -> String {
+		format!("{}: {}", self.from_name().to_snake_case(), self.get_type_no_option())
+	}
+}
+
+impl<'a> Event<'a> {
+	/// The name of the change, could be a keyword.
+	pub fn get_small_name(&self) -> String {
+		self.msg.name.replace(&self.book_struct.name, "")
+	}
+
+	/// The small name, not a keyword
+	pub fn get_change_name(&self) -> String {
+		let small_change_name = self.get_small_name();
+		if small_change_name == "Move" {
+			self.msg.name.clone()
+		} else {
+			small_change_name
+		}
+	}
 }

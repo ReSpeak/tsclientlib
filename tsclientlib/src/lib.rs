@@ -1,11 +1,10 @@
 //! tsclientlib is a library which makes it simple to create TeamSpeak clients
 //! and bots.
 //!
-//! If you want a full client application, you might want to have a look at
-//! [Qint].
+//! For a full client application, you might want to have a look at [Qint].
 //!
-//! If you need more power over the internals of a connection, you can enable the `unstable`
-//! feature. Beware that this functionality may change on any minor release.
+//! If more power over the internals of a connection is needed, the `unstable` feature can be
+//! enabled. Beware that functionality behind this feature may change on any minor release.
 //!
 //! The base class of this library is the [`Connection`]. One instance of this
 //! struct manages a single connection to a server.
@@ -30,6 +29,7 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
 use tokio::time;
+use ts_bookkeeping::messages::OutMessageTrait;
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use tsproto::client;
@@ -41,7 +41,7 @@ use tsproto_packets::packets::{InCommandBuf, OutCommand};
 
 #[cfg(feature = "audio")]
 pub mod audio;
-pub mod facades;
+pub mod prelude;
 pub mod resolver;
 pub mod sync;
 
@@ -65,14 +65,24 @@ pub struct MessageHandle(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FileTransferHandle(pub u16);
 
-// TODO Sort
 #[derive(Debug, Error)]
 pub enum Error {
 	/// A command return an error.
 	#[error(transparent)]
 	CommandError(#[from] tsproto_types::errors::Error),
+	#[error("Failed to connect: {0}")]
+	Connect(#[source] tsproto::client::Error),
+	#[error("Failed to connect to server at {address:?}: {errors:?}")]
+	ConnectionFailed { address: String, errors: Vec<Error> },
+	/// The connection was destroyed.
+	#[error("Connection does not exist anymore")]
+	ConnectionGone,
+	#[error("Server refused connection: {0}")]
+	ConnectTs(#[source] tsproto_types::errors::Error),
 	#[error("File transfer failed: {0}")]
 	FileTransferIo(#[source] std::io::Error),
+	#[error("Failed to create identity: {0}")]
+	IdentityCreate(#[source] tsproto::Error),
 	#[error("The server needs an identity of level {0}, please increase your identity level")]
 	IdentityLevel(u8),
 	#[error(
@@ -83,36 +93,31 @@ pub enum Error {
 	IdentityLevelIncreaseFailed(#[source] tsproto::Error),
 	#[error("Failed to increase identity level: Thread died")]
 	IdentityLevelIncreaseFailedThread,
-	#[error("Failed to create identity: {0}")]
-	IdentityCreate(#[source] tsproto::Error),
-	/// The connection is currently not connected to a server but is in the process of connecting.
-	#[error("Currently not connected")]
-	NotConnected,
-	#[error("Failed to connect: {0}")]
-	Connect(#[source] tsproto::client::Error),
-	#[error("Server refused connection: {0}")]
-	ConnectTs(#[source] tsproto_types::errors::Error),
-	#[error("Failed to send clientinit: {0}")]
-	SendClientinit(#[source] tsproto::client::Error),
-	#[error("Failed to send packet: {0}")]
-	SendPacket(#[source] tsproto::client::Error),
+	#[error("We should be connected but the connection params do not exist")]
+	InitserverParamsMissing,
+	#[error("Failed to parse initserver: {0}")]
+	InitserverParse(#[source] ts_bookkeeping::messages::ParseError),
 	#[error("Timeout while waiting for initserver")]
 	InitserverTimeout,
 	#[error("Failed to receive initserver: {0}")]
 	InitserverWait(#[source] tsproto::client::Error),
-	#[error("Failed to parse initserver: {0}")]
-	InitserverParse(#[source] ts_bookkeeping::messages::ParseError),
-	#[error("We should be connected but the connection params do not exist")]
-	InitserverParamsMissing,
-	/// The connection was destroyed.
-	#[error("Connection does not exist anymore")]
-	ConnectionGone,
-	#[error("Failed to connect to server at {address:?}: {errors:?}")]
-	ConnectionFailed { address: String, errors: Vec<Error> },
-	#[error("Failed to resolve address: {0}")]
-	ResolveAddress(#[source] resolver::Error),
 	#[error("Io error: {0}")]
 	Io(#[source] tokio::io::Error),
+	/// The connection is currently not connected to a server but is in the process of connecting.
+	#[error("Currently not connected")]
+	NotConnected,
+	#[error("Failed to resolve address: {0}")]
+	ResolveAddress(#[source] resolver::Error),
+	#[error("Failed to send clientinit: {0}")]
+	SendClientinit(#[source] tsproto::client::Error),
+	#[error("Failed to send packet: {0}")]
+	SendPacket(#[source] tsproto::client::Error),
+}
+
+pub trait OutCommandExt {
+	/// Adds a `return_code` to the command and returns if the corresponding
+	/// answer is received. If an error occurs, the future will return an error.
+	fn send(self, con: &mut Connection) -> Result<MessageHandle>;
 }
 
 /// The result of a download request.
@@ -261,11 +266,10 @@ enum IdentityIncreaseLevelState {
 
 /// The main type of this crate, which represents a connection to a server.
 ///
-/// After creating a connection with [`Connection::new`], there are a few ways
-/// of interacting with it. [`get_state`] lets you inspect the other clients and
-/// channels on the server. [`get_mut_state`] in additian allowes changing them.
-/// The setter methods e.g. for your own nickname or channel send a command to
-/// the server. The methods return a handle which can then be used to check if
+/// After creating a connection with [`Connection::new`], the main way to interact with it is
+/// [`get_state`]. It stores currently visible clients and channels on the server.
+/// The setter methods e.g. for the nickname or channel create a command that can be send to
+/// the server. The send method returns a handle which can then be used to check if
 /// the action succeeded or not.
 ///
 /// The second way of interaction is polling with [`events()`], which returns a
@@ -297,7 +301,6 @@ enum IdentityIncreaseLevelState {
 ///
 /// [`Connection::new`]: #method.new
 /// [`get_state`]: #method.get_state
-/// [`get_mut_state`]: #method.get_mut_state
 /// [`events()`]: #method.events
 /// [`StreamItem`]: enum.StreamItem.html
 impl Connection {
@@ -387,7 +390,7 @@ impl Connection {
 	/// level needs to be improved.
 	pub fn get_options(&self) -> &ConnectOptions { &self.options }
 
-	/// Get a stream of events. You need to poll the event stream, otherwise
+	/// Get a stream of events. The event stream needs to be polled, otherwise
 	/// nothing will happen in a connection, not even sending packets will work.
 	///
 	/// The returned stream can be dropped and recreated if needed.
@@ -590,6 +593,16 @@ impl Connection {
 		Ok(())
 	}
 
+	/// Adds a `return_code` to the command and returns if the corresponding
+	/// answer is received. If an error occurs, the future will return an error.
+	fn send_command(&mut self, packet: OutCommand) -> Result<MessageHandle> {
+		if let ConnectionState::Connected { con, .. } = &mut self.state {
+			con.send_command(packet)
+		} else {
+			Err(Error::NotConnected)
+		}
+	}
+
 	/// Cancels the computation to increase the identity level.
 	///
 	/// This function initiates the cancellation and immediately returns. It
@@ -638,37 +651,12 @@ impl Connection {
 		})
 	}
 
-	/// Adds a `return_code` to the command and returns if the corresponding
-	/// answer is received. If an error occurs, the future will return an error.
-	#[cfg(feature = "unstable")]
-	pub fn send_command(&mut self, packet: OutCommand) -> Result<MessageHandle> {
-		if let ConnectionState::Connected { con, .. } = &mut self.state {
-			con.send_command(packet)
-		} else {
-			Err(Error::NotConnected)
-		}
-	}
-
 	/// Get the current state of clients and channels of this connection.
 	///
 	/// Fails if the connection is currently not connected to the server.
 	pub fn get_state(&self) -> Result<&data::Connection> {
 		if let ConnectionState::Connected { book, .. } = &self.state {
 			Ok(book)
-		} else {
-			Err(Error::NotConnected)
-		}
-	}
-
-	/// Get a connection where you can change properties.
-	///
-	/// Changing properties will send a packet to the server, it will not
-	/// immediately change the value.
-	///
-	/// Fails if the connection is currently not connected to the server.
-	pub fn get_mut_state(&mut self) -> Result<facades::ConnectionMut> {
-		if let ConnectionState::Connected { con, book } = &mut self.state {
-			Ok(facades::ConnectionMut { connection: con, inner: book })
 		} else {
 			Err(Error::NotConnected)
 		}
@@ -899,6 +887,12 @@ impl Connection {
 				}
 			},
 		}
+	}
+}
+
+impl<T: OutMessageTrait> OutCommandExt for T {
+	fn send(self, con: &mut Connection) -> Result<MessageHandle> {
+		con.send_command(self.to_packet())
 	}
 }
 
