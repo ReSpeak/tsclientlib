@@ -23,7 +23,7 @@ tsproto-types = { path = "../tsproto-types" }
 heck = "0.3"
 itertools = "0.9"
 #t4rust-derive = "0.2"
-t4rust-derive = { path = "../../../t4rust" }
+t4rust-derive = { git = "https://github.com/ReSpeak/t4rust.git" }
 tsproto-structs = { path = "../tsproto-structs", version = "=0.1.0" }
 
 [dev-dependencies]
