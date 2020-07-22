@@ -90,7 +90,8 @@ impl Connection {
 			),
 			clients: HashMap::new(),
 			channels: HashMap::new(),
-			groups: HashMap::new(),
+			channel_groups: HashMap::new(),
+			server_groups: HashMap::new(),
 		}
 	}
 
@@ -176,13 +177,21 @@ impl Connection {
 	fn get_server(&self) -> Result<&Server> { Ok(&self.server) }
 	fn get_mut_server(&mut self) -> Result<&mut Server> { Ok(&mut self.server) }
 
+	fn get_channel_group(&self, group: ChannelGroupId) -> Result<&ChannelGroup> {
+		self.channel_groups.get(&group).ok_or_else(|| Error::NotFound("ChannelGroup", group.to_string()))
+	}
+	fn add_channel_group(
+		&mut self, group: ChannelGroupId, r: ChannelGroup, _: &mut Vec<Event>,
+	) -> Result<Option<ChannelGroup>> {
+		Ok(self.channel_groups.insert(group, r))
+	}
 	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
-		self.groups.get(&group).ok_or_else(|| Error::NotFound("ServerGroup", group.to_string()))
+		self.server_groups.get(&group).ok_or_else(|| Error::NotFound("ServerGroup", group.to_string()))
 	}
 	fn add_server_group(
 		&mut self, group: ServerGroupId, r: ServerGroup, _: &mut Vec<Event>,
 	) -> Result<Option<ServerGroup>> {
-		Ok(self.groups.insert(group, r))
+		Ok(self.server_groups.insert(group, r))
 	}
 
 	fn get_optional_server_data(&self) -> Result<&OptionalServerData> {

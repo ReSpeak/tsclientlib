@@ -5,7 +5,7 @@ use time::{Duration, OffsetDateTime};
 use tsproto_types::crypto::EccKeyPubP256;
 
 use crate::data::{
-	Channel, Client, Connection, ConnectionClientData, ConnectionServerData, File,
+	Channel, ChannelGroup, Client, Connection, ConnectionClientData, ConnectionServerData, File,
 	OptionalChannelData, OptionalClientData, OptionalServerData, Server, ServerGroup,
 };
 use crate::*;
