@@ -22,7 +22,7 @@ fn get_all_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> Strin
 	args
 }
 
-fn get_all_id_arguments<'a>(e: &'a Event<'a>, r: Option<&'a RuleKind<'a>>) -> String {
+fn get_all_id_arguments<'a>(e: &'a Event<'a>) -> String {
 	let mut args = String::new();
 	for r in &e.ids {
 		match r {
@@ -115,9 +115,9 @@ fn call_func2(_fmt: &mut fmt::Formatter, struct_name: &str, r: &RuleKind) -> fmt
 	Ok(())
 }
 
-for e in &self.0.decls {
+for e in &self.decls {
 	let msg_group = self.messages.get_message_group(&e.msg);
-	let uses_lifetime = self.0.messages.uses_lifetime(&e.msg);
+	let uses_lifetime = self.messages.uses_lifetime(&e.msg);
 	// Update
 	if e.op == RuleOp::Update {
 		let small_change_name = e.get_small_name();
@@ -126,17 +126,17 @@ for e in &self.0.decls {
 
 impl <#= e.book_struct.name #> {
 	pub fn <#= change_name.to_snake_case() #><# if uses_lifetime { #><'a><# } #>(&self, <#=
-		get_all_id_arguments(e, None).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>
+		get_all_id_arguments(e).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>
 	) -> c2s::Out<#= e.msg.name #>Part<# if uses_lifetime { #><'a><# } #>
 	{
-		<# create_message(_fmt, e, None, msg_group, &self.0.messages)?; #>
+		<# create_message(_fmt, e, None, msg_group, &self.messages)?; #>
 	}
 }
 
 <# if !e.rules.is_empty() { #>
 pub trait M2B<#= e.msg.name #>Ext<# if uses_lifetime { #><'a><# } #> {
 <# for r in &e.rules {
-	let name = r.from_name_singular();
+	let name = r.from_name();
 	#>
 	fn set_<#= name.to_snake_case() #>(self, <#= r.get_argument_no_option()
 		.replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>) -> Self;
@@ -145,7 +145,7 @@ pub trait M2B<#= e.msg.name #>Ext<# if uses_lifetime { #><'a><# } #> {
 
 impl<# if uses_lifetime { #><'a><# } #> M2B<#= e.msg.name #>Ext<# if uses_lifetime { #><'a><# } #> for c2s::Out<#= e.msg.name #>Part<# if uses_lifetime { #><'a><# } #> {
 <# for r in &e.rules {
-	let name = r.from_name_singular();
+	let name = r.from_name();
 	let from_name;
 	match r {
 		RuleKind::Map { from, .. } => {
@@ -195,16 +195,13 @@ impl<# if uses_lifetime { #><'a><# } #> M2B<#= e.msg.name #>Ext<# if uses_lifeti
 impl <#= e.book_struct.name #> {
 	pub fn remove<#= name_add #>(&self<#= args #>) -> OutCommand {
 		c2s::Out<#= e.msg.name #>Message::new(&mut std::iter::once({
-			<# create_message(_fmt, e, None, msg_group, &self.0.messages)?; #>
+			<# create_message(_fmt, e, None, msg_group, &self.messages)?; #>
 		})<# if msg_group.default.response { #>, None<# } #>)
 	}
 }
 <# } else {
 	// Remove the property
 	for r in &e.rules {
-		let name = r.from_name_singular();
-		let name = format!("{}{}", e.book_struct.name, name);
-
 		let args = get_all_arguments(e, Some(r));
 		let name_add = if !args.is_empty() {
 			format!("_{}", &args[2..args.find(':').unwrap()])
@@ -212,10 +209,10 @@ impl <#= e.book_struct.name #> {
 			"".into()
 		}; #>
 
-impl <#= name #> {
+impl <#= e.book_struct.name #> {
 	pub fn remove<#= name_add #>(&self<#= args #>) -> OutCommand {
 		c2s::Out<#= e.msg.name #>Message::new(&mut std::iter::once({
-			<# create_message(_fmt, e, Some(r), msg_group, &self.0.messages)?; #>
+			<# create_message(_fmt, e, Some(r), msg_group, &self.messages)?; #>
 		})<# if msg_group.default.response { #>, None<# } #>)
 	}
 }
@@ -229,7 +226,7 @@ impl <#= name #> {
 impl <#= e.book_struct.name #> {
 	pub fn add_<#= name.to_snake_case() #>(&self<#= get_all_arguments(e, Some(r)) #>) -> OutCommand {
 		c2s::Out<#= e.msg.name #>Message::new(&mut std::iter::once({
-			<# create_message(_fmt, e, Some(r), msg_group, &self.0.messages)?; #>
+			<# create_message(_fmt, e, Some(r), msg_group, &self.messages)?; #>
 		})<# if msg_group.default.response { #>, None<# } #>)
 	}
 }

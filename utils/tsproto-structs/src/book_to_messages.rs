@@ -337,10 +337,22 @@ impl<'a> RuleKind<'a> {
 		}
 	}
 
+	pub fn get_type_no_option_owned(&self) -> String {
+		match self {
+			RuleKind::Map { .. } => {
+				let mut rust_type = self.from().clone();
+				rust_type.opt = false;
+				rust_type.get_rust_type(false)
+			}
+			RuleKind::Function { .. } => self.from().get_rust_type(false),
+			RuleKind::ArgumentMap { to, .. } => convert_type(&to.type_s, false),
+			RuleKind::ArgumentFunction { type_s, .. } => convert_type(type_s, false),
+		}
+	}
+
 	pub fn get_type_no_option(&self) -> String {
 		match self {
 			RuleKind::Map { .. } => {
-				// TODO: MILD HACK !!!!
 				let mut rust_type = self.from().clone();
 				rust_type.opt = false;
 				rust_type.get_rust_type(true)

@@ -697,16 +697,6 @@ impl Channel {
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 }
 
-// TODO ClientServerGroup?
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct ClientServerGroup {
-	database_id: ClientDbId,
-	inner: ServerGroupId,
-}
-impl ClientServerGroup {
-	fn get_id(&self) -> ServerGroupId { self.inner }
-}
-
 /// The `ChannelOptions` are used to set initial properties of a new channel.
 ///
 /// A channel can be created with [`ServerMut::add_channel`]. The only necessary
