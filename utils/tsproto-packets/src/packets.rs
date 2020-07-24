@@ -241,6 +241,7 @@ pub struct InAudio<'a> {
 	data: AudioData<'a>,
 }
 
+#[must_use]
 pub struct OutCommand(pub OutPacket);
 pub struct OutC2SInit0;
 pub struct OutC2SInit2;

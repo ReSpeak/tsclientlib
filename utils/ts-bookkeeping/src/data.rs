@@ -178,7 +178,9 @@ impl Connection {
 	fn get_mut_server(&mut self) -> Result<&mut Server> { Ok(&mut self.server) }
 
 	fn get_channel_group(&self, group: ChannelGroupId) -> Result<&ChannelGroup> {
-		self.channel_groups.get(&group).ok_or_else(|| Error::NotFound("ChannelGroup", group.to_string()))
+		self.channel_groups
+			.get(&group)
+			.ok_or_else(|| Error::NotFound("ChannelGroup", group.to_string()))
 	}
 	fn add_channel_group(
 		&mut self, group: ChannelGroupId, r: ChannelGroup, _: &mut Vec<Event>,
@@ -186,7 +188,9 @@ impl Connection {
 		Ok(self.channel_groups.insert(group, r))
 	}
 	fn get_server_group(&self, group: ServerGroupId) -> Result<&ServerGroup> {
-		self.server_groups.get(&group).ok_or_else(|| Error::NotFound("ServerGroup", group.to_string()))
+		self.server_groups
+			.get(&group)
+			.ok_or_else(|| Error::NotFound("ServerGroup", group.to_string()))
 	}
 	fn add_server_group(
 		&mut self, group: ServerGroupId, r: ServerGroup, _: &mut Vec<Event>,
@@ -695,6 +699,18 @@ impl Channel {
 	}
 
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
+
+	pub fn set_subscribed(&self, subscribed: bool) -> OutCommand {
+		if subscribed {
+			c2s::OutChannelSubscribeMessage::new(&mut iter::once(c2s::OutChannelSubscribePart {
+				channel_id: self.id,
+			}))
+		} else {
+			c2s::OutChannelUnsubscribeMessage::new(&mut iter::once(c2s::OutChannelUnsubscribePart {
+				channel_id: self.id,
+			}))
+		}
+	}
 }
 
 /// The `ChannelOptions` are used to set initial properties of a new channel.
