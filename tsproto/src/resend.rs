@@ -8,7 +8,7 @@ use std::task::{Context, Poll};
 
 use futures::prelude::*;
 use num_traits::ToPrimitive;
-use slog::{info, warn, Logger};
+use slog::{info, trace, warn, Logger};
 use tokio::time::{Delay, Duration, Instant};
 use tsproto_packets::packets::*;
 
@@ -466,14 +466,22 @@ impl Resender {
 			packet,
 		};
 
+		trace!(con.logger, "Adding send record"; "record" => ?rec, "window" => con.resender.get_window());
 		let i = Self::packet_type_to_index(rec.id.id.packet_type);
+		// Reduce index if necessary (needed e.g. for resending lower init packets)
+		if con.resender.send_queue_indices[i] > rec.id.id.part {
+			con.resender.send_queue_indices[i] = rec.id.id.part;
+		}
+
 		con.resender.full_send_queue[i].insert(rec.id.id.part, rec);
 		con.resender.fill_up_send_queue();
+		trace!(con.logger, "After adding send record"; "state" => ?con.resender.send_queue, "indices" => ?con.resender.send_queue_indices);
 	}
 
 	/// Returns an error if the timeout is exceeded and the connection is
 	/// considered dead or another unrecoverable error occurs.
 	pub fn poll_resend(con: &mut Connection, cx: &mut Context) -> Result<()> {
+		trace!(con.logger, "Poll resend"; "state" => ?con.resender.send_queue);
 		let timeout = con.resender.get_timeout();
 		// Send a packet at least every second
 		let max_send_rto = Duration::from_secs(1);
@@ -495,6 +503,7 @@ impl Resender {
 			} else {
 				break;
 			};
+			trace!(con.logger, "Polling send record");
 
 			// Skip if not contained in full_send_queue. This happens when the
 			// packet was acknowledged.
@@ -525,6 +534,7 @@ impl Resender {
 			}
 
 			// Try to send this packet
+			trace!(con.logger, "Try sending packet");
 			match Connection::static_poll_send_udp_packet(
 				&*con.udp_socket,
 				&con.address,

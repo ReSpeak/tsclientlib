@@ -2,7 +2,8 @@ use std::fmt::Debug;
 use std::str;
 
 use slog::{debug, o, Logger};
-use tsproto_packets::packets::{OutUdpPacket, PacketType};
+use tsproto_packets::HexSlice;
+use tsproto_packets::packets::{InUdpPacket, OutUdpPacket, PacketType};
 
 use crate::connection::{Connection, Event};
 
@@ -18,9 +19,11 @@ fn prepare_logger(logger: &Logger, is_client: bool, incoming: bool) -> Logger {
 	logger.new(o!("to" => to_s, "dir" => in_s))
 }
 
-pub fn log_udp_packet<P: Debug>(logger: &Logger, is_client: bool, incoming: bool, packet: &P) {
+pub fn log_udp_packet(logger: &Logger, is_client: bool, incoming: bool, packet: &InUdpPacket) {
 	let logger = prepare_logger(logger, is_client, incoming);
-	debug!(logger, "UdpPacket"; "header" => ?packet);
+	debug!(logger, "UdpPacket"; "header" => ?packet.0.header(),
+		"content" => %HexSlice(packet.0.content()),
+	);
 }
 
 pub fn log_out_udp_packet(logger: &Logger, is_client: bool, incoming: bool, packet: &OutUdpPacket) {
@@ -28,6 +31,7 @@ pub fn log_out_udp_packet(logger: &Logger, is_client: bool, incoming: bool, pack
 	debug!(logger, "UdpPacket";
 		"generation" => packet.generation_id(),
 		"header" => ?packet.data().header(),
+		"content" => %HexSlice(packet.data().content()),
 	);
 }
 
@@ -61,7 +65,7 @@ pub fn add_logger(logger: Logger, verbosity: u8, con: &mut Connection) {
 	let listener = Box::new(move |event: &Event| match event {
 		Event::ReceiveUdpPacket(packet) => {
 			if verbosity > 0 {
-				log_udp_packet(&logger, is_client, true, packet.0.header());
+				log_udp_packet(&logger, is_client, true, packet);
 			}
 		}
 		Event::ReceivePacket(packet) => {

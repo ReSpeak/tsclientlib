@@ -92,11 +92,11 @@ impl Client {
 		Self { con: Connection::new(true, logger, address, udp_socket), private_key }
 	}
 
-	async fn get_init(&mut self, init_step: u8) -> Result<InS2CInitBuf> {
+	async fn get_init(&mut self, init_steps: &[u8]) -> Result<InS2CInitBuf> {
 		self.filter_items(|con, i| {
 			Ok(match i {
 				StreamItem::S2CInit(packet) => {
-					if packet.data().data().get_step() == init_step {
+					if init_steps.contains(&packet.data().data().get_step()) {
 						Some(packet)
 					} else {
 						// Resent packet
@@ -245,117 +245,125 @@ impl Client {
 		// Get the current timestamp
 		let now = OffsetDateTime::now_utc();
 		let timestamp = now.timestamp() as u32;
+		// TeamSpeak offsets the timestamp for the version by some years
+		let version = timestamp - 1356998400;
 
 		// Random bytes
 		let random0 = rand::thread_rng().gen::<[u8; 4]>();
 
-		// Wait for Init1
-		{
-			self.send_packet(OutC2SInit0::new(timestamp, timestamp, random0))?;
-			let init1 = self.get_init(1).await?;
-			match init1.data().data() {
-				S2CInitData::Init1 { random1, random0_r } => {
-					// Check the response
-					// Most of the time, random0_r is the reversed random0, but
-					// sometimes it isn't so do not check it.
-					// random0.as_ref().iter().rev().eq(random0_r.as_ref())
-					// The packet is correct.
-
-					// Send next init packet
-					self.send_packet(OutC2SInit2::new(timestamp, random1, **random0_r))?;
-				}
-				_ => {
-					return Err(Error::UnexpectedPacket(
-						"Init1",
-						format!("{:?}", init1.data().packet().header().packet_type()),
-					));
-				}
-			}
-		}
-
-		// Wait for Init3
 		let alpha;
-		{
-			let init3 = self.get_init(3).await?;
-			match init3.data().data() {
-				S2CInitData::Init3 { x, n, level, random2 } => {
-					let level = *level;
-					// Solve RSA puzzle: y = x ^ (2 ^ level) % n
-					// Use Montgomery Reduction
-					if level > 10_000_000 {
-						// Reject too high exponents
-						return Err(Error::RsaPuzzleTooHighLevel(level));
+		loop {
+			// Wait for Init1
+			{
+				self.send_packet(OutC2SInit0::new(version, timestamp, random0))?;
+				let init1 = self.get_init(&[1]).await?;
+				match init1.data().data() {
+					S2CInitData::Init1 { random1, random0_r } => {
+						// Check the response
+						// Most of the time, random0_r is the reversed random0, but
+						// sometimes it isn't so do not check it.
+						// random0.as_ref().iter().rev().eq(random0_r.as_ref())
+						// The packet is correct.
+
+						// Send next init packet
+						self.send_packet(OutC2SInit2::new(version, random1, **random0_r))?;
 					}
-
-					// Create clientinitiv
-					alpha = rand::thread_rng().gen::<[u8; 10]>();
-					// omega is an ASN.1-DER encoded public key from
-					// the ECDH parameters.
-
-					let ip = self.con.address.ip();
-
-					let x = **x;
-					let n = **n;
-					let random2 = **random2;
-
-					let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-						"Solve RSA puzzle",
-						self.con.logger.clone(),
-						Level::Info,
-					);
-					time_reporter.start("");
-
-					// Use gmp for faster computations if it is
-					// available.
-					#[cfg(feature = "rug")]
-					let y = {
-						let mut e = Integer::new();
-						let n = Integer::from_digits(&n[..], Order::Msf);
-						let x = Integer::from_digits(&x[..], Order::Msf);
-						e.set_bit(level, true);
-						let y = x.pow_mod(&e, &n).map_err(|_| Error::RsaPuzzle)?;
-						let mut yi = [0; 64];
-						y.write_digits(&mut yi, Order::Msf);
-						yi
-					};
-
-					#[cfg(not(feature = "rug"))]
-					let y = {
-						let xi = BigUint::from_bytes_be(&x);
-						let ni = BigUint::from_bytes_be(&n);
-						let e = BigUint::one() << level as usize;
-						let yi = xi.modpow(&e, &ni);
-						info!(self.con.logger, "Solve RSA puzzle";
-							"level" => level, "x" => %xi, "n" => %ni,
-							"y" => %yi);
-						algs::biguint_to_array(&yi)
-					};
-
-					time_reporter.finish();
-
-					// Create the command string
-					// omega is an ASN.1-DER encoded public key from
-					// the ECDH parameters.
-					let omega =
-						self.private_key.to_pub().to_tomcrypt().map_err(Error::SerializeKey)?;
-					let ip = if crate::utils::is_global_ip(&ip) {
-						ip.to_string()
-					} else {
-						String::new()
-					};
-
-					// Send next init packet
-					self.send_packet(OutC2SInit4::new(
-						timestamp, &x, &n, level, &random2, &y, &alpha, &omega, &ip,
-					))?;
-				}
-				_ => {
-					return Err(Error::UnexpectedPacket(
-						"Init3",
-						format!("{:?}", init3.data().packet().header().packet_type()),
-					));
+					_ => {
+						return Err(Error::UnexpectedPacket(
+							"Init1",
+							format!("{:?}", init1.data().packet().header().packet_type()),
+						));
+					}
 				}
 			}
+
+			// Wait for Init3
+			{
+				let init3 = self.get_init(&[3, 127]).await?;
+				if init3.data().data().get_step() == 127 {
+					continue;
+				}
+				match init3.data().data() {
+					S2CInitData::Init3 { x, n, level, random2 } => {
+						let level = *level;
+						// Solve RSA puzzle: y = x ^ (2 ^ level) % n
+						// Use Montgomery Reduction
+						if level > 10_000_000 {
+							// Reject too high exponents
+							return Err(Error::RsaPuzzleTooHighLevel(level));
+						}
+
+						// Create clientinitiv
+						alpha = rand::thread_rng().gen::<[u8; 10]>();
+						// omega is an ASN.1-DER encoded public key from
+						// the ECDH parameters.
+
+						let ip = self.con.address.ip();
+
+						let x = **x;
+						let n = **n;
+						let random2 = **random2;
+
+						let mut time_reporter = slog_perf::TimeReporter::new_with_level(
+							"Solve RSA puzzle",
+							self.con.logger.clone(),
+							Level::Info,
+						);
+						time_reporter.start("");
+
+						// Use gmp for faster computations if it is
+						// available.
+						#[cfg(feature = "rug")]
+						let y = {
+							let mut e = Integer::new();
+							let n = Integer::from_digits(&n[..], Order::Msf);
+							let x = Integer::from_digits(&x[..], Order::Msf);
+							e.set_bit(level, true);
+							let y = x.pow_mod(&e, &n).map_err(|_| Error::RsaPuzzle)?;
+							let mut yi = [0; 64];
+							y.write_digits(&mut yi, Order::Msf);
+							yi
+						};
+
+						#[cfg(not(feature = "rug"))]
+						let y = {
+							let xi = BigUint::from_bytes_be(&x);
+							let ni = BigUint::from_bytes_be(&n);
+							let e = BigUint::one() << level as usize;
+							let yi = xi.modpow(&e, &ni);
+							info!(self.con.logger, "Solve RSA puzzle";
+								"level" => level, "x" => %xi, "n" => %ni,
+								"y" => %yi);
+							algs::biguint_to_array(&yi)
+						};
+
+						time_reporter.finish();
+
+						// Create the command string
+						// omega is an ASN.1-DER encoded public key from
+						// the ECDH parameters.
+						let omega =
+							self.private_key.to_pub().to_tomcrypt().map_err(Error::SerializeKey)?;
+						let ip = if crate::utils::is_global_ip(&ip) {
+							ip.to_string()
+						} else {
+							String::new()
+						};
+
+						// Send next init packet
+						self.send_packet(OutC2SInit4::new(
+							version, &x, &n, level, &random2, &y, &alpha, &omega, &ip,
+						))?;
+					}
+					_ => {
+						return Err(Error::UnexpectedPacket(
+							"Init3",
+							format!("{:?}", init3.data().packet().header().packet_type()),
+						));
+					}
+				}
+			}
+			break;
 		}
 
 		let clientek_id;

@@ -419,10 +419,12 @@ impl Stream for Connection {
 			Err(e) => return Poll::Ready(Some(Err(e))),
 		}
 
-		// Use the resender to send pings
-		match Resender::poll_ping(&mut *self, cx) {
-			Ok(()) => {}
-			Err(e) => return Poll::Ready(Some(Err(e))),
+		if self.resender.get_state() == ResenderState::Connected {
+			// Use the resender to send pings
+			match Resender::poll_ping(&mut *self, cx) {
+				Ok(()) => {}
+				Err(e) => return Poll::Ready(Some(Err(e))),
+			}
 		}
 
 		// Return existing stream_items

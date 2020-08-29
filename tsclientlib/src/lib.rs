@@ -460,7 +460,7 @@ impl Connection {
 			0
 		};
 		if verbosity > 0 {
-			tsproto::log::add_logger(logger.clone(), verbosity, &mut *client);
+			tsproto::log::add_logger(client.logger.clone(), verbosity, &mut *client);
 		}
 
 		// Create a connection

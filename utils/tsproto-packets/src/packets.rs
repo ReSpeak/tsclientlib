@@ -183,6 +183,7 @@ pub enum C2SInitData<'a> {
 pub enum S2CInitData<'a> {
 	Init1 { random1: &'a [u8; 16], random0_r: &'a [u8; 4] },
 	Init3 { x: &'a [u8; 64], n: &'a [u8; 64], level: u32, random2: &'a [u8; 100] },
+	Init127 { },
 }
 
 #[derive(Clone, Debug)]
@@ -318,6 +319,7 @@ impl<'a> InPacket<'a> {
 						.and_then(|i| match u16::from(*i) {
 							1 => Ok(0),
 							3 => Ok(2),
+							127 => Ok(2), // Have to restart sending Init0, remove Init2 anyway
 							_ => Err(Error::InvalidInitStep(*i)),
 						})?,
 				))
@@ -363,7 +365,7 @@ impl<'a> InPacket<'a> {
 			return Err(Error::WrongInitMac(mac.to_vec()));
 		}
 
-		if self.content.len() < 1 {
+		if self.content.is_empty() {
 			return Err(Error::PacketContentTooShort(self.content.len()));
 		}
 
@@ -386,6 +388,8 @@ impl<'a> InPacket<'a> {
 				level: (&self.content[129..]).read_be()?,
 				random2: array_ref!(self.content, 133, 100),
 			};
+		} else if self.content[0] == 127 {
+			data = S2CInitData::Init127 { };
 		} else {
 			return Err(Error::InvalidInitStep(self.content[0]));
 		}
@@ -607,6 +611,7 @@ impl S2CInitData<'_> {
 		match self {
 			S2CInitData::Init1 { .. } => 1,
 			S2CInitData::Init3 { .. } => 3,
+			S2CInitData::Init127 { .. } => 127,
 		}
 	}
 }
@@ -616,6 +621,7 @@ impl<'a> fmt::Debug for S2CInitData<'a> {
 		match self {
 			S2CInitData::Init1 { .. } => write!(f, "Init1"),
 			S2CInitData::Init3 { level, .. } => write!(f, "Init3(level: {})", level),
+			S2CInitData::Init127 { .. } => write!(f, "Init127"),
 		}
 	}
 }
