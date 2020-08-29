@@ -151,11 +151,11 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 					value: val.to_string(),
 					source: e,
 				}})?;
-				if let Some(_) = val.checked_mul(1000) {{ Duration::seconds(val) }}
-				else {{ Err(ParseError::InvalidValue {{
+				if val.checked_mul(1000).is_some() {{ Duration::seconds(val) }}
+				else {{ return Err(ParseError::InvalidValue {{
 					arg: \"{0}\",
 					value: val.to_string(),
-					}})? }}",
+					}}); }}",
 					field.pretty
 				)
 			} else if field.type_s == "DurationMilliseconds" {
