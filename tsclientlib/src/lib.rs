@@ -21,6 +21,7 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use futures::prelude::*;
 use slog::{debug, info, o, warn, Drain, Logger};
@@ -73,7 +74,9 @@ pub enum Error {
 	#[error("Failed to connect: {0}")]
 	Connect(#[source] tsproto::client::Error),
 	#[error("Failed to connect to server at {address:?}: {errors:?}")]
-	ConnectionFailed { address: String, errors: Vec<Error> },
+	ConnectFailed { address: String, errors: Vec<Error> },
+	#[error("Connection aborted: {0}")]
+	ConnectionFailed(#[source] tsproto::client::Error),
 	/// The connection was destroyed.
 	#[error("Connection does not exist anymore")]
 	ConnectionGone,
@@ -219,10 +222,9 @@ pub enum StreamItem {
 
 /// The `Connection` is the main interaction point with this library.
 ///
-/// It represents a connection to a TeamSpeak server. It will reconnect
-/// automatically when the connection times out (though timeout is not yet
-/// implemented). It will not reconnect which the client is kicked or banned
-/// from the server.
+/// It represents a connection to a TeamSpeak server. It will reconnect automatically when the
+/// connection times out. It will not reconnect which the client is kicked or banned from the
+/// server.
 pub struct Connection {
 	state: ConnectionState,
 	logger: Logger,
@@ -242,7 +244,11 @@ struct ConnectedConnection {
 }
 
 enum ConnectionState {
-	Connecting(future::BoxFuture<'static, Result<(client::Client, data::Connection)>>),
+	/// The future that resolves to a connection and a boolean if we should reconnect on failure.
+	///
+	/// If the `bool` is `false`, the connection will abort on error. Otherwise it will try to
+	/// connect again on timeout.
+	Connecting(future::BoxFuture<'static, Result<(client::Client, data::Connection)>>, bool),
 	IdentityLevelIncreasing {
 		/// We get the improved identity here.
 		recv: oneshot::Receiver<std::result::Result<Identity, tsproto::Error>>,
@@ -374,10 +380,10 @@ impl Connection {
 		);
 
 		// Try all addresses
-		let fut = Self::connect(logger.clone(), options.clone());
+		let fut = Self::connect(logger.clone(), options.clone(), false);
 
 		Ok(Self {
-			state: ConnectionState::Connecting(Box::pin(fut)),
+			state: ConnectionState::Connecting(Box::pin(fut), false),
 			logger,
 			options,
 			stream_items,
@@ -398,9 +404,17 @@ impl Connection {
 		EventStream(self)
 	}
 
+	/// Connect to a server.
+	///
+	/// If `is_reconnect` is `true`, wait 10 seconds before sending the first packet. This is to not
+	/// spam unnecessary packets if the internet or server is down.
 	async fn connect(
-		logger: Logger, options: ConnectOptions,
+		logger: Logger, options: ConnectOptions, is_reconnect: bool,
 	) -> Result<(client::Client, data::Connection)> {
+		if is_reconnect {
+			time::delay_for(Duration::from_secs(10)).await;
+		}
+
 		let resolved = match &options.address {
 			ServerAddress::SocketAddr(a) => stream::once(future::ok(*a)).left_stream(),
 			ServerAddress::Other(s) => resolver::resolve(logger.clone(), s.into()).right_stream(),
@@ -424,7 +438,7 @@ impl Connection {
 				}
 			}
 		}
-		Err(Error::ConnectionFailed { address: options.address.to_string(), errors })
+		Err(Error::ConnectFailed { address: options.address.to_string(), errors })
 	}
 
 	async fn connect_to(
@@ -783,7 +797,7 @@ impl Connection {
 			return Poll::Ready(Some(item));
 		}
 		match &mut self.state {
-			ConnectionState::Connecting(fut) => match fut.poll_unpin(cx) {
+			ConnectionState::Connecting(fut, reconnect) => match fut.poll_unpin(cx) {
 				Poll::Pending => Poll::Pending,
 				Poll::Ready(Err(Error::IdentityLevel(level))) => {
 					if let Err(e) = self.increase_identity_level(level) {
@@ -791,7 +805,29 @@ impl Connection {
 					}
 					Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreasing(level))))
 				}
-				Poll::Ready(Err(e)) => Poll::Ready(Some(Err(e))),
+				Poll::Ready(Err(e)) => {
+					if *reconnect {
+						if let Error::ConnectFailed { errors, .. } = &e {
+							for e in errors {
+								if let Error::Connect(client::Error::TsProto(
+									tsproto::Error::Timeout(reason),
+								)) = e
+								{
+									debug!(self.logger, "Connect failed, reconnecting";
+										"timout" => reason);
+									let fut = Self::connect(
+										self.logger.clone(),
+										self.options.clone(),
+										true,
+									);
+									self.state = ConnectionState::Connecting(Box::pin(fut), true);
+									return self.poll_next(cx);
+								}
+							}
+						}
+					}
+					Poll::Ready(Some(Err(e)))
+				}
 				Poll::Ready(Ok((client, book))) => {
 					let con = ConnectedConnection {
 						client,
@@ -819,8 +855,8 @@ impl Connection {
 				}
 				Poll::Ready(Ok(Ok(identity))) => {
 					self.options.identity = Some(identity);
-					let fut = Self::connect(self.logger.clone(), self.options.clone());
-					self.state = ConnectionState::Connecting(Box::pin(fut));
+					let fut = Self::connect(self.logger.clone(), self.options.clone(), false);
+					self.state = ConnectionState::Connecting(Box::pin(fut), false);
 					Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreased)))
 				}
 			},
@@ -837,12 +873,16 @@ impl Connection {
 							break Poll::Ready(None);
 						}
 
-						warn!(self.logger, "Connection failed, reconnecting"; "error" => %e);
-						// Reconnect
-						// TODO Depending on reason
-						let fut = Self::connect(self.logger.clone(), self.options.clone());
-						self.state = ConnectionState::Connecting(Box::pin(fut));
-						return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily)));
+						if let client::Error::TsProto(tsproto::Error::Timeout(reason)) = e {
+							// Reconnect on timeout
+							warn!(self.logger, "Connection failed, reconnecting"; "timout" => reason);
+							let fut =
+								Self::connect(self.logger.clone(), self.options.clone(), true);
+							self.state = ConnectionState::Connecting(Box::pin(fut), true);
+							return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily)));
+						} else {
+							break Poll::Ready(Some(Err(Error::ConnectionFailed(e))));
+						}
 					}
 					Poll::Ready(Some(Ok(item))) => match item {
 						ProtoStreamItem::Error(e) => {
