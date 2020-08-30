@@ -18,26 +18,9 @@ pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
 
 type Result<T> = std::result::Result<T, Error>;
 
-// TODO Sort
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-	#[error("Failed to serialize license: {0}")]
-	Serialize(#[source] std::io::Error),
-	#[error("Failed to deserialize license: {0}")]
-	Deserialize(#[source] std::io::Error),
-	#[error("Failed to deserialize license: {0}")]
-	DeserializeString(#[source] std::str::Utf8Error),
-	#[error("Non-null-terminated string")]
-	NonterminatedString,
-	#[error("Cannot uncompress license public key")]
-	InvalidPublicKey,
-	#[error("Unsupported license version {0}")]
-	UnsupportedVersion(u8),
-	#[error("Too many license blocks: {0}")]
-	TooManyBlocks(usize),
-	#[error("License is only valid between {start} and {end}")]
-	Expired { start: OffsetDateTime, end: OffsetDateTime },
 	#[error(
 		"License must not exceed bounds {outer_start} - {outer_end} but has {inner_start} - \
 		 {inner_end}"
@@ -48,21 +31,38 @@ pub enum Error {
 		inner_start: OffsetDateTime,
 		inner_end: OffsetDateTime,
 	},
-	#[error("Invalid public root key for license")]
-	InvalidRootKey,
-	#[error("License too short")]
-	TooShort,
-	#[error("Wrong key kind {0} in license")]
-	WrongKeyKind(u8),
+	#[error("Failed to deserialize license: {0}")]
+	Deserialize(#[source] std::io::Error),
+	#[error("Failed to deserialize license: {0}")]
+	DeserializeString(#[source] std::str::Utf8Error),
+	#[error("License is only valid between {start} and {end}")]
+	Expired { start: OffsetDateTime, end: OffsetDateTime },
+	#[error("Cannot uncompress license public key")]
+	InvalidPublicKey,
 	#[error("Invalid data {0:#x} in intermediate license")]
 	IntermediateInvalidData(u32),
+	#[error("Invalid public root key for license")]
+	InvalidRootKey,
+	#[error("Non-null-terminated string")]
+	NonterminatedString,
 	#[error("License contains no private key")]
 	NoPrivateKey,
-	#[error("Unknown license type {0}")]
-	UnknownLicenseType(u8),
+	#[error("Failed to serialize license: {0}")]
+	Serialize(#[source] std::io::Error),
+	#[error("Too many license blocks: {0}")]
+	TooManyBlocks(usize),
+	#[error("License too short")]
+	TooShort,
 	#[error("Unknown license block type {0}")]
 	UnknownBlockType(u8),
+	#[error("Unknown license type {0}")]
+	UnknownLicenseType(u8),
+	#[error("Unsupported license version {0}")]
+	UnsupportedVersion(u8),
+	#[error("Wrong key kind {0} in license")]
+	WrongKeyKind(u8),
 }
+
 /// Either a public or a private key.
 #[derive(Debug, Clone)]
 pub enum LicenseKey {

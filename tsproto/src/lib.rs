@@ -73,14 +73,29 @@ pub const ROOT_KEY: [u8; 32] = [
 /// connection.
 const UDP_SINK_CAPACITY: usize = 50;
 
-// TODO Sort
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
+	#[error("Failed to compute cryptographic parameters: {0}")]
+	ComputeIv(#[source] tsproto_types::crypto::Error),
+	#[error("Failed to create ack packet: {0}")]
+	CreateAck(#[source] tsproto_packets::Error),
+	#[error("Failed to decompress packet: {0}")]
+	DecompressPacket(#[source] quicklz::Error),
+	#[error(transparent)]
+	IdentityCrypto(tsproto_types::crypto::Error),
+	#[error("Failed to parse int: {0}")]
+	InvalidHex(#[source] ParseIntError),
+	#[error("Maximum length exceeded for {0}")]
+	MaxLengthExceeded(&'static str),
 	#[error("Network error: {0}")]
 	Network(#[source] std::io::Error),
 	#[error("Packet {id} not in receive window [{next};{limit}) for type {p_type:?}")]
 	NotInReceiveWindow { id: u16, next: u16, limit: u16, p_type: packets::PacketType },
+	#[error("Failed to parse {0} packet: {1}")]
+	PacketParse(&'static str, #[source] tsproto_packets::Error),
+	#[error("Connection timed out: {0}")]
+	Timeout(&'static str),
 	#[error("Got unallowed unencrypted packet")]
 	UnallowedUnencryptedPacket,
 	#[error("Got unexpected init packet")]
@@ -91,22 +106,6 @@ pub enum Error {
 	WrongAddress,
 	#[error("{p_type:?} Packet {generation_id}:{packet_id} has a wrong mac")]
 	WrongMac { p_type: packets::PacketType, generation_id: u32, packet_id: u16 },
-	#[error("Maximum length exceeded for {0}")]
-	MaxLengthExceeded(&'static str),
-	#[error("Failed to parse int: {0}")]
-	InvalidHex(#[source] ParseIntError),
-	#[error("Failed to decompress packet: {0}")]
-	DecompressPacket(#[source] quicklz::Error),
-	#[error("Failed to parse {0} packet: {1}")]
-	PacketParse(&'static str, #[source] tsproto_packets::Error),
-	#[error("Failed to create ack packet: {0}")]
-	CreateAck(#[source] tsproto_packets::Error),
-	#[error(transparent)]
-	IdentityCrypto(tsproto_types::crypto::Error),
-	#[error("Failed to compute cryptographic parameters: {0}")]
-	ComputeIv(#[source] tsproto_types::crypto::Error),
-	#[error("Connection timed out: {0}")]
-	Timeout(&'static str),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

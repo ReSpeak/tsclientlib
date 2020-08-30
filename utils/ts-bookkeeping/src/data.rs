@@ -944,30 +944,12 @@ impl Connection {
 	pub fn disconnect(&self, options: crate::DisconnectOptions) -> OutCommand {
 		c2s::OutDisconnectMessage::new(&mut iter::once(c2s::OutDisconnectPart {
 			reason: options.reason,
-			reason_message: options.message.as_ref().map(|m| m.as_str()),
+			reason_message: options.message.as_deref(),
 		}))
 	}
 }
 
 impl Client {
-	// TODO Move other clients
-	/*/// Move this client to another channel.
-	/// This function takes a password so it is possible to join protected
-	/// channels.
-	///
-	/// # Examples
-	/// ```rust,no_run
-	/// # use futures::Future;
-	/// # let connection: tsclientlib::Connection = panic!();
-	/// let con_lock = connection.lock();
-	/// let con_mut = con_lock.to_mut();
-	/// // Get our own client in mutable form
-	/// let client = con_mut.get_server().get_client(&con_lock.own_client).unwrap();
-	/// // Switch to channel 2
-	/// tokio::spawn(client.set_channel_with_password(ChannelId(2), "secure password")
-	///	    .map_err(|e| println!("Failed to switch channel ({:?})", e)));
-	/// ```*/
-
 	pub fn send_textmessage(&self, message: &str) -> OutCommand {
 		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 			target: TextMessageTargetMode::Client,

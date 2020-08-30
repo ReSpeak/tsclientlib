@@ -737,36 +737,6 @@ mod test {
 		}
 	}
 
-	// TODO
-	/*#[test]
-	fn test_opus_roundtrip() -> Result<()> {
-		let mut opus_output = [0; 1275]; // Max size for an opus packet
-		let encoder = Encoder::new(
-			audiopus::SampleRate::Hz48000,
-			audiopus::Channels::Mono,
-			audiopus::Application::Voip,
-		)?;
-		let mut decoder = Decoder::new(SAMPLE_RATE, CHANNELS)?;
-		let data = vec![0.1234 as f32; USUAL_FRAME_SIZE];
-		let len = encoder.encode_float(&data, &mut opus_output[..])?;
-		let mut decoded_buffer = vec![0.0; USUAL_FRAME_SIZE * 2];
-		let len2 = decoder.decode_float(
-			Some(&opus_output[..len]),
-			&mut decoded_buffer[..],
-			false,
-		)?;
-		assert_eq!(len2, USUAL_FRAME_SIZE);
-
-		for b in &decoded_buffer {
-			if (*b - 0.1234).abs() > 0.1 {
-				bail!("Buffer contains wrong value, expected 0.1234: {:?}",
-					decoded_buffer);
-			}
-		}
-
-		Ok(())
-	}*/
-
 	#[test]
 	fn packets_wrapping2() -> Result<()> {
 		let mut a = vec![SimulateAction::CreateEncoder];
