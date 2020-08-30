@@ -28,54 +28,53 @@ use crate::resend::{PacketId, ResenderState};
 
 type Result<T> = std::result::Result<T, Error>;
 
-// TODO Sort
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-	#[error(transparent)]
-	TsProto(#[from] crate::Error),
-	#[error("Failed to solve RSA puzzle")]
-	RsaPuzzle,
-	#[error("Expected {0} but got {1}")]
-	UnexpectedPacket(&'static str, String),
-	#[error("Requested RSA puzzle level {0} is too high")]
-	RsaPuzzleTooHighLevel(u32),
-	#[error("Invalid packet: {0}")]
-	InvalidPacket(&'static str),
-	#[error("Invalid packet: Got multiple {0} in one packet")]
-	MultipleCommands(&'static str),
-	#[error("Invalid packet: initivexpand2 command has wrong arguments")]
-	InvalidInitivexpand2,
-	#[error("Cannot parse base64 argument {0}: {1}")]
-	InvalidBase64Arg(&'static str, #[source] base64::DecodeError),
-	#[error("Invalid packet: Got root for initivexpand2, but length {0} != 32")]
-	InvalidRootKeyLength(usize),
-	#[error("Invalid packet: Incorrect beta length in initivexpand2 {0} != 54")]
-	InvalidBetaLength(usize),
-	#[error("Invalid packet: Cannot parse omega as string: {0}")]
-	InvalidOmegaString(#[source] tsproto_packets::Error),
-	#[error("Invalid packet: Cannot parse omega as key: {0}")]
-	InvalidOmegaKey(#[source] tsproto_types::crypto::Error),
-	#[error("Got no ot=1, the server is probably outdated")]
-	OutdatedServer,
-	#[error("The server license signature is invalid: {0}")]
-	InvalidSignature(#[source] tsproto_types::crypto::Error),
-	#[error("Failed to parse license: {0}")]
-	ParseLicense(#[source] crate::license::Error),
-	#[error("Failed to create key: {0}")]
-	CreateKey(#[source] tsproto_types::crypto::Error),
-	#[error("Failed to sign ephemeral key: {0}")]
-	SignKey(#[source] tsproto_types::crypto::Error),
-	#[error("Failed to serialize key: {0}")]
-	SerializeKey(#[source] tsproto_types::crypto::Error),
 	#[error("Connection ended unexpectedly")]
 	ConnectionEnd,
-	#[error("Got invalid client id {0:?}: {1}")]
-	InvalidClientId(Vec<u8>, #[source] tsproto_packets::Error),
-	#[error("Got initserver without accepted client id")]
-	NoClientId,
+	#[error("Failed to create key: {0}")]
+	CreateKey(#[source] tsproto_types::crypto::Error),
 	#[error("Got initserver, but we have not yet a full connection")]
 	EarlyInitserver,
+	#[error("Cannot parse base64 argument {0}: {1}")]
+	InvalidBase64Arg(&'static str, #[source] base64::DecodeError),
+	#[error("Invalid packet: Incorrect beta length in initivexpand2 {0} != 54")]
+	InvalidBetaLength(usize),
+	#[error("Got invalid client id {0:?}: {1}")]
+	InvalidClientId(Vec<u8>, #[source] tsproto_packets::Error),
+	#[error("Invalid packet: initivexpand2 command has wrong arguments")]
+	InvalidInitivexpand2,
+	#[error("Invalid packet: Cannot parse omega as key: {0}")]
+	InvalidOmegaKey(#[source] tsproto_types::crypto::Error),
+	#[error("Invalid packet: Cannot parse omega as string: {0}")]
+	InvalidOmegaString(#[source] tsproto_packets::Error),
+	#[error("Invalid packet: {0}")]
+	InvalidPacket(&'static str),
+	#[error("Invalid packet: Got root for initivexpand2, but length {0} != 32")]
+	InvalidRootKeyLength(usize),
+	#[error("The server license signature is invalid: {0}")]
+	InvalidSignature(#[source] tsproto_types::crypto::Error),
+	#[error("Invalid packet: Got multiple {0} in one packet")]
+	MultipleCommands(&'static str),
+	#[error("Got initserver without accepted client id")]
+	NoClientId,
+	#[error("Got no ot=1, the server is probably outdated")]
+	OutdatedServer,
+	#[error("Failed to parse license: {0}")]
+	ParseLicense(#[source] crate::license::Error),
+	#[error("Failed to solve RSA puzzle")]
+	RsaPuzzle,
+	#[error("Requested RSA puzzle level {0} is too high")]
+	RsaPuzzleTooHighLevel(u32),
+	#[error("Failed to serialize key: {0}")]
+	SerializeKey(#[source] tsproto_types::crypto::Error),
+	#[error("Failed to sign ephemeral key: {0}")]
+	SignKey(#[source] tsproto_types::crypto::Error),
+	#[error(transparent)]
+	TsProto(#[from] crate::Error),
+	#[error("Expected {0} but got {1}")]
+	UnexpectedPacket(&'static str, String),
 }
 
 pub struct Client {
@@ -856,20 +855,17 @@ mod tests {
 
 	/// Check if init packet is sent and connect timeout is working.
 	#[tokio::test]
-	async fn test_connect_timeout() -> Result<()> {
+	async fn connect_timeout() -> Result<()> {
 		let mut state = TestConnection::new()?;
 
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
-		let listener = move |event: &Event| match event {
-			Event::ReceivePacket(packet) => {
-				if packet.header().packet_type() == PacketType::Init {
-					if let Some(s) = send.replace(None) {
-						s.send(()).unwrap();
-					}
+		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
+			if packet.header().packet_type() == PacketType::Init {
+				if let Some(s) = send.replace(None) {
+					s.send(()).unwrap();
 				}
 			}
-			_ => {}
 		};
 
 		state.server.event_listeners.push(Box::new(listener));
@@ -890,19 +886,16 @@ mod tests {
 	}
 
 	#[tokio::test]
-	async fn test_disconnect_timeout() -> Result<()> {
+	async fn disconnect_timeout() -> Result<()> {
 		let mut state = TestConnection::new()?;
 		state.set_connected().await;
 
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
-		let listener = move |event: &Event| match event {
-			Event::ReceivePacket(packet) => {
-				if packet.header().packet_type() == PacketType::Command {
-					send.replace(None).unwrap().send(()).unwrap();
-				}
+		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
+			if packet.header().packet_type() == PacketType::Command {
+				send.replace(None).unwrap().send(()).unwrap();
 			}
-			_ => {}
 		};
 
 		state.server.event_listeners.push(Box::new(listener));
@@ -924,7 +917,7 @@ mod tests {
 				state.client.wait_disconnect(),
 			) => {
 				r??;
-				assert!(err.is_err(), "Connect should timeout");
+				assert!(err.is_err(), "Disconnect should timeout");
 				return Ok(());
 			}
 			_ = state.server.wait_disconnect() => {
@@ -933,9 +926,20 @@ mod tests {
 		);
 	}
 
+	#[tokio::test]
+	async fn timeout() -> Result<()> {
+		let mut state = TestConnection::new()?;
+		state.set_connected().await;
+
+		let r = state.client.wait_disconnect().await;
+		assert!(matches!(r, super::Result::<()>::Err(Error::TsProto(crate::Error::Timeout(_)))),
+			"Connection should timeout (result: {:?})", r);
+		Ok(())
+	}
+
 	/// Send ping and check that a pong is received.
 	#[tokio::test]
-	async fn test_pong() -> Result<()> {
+	async fn pong() -> Result<()> {
 		let mut state = TestConnection::new()?;
 		state.set_connected().await;
 
@@ -946,17 +950,14 @@ mod tests {
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
 		let counter = Cell::new(0u8);
-		let listener = move |event: &Event| match event {
-			Event::ReceivePacket(packet) => {
-				if packet.header().packet_type() == PacketType::Pong {
-					counter.set(counter.get() + 1);
-					// Until 2 pongs are received
-					if counter.get() == 2 {
-						send.replace(None).unwrap().send(()).unwrap();
-					}
+		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
+			if packet.header().packet_type() == PacketType::Pong {
+				counter.set(counter.get() + 1);
+				// Until 2 pongs are received
+				if counter.get() == 2 {
+					send.replace(None).unwrap().send(()).unwrap();
 				}
 			}
-			_ => {}
 		};
 
 		state.server.event_listeners.push(Box::new(listener));
@@ -974,7 +975,7 @@ mod tests {
 
 	/// Check that the packet id wraps around.
 	#[tokio::test]
-	async fn test_generation_id() -> Result<()> {
+	async fn generation_id() -> Result<()> {
 		let mut state = TestConnection::new()?;
 		state.set_connected().await;
 
@@ -997,16 +998,13 @@ mod tests {
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
 		let counter = Cell::new(0u8);
-		let listener = move |event: &Event| match event {
-			Event::ReceivePacket(packet) => {
-				if packet.header().packet_type() == PacketType::Command {
-					counter.set(counter.get() + 1);
-					if counter.get() == count {
-						send.replace(None).unwrap().send(()).unwrap();
-					}
+		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
+			if packet.header().packet_type() == PacketType::Command {
+				counter.set(counter.get() + 1);
+				if counter.get() == count {
+					send.replace(None).unwrap().send(()).unwrap();
 				}
 			}
-			_ => {}
 		};
 
 		state.client.event_listeners.push(Box::new(listener));

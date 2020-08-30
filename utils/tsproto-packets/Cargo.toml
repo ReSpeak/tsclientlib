@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 arrayref = "0.3"
-base64 = "0.11"
+base64 = "0.12"
 bitflags = "1"
 num-derive = "0.3"
 num-traits = "0.2"

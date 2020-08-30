@@ -602,48 +602,49 @@ impl Resender {
 			}
 		}
 
-		if con.resender.full_send_queue.iter().any(|q| !q.is_empty()) {
-			// There are packets in queue, we don't need to send pings
-			return Ok(());
-		}
-
-		loop {
-			let now = Instant::now();
-			let ping_secs = 1;
-			let mut next_ping = con.resender.last_receive + Duration::from_secs(ping_secs);
-			if let Some(p) = con.resender.last_pings.last() {
-				if p.sent > con.resender.last_receive {
-					next_ping = p.sent + Duration::from_secs(ping_secs);
-				} else {
-					// We received a packet, clear the ping queue
-					con.resender.last_pings.clear();
-				}
-			}
-			con.resender.ping_timeout.reset(next_ping);
-
-			if let Poll::Ready(()) = con.resender.ping_timeout.poll_unpin(cx) {
-				// Check for timeouts
-				if con.resender.last_pings.len() >= PING_COUNT {
-					let diff = con.resender.last_pings.last().unwrap().id
-						- con.resender.last_pings.first().unwrap().id;
-					// We did not receive a pong in between the last pings
-					if diff as usize == con.resender.last_pings.len() - 1 {
-						return Err(Error::Timeout("Server did not respond to pings"));
+		if con.resender.get_state() == ResenderState::Connected
+			&& !con.resender.full_send_queue.iter().any(|q| !q.is_empty())
+		{
+			// Send pings if we are connected and there are no packets in the queue
+			loop {
+				let now = Instant::now();
+				let ping_secs = 1;
+				let mut next_ping = con.resender.last_receive + Duration::from_secs(ping_secs);
+				if let Some(p) = con.resender.last_pings.last() {
+					if p.sent > con.resender.last_receive {
+						next_ping = p.sent + Duration::from_secs(ping_secs);
+					} else {
+						// We received a packet, clear the ping queue
+						con.resender.last_pings.clear();
 					}
 				}
+				con.resender.ping_timeout.reset(next_ping);
 
-				// Send ping
-				let dir = if con.is_client { Direction::C2S } else { Direction::S2C };
-				let packet = OutPacket::new_with_dir(dir, Flags::empty(), PacketType::Ping);
-				let p_id = con.send_packet(packet)?;
-				con.resender.last_pings.push(Ping { id: p_id.part, sent: now });
-				if con.resender.last_pings.len() > PING_COUNT {
-					con.resender.last_pings.remove(0);
+				if let Poll::Ready(()) = con.resender.ping_timeout.poll_unpin(cx) {
+					// Check for timeouts
+					if con.resender.last_pings.len() >= PING_COUNT {
+						let diff = con.resender.last_pings.last().unwrap().id
+							- con.resender.last_pings.first().unwrap().id;
+						// We did not receive a pong in between the last pings
+						if diff as usize == con.resender.last_pings.len() - 1 {
+							return Err(Error::Timeout("Server did not respond to pings"));
+						}
+					}
+
+					// Send ping
+					let dir = if con.is_client { Direction::C2S } else { Direction::S2C };
+					let packet = OutPacket::new_with_dir(dir, Flags::empty(), PacketType::Ping);
+					let p_id = con.send_packet(packet)?;
+					con.resender.last_pings.push(Ping { id: p_id.part, sent: now });
+					if con.resender.last_pings.len() > PING_COUNT {
+						con.resender.last_pings.remove(0);
+					}
+				} else {
+					break;
 				}
-			} else {
-				break;
 			}
 		}
+
 		Ok(())
 	}
 }
