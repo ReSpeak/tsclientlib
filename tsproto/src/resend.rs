@@ -151,7 +151,7 @@ enum PacketLossStat {
 }
 
 /// Network statistics of a connection.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ConnectionStats {
 	/// Non-smoothed Round Trip Time.
 	pub rtt: Duration,
@@ -881,7 +881,7 @@ impl ConnectionStats {
 
 	pub fn get_last_minute_bytes(&self) -> [u64; 6] {
 		let mut bytes = [0; 6];
-		for bs in &self.last_second_bytes {
+		for bs in &self.last_second_bytes[..] {
 			for (i, b) in bs.iter().enumerate() {
 				bytes[i] += u64::from(*b);
 			}
@@ -961,6 +961,20 @@ impl Default for ConnectionStats {
 			last_second_bytes: [Default::default(); 60],
 			next_second_index: Default::default(),
 		}
+	}
+}
+
+impl fmt::Debug for ConnectionStats {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		f.debug_struct("ConnectionStats")
+			.field("rtt", &self.rtt)
+			.field("rtt_dev", &self.rtt_dev)
+			.field("total_packets", &self.total_packets)
+			.field("total_bytes", &self.total_bytes)
+			.field("packet_loss", &self.packet_loss)
+			.field("last_second_bytes", self.get_last_second_bytes())
+			.field("next_second_index", &self.next_second_index)
+			.finish()
 	}
 }
 
