@@ -53,6 +53,8 @@ impl PacketCodec {
 		let id = packet.header().packet_id();
 		let (in_recv_win, gen_id, cur_next, limit) = con.in_receive_window(p_type, id);
 
+		con.resender.handle_loss_incoming(&packet, in_recv_win, cur_next);
+
 		if let Some(params) = &con.params {
 			if p_type == PacketType::Init {
 				con.stream_items.push_back(StreamItem::Error(Error::UnexpectedInitPacket));
@@ -229,6 +231,7 @@ impl PacketCodec {
 			// Send an ack for the case when it was lost
 			if p_type == PacketType::Command || p_type == PacketType::CommandLow {
 				ack = true;
+				con.resender.handle_loss_resend_ack();
 			}
 			con.stream_items.push_back(StreamItem::Error(Error::NotInReceiveWindow {
 				id,

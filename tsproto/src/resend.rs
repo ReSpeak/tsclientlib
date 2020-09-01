@@ -28,6 +28,17 @@ const BETA: f32 = 0.7;
 const C: f32 = 0.5;
 /// Store that many pings, if all of them get lost, it is a timeout.
 const PING_COUNT: usize = 30;
+/// Duration in seconds between sending two ping packets.
+const PING_SECONDS: u64 = 1;
+/// Duration in seconds between resetting the statistic counters.
+const STAT_SECONDS: u64 = 1;
+/// Size of an UDP header in bytes.
+const UDP_HEADER_SIZE: u32 = 8;
+/// Size of an IPv4 header in bytes.
+const IPV4_HEADER_SIZE: u32 = 20;
+// TODO Use correct IPv6 header size to compute bandwidth
+// Size of an IPv6 header in bytes.
+//const IPV6_HEADER_SIZE: u32 = 40;
 
 /// Events to inform a resender of the current state of a connection.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -79,6 +90,97 @@ struct Ping {
 	sent: Instant,
 }
 
+/// Enum for different collected packet statistics.
+#[derive(Clone, Copy, Debug)]
+pub enum PacketStat {
+	/// Commands and acks
+	InControl,
+	/// Ping and Pong
+	InKeepalive,
+	/// Voice
+	InSpeech,
+	/// Commands and acks
+	OutControl,
+	/// Ping and Pong
+	OutKeepalive,
+	/// Voice
+	OutSpeech,
+}
+
+/// Metrics collected to compute packet loss.
+///
+/// The count of incoming packets includes packets that were lost. It is computed by the difference
+/// of packet ids.
+///
+/// Packet losses that are impossible to track: Outgoing voice, incoming commands, outgoing pongs.
+#[derive(Clone, Copy, Debug)]
+enum PacketLossStat {
+	/// Count of incoming voice packets.
+	VoiceInCount,
+	/// Count of packet ids that we should have received but did not get.
+	VoiceInLost,
+	/// Count of outgoing acks.
+	AckOutCount,
+	/// Count of already acked commands that were received.
+	AckOutLost,
+	/// Count of incoming ack packets.
+	AckInCount,
+	/// Count of packet ids that we should have received but did not get.
+	AckInLost,
+	/// Count of command packets that were resent.
+	///
+	/// If a command packet needs to be resent, either the command or the ack was lost.
+	AckInOrCommandOutLost,
+	/// Count of outgoing command packets.
+	CommandOutCount,
+	/// Count of incoming pong packets.
+	PongInCount,
+	/// Count of packet ids that we should have received but did not get.
+	PongInLost,
+	// Count of ping packets for which we did not get an answer.
+	//
+	// If no pong is received for a ping, either the ping or the pong was lost.
+	// We do not handle many pings, so just use PingOutCount - PongInCount.
+	//PongInOrPingOutLost,
+	/// Count of outgoing pings.
+	PingOutCount,
+	/// Count of incoming pings.
+	PingInCount,
+	/// Count of packet ids that we should have received but did not get.
+	PingInLost,
+}
+
+/// Network statistics of a connection.
+#[derive(Clone, Debug)]
+pub struct ConnectionStats {
+	/// Non-smoothed Round Trip Time.
+	pub rtt: Duration,
+	/// Deviation of the rtt.
+	pub rtt_dev: Duration,
+	/// Total count of packets since start of the connection. Indexed by `PacketStat`.
+	pub total_packets: [u64; 6],
+	/// Total count of bytes since start of the connection. Indexed by `PacketStat`.
+	pub total_bytes: [u64; 6],
+	/// Stats collected to compute packet loss. Indexed by `PacketLossStat`.
+	packet_loss: [u32; 14],
+	/// Bytes in the last second. Indexed by `PacketStat`.
+	///
+	/// For the last 60 seconds, so the per minute stats can be computed.
+	pub last_second_bytes: [[u32; 6]; 60],
+	/// The index in `last_second_bytes` that will be written next.
+	next_second_index: u8,
+}
+
+/// An intermediate struct to collect network statistics.
+///
+/// Collected for one second and reset after moving them to `ConnectionStats`.
+#[derive(Clone, Debug, Default)]
+struct ConnectionStatsCounter {
+	bytes: [u32; 6],
+	/// Stats collected to compute packet loss. Indexed by `PacketLossStat`.
+	packet_loss: [u32; 14],
+}
+
 /// Resend command and init packets until the other side acknowledges them.
 #[derive(Debug)]
 pub struct Resender {
@@ -99,6 +201,10 @@ pub struct Resender {
 	state: ResenderState,
 	/// A list of the last sent pings that were not yet acknowledged.
 	last_pings: Vec<Ping>,
+	/// In progress counters.
+	stats_counter: ConnectionStatsCounter,
+	/// Current up to date statistics.
+	pub stats: ConnectionStats,
 
 	// Congestion control
 	/// The maximum send window before the last reduction.
@@ -120,6 +226,8 @@ pub struct Resender {
 	///
 	/// This is used to handle timeouts when disconnecting.
 	last_send: Instant,
+	/// When the statistics were last reset.
+	last_stat: Instant,
 
 	/// The future to wake us up when the next packet should be resent.
 	timeout: Delay,
@@ -127,6 +235,8 @@ pub struct Resender {
 	ping_timeout: Delay,
 	/// The timer used for disconnecting the connection.
 	state_timeout: Delay,
+	/// The timer used to update network statistics.
+	stats_timeout: Delay,
 }
 
 #[derive(Clone, Debug)]
@@ -136,9 +246,9 @@ pub struct ResendConfig {
 	pub normal_timeout: Duration,
 	pub disconnect_timeout: Duration,
 
-	/// Start value for the Smoothed Round Trip Time.
+	/// Smoothed Round Trip Time.
 	pub srtt: Duration,
-	/// Start value for the deviation of the srtt.
+	/// Deviation of the srtt.
 	pub srtt_dev: Duration,
 }
 
@@ -266,6 +376,8 @@ impl Default for Resender {
 			config: Default::default(),
 			state: ResenderState::Connecting,
 			last_pings: Default::default(),
+			stats: Default::default(),
+			stats_counter: Default::default(),
 
 			w_max: UDP_SINK_CAPACITY as u16,
 			last_loss: now,
@@ -274,8 +386,10 @@ impl Default for Resender {
 			timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
 			last_receive: now,
 			last_send: now,
-			ping_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
+			last_stat: now,
+			ping_timeout: tokio::time::delay_for(std::time::Duration::from_secs(PING_SECONDS)),
 			state_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
+			stats_timeout: tokio::time::delay_for(std::time::Duration::from_secs(STAT_SECONDS)),
 		}
 	}
 }
@@ -350,6 +464,56 @@ impl Resender {
 	}
 
 	pub fn received_packet(&mut self) { self.last_receive = Instant::now(); }
+
+	pub fn handle_loss_incoming(&mut self, packet: &InPacket, in_recv_win: bool, cur_next: u16) {
+		let p_type = packet.header().packet_type();
+		let id = packet.header().packet_id();
+		let id_diff = u32::from(id.wrapping_sub(cur_next));
+		let p_stat = PacketStat::from(p_type, true);
+		let len = (packet.header().data().len() + packet.content().len()) as u32
+			+ UDP_HEADER_SIZE
+			+ IPV4_HEADER_SIZE;
+
+		self.stats_counter.bytes[p_stat as usize] += len;
+		self.stats.total_packets[p_stat as usize] += 1;
+		self.stats.total_bytes[p_stat as usize] += u64::from(len);
+
+		let stats;
+		if p_type.is_voice() {
+			stats = Some((PacketLossStat::VoiceInCount, PacketLossStat::VoiceInLost));
+		} else if p_type.is_ack() {
+			stats = Some((PacketLossStat::AckInCount, PacketLossStat::AckInLost));
+		} else if p_type == PacketType::Pong {
+			stats = Some((PacketLossStat::PongInCount, PacketLossStat::PongInLost));
+		} else if p_type == PacketType::Ping {
+			stats = Some((PacketLossStat::PingInCount, PacketLossStat::PingInLost));
+		} else {
+			stats = None;
+		}
+
+		if let Some((count, lost)) = stats {
+			if in_recv_win {
+				self.stats_counter.packet_loss[count as usize] += id_diff + 1;
+				self.stats_counter.packet_loss[lost as usize] += id_diff;
+			} else {
+				self.stats_counter.packet_loss[lost as usize] =
+					self.stats_counter.packet_loss[lost as usize].saturating_sub(1);
+			}
+		}
+	}
+
+	pub fn handle_loss_outgoing(&mut self, packet: &OutUdpPacket) {
+		let p_type = packet.data().header().packet_type();
+		let p_stat = PacketStat::from(p_type, false);
+		// 8 byte UDP header
+		let len = packet.data().data().len() as u32 + UDP_HEADER_SIZE + IPV4_HEADER_SIZE;
+		self.stats_counter.handle_loss_outgoing(packet, p_stat, len);
+		self.stats.handle_loss_outgoing(p_stat, u64::from(len));
+	}
+
+	pub fn handle_loss_resend_ack(&mut self) {
+		self.stats_counter.packet_loss[PacketLossStat::AckOutLost as usize] += 1;
+	}
 
 	fn get_timeout(&self) -> Duration {
 		match self.state {
@@ -456,6 +620,11 @@ impl Resender {
 			if rtt > self.config.srtt { rtt - self.config.srtt } else { self.config.srtt - rtt };
 		self.config.srtt_dev = self.config.srtt_dev * 3 / 4 + diff / 4;
 		self.config.srtt = self.config.srtt * 7 / 8 + rtt / 8;
+
+		// Rtt (non-smoothed)
+		let diff = if rtt > self.stats.rtt { rtt - self.stats.rtt } else { self.stats.rtt - rtt };
+		self.stats.rtt_dev = self.stats.rtt_dev * 3 / 4 + diff / 4;
+		self.stats.rtt = self.stats.rtt * 7 / 8 + rtt / 8;
 	}
 
 	pub fn send_packet(con: &mut Connection, packet: OutUdpPacket) {
@@ -557,12 +726,20 @@ impl Resender {
 							"rto" => ?rto,
 							"send_window" => window,
 						);
+						con.resender.stats_counter.handle_loss_resend_command();
 					}
 
 					// Successfully started sending the packet, update record
 					rec.last = now;
 					rec.tries += 1;
 					full_rec.id = rec.clone();
+
+					let p_type = full_rec.packet.data().header().packet_type();
+					let p_stat = PacketStat::from(p_type, false);
+					let len = full_rec.packet.data().data().len() as u32
+						+ UDP_HEADER_SIZE + IPV4_HEADER_SIZE;
+					con.resender.stats_counter.handle_loss_outgoing(&full_rec.packet, p_stat, len);
+					con.resender.stats.handle_loss_outgoing(p_stat, u64::from(len));
 
 					if rec.tries != 1 {
 						drop(rec);
@@ -577,6 +754,8 @@ impl Resender {
 						con.resender.last_loss = Instant::now();
 						con.resender.no_congestion_since = None;
 						con.resender.rebuild_send_queue();
+					} else {
+						drop(rec);
 					}
 				}
 			}
@@ -602,17 +781,36 @@ impl Resender {
 			}
 		}
 
+		// Update stats
+		loop {
+			let next_reset = con.resender.last_stat + Duration::from_secs(STAT_SECONDS);
+			con.resender.stats_timeout.reset(next_reset);
+
+			if let Poll::Ready(()) = con.resender.stats_timeout.poll_unpin(cx) {
+				// Reset stats
+				con.resender.last_stat = Instant::now();
+				let stats = &mut con.resender.stats;
+				let counter = &mut con.resender.stats_counter;
+				let second_index = stats.next_second_index;
+				stats.last_second_bytes[second_index as usize] = counter.bytes;
+				stats.next_second_index = (second_index + 1) % stats.last_second_bytes.len() as u8;
+				stats.packet_loss = counter.packet_loss;
+				counter.reset();
+			} else {
+				break;
+			}
+		}
+
 		if con.resender.get_state() == ResenderState::Connected
 			&& !con.resender.full_send_queue.iter().any(|q| !q.is_empty())
 		{
 			// Send pings if we are connected and there are no packets in the queue
 			loop {
 				let now = Instant::now();
-				let ping_secs = 1;
-				let mut next_ping = con.resender.last_receive + Duration::from_secs(ping_secs);
+				let mut next_ping = con.resender.last_receive + Duration::from_secs(PING_SECONDS);
 				if let Some(p) = con.resender.last_pings.last() {
 					if p.sent > con.resender.last_receive {
-						next_ping = p.sent + Duration::from_secs(ping_secs);
+						next_ping = p.sent + Duration::from_secs(PING_SECONDS);
 					} else {
 						// We received a packet, clear the ping queue
 						con.resender.last_pings.clear();
@@ -649,6 +847,96 @@ impl Resender {
 	}
 }
 
+impl ConnectionStatsCounter {
+	fn handle_loss_outgoing(&mut self, packet: &OutUdpPacket, p_stat: PacketStat, len: u32) {
+		let p_type = packet.data().header().packet_type();
+
+		self.bytes[p_stat as usize] += len;
+
+		if p_type.is_ack() {
+			self.packet_loss[PacketLossStat::AckOutCount as usize] += 1;
+		} else if p_type == PacketType::Ping {
+			self.packet_loss[PacketLossStat::PingOutCount as usize] += 1;
+		} else if p_type.is_command() {
+			self.packet_loss[PacketLossStat::CommandOutCount as usize] += 1;
+		}
+	}
+
+	pub(crate) fn handle_loss_resend_command(&mut self) {
+		self.packet_loss[PacketLossStat::AckInOrCommandOutLost as usize] += 1;
+	}
+
+	fn reset(&mut self) { *self = Default::default(); }
+}
+
+impl ConnectionStats {
+	fn handle_loss_outgoing(&mut self, p_stat: PacketStat, len: u64) {
+		self.total_packets[p_stat as usize] += 1;
+		self.total_bytes[p_stat as usize] += len;
+	}
+
+	pub fn get_last_second_bytes(&self) -> &[u32; 6] {
+		&self.last_second_bytes[((self.next_second_index + 60 - 1) % 60) as usize]
+	}
+
+	pub fn get_last_minute_bytes(&self) -> [u64; 6] {
+		let mut bytes = [0; 6];
+		for bs in &self.last_second_bytes {
+			for (i, b) in bs.iter().enumerate() {
+				bytes[i] += u64::from(*b);
+			}
+		}
+		bytes
+	}
+
+	// Packetloss stats for TeamSpeak
+	pub fn get_packetloss_s2c_speech(&self) -> f32 {
+		let count = self.packet_loss[PacketLossStat::VoiceInCount as usize];
+		if count == 0 {
+			0.0
+		} else {
+			self.packet_loss[PacketLossStat::VoiceInLost as usize] as f32 / count as f32
+		}
+	}
+
+	pub fn get_packetloss_s2c_keepalive(&self) -> f32 {
+		let count = self.packet_loss[PacketLossStat::PingInCount as usize]
+			+ self.packet_loss[PacketLossStat::PongInCount as usize];
+		if count == 0 {
+			0.0
+		} else {
+			(self.packet_loss[PacketLossStat::PingInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::PongInLost as usize] as f32)
+				/ count as f32
+		}
+	}
+
+	pub fn get_packetloss_s2c_control(&self) -> f32 {
+		let count = self.packet_loss[PacketLossStat::AckInCount as usize];
+		if count == 0 {
+			0.0
+		} else {
+			self.packet_loss[PacketLossStat::AckInLost as usize] as f32 / count as f32
+		}
+	}
+
+	pub fn get_packetloss_s2c_total(&self) -> f32 {
+		let count = self.packet_loss[PacketLossStat::VoiceInCount as usize]
+			+ self.packet_loss[PacketLossStat::PingInCount as usize]
+			+ self.packet_loss[PacketLossStat::PongInCount as usize]
+			+ self.packet_loss[PacketLossStat::AckInCount as usize];
+		if count == 0 {
+			0.0
+		} else {
+			(self.packet_loss[PacketLossStat::VoiceInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::PingInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::PongInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::AckInLost as usize] as f32)
+				/ count as f32
+		}
+	}
+}
+
 impl Default for ResendConfig {
 	fn default() -> Self {
 		Self {
@@ -658,6 +946,52 @@ impl Default for ResendConfig {
 
 			srtt: Duration::from_millis(500),
 			srtt_dev: Duration::from_millis(0),
+		}
+	}
+}
+
+impl Default for ConnectionStats {
+	fn default() -> Self {
+		Self {
+			rtt: Duration::from_millis(0),
+			rtt_dev: Duration::from_millis(0),
+			total_packets: Default::default(),
+			total_bytes: Default::default(),
+			packet_loss: Default::default(),
+			last_second_bytes: [Default::default(); 60],
+			next_second_index: Default::default(),
+		}
+	}
+}
+
+impl PacketStat {
+	fn from(t: PacketType, incoming: bool) -> Self {
+		match t {
+			PacketType::Voice | PacketType::VoiceWhisper => {
+				if incoming {
+					PacketStat::InSpeech
+				} else {
+					PacketStat::OutSpeech
+				}
+			}
+			PacketType::Command
+			| PacketType::CommandLow
+			| PacketType::Ack
+			| PacketType::AckLow
+			| PacketType::Init => {
+				if incoming {
+					PacketStat::InControl
+				} else {
+					PacketStat::OutControl
+				}
+			}
+			PacketType::Ping | PacketType::Pong => {
+				if incoming {
+					PacketStat::InKeepalive
+				} else {
+					PacketStat::OutKeepalive
+				}
+			}
 		}
 	}
 }

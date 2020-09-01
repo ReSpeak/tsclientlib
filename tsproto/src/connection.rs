@@ -81,7 +81,7 @@ pub enum StreamItem {
 	Error(Error),
 }
 
-type EventListener = Box<dyn for<'a> Fn(&'a Event<'a>) -> () + Send>;
+type EventListener = Box<dyn for<'a> Fn(&'a Event<'a>) + Send>;
 
 /// Represents a currently alive connection.
 pub struct Connection {
@@ -230,7 +230,9 @@ impl Connection {
 		// Poll acks_to_send
 		while let Some(packet) = self.acks_to_send.front() {
 			match self.poll_send_udp_packet(cx, packet) {
-				Poll::Ready(Ok(())) => {}
+				Poll::Ready(Ok(())) => {
+					self.resender.handle_loss_outgoing(packet);
+				}
 				Poll::Ready(Err(e)) => return Err(e),
 				Poll::Pending => break,
 			}
@@ -311,7 +313,12 @@ impl Connection {
 		let packet = udp_packets.pop().unwrap();
 
 		match self.poll_send_udp_packet(cx, &packet) {
-			Poll::Ready(r) => r,
+			Poll::Ready(r) => {
+				if r.is_ok() {
+					self.resender.handle_loss_outgoing(&packet);
+				}
+				r
+			}
 			Poll::Pending => {
 				self.acks_to_send.push_back(packet);
 				Ok(())
@@ -361,6 +368,7 @@ impl Connection {
 		)
 	}
 
+	/// Remember to add the size of the sent packet to the stats in the resender.
 	pub fn static_poll_send_udp_packet(
 		udp_socket: &dyn Socket, address: &SocketAddr, event_listeners: &[EventListener],
 		cx: &mut Context, packet: &OutUdpPacket,

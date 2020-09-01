@@ -16,6 +16,7 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::convert::TryInto;
 use std::iter;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -29,7 +30,6 @@ use thiserror::Error;
 use tokio::io::AsyncWriteExt as _;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
-use tokio::time;
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::s2c::InMessage;
 use ts_bookkeeping::messages::OutMessageTrait;
@@ -412,7 +412,7 @@ impl Connection {
 		logger: Logger, options: ConnectOptions, is_reconnect: bool,
 	) -> Result<(client::Client, data::Connection)> {
 		if is_reconnect {
-			time::delay_for(Duration::from_secs(10)).await;
+			tokio::time::delay_for(Duration::from_secs(10)).await;
 		}
 
 		let resolved = match &options.address {
@@ -516,8 +516,8 @@ impl Connection {
 
 		client.send_packet(packet.into_packet()).map_err(Error::SendClientinit)?;
 
-		match time::timeout(
-			time::Duration::from_secs(INITSERVER_TIMEOUT),
+		match tokio::time::timeout(
+			Duration::from_secs(INITSERVER_TIMEOUT),
 			Self::wait_initserver(logger, client),
 		)
 		.await
@@ -1031,6 +1031,48 @@ impl ConnectedConnection {
 				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
 				stream_items
 					.push_back(Ok(StreamItem::FileTransferFailed(ft_id, msg.status.into())));
+			}
+		} else if let InMessage::ClientConnectionInfoUpdateRequest(_) = &msg {
+			use tsproto::resend::PacketStat;
+
+			let stats = &self.client.resender.stats;
+			let last_second_bytes = stats.get_last_second_bytes();
+			let last_minute_bytes = stats.get_last_minute_bytes();
+			let packet = c2s::OutSetConnectionInfoMessage::new(&mut iter::once(c2s::OutSetConnectionInfoPart {
+				ping: stats.rtt.try_into().unwrap_or_else(|_| time::Duration::seconds(1)),
+				ping_deviation: stats.rtt_dev.try_into().unwrap_or_else(|_| time::Duration::seconds(1)),
+				packets_sent_speech: stats.total_packets[PacketStat::OutSpeech as usize],
+				packets_sent_keepalive: stats.total_packets[PacketStat::OutKeepalive as usize],
+				packets_sent_control: stats.total_packets[PacketStat::OutControl as usize],
+				bytes_sent_speech: stats.total_bytes[PacketStat::OutSpeech as usize],
+				bytes_sent_keepalive: stats.total_bytes[PacketStat::OutKeepalive as usize],
+				bytes_sent_control: stats.total_bytes[PacketStat::OutControl as usize],
+				packets_received_speech: stats.total_packets[PacketStat::InSpeech as usize],
+				packets_received_keepalive: stats.total_packets[PacketStat::InKeepalive as usize],
+				packets_received_control: stats.total_packets[PacketStat::InControl as usize],
+				bytes_received_speech: stats.total_bytes[PacketStat::InSpeech as usize],
+				bytes_received_keepalive: stats.total_bytes[PacketStat::InKeepalive as usize],
+				bytes_received_control: stats.total_bytes[PacketStat::InControl as usize],
+				server_to_client_packetloss_speech: stats.get_packetloss_s2c_speech(),
+				server_to_client_packetloss_keepalive: stats.get_packetloss_s2c_keepalive(),
+				server_to_client_packetloss_control: stats.get_packetloss_s2c_control(),
+				server_to_client_packetloss_total: stats.get_packetloss_s2c_total(),
+				bandwidth_sent_last_second_speech: last_second_bytes[PacketStat::OutSpeech as usize] as u64,
+				bandwidth_sent_last_second_keepalive: last_second_bytes[PacketStat::OutKeepalive as usize] as u64,
+				bandwidth_sent_last_second_control: last_second_bytes[PacketStat::OutControl as usize] as u64,
+				bandwidth_sent_last_minute_speech: last_minute_bytes[PacketStat::OutSpeech as usize] / 60,
+				bandwidth_sent_last_minute_keepalive: last_minute_bytes[PacketStat::OutKeepalive as usize] / 60,
+				bandwidth_sent_last_minute_control: last_minute_bytes[PacketStat::OutControl as usize] / 60,
+				bandwidth_received_last_second_speech: last_second_bytes[PacketStat::InSpeech as usize] as u64,
+				bandwidth_received_last_second_keepalive: last_second_bytes[PacketStat::InKeepalive as usize] as u64,
+				bandwidth_received_last_second_control: last_second_bytes[PacketStat::InControl as usize] as u64,
+				bandwidth_received_last_minute_speech: last_minute_bytes[PacketStat::InSpeech as usize] / 60,
+				bandwidth_received_last_minute_keepalive: last_minute_bytes[PacketStat::InKeepalive as usize] / 60,
+				bandwidth_received_last_minute_control: last_minute_bytes[PacketStat::InControl as usize] / 60,
+			}));
+
+			if let Err(e) = self.client.send_packet(packet.into_packet()) {
+				stream_items.push_back(Err(Error::SendPacket(e)));
 			}
 		} else {
 			let events = match book.handle_command(logger, &msg) {
