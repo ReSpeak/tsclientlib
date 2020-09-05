@@ -805,7 +805,7 @@ impl Connection {
 	///
 	/// ```no_run
 	/// # let con: tsclientlib::Connection = panic!();
-	/// let loss: f32 = con.get_network_stats()?.get_packetloss();
+	/// let loss: f32 = con.get_network_stats().unwrap().get_packetloss();
 	/// ```
 	///
 	/// # Error
