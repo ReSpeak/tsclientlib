@@ -2,16 +2,27 @@
 <#
 /// Push into events the difference between two arrays.
 ///
-/// The old value is stored in a `Vec` in `old`, the `new` in the book.
-fn diff_array(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
-	let mut ids = get_id_args(event);
-	let type_s = get_rust_type(p);
-	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
+/// The old value is stored in `old`, the `new` in the book.
+fn diff(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
+	let mut ids = event.get_id_args("m");
+	let type_s = p.get_inner_rust_type_as_name();
+	let added;
+	let removed;
+	let modifier = from.modifier.as_ref().unwrap();
+	if modifier == "array" {
+		added = format!("iter().filter(|n| !old.contains(n))");
+		removed = format!("into_iter().filter(|o| !{}.contains(o))", new);
+	} else if modifier == "set" {
+		added = format!("difference(&old)");
+		removed = format!("difference(&{})", new);
+	} else {
+		panic!("Unsupported modifier {}", modifier);
+	}
 #>
 					// Added
-					for i in <#= new #>.iter().filter(|n| !old.contains(n)) {
+					for i in <#= new #>.<#= added #> {
 						events.push(Event::PropertyAdded {
-							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
+							id: PropertyId::<#= event.book_struct.name #><#= p.get_name() #>(<#= ids #>, *i),
 							invoker: invoker.clone(),
 							extra: ExtraInfo {
 								reason,
@@ -20,44 +31,10 @@ fn diff_array(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Prop
 					}
 
 					// Removed
-					for i in old.into_iter().filter(|o| !<#= new #>.contains(o)) {
+					for i in old.<#= removed #> {
 						events.push(Event::PropertyRemoved {
-							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, i),
+							id: PropertyId::<#= event.book_struct.name #><#= p.get_name() #>(<#= ids #>, i),
 							old: PropertyValue::<#= type_s #>(i),
-							invoker: invoker.clone(),
-							extra: ExtraInfo {
-								reason,
-							},
-						});
-					}
-<#
-	Ok(())
-}
-
-/// Push into events the difference between two sets.
-///
-/// The old value is stored in a `HashSet` in `old`, the `new` in the book.
-fn diff_set(_fmt: &mut std::fmt::Formatter, new: &str, event: &Event, p: &Property, from: &Field) -> std::fmt::Result {
-	let mut ids = get_id_args(event);
-	let type_s = get_rust_type(p);
-	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
-#>
-					// Added
-					for i in <#= new #>.difference(&old) {
-						events.push(Event::PropertyAdded {
-							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
-							invoker: invoker.clone(),
-							extra: ExtraInfo {
-								reason,
-							},
-						});
-					}
-
-					// Removed
-					for i in old.difference(&<#= new #>) {
-						events.push(Event::PropertyRemoved {
-							id: PropertyId::<#= get_property_name(event, p) #>(<#= ids #>, *i),
-							old: PropertyValue::<#= type_s #>(*i),
 							invoker: invoker.clone(),
 							extra: ExtraInfo {
 								reason,
@@ -92,13 +69,8 @@ impl Connection {
 
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", book_name.to_snake_case());
-				let ids = get_id_args(event);
-				let ids2 = if !ids.is_empty() {
-					format!("({})", ids)
-				} else {
-					ids.clone()
-				};
-				#>
+				let ids = event.get_id_args("m");
+				let ids2 = embrace(&ids); #>
 				let old = self.<#= function_name #>(<#= ids #>, &mut events)?
 					.ok_or(Error::RemoveNotFound("<#= book_name #>"))?;
 				events.push(Event::PropertyRemoved {
@@ -116,14 +88,14 @@ impl Connection {
 				for rule in &event.rules {
 					if let RuleKind::Function { name, to } = rule {
 						rule_count -= 1; #>
-				self.<#= name.to_snake_case() #>(<#= get_id_args(event) #>, m, &mut events)?;
+				self.<#= name.to_snake_case() #>(<#= event.get_id_args("m") #>, m, &mut events)?;
 					<# }
 				}
 				let function_name = format!("get_mut_{}", book_name.to_snake_case());
 
 				// Only print if necessary
 				if rule_count > 0 { #>
-				let r = self.<#= function_name #>(<#= get_id_args(event) #>)?;
+				let r = self.<#= function_name #>(<#= event.get_id_args("m") #>)?;
 				<# }
 				for rule in &event.rules {
 					match rule {
@@ -136,7 +108,7 @@ impl Connection {
 									if to.opt && !from_opt { #>
 				let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(m.<#= from.get_rust_name() #>.clone()));
 				events.push(Event::PropertyChanged {
-					id: <#= get_property_id(event, to, from) #>,
+					id: <#= event.get_property_id(to, from, "m") #>,
 					old: <#= get_property(to, "old") #>,
 					invoker: invoker.clone(),
 					extra: ExtraInfo {
@@ -155,13 +127,11 @@ impl Connection {
 									<# } else { #>
 					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, val<#= transform_func #>);
 									<# } #>
-				<# if from.modifier.as_ref().map(|s| s == "array").unwrap_or(false) {
-					diff_array(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
-				} else if from.modifier.as_ref().map(|s| s == "set").unwrap_or(false) {
-					diff_set(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
+				<# if from.modifier.as_ref().map(|s| s == "array" || s == "set").unwrap_or(false) {
+					diff(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
 				} else { #>
 					events.push(Event::PropertyChanged {
-						id: <#= get_property_id(event, to, from) #>,
+						id: <#= event.get_property_id(to, from, "m") #>,
 						old: <#= get_property(to, "old") #>,
 						invoker: invoker.clone(),
 						extra: ExtraInfo {
@@ -175,7 +145,7 @@ impl Connection {
 										#>
 				let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, m.<#= from.get_rust_name() #>.clone());
 				events.push(Event::PropertyChanged {
-					id: <#= get_property_id(event, to, from) #>,
+					id: <#= event.get_property_id(to, from, "m") #>,
 					old: <#= get_property(to, "old") #>,
 					invoker: invoker.clone(),
 					extra: ExtraInfo {
@@ -192,7 +162,7 @@ impl Connection {
 				r.<#= to.name.to_snake_case() #>.push(m.<#= from.get_rust_name() #>.clone());
 									<# } #>
 				events.push(Event::PropertyAdded {
-					id: <#= get_property_id(event, to, from) #>,
+					id: <#= event.get_property_id(to, from, "m") #>,
 					invoker: invoker.clone(),
 					extra: ExtraInfo {
 						reason,
@@ -209,7 +179,7 @@ impl Connection {
 					let old = r.<#= to.name.to_snake_case() #>.remove(i);
 									<# } #>
 					events.push(Event::PropertyRemoved {
-						id: <#= get_property_id(event, to, from) #>,
+						id: <#= event.get_property_id(to, from, "m") #>,
 						old: <#= get_property(to, "old") #>,
 						invoker: invoker.clone(),
 						extra: ExtraInfo {
@@ -228,8 +198,13 @@ impl Connection {
 				// Create a new object
 				// First, call all functions
 				for fun in event.rules.iter().filter(|r| r.is_function()) {
-					if let RuleKind::Function { name, to } = fun { #>
-				let <#= gen_return_match(to) #> = self.<#= name.to_snake_case() #>(m, &mut events)?;
+					if let RuleKind::Function { name, to } = fun {
+						let return_match = if to.len() == 1 {
+							to[0].name.to_snake_case()
+						} else {
+							format!("({})", to.iter().map(|p| p.name.to_snake_case()).collect::<Vec<_>>().join(", "))
+						}; #>
+				let <#= return_match #> = self.<#= name.to_snake_case() #>(m, &mut events)?;
 					<# }
 				} #>
 				let r = <#= book_name #> {
@@ -256,8 +231,10 @@ impl Connection {
 						}
 						let transform_func = if to.is_set() {
 							".iter().cloned().collect()"
-						} else {
+						} else if is_ref_type(&to.type_s) {
 							".clone()"
+						} else {
+							""
 						};
 						// to is optional, but from not
 						let from_opt = from.is_opt(&event.msg); #>
@@ -270,7 +247,7 @@ impl Connection {
 					<# }
 				}
 				let function_name = format!("add_{}", book_name.to_snake_case());
-				let ids = get_id_args(event);
+				let ids = event.get_id_args("m");
 				let ids2 = if !ids.is_empty() {
 					format!("({})", ids)
 				} else {

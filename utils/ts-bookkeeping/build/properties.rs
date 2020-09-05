@@ -3,10 +3,9 @@ use std::default::Default;
 
 use heck::*;
 use t4rust_derive::Template;
+use tsproto_structs::embrace;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
-
-use crate::events::{get_properties, get_rust_type};
 
 #[derive(Template)]
 #[TemplatePath = "build/Properties.tt"]
@@ -20,11 +19,9 @@ impl Default for Properties<'static> {
 fn get_ids(struc: &Struct) -> String {
 	let mut res = String::new();
 	for i in 0..struc.id.len() {
-		//let p = id.find_property(structs);
 		if !res.is_empty() {
 			res.push_str(", ");
 		}
-		//res.push_str(&p.get_rust_type());
 		res.push_str(&format!("s{}", i));
 	}
 	res

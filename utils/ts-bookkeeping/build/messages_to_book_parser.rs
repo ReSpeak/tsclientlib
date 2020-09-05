@@ -8,8 +8,6 @@ use tsproto_structs::messages::Field;
 use tsproto_structs::messages_to_book::*;
 use tsproto_structs::*;
 
-use crate::events::get_rust_type;
-
 #[derive(Template)]
 #[TemplatePath = "build/MessagesToBook.tt"]
 #[derive(Debug)]
@@ -24,53 +22,6 @@ impl Default for MessagesToBookDeclarations<'static> {
 	fn default() -> Self { MessagesToBookDeclarations(&DATA) }
 }
 
-fn get_id_args(event: &Event) -> String {
-	let mut res = String::new();
-	for f in &event.id {
-		if !res.is_empty() {
-			res.push_str(", ");
-		}
-		if is_ref_type(&f.get_rust_type("", false)) {
-			res.push('&');
-		}
-		res.push_str(&format!("m.{}", f.get_rust_name()));
-	}
-	res
-}
-
-fn gen_return_match(to: &[&Property]) -> String {
-	if to.len() == 1 {
-		to[0].name.to_snake_case()
-	} else {
-		format!("({})", to.iter().map(|p| p.name.to_snake_case()).collect::<Vec<_>>().join(", "))
-	}
-}
-
-fn get_property_name(e: &Event, p: &Property) -> String {
-	format!("{}{}", e.book_struct.name, p.get_name())
-}
-
-fn get_property_id(e: &Event, p: &Property, from: &Field) -> String {
-	let mut ids = get_id_args(e);
-	if let Some(m) = &p.modifier {
-		if !ids.is_empty() {
-			ids.push_str(", ");
-		}
-		if m == "map" || m == "array" || m == "set" {
-			ids.push_str(&format!("m.{}", from.get_rust_name()));
-		} else {
-			panic!("Unknown modifier {}", m);
-		}
-	}
-
-	if !ids.is_empty() {
-		ids = format!("({})", ids);
-	}
-	format!("PropertyId::{}{}", get_property_name(e, p), ids)
-}
-
 fn get_property(p: &Property, name: &str) -> String {
-	let type_s = get_rust_type(p);
-	let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
-	format!("PropertyValue::{}({})", type_s, name)
+	format!("PropertyValue::{}({})", p.get_inner_rust_type_as_name(), name)
 }

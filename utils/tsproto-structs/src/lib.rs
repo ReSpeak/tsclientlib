@@ -125,3 +125,12 @@ pub fn unindent(mut s: &mut String) {
 		s.remove(0);
 	}
 }
+
+/// Returns an empty string if `s` is empty, otherwise `s` with braces.
+pub fn embrace(s: &str) -> String {
+	if s.is_empty() {
+		String::new()
+	} else {
+		format!("({})", s)
+	}
+}

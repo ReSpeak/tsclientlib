@@ -89,6 +89,24 @@ pub struct Property {
 	pub key: Option<String>,
 }
 
+impl Struct {
+	pub fn get_ids(&self, structs: &[Struct]) -> String {
+		let mut res = String::new();
+		for id in &self.id {
+			let p = id.find_property(structs);
+			if !res.is_empty() {
+				res.push_str(", ");
+			}
+			res.push_str(&p.get_rust_type(false));
+		}
+		embrace(&res)
+	}
+
+	pub fn get_properties(&self, structs: &[Struct]) -> Vec<&Property> {
+		self.properties.iter().filter(|p| !structs.iter().any(|s| s.name == p.type_s)).collect()
+	}
+}
+
 impl Property {
 	pub fn get_get(&self, struc: &Struct) -> bool { self.get.unwrap_or_else(|| struc.accessor.get) }
 	pub fn get_set(&self, struc: &Struct) -> bool { self.set.unwrap_or_else(|| struc.accessor.set) }
@@ -107,6 +125,49 @@ impl Property {
 			res = format!("Option<{}>", res);
 		}
 		res
+	}
+
+	/// If this property is an array, set or map, returns only the inner type.
+	pub fn get_inner_rust_type(&self, is_ref: bool) -> String {
+		let mut res = convert_type(&self.type_s, is_ref);
+
+		if self.opt {
+			res = format!("Option<{}>", res);
+		}
+		res
+	}
+
+	pub fn get_inner_rust_type_lifetime(&self) -> String {
+		self.get_inner_rust_type(true).replace('&', "&'a ").replace("UidRef", "UidRef<'a>")
+	}
+
+	/// Gets the type as a name, used for storing it in an enum.
+	pub fn get_inner_rust_type_as_name(&self) -> String {
+		self.get_inner_rust_type(false).replace('<', "_").replace('>', "").to_camel_case()
+	}
+
+	pub fn get_ids(&self, structs: &[Struct], struc: &Struct) -> String {
+		let mut ids = struc.get_ids(structs);
+		if !ids.is_empty() {
+			ids.remove(0);
+			ids.pop();
+		}
+		if let Some(m) = &self.modifier {
+			if !ids.is_empty() {
+				ids.push_str(", ");
+			}
+			if m == "map" {
+				// The key is part of the id
+				ids.push_str(self.key.as_ref().unwrap());
+			} else if m == "array" || m == "set" {
+				// Take the element itself as part of the id.
+				// It has to be copied but most of the times it is an id itself.
+				ids.push_str(&convert_type(&self.type_s, false));
+			} else {
+				panic!("Unknown modifier {}", m);
+			}
+		}
+		embrace(&ids)
 	}
 
 	/// Get the name without trailing `s`.

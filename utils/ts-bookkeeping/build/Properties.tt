@@ -4,19 +4,15 @@ impl Connection {
 	pub fn get_property(&self, id: &PropertyId) -> Result<PropertyValueRef> {
 		Ok(match id {
 <# for struc in &self.0.structs {
-	let mut ids = get_ids(struc);
+	let mut ids = embrace(&get_ids(struc));
 	let mut ids2 = get_ids2(&self.0.structs, struc);
-	ids2 = format!("({})", ids2);
-	if !ids.is_empty() {
-		ids = format!("({})", ids);
-	} #>
+	ids2 = format!("({})", ids2); #>
 			PropertyId::<#= struc.name #><#= ids #> => PropertyValueRef::<#= struc.name #>(self.get_<#= struc.name.to_snake_case() #><#= ids2 #>?),
 <# } #>
 
 <# for struc in &self.0.structs {
-	for p in get_properties(&self.0.structs, struc) {
-		let type_s = get_rust_type(p);
-		let type_s = type_s.replace('<', "_").replace('>', "").to_camel_case();
+	for p in struc.get_properties(&self.0.structs) {
+		let type_s = p.get_inner_rust_type_as_name();
 
 		let mut ids = get_ids(struc);
 		if p.modifier.is_some() {
@@ -25,11 +21,9 @@ impl Connection {
 			}
 			ids.push_str("m");
 		}
+		ids = embrace(&ids);
 
 		let mut ids2 = format!("({})", get_ids2(&self.0.structs, struc));
-		if !ids.is_empty() {
-			ids = format!("({})", ids);
-		}
 		#>
 			PropertyId::<#= struc.name #><#= p.get_name() #><#= ids
 				#> => PropertyValueRef::<#= type_s #>(self.get_<#=

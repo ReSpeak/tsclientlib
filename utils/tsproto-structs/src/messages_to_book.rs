@@ -40,7 +40,7 @@ lazy_static! {
 						.map(|s| find_field(s, &msg_fields))
 						.collect(),
 					msg,
-					book_struct: book_struct,
+					book_struct,
 					rules: r.properties
 						.into_iter()
 						.map(|p| {
@@ -202,6 +202,43 @@ struct RuleProperty {
 
 	function: Option<String>,
 	tolist: Option<Vec<String>>,
+}
+
+impl Event<'_> {
+	/// Fill the id of a `PropertyId`.
+	///
+	/// `msg` is the name of the message object.
+	pub fn get_id_args(&self, msg: &str) -> String {
+		let mut res = String::new();
+		for f in &self.id {
+			if !res.is_empty() {
+				res.push_str(", ");
+			}
+			if is_ref_type(&f.get_rust_type("", false)) {
+				res.push('&');
+			}
+			res.push_str(&format!("{}.{}", msg, f.get_rust_name()));
+		}
+		res
+	}
+
+	/// Create a `PropertyId` from a message struct.
+	///
+	/// `msg` is the name of the message object.
+	pub fn get_property_id(&self, p: &Property, from: &Field, msg: &str) -> String {
+		let mut ids = self.get_id_args(msg);
+		if let Some(m) = &p.modifier {
+			if !ids.is_empty() {
+				ids.push_str(", ");
+			}
+			if m == "map" || m == "array" || m == "set" {
+				ids.push_str(&format!("{}.{}", msg, from.get_rust_name()));
+			} else {
+				panic!("Unknown modifier {}", m);
+			}
+		}
+		format!("PropertyId::{}{}{}", self.book_struct.name, p.get_name(), embrace(&ids))
+	}
 }
 
 impl RuleProperty {
