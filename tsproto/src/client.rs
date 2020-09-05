@@ -531,6 +531,7 @@ impl Client {
 						return Ok(r);
 					}
 				}
+				Some(Ok(StreamItem::NetworkStatsUpdated)) => {}
 			}
 		}
 	}
@@ -557,6 +558,7 @@ impl Client {
 				Some(Ok(StreamItem::Command(packet))) => {
 					self.hand_back_buffer(packet.into_buffer());
 				}
+				Some(Ok(StreamItem::NetworkStatsUpdated)) => {}
 			}
 		}
 	}

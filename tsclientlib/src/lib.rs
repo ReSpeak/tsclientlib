@@ -55,6 +55,7 @@ mod tests;
 // Reexports
 pub use ts_bookkeeping::*;
 pub use tsproto::Identity;
+pub use tsproto::resend::{ConnectionStats, PacketStat};
 
 /// Wait this time for initserver, in seconds.
 const INITSERVER_TIMEOUT: u64 = 5;
@@ -218,6 +219,11 @@ pub enum StreamItem {
 	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
 	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 	FileTransferFailed(FileTransferHandle, Error),
+	/// The network statistics were updated.
+	///
+	/// This means e.g. the packet loss got a new value. Clients with audio probably want to update
+	/// the packet loss option of opus.
+	NetworkStatsUpdated,
 }
 
 /// The `Connection` is the main interaction point with this library.
@@ -792,6 +798,26 @@ impl Connection {
 		}
 	}
 
+	/// Get statistics about the network connection.
+	///
+	/// # Example
+	/// Get the fraction of packets that are currently lost.
+	///
+	/// ```no_run
+	/// # let con: tsclientlib::Connection = panic!();
+	/// let loss: f32 = con.get_network_stats()?.get_packetloss();
+	/// ```
+	///
+	/// # Error
+	/// Returns an error if currently not connected.
+	pub fn get_network_stats(&self) -> Result<&ConnectionStats> {
+		if let ConnectionState::Connected { con, .. } = &self.state {
+			Ok(&con.client.resender.stats)
+		} else {
+			Err(Error::NotConnected)
+		}
+	}
+
 	fn poll_next(&mut self, cx: &mut Context) -> Poll<Option<Result<StreamItem>>> {
 		if let Some(item) = self.stream_items.pop_front() {
 			return Poll::Ready(Some(item));
@@ -904,6 +930,9 @@ impl Connection {
 							if let Some(item) = self.stream_items.pop_front() {
 								break Poll::Ready(Some(item));
 							}
+						}
+						ProtoStreamItem::NetworkStatsUpdated => {
+								return Poll::Ready(Some(Ok(StreamItem::NetworkStatsUpdated)));
 						}
 						_ => {}
 					},
@@ -1033,8 +1062,6 @@ impl ConnectedConnection {
 					.push_back(Ok(StreamItem::FileTransferFailed(ft_id, msg.status.into())));
 			}
 		} else if let InMessage::ClientConnectionInfoUpdateRequest(_) = &msg {
-			use tsproto::resend::PacketStat;
-
 			let stats = &self.client.resender.stats;
 			let last_second_bytes = stats.get_last_second_bytes();
 			let last_minute_bytes = stats.get_last_minute_bytes();

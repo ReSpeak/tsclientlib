@@ -67,6 +67,11 @@ pub enum SyncStreamItem {
 	/// The connection timed out or the server shut down. The connection will be
 	/// rebuilt automatically.
 	DisconnectedTemporarily,
+	/// The network statistics were updated.
+	///
+	/// This means e.g. the packet loss got a new value. Clients with audio probably want to update
+	/// the packet loss option of opus.
+	NetworkStatsUpdated,
 }
 
 /// A handle for a [`SyncConnection`] which can be sent across threads.
@@ -266,6 +271,9 @@ impl Stream for SyncConnection {
 								info!(self.con.logger, "Got untracked file transfer");
 							}
 							continue;
+						}
+						StreamItem::NetworkStatsUpdated => {
+							SyncStreamItem::NetworkStatsUpdated
 						}
 					})),
 					Some(Err(e)) => Some(Err(e)),

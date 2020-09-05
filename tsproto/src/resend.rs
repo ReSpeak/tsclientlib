@@ -1,4 +1,4 @@
-use std::cmp::{Ord, Ordering};
+use std::cmp::{min, Ord, Ordering};
 use std::collections::{BTreeMap, BinaryHeap};
 use std::convert::From;
 use std::fmt;
@@ -162,7 +162,7 @@ pub struct ConnectionStats {
 	/// Total count of bytes since start of the connection. Indexed by `PacketStat`.
 	pub total_bytes: [u64; 6],
 	/// Stats collected to compute packet loss. Indexed by `PacketLossStat`.
-	packet_loss: [u32; 14],
+	packet_loss: [u32; 13],
 	/// Bytes in the last second. Indexed by `PacketStat`.
 	///
 	/// For the last 60 seconds, so the per minute stats can be computed.
@@ -178,7 +178,7 @@ pub struct ConnectionStats {
 struct ConnectionStatsCounter {
 	bytes: [u32; 6],
 	/// Stats collected to compute packet loss. Indexed by `PacketLossStat`.
-	packet_loss: [u32; 14],
+	packet_loss: [u32; 13],
 }
 
 /// Resend command and init packets until the other side acknowledges them.
@@ -796,6 +796,8 @@ impl Resender {
 				stats.next_second_index = (second_index + 1) % stats.last_second_bytes.len() as u8;
 				stats.packet_loss = counter.packet_loss;
 				counter.reset();
+
+				con.stream_items.push_back(StreamItem::NetworkStatsUpdated);
 			} else {
 				break;
 			}
@@ -932,6 +934,34 @@ impl ConnectionStats {
 				+ self.packet_loss[PacketLossStat::PingInLost as usize] as f32
 				+ self.packet_loss[PacketLossStat::PongInLost as usize] as f32
 				+ self.packet_loss[PacketLossStat::AckInLost as usize] as f32)
+				/ count as f32
+		}
+	}
+
+	/// Compute the average incoming and outgoing packet loss.
+	pub fn get_packetloss(&self) -> f32 {
+		let count = self.packet_loss[PacketLossStat::VoiceInCount as usize]
+			+ self.packet_loss[PacketLossStat::PingInCount as usize]
+			+ self.packet_loss[PacketLossStat::PongInCount as usize]
+			+ self.packet_loss[PacketLossStat::AckInCount as usize]
+			+ self.packet_loss[PacketLossStat::AckOutCount as usize]
+			+ self.packet_loss[PacketLossStat::CommandOutCount as usize];
+		// Do not use ping count, it is unreliable
+		if count == 0 {
+			0.0
+		} else {
+			let command_out_lost = min(
+				self.packet_loss[PacketLossStat::AckInOrCommandOutLost as usize]
+					.saturating_sub(self.packet_loss[PacketLossStat::AckInLost as usize]),
+				self.packet_loss[PacketLossStat::CommandOutCount as usize],
+			);
+
+			(self.packet_loss[PacketLossStat::VoiceInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::PingInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::PongInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::AckInLost as usize] as f32
+				+ self.packet_loss[PacketLossStat::AckOutLost as usize] as f32
+				+ command_out_lost as f32)
 				/ count as f32
 		}
 	}

@@ -78,6 +78,8 @@ pub enum StreamItem {
 	S2CInit(InS2CInitBuf),
 	/// All packets with an id less or equal to this id were acknowledged.
 	AckPacket(PacketId),
+	/// The network statistics were updated.
+	NetworkStatsUpdated,
 	Error(Error),
 }
 
