@@ -588,7 +588,7 @@ impl Connection {
 	/// If this returns `None`, the level was increased and we should try
 	/// connecting again.
 	fn increase_identity_level(&mut self, needed: u8) -> Result<()> {
-		if needed > 20 {
+		if needed > 30 {
 			return Err(Error::IdentityLevel(needed));
 		}
 
