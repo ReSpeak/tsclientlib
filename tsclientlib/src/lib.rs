@@ -56,6 +56,7 @@ mod tests;
 pub use ts_bookkeeping::*;
 pub use tsproto::Identity;
 pub use tsproto::resend::{ConnectionStats, PacketStat};
+pub use tsproto_types::errors::Error as TsError;
 
 /// Wait this time for initserver, in seconds.
 const INITSERVER_TIMEOUT: u64 = 5;
