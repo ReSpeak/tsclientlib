@@ -9,7 +9,7 @@ use curve25519_dalek::scalar::Scalar;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
-use ring::digest;
+use flakebi_ring::digest;
 use thiserror::Error;
 use time::OffsetDateTime;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};

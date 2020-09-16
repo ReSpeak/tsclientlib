@@ -8,7 +8,7 @@ use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use omnom::WriteExt;
 use quicklz::CompressionLevel;
-use ring::digest;
+use flakebi_ring::digest;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 
 use crate::connection::CachedKey;

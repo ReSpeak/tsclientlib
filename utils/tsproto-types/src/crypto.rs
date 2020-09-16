@@ -6,8 +6,8 @@ use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
 use num_bigint::{BigInt, Sign};
-use ring::digest;
-use ring::signature::KeyPair;
+use flakebi_ring::digest;
+use flakebi_ring::signature::{self, KeyPair};
 use serde::{Deserialize, Serialize};
 use simple_asn1::ASN1Block;
 use thiserror::Error;
@@ -203,8 +203,8 @@ impl EccKeyPubP256 {
 	pub fn get_uid(&self) -> Result<String> { Ok(base64::encode(&self.get_uid_no_base64()?)) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
-		let key = ring::signature::UnparsedPublicKey::new(
-			&ring::signature::ECDSA_P256_SHA256_ASN1,
+		let key = signature::UnparsedPublicKey::new(
+			&signature::ECDSA_P256_SHA256_ASN1,
 			&self.0,
 		);
 		key.verify(data, signature).map_err(|_| Error::WrongSignature {
@@ -222,9 +222,9 @@ impl EccKeyPrivP256 {
 	/// Create a new key key pair.
 	pub fn create() -> Result<Self> {
 		Ok(EccKeyPrivP256(
-			ring::signature::EcdsaKeyPair::generate_private_key(
-				&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-				&ring::rand::SystemRandom::new(),
+			signature::EcdsaKeyPair::generate_private_key(
+				&signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+				&flakebi_ring::rand::SystemRandom::new(),
 			)
 			.map_err(|_| Error::KeyGenerationFailed)?,
 		))
@@ -268,8 +268,8 @@ impl EccKeyPrivP256 {
 	/// This is just the `BigNum` of the private key.
 	pub fn from_short(data: Vec<u8>) -> Result<Self> {
 		// Check if the key is valid by converting it to a ring key
-		let _ = ring::signature::EcdsaKeyPair::from_private_key(
-			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+		let _ = signature::EcdsaKeyPair::from_private_key(
+			&signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 			Input::from(&data),
 		)
 		.map_err(|_| Error::NoShortKey)?;
@@ -399,9 +399,9 @@ impl EccKeyPrivP256 {
 	}
 
 	/// Create a `ring` key from the stored private key.
-	fn to_ring(&self) -> ring::signature::EcdsaKeyPair {
-		ring::signature::EcdsaKeyPair::from_private_key(
-			&ring::signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+	fn to_ring(&self) -> signature::EcdsaKeyPair {
+		signature::EcdsaKeyPair::from_private_key(
+			&signature::ECDSA_P256_SHA256_ASN1_SIGNING,
 			Input::from(&self.0),
 		)
 		.unwrap()
@@ -409,8 +409,8 @@ impl EccKeyPrivP256 {
 
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(self, other: EccKeyPubP256) -> Result<Vec<u8>> {
-		use ring::ec::keys::Seed;
-		use ring::ec::suite_b::ecdh;
+		use flakebi_ring::ec::keys::Seed;
+		use flakebi_ring::ec::suite_b::ecdh;
 
 		let seed =
 			Seed::from_p256_bytes(Input::from(&self.0)).map_err(|_| Error::ParsePublicKeyFailed)?;
@@ -423,7 +423,7 @@ impl EccKeyPrivP256 {
 	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
 		let key = self.to_ring();
 		Ok(key
-			.sign(&ring::rand::SystemRandom::new(), data)
+			.sign(&flakebi_ring::rand::SystemRandom::new(), data)
 			.map_err(|_| Error::CreateSignatureFailed)?
 			.as_ref()
 			.to_vec())
