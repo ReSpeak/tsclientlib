@@ -355,7 +355,7 @@ impl SyncConnectionHandle {
 	///
 	/// # #[tokio::main]
 	/// # async fn main() {
-	/// let con: SyncConnection = Connection::new(ConnectOptions::new("localhost")).unwrap().into();
+	/// let con: SyncConnection = Connection::build("localhost").connect().unwrap().into();
 	/// let mut handle = con.get_handle();
 	/// tokio::spawn(con.for_each(|_| future::ready(())));
 	/// // Wait until connected
@@ -375,7 +375,7 @@ impl SyncConnectionHandle {
 	///
 	/// # #[tokio::main]
 	/// # async fn main() {
-	/// let con: SyncConnection = Connection::new(ConnectOptions::new("localhost")).unwrap().into();
+	/// let con: SyncConnection = Connection::build("localhost").connect().unwrap().into();
 	/// let mut handle = con.get_handle();
 	/// tokio::spawn(con.for_each(|_| future::ready(())));
 	/// // Wait until connected

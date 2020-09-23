@@ -3,7 +3,7 @@ use futures::prelude::*;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
+use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -28,7 +28,7 @@ async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
-	let con_config = ConnectOptions::new(args.address)
+	let con_config = Connection::build(args.address)
 		.log_commands(args.verbose >= 1)
 		.log_packets(args.verbose >= 2)
 		.log_udp_packets(args.verbose >= 3);
@@ -41,7 +41,7 @@ async fn real_main() -> Result<()> {
 	let con_config = con_config.identity(id);
 
 	// Connect
-	let mut con = Connection::new(con_config)?;
+	let mut con = con_config.connect()?;
 
 	let r = con
 		.events()

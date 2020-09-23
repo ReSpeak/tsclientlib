@@ -182,8 +182,18 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	);
 
 	tokio::stream::StreamExt::timeout(res, Duration::from_secs(TIMEOUT_SECONDS))
-		.filter_map(|r: std::result::Result<Result<SocketAddr>, _>| {
-			future::ready(if let Ok(Ok(r)) = r { Some(Ok(r)) } else { None })
+		.filter_map(move |r: std::result::Result<Result<SocketAddr>, _>| {
+			future::ready(match r {
+				// Timeout
+				Err(_) => None,
+				// Error
+				Ok(Err(e)) => {
+					debug!(logger, "Resolver failed in one step"; "error" => %e);
+					None
+				}
+				// Success
+				Ok(Ok(r)) => Some(Ok(r)),
+			})
 		})
 		.right_stream()
 }

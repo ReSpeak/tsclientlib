@@ -4,7 +4,7 @@ use slog::{error, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
+use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -40,7 +40,7 @@ async fn real_main() -> Result<()> {
 		Logger::root(drain, o!())
 	};
 
-	let con_config = ConnectOptions::new(args.address.as_str())
+	let con_config = Connection::build(args.address.as_str())
 		.logger(logger.clone())
 		.log_commands(args.verbose >= 1)
 		.log_packets(args.verbose >= 2)
@@ -59,7 +59,7 @@ async fn real_main() -> Result<()> {
 			let logger = logger.clone();
 			tokio::spawn(async move {
 				// Connect
-				let mut con = Connection::new(con_config).unwrap();
+				let mut con = con_config.connect().unwrap();
 
 				let r = con
 					.events()

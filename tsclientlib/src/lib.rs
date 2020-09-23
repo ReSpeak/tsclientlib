@@ -54,8 +54,8 @@ mod tests;
 
 // Reexports
 pub use ts_bookkeeping::*;
-pub use tsproto::Identity;
 pub use tsproto::resend::{ConnectionStats, PacketStat};
+pub use tsproto::Identity;
 pub use tsproto_types::errors::Error as TsError;
 
 /// Wait this time for initserver, in seconds.
@@ -117,6 +117,8 @@ pub enum Error {
 	SendClientinit(#[source] tsproto::client::Error),
 	#[error("Failed to send packet: {0}")]
 	SendPacket(#[source] tsproto::client::Error),
+	#[error("The server changed its identity")]
+	ServerUidMismatch(Uid),
 }
 
 pub trait OutCommandExt {
@@ -297,11 +299,11 @@ enum IdentityIncreaseLevelState {
 ///
 /// ```no_run
 /// use futures::prelude::*;
-/// use tsclientlib::{Connection, ConnectOptions, StreamItem};
+/// use tsclientlib::{Connection, StreamItem};
 ///
 /// #[tokio::main]
 /// async fn main() {
-///     let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+///     let mut con = Connection::build("localhost").connect().unwrap();
 ///     // Wait until connected
 ///     con.events()
 ///         // We are connected when we receive the first ConEvents
@@ -317,6 +319,57 @@ enum IdentityIncreaseLevelState {
 /// [`events()`]: #method.events
 /// [`StreamItem`]: enum.StreamItem.html
 impl Connection {
+	/// Start creating the configuration of a new connection.
+	///
+	/// # Arguments
+	/// The address of the server has to be supplied. The address can be a
+	/// [`SocketAddr`], a string or directly a [`ServerAddress`]. A string
+	/// will automatically be resolved from all formats supported by TeamSpeak.
+	/// For details, see [`resolver::resolve`].
+	///
+	/// # Examples
+	/// This will open a connection to the TeamSpeak server at `localhost`.
+	///
+	/// ```no_run
+	/// # use futures::prelude::*;
+	/// # use tsclientlib::{Connection, StreamItem};
+	///
+	/// # #[tokio::main]
+	/// # async fn main() {
+	///     let mut con = Connection::build("localhost").connect().unwrap();
+	///     // Wait until connected
+	///     con.events()
+	///         // We are connected when we receive the first ConEvents
+	///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///         .next()
+	///         .await
+	///         .unwrap();
+	/// # }
+	/// ```
+	///
+	/// [`SocketAddr`]: ../../std/net/enum.SocketAddr.html
+	/// [`ServerAddress`]: enum.ServerAddress.html
+	/// [`resolver::resolve`]: resolver/method.resolve.html
+	#[inline]
+	pub fn build<A: Into<ServerAddress>>(address: A) -> ConnectOptions {
+		ConnectOptions {
+			address: address.into(),
+			local_address: None,
+			identity: None,
+			server: None,
+			name: "TeamSpeakUser".into(),
+			version: Version::Windows_3_X_X__1,
+			hardware_id: "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc".into(),
+			channel: None,
+			channel_password: None,
+			password: None,
+			logger: None,
+			log_commands: false,
+			log_packets: false,
+			log_udp_packets: false,
+		}
+	}
+
 	/// Create a connection
 	///
 	/// This function opens a new connection to a server. The returned future
@@ -346,56 +399,9 @@ impl Connection {
 	/// ```
 	///
 	/// [`ConnectOptions`]: struct.ConnectOptions.html
-	pub fn new(mut options: ConnectOptions) -> Result<Self> {
-		let logger = options.logger.take().unwrap_or_else(|| {
-			let decorator = slog_term::TermDecorator::new().build();
-			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-			let drain = slog_async::Async::new(drain).build().fuse();
-
-			slog::Logger::root(drain, o!())
-		});
-
-		#[cfg(debug_assertions)]
-		let profile = "Debug";
-		#[cfg(not(debug_assertions))]
-		let profile = "Release";
-
-		info!(logger, "TsClientlib";
-			"version" => git_testament::render_testament!(TESTAMENT),
-			"profile" => profile,
-			"tsproto-version" => git_testament::render_testament!(tsproto::get_testament()),
-		);
-
-		let logger = logger.new(o!("addr" => options.address.to_string()));
-
-		let mut stream_items = VecDeque::new();
-		options.identity = Some(
-			options
-				.identity
-				.take()
-				.map(Ok)
-				.unwrap_or_else(|| {
-					// Create new ECDH key
-					let id = Identity::create();
-					if id.is_ok() {
-						// Send event
-						stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
-					}
-					id
-				})
-				.map_err(Error::IdentityCreate)?,
-		);
-
-		// Try all addresses
-		let fut = Self::connect(logger.clone(), options.clone(), false);
-
-		Ok(Self {
-			state: ConnectionState::Connecting(Box::pin(fut), false),
-			logger,
-			options,
-			stream_items,
-		})
-	}
+	// TODO Remove
+	#[deprecated(since = "0.2.0", note = "ConnectOptions::connect should be used instead")]
+	pub fn new(options: ConnectOptions) -> Result<Self> { options.connect() }
 
 	/// Get the options which were used to create this connection.
 	///
@@ -487,6 +493,22 @@ impl Connection {
 		// Create a connection
 		debug!(logger, "Connecting"; "address" => %addr);
 		client.connect().await.map_err(Error::Connect)?;
+
+		if let Some(server_uid) = &options.server {
+			let params = if let Some(r) = &client.params {
+				r
+			} else {
+				return Err(Error::InitserverParamsMissing);
+			};
+			let real_uid = Uid(params.public_key.get_uid_no_base64().map_err(|e| {
+				Error::Connect(tsproto::client::Error::TsProto(tsproto::Error::IdentityCrypto(
+					e.into(),
+				)))
+			})?);
+			if real_uid != *server_uid {
+				return Err(Error::ServerUidMismatch(real_uid));
+			}
+		}
 
 		// Create clientinit packet
 		let client_version = options.version.get_version_string();
@@ -694,11 +716,11 @@ impl Connection {
 	///
 	/// ```no_run
 	/// # use futures::prelude::*;
-	/// # use tsclientlib::{Connection, ConnectOptions, DisconnectOptions, StreamItem};
+	/// # use tsclientlib::{Connection, DisconnectOptions, StreamItem};
 	///
 	/// # #[tokio::main]
 	/// # async fn main() {
-	/// let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	/// let mut con = Connection::build("localhost").connect().unwrap();
 	/// // Wait until connected
 	/// con.events()
 	///     // We are connected when we receive the first ConEvents
@@ -717,11 +739,11 @@ impl Connection {
 	///
 	/// ```no_run
 	/// # use futures::prelude::*;
-	/// # use tsclientlib::{Connection, ConnectOptions, DisconnectOptions, Reason, StreamItem};
+	/// # use tsclientlib::{Connection, DisconnectOptions, Reason, StreamItem};
 	///
 	/// # #[tokio::main]
 	/// # async fn main() {
-	/// let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
+	/// let mut con = Connection::build("localhost").connect().unwrap();
 	/// // Wait until connected
 	/// con.events()
 	///     // We are connected when we receive the first ConEvents
@@ -1175,8 +1197,8 @@ impl ConnectedConnection {
 /// # Example
 ///
 /// ```
-/// # use tsclientlib::{Connection, ConnectOptions};
-/// let config = ConnectOptions::new("localhost")
+/// # use tsclientlib::Connection;
+/// let config = Connection::build("localhost")
 ///     .name("MyUser")
 ///     .channel("Default Channel/Nested");
 ///
@@ -1187,6 +1209,7 @@ pub struct ConnectOptions {
 	address: ServerAddress,
 	local_address: Option<SocketAddr>,
 	identity: Option<Identity>,
+	server: Option<Uid>,
 	name: Cow<'static, str>,
 	version: Version,
 	hardware_id: Cow<'static, str>,
@@ -1212,22 +1235,85 @@ impl ConnectOptions {
 	/// [`ServerAddress`]: enum.ServerAddress.html
 	/// [`resolver::resolve`]: resolver/method.resolve.html
 	#[inline]
-	pub fn new<A: Into<ServerAddress>>(address: A) -> Self {
-		Self {
-			address: address.into(),
-			local_address: None,
-			identity: None,
-			name: "TeamSpeakUser".into(),
-			version: Version::Windows_3_X_X__1,
-			hardware_id: "923f136fb1e22ae6ce95e60255529c00,d13231b1bc33edfecfb9169cc7a63bcc".into(),
-			channel: None,
-			channel_password: None,
-			password: None,
-			logger: None,
-			log_commands: false,
-			log_packets: false,
-			log_udp_packets: false,
-		}
+	// TODO Remove
+	#[deprecated(since = "0.2.0", note = "Connection::build should be used instead")]
+	pub fn new<A: Into<ServerAddress>>(address: A) -> Self { Connection::build(address) }
+
+	/// Create the connection object from these options.
+	///
+	/// This function opens a new connection to a server. The connection needs to be polled for
+	/// events to do something.
+	///
+	/// # Examples
+	/// This will open a connection to the TeamSpeak server at `localhost`.
+	///
+	/// ```no_run
+	/// # use futures::prelude::*;
+	/// # use tsclientlib::{Connection, StreamItem};
+	///
+	/// # #[tokio::main]
+	/// # async fn main() {
+	///     let mut con = Connection::build("localhost").connect().unwrap();
+	///     // Wait until connected
+	///     con.events()
+	///         // We are connected when we receive the first ConEvents
+	///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///         .next()
+	///         .await
+	///         .unwrap();
+	/// # }
+	/// ```
+	///
+	/// [`ConnectOptions`]: struct.ConnectOptions.html
+	/// [`Connection::build`]: struct.Connection.html#method.build
+	pub fn connect(mut self) -> Result<Connection> {
+		let logger = self.logger.take().unwrap_or_else(|| {
+			let decorator = slog_term::TermDecorator::new().build();
+			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+			let drain = slog_async::Async::new(drain).build().fuse();
+
+			slog::Logger::root(drain, o!())
+		});
+
+		#[cfg(debug_assertions)]
+		let profile = "Debug";
+		#[cfg(not(debug_assertions))]
+		let profile = "Release";
+
+		info!(logger, "tsclientlib";
+			"version" => git_testament::render_testament!(TESTAMENT),
+			"profile" => profile,
+			"tsproto-version" => git_testament::render_testament!(tsproto::get_testament()),
+		);
+
+		let logger = logger.new(o!("addr" => self.address.to_string()));
+
+		let mut stream_items = VecDeque::new();
+		self.identity = Some(
+			self.identity
+				.take()
+				.map(Ok)
+				.unwrap_or_else(|| {
+					// Create new ECDH key
+					let id = Identity::create();
+					if id.is_ok() {
+						// Send event
+						stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
+					}
+					id
+				})
+				.map_err(Error::IdentityCreate)?,
+		);
+
+		// Try all addresses
+		let fut = Connection::connect(logger.clone(), self.clone(), false);
+
+		Ok(Connection {
+			state: ConnectionState::Connecting(Box::pin(fut), false),
+			logger,
+			options: self,
+			stream_items,
+		})
 	}
 
 	/// The address for the socket of our client
@@ -1248,6 +1334,18 @@ impl ConnectOptions {
 	#[inline]
 	pub fn identity(mut self, identity: Identity) -> Self {
 		self.identity = Some(identity);
+		self
+	}
+
+	/// Check the identity of the server to be equal with the given uid.
+	///
+	/// If the public key of the server does not match this uid, the connection will be aborted.
+	///
+	/// # Default
+	/// Allow the server to have any identity.
+	#[inline]
+	pub fn server(mut self, server: Uid) -> Self {
+		self.server = Some(server);
 		self
 	}
 
@@ -1285,15 +1383,14 @@ impl ConnectOptions {
 	///
 	/// # Example
 	/// ```
-	/// # use tsclientlib::ConnectOptions;
-	/// let opts = ConnectOptions::new("localhost").channel("Default Channel");
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").channel("Default Channel");
 	/// ```
 	///
 	/// Connecting to a channel further down in the hierarchy.
 	/// ```
-	/// # use tsclientlib::ConnectOptions;
-	/// let opts = ConnectOptions::new("localhost")
-	///     .channel("Default Channel/Nested");
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").channel("Default Channel/Nested");
 	/// ```
 	#[inline]
 	pub fn channel<S: Into<Cow<'static, str>>>(mut self, path: S) -> Self {
@@ -1307,8 +1404,8 @@ impl ConnectOptions {
 	///
 	/// # Example
 	/// ```
-	/// # use tsclientlib::{ChannelId, ConnectOptions};
-	/// let opts = ConnectOptions::new("localhost").channel_id(ChannelId(2));
+	/// # use tsclientlib::{ChannelId, Connection};
+	/// let opts = Connection::build("localhost").channel_id(ChannelId(2));
 	/// ```
 	#[inline]
 	pub fn channel_id(mut self, channel: ChannelId) -> Self {
@@ -1320,8 +1417,8 @@ impl ConnectOptions {
 	///
 	/// # Example
 	/// ```
-	/// # use tsclientlib::ConnectOptions;
-	/// let opts = ConnectOptions::new("localhost")
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost")
 	///     .channel("Secret Channel")
 	///     .channel_password("My secret password");
 	/// ```
@@ -1335,8 +1432,8 @@ impl ConnectOptions {
 	///
 	/// # Example
 	/// ```
-	/// # use tsclientlib::ConnectOptions;
-	/// let opts = ConnectOptions::new("localhost").password("My secret password");
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").password("My secret password");
 	/// ```
 	#[inline]
 	pub fn password<S: Into<Cow<'static, str>>>(mut self, pwd: S) -> Self {
@@ -1392,6 +1489,8 @@ impl ConnectOptions {
 	pub fn get_local_address(&self) -> Option<&SocketAddr> { self.local_address.as_ref() }
 	#[inline]
 	pub fn get_identity(&self) -> Option<&Identity> { self.identity.as_ref() }
+	#[inline]
+	pub fn get_server(&self) -> Option<UidRef> { self.server.as_ref().map(Uid::as_ref) }
 	#[inline]
 	pub fn get_name(&self) -> &str { &self.name }
 	#[inline]

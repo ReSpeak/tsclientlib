@@ -5,7 +5,7 @@ use structopt::StructOpt;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 
-use tsclientlib::{ClientId, ConnectOptions, Connection, DisconnectOptions, Identity, StreamItem};
+use tsclientlib::{ClientId, Connection, DisconnectOptions, Identity, StreamItem};
 use tsproto_packets::packets::AudioData;
 
 mod audio_utils;
@@ -51,7 +51,7 @@ async fn real_main() -> Result<()> {
 	let local_set = LocalSet::new();
 	let audiodata = audio_utils::start(logger.clone(), &local_set)?;
 
-	let con_config = ConnectOptions::new(args.address)
+	let con_config = Connection::build(args.address)
 		.log_commands(args.verbose >= 1)
 		.log_packets(args.verbose >= 2)
 		.log_udp_packets(args.verbose >= 3);
@@ -64,7 +64,7 @@ async fn real_main() -> Result<()> {
 	let con_config = con_config.identity(id);
 
 	// Connect
-	let mut con = Connection::new(con_config)?;
+	let mut con = con_config.connect()?;
 
 	let r = con
 		.events()

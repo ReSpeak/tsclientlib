@@ -6,13 +6,13 @@ use std::str;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
-use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use flakebi_ring::digest;
 use thiserror::Error;
 use time::OffsetDateTime;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
+use tsproto_types::LicenseType;
 
 pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
 
@@ -78,22 +78,6 @@ pub struct License {
 	/// First 32 byte of SHA512(last 4 bytes from key || rest of license block)
 	pub hash: [u8; 32],
 	pub inner: InnerLicense,
-}
-
-#[derive(Debug, Clone, Copy, Hash, FromPrimitive, ToPrimitive)]
-pub enum LicenseType {
-	None,
-	Offline,
-	Sdk,
-	SdkOffline,
-	/// Non-profit license
-	Npl,
-	/// Authorized Teamspeak hosting provider
-	Athp,
-	/// Annual activation license
-	Aal,
-	/// 32 slots default license
-	Default,
 }
 
 #[derive(Debug, Clone)]

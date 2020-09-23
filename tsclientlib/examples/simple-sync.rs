@@ -4,7 +4,7 @@ use structopt::StructOpt;
 use tokio::time::{self, Duration};
 
 use tsclientlib::sync::SyncConnection;
-use tsclientlib::{ConnectOptions, Connection, DisconnectOptions, Identity};
+use tsclientlib::{Connection, DisconnectOptions, Identity};
 
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
@@ -29,7 +29,7 @@ async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
 
-	let con_config = ConnectOptions::new(args.address)
+	let con_config = Connection::build(args.address)
 		.log_commands(args.verbose >= 1)
 		.log_packets(args.verbose >= 2)
 		.log_udp_packets(args.verbose >= 3);
@@ -42,8 +42,7 @@ async fn real_main() -> Result<()> {
 	let con_config = con_config.identity(id);
 
 	// Connect
-	let con = Connection::new(con_config)?;
-	let con: SyncConnection = con.into();
+	let con: SyncConnection = con_config.connect()?.into();
 	let mut handle = con.get_handle();
 
 	// Do event handling in another thread
