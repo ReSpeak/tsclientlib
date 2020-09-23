@@ -3,8 +3,8 @@ use std::default::Default;
 
 use heck::*;
 use t4rust_derive::Template;
-use tsproto_structs::embrace;
 use tsproto_structs::book::*;
+use tsproto_structs::embrace;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
 
 #[derive(Template)]

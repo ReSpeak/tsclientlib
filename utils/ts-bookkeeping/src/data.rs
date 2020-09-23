@@ -706,9 +706,9 @@ impl Channel {
 				channel_id: self.id,
 			}))
 		} else {
-			c2s::OutChannelUnsubscribeMessage::new(&mut iter::once(c2s::OutChannelUnsubscribePart {
-				channel_id: self.id,
-			}))
+			c2s::OutChannelUnsubscribeMessage::new(&mut iter::once(
+				c2s::OutChannelUnsubscribePart { channel_id: self.id },
+			))
 		}
 	}
 }

@@ -5,9 +5,9 @@ use arrayref::array_ref;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use num_bigint::{BigInt, Sign};
 use flakebi_ring::digest;
 use flakebi_ring::signature::{self, KeyPair};
+use num_bigint::{BigInt, Sign};
 use serde::{Deserialize, Serialize};
 use simple_asn1::ASN1Block;
 use thiserror::Error;
@@ -203,10 +203,7 @@ impl EccKeyPubP256 {
 	pub fn get_uid(&self) -> Result<String> { Ok(base64::encode(&self.get_uid_no_base64()?)) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
-		let key = signature::UnparsedPublicKey::new(
-			&signature::ECDSA_P256_SHA256_ASN1,
-			&self.0,
-		);
+		let key = signature::UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_ASN1, &self.0);
 		key.verify(data, signature).map_err(|_| Error::WrongSignature {
 			key: self.clone(),
 			data: data.to_vec(),

@@ -272,9 +272,7 @@ impl Stream for SyncConnection {
 							}
 							continue;
 						}
-						StreamItem::NetworkStatsUpdated => {
-							SyncStreamItem::NetworkStatsUpdated
-						}
+						StreamItem::NetworkStatsUpdated => SyncStreamItem::NetworkStatsUpdated,
 					})),
 					Some(Err(e)) => Some(Err(e)),
 					None => {

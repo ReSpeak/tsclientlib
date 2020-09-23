@@ -4,11 +4,11 @@ use std::u64;
 use aes::block_cipher_trait::generic_array::typenum::consts::U16;
 use aes::block_cipher_trait::generic_array::GenericArray;
 use curve25519_dalek::edwards::EdwardsPoint;
+use flakebi_ring::digest;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use omnom::WriteExt;
 use quicklz::CompressionLevel;
-use flakebi_ring::digest;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 
 use crate::connection::CachedKey;

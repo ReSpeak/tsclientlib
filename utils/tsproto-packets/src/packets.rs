@@ -183,7 +183,7 @@ pub enum C2SInitData<'a> {
 pub enum S2CInitData<'a> {
 	Init1 { random1: &'a [u8; 16], random0_r: &'a [u8; 4] },
 	Init3 { x: &'a [u8; 64], n: &'a [u8; 64], level: u32, random2: &'a [u8; 100] },
-	Init127 { },
+	Init127 {},
 }
 
 #[derive(Clone, Debug)]
@@ -389,7 +389,7 @@ impl<'a> InPacket<'a> {
 				random2: array_ref!(self.content, 133, 100),
 			};
 		} else if self.content[0] == 127 {
-			data = S2CInitData::Init127 { };
+			data = S2CInitData::Init127 {};
 		} else {
 			return Err(Error::InvalidInitStep(self.content[0]));
 		}

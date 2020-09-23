@@ -2,8 +2,8 @@ use std::fmt::Debug;
 use std::str;
 
 use slog::{debug, o, Logger};
-use tsproto_packets::HexSlice;
 use tsproto_packets::packets::{InUdpPacket, OutUdpPacket, PacketType};
+use tsproto_packets::HexSlice;
 
 use crate::connection::{Connection, Event};
 

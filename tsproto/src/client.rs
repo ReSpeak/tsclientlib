@@ -862,10 +862,12 @@ mod tests {
 
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
-		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
-			if packet.header().packet_type() == PacketType::Init {
-				if let Some(s) = send.replace(None) {
-					s.send(()).unwrap();
+		let listener = move |event: &Event| {
+			if let Event::ReceivePacket(packet) = event {
+				if packet.header().packet_type() == PacketType::Init {
+					if let Some(s) = send.replace(None) {
+						s.send(()).unwrap();
+					}
 				}
 			}
 		};
@@ -894,9 +896,11 @@ mod tests {
 
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
-		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
-			if packet.header().packet_type() == PacketType::Command {
-				send.replace(None).unwrap().send(()).unwrap();
+		let listener = move |event: &Event| {
+			if let Event::ReceivePacket(packet) = event {
+				if packet.header().packet_type() == PacketType::Command {
+					send.replace(None).unwrap().send(()).unwrap();
+				}
 			}
 		};
 
@@ -934,8 +938,11 @@ mod tests {
 		state.set_connected().await;
 
 		let r = state.client.wait_disconnect().await;
-		assert!(matches!(r, super::Result::<()>::Err(Error::TsProto(crate::Error::Timeout(_)))),
-			"Connection should timeout (result: {:?})", r);
+		assert!(
+			matches!(r, super::Result::<()>::Err(Error::TsProto(crate::Error::Timeout(_)))),
+			"Connection should timeout (result: {:?})",
+			r
+		);
 		Ok(())
 	}
 
@@ -952,12 +959,14 @@ mod tests {
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
 		let counter = Cell::new(0u8);
-		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
-			if packet.header().packet_type() == PacketType::Pong {
-				counter.set(counter.get() + 1);
-				// Until 2 pongs are received
-				if counter.get() == 2 {
-					send.replace(None).unwrap().send(()).unwrap();
+		let listener = move |event: &Event| {
+			if let Event::ReceivePacket(packet) = event {
+				if packet.header().packet_type() == PacketType::Pong {
+					counter.set(counter.get() + 1);
+					// Until 2 pongs are received
+					if counter.get() == 2 {
+						send.replace(None).unwrap().send(()).unwrap();
+					}
 				}
 			}
 		};
@@ -1000,11 +1009,13 @@ mod tests {
 		let (send, recv) = oneshot::channel();
 		let send = Cell::new(Some(send));
 		let counter = Cell::new(0u8);
-		let listener = move |event: &Event| if let Event::ReceivePacket(packet) = event {
-			if packet.header().packet_type() == PacketType::Command {
-				counter.set(counter.get() + 1);
-				if counter.get() == count {
-					send.replace(None).unwrap().send(()).unwrap();
+		let listener = move |event: &Event| {
+			if let Event::ReceivePacket(packet) = event {
+				if packet.header().packet_type() == PacketType::Command {
+					counter.set(counter.get() + 1);
+					if counter.get() == count {
+						send.replace(None).unwrap().send(()).unwrap();
+					}
 				}
 			}
 		};
