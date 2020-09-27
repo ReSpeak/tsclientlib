@@ -1,9 +1,10 @@
 //! Handle packet splitting and cryptography
 use std::u64;
 
-use aes::block_cipher_trait::generic_array::typenum::consts::U16;
-use aes::block_cipher_trait::generic_array::GenericArray;
+use aes::block_cipher::generic_array::typenum::consts::U16;
+use aes::block_cipher::generic_array::GenericArray;
 use curve25519_dalek::edwards::EdwardsPoint;
+use eax::{AeadInPlace, Eax, NewAead};
 use flakebi_ring::digest;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
@@ -150,8 +151,11 @@ pub fn encrypt_key_nonce(
 	packet: &mut OutPacket, key: &GenericArray<u8, U16>, nonce: &GenericArray<u8, U16>,
 ) -> Result<()> {
 	let meta = packet.header().get_meta().to_vec();
-	let mac = eax::Eax::<aes::Aes128>::encrypt(key, nonce, &meta, packet.content_mut());
-	packet.mac().copy_from_slice(&mac[..8]);
+	let cipher = Eax::<aes::Aes128>::new(key);
+	let mac = cipher
+		.encrypt_in_place_detached(nonce, &meta, packet.content_mut())
+		.map_err(|_| Error::MaxLengthExceeded("encryption data"))?;
+	packet.mac().copy_from_slice(&mac.as_slice()[..8]);
 	Ok(())
 }
 
@@ -179,9 +183,16 @@ pub fn decrypt_key_nonce(
 ) -> Result<Vec<u8>> {
 	let header = packet.header();
 	let meta = header.get_meta();
-	// TODO decrypt in-place
+	// TODO decrypt in-place in packet
 	let mut content = packet.content().to_vec();
-	eax::Eax::<aes::Aes128>::decrypt(key, nonce, &meta, &mut content, header.mac())
+	let cipher = Eax::<aes::Aes128>::new(key);
+	cipher
+		.decrypt_in_place_detached2(
+			nonce,
+			&meta,
+			&mut content,
+			header.mac(),
+		)
 		.map(|()| content)
 		.map_err(|_| Error::WrongMac {
 			p_type: header.packet_type(),

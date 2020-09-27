@@ -20,12 +20,13 @@ include = [
 travis-ci = { repository = "ReSpeak/tsclientlib" }
 
 [dependencies]
-aes = "0.3"
+aes = "0.5"
 base64 = "0.12"
 bitflags = "1"
 omnom = "3"
 curve25519-dalek = "3"
-eax = "0.1"
+#eax = "0.2.0-pre"
+eax = { git = "https://github.com/Flakebi/AEADs" }
 flakebi-ring = "0.16.15"
 futures = "0.3"
 git-testament = "0.1"
