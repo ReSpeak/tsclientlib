@@ -79,7 +79,7 @@ pub struct ServerGroupId(pub u64);
 pub struct ChannelGroupId(pub u64);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct IconHash(pub u32);
+pub struct IconId(pub u32);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct Permission(pub u32);

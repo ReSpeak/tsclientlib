@@ -517,8 +517,8 @@ impl Connection {
 
 		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
 			name: &options.name,
-			client_version: &client_version,
-			client_platform: &client_platform,
+			version: &client_version,
+			platform: &client_platform,
 			input_hardware_enabled: true,
 			output_hardware_enabled: true,
 			default_channel: options.channel.as_ref().map(AsRef::as_ref).unwrap_or_default(),
@@ -529,7 +529,7 @@ impl Connection {
 				.unwrap_or_default(),
 			password: options.password.as_ref().map(AsRef::as_ref).unwrap_or_default(),
 			metadata: "",
-			client_version_sign: &client_version_sign,
+			version_sign: &client_version_sign,
 			client_key_offset: counter,
 			phonetic_name: "",
 			default_token: "",

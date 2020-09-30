@@ -68,8 +68,8 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 		.into(),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
-		"IconHash" => format!(
-			"IconHash(if val.starts_with('-') {{
+		"IconId" => format!(
+			"IconId(if val.starts_with('-') {{
 			val.parse::<i32>().map(|i| i as u32)
 		}} else {{
 			val.parse::<u64>().map(|i| i as u32)
@@ -231,7 +231,7 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 			name,
 		),
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId"
-		| "IconHash" => format!("&{}.0", name),
+		| "IconId" => format!("&{}.0", name),
 		"ClientType" => format!(
 			"match {} {{
 				ClientType::Normal => &\"0\",

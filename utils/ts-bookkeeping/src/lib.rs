@@ -14,7 +14,7 @@ pub use tsproto_types::versions::Version;
 pub use tsproto_types::{
 	ChannelGroupId, ChannelId, ChannelPermissionHint, ChannelType, ClientDbId, ClientId,
 	ClientPermissionHint, ClientType, Codec, CodecEncryptionMode, GroupNamingMode, GroupType,
-	HostBannerMode, HostMessageMode, IconHash, Invoker, InvokerRef, LicenseType, LogLevel,
+	HostBannerMode, HostMessageMode, IconId, Invoker, InvokerRef, LicenseType, LogLevel,
 	MaxClients, Permission, PermissionType, PluginTargetMode, Reason, ServerGroupId,
 	TalkPowerRequest, TextMessageTargetMode, TokenType, Uid, UidRef,
 };

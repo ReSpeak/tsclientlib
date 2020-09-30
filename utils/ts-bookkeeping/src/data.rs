@@ -52,36 +52,36 @@ impl Connection {
 		Self {
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;
-				welcome_message,
-				max_clients,
+				ask_for_privilegekey,
 				codec_encryption_mode,
-				hostmessage,
-				hostmessage_mode,
-				default_server_group,
+				created,
 				default_channel_group,
-				hostbanner_url,
-				hostbanner_gfx_url,
+				default_server_group,
 				hostbanner_gfx_interval,
-				priority_speaker_dimm_modificator,
-				virtual_server_id,
+				hostbanner_gfx_url,
+				hostbanner_mode,
+				hostbanner_url,
+				hostbutton_gfx_url,
 				hostbutton_tooltip,
 				hostbutton_url,
-				hostbutton_gfx_url,
-				hostbanner_mode,
+				hostmessage_mode,
+				hostmessage,
+				icon,
+				max_clients,
+				name,
+				nickname,
+				phonetic_name,
+				platform,
+				priority_speaker_dimm_modificator,
 				protocol_version,
-				icon_id,
 				temp_channel_default_delete_delay,
+				version,
+				welcome_message,
 				;
 
+				id: packet.virtual_server_id,
 				public_key: public_key,
-				name: packet.server_name.clone(),
-				phonetic_name: packet.server_phonetic_name.clone(),
-				nickname: packet.nickname.clone(),
-				platform: packet.server_platform.clone(),
-				version: packet.server_version.clone(),
-				created: packet.server_created,
-				ips: packet.server_ip.clone().unwrap_or_else(Vec::new),
-				ask_for_privilegekey: packet.ask_for_privilegekey,
+				ips: packet.ips.clone().unwrap_or_else(Vec::new),
 				// TODO Get from license struct
 				license: LicenseType::NoLicense,
 
@@ -278,10 +278,6 @@ impl Connection {
 		} else {
 			Err(Error::NotFound("Channel", channel.to_string()))
 		}
-	}
-
-	fn get_file(&self, _channel: ChannelId, _path: &str) -> Result<&File> {
-		unimplemented!("Files are not yet implemented")
 	}
 
 	// Backing functions for MessageToBook declarations

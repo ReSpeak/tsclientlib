@@ -30,13 +30,6 @@ impl BookDeclarations {
 
 #[derive(Deserialize, Clone, Debug)]
 #[serde(deny_unknown_fields)]
-pub struct Accessors {
-	pub get: bool,
-	pub set: bool,
-}
-
-#[derive(Deserialize, Clone, Debug)]
-#[serde(deny_unknown_fields)]
 pub struct Id {
 	#[serde(rename = "struct")]
 	pub struct_name: String,
@@ -66,7 +59,6 @@ pub struct Struct {
 	pub name: String,
 	pub id: Vec<Id>,
 	pub doc: String,
-	pub accessor: Accessors,
 	pub properties: Vec<Property>,
 }
 
@@ -80,8 +72,6 @@ pub struct Property {
 	#[serde(rename = "type")]
 	pub type_s: String,
 	pub doc: Option<String>,
-	pub get: Option<bool>,
-	pub set: Option<bool>,
 	#[serde(default = "get_false")]
 	pub opt: bool,
 	#[serde(rename = "mod")]
@@ -108,8 +98,6 @@ impl Struct {
 }
 
 impl Property {
-	pub fn get_get(&self, struc: &Struct) -> bool { self.get.unwrap_or_else(|| struc.accessor.get) }
-	pub fn get_set(&self, struc: &Struct) -> bool { self.set.unwrap_or_else(|| struc.accessor.set) }
 	pub fn get_rust_type(&self, is_ref: bool) -> String {
 		let mut res = convert_type(&self.type_s, is_ref);
 

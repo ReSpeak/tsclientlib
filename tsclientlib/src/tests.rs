@@ -26,7 +26,7 @@ fn test_iconid(input: &str, expected: u32) {
 	));
 	if let InMessage::InitServer(list) = msg {
 		let cmd = list.iter().next().unwrap();
-		assert_eq!(cmd.icon_id, ts_bookkeeping::IconHash(expected));
+		assert_eq!(cmd.icon, ts_bookkeeping::IconId(expected));
 	} else {
 		panic!("Failed to parse as initserver");
 	}
