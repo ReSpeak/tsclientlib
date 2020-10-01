@@ -823,8 +823,8 @@ mod tests {
 			let mut server = Client::new(logger.clone(), addr, Box::new(socket1), server_key);
 			server.is_client = false;
 
-			crate::log::add_logger(logger.new(o!("is" => "client")), 2, &mut client);
-			crate::log::add_logger(logger.new(o!("is" => "server")), 2, &mut server);
+			crate::log::add_logger_with_verbosity(logger.new(o!("is" => "client")), 3, &mut client);
+			crate::log::add_logger_with_verbosity(logger.new(o!("is" => "server")), 3, &mut server);
 
 			Ok(Self { client, server })
 		}

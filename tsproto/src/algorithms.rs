@@ -187,12 +187,7 @@ pub fn decrypt_key_nonce(
 	let mut content = packet.content().to_vec();
 	let cipher = Eax::<aes::Aes128>::new(key);
 	cipher
-		.decrypt_in_place_detached2(
-			nonce,
-			&meta,
-			&mut content,
-			header.mac(),
-		)
+		.decrypt_in_place_detached2(nonce, &meta, &mut content, header.mac())
 		.map(|()| content)
 		.map_err(|_| Error::WrongMac {
 			p_type: header.packet_type(),

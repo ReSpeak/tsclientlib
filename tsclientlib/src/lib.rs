@@ -477,18 +477,13 @@ impl Connection {
 		);
 
 		// Logging
-		let verbosity = if options.log_packets {
-			3
-		} else if options.log_udp_packets {
-			2
-		} else if options.log_commands {
-			1
-		} else {
-			0
-		};
-		if verbosity > 0 {
-			tsproto::log::add_logger(client.logger.clone(), verbosity, &mut *client);
-		}
+		tsproto::log::add_logger(
+			client.logger.clone(),
+			options.log_commands,
+			options.log_packets,
+			options.log_udp_packets,
+			&mut *client,
+		);
 
 		// Create a connection
 		debug!(logger, "Connecting"; "address" => %addr);

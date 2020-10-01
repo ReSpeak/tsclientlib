@@ -60,44 +60,57 @@ pub fn log_command(
 /// 0 - Print commands
 /// 1 - Print packets
 /// 2 - Print udp packets
-pub fn add_logger(logger: Logger, verbosity: u8, con: &mut Connection) {
-	let is_client = con.is_client;
-	let listener = Box::new(move |event: &Event| match event {
-		Event::ReceiveUdpPacket(packet) => {
-			if verbosity > 0 {
-				log_udp_packet(&logger, is_client, true, packet);
-			}
-		}
-		Event::ReceivePacket(packet) => {
-			if verbosity > 1 {
-				log_packet(&logger, is_client, true, packet);
-			} else {
-				let p_type = packet.header().packet_type();
-				if p_type.is_command() {
-					if let Ok(s) = str::from_utf8(packet.content()) {
-						log_command(&logger, is_client, true, p_type, s);
-					}
-				}
-			}
-		}
-		Event::SendUdpPacket(packet) => {
-			if verbosity > 0 {
-				log_out_udp_packet(&logger, is_client, false, packet);
-			}
-		}
-		Event::SendPacket(packet) => {
-			if verbosity > 1 {
-				log_packet(&logger, is_client, false, &packet.packet());
-			} else {
-				let p_type = packet.header().packet_type();
-				if p_type.is_command() {
-					if let Ok(s) = str::from_utf8(packet.content()) {
-						log_command(&logger, is_client, false, p_type, s);
-					}
-				}
-			}
-		}
-	});
+pub fn add_logger_with_verbosity(logger: Logger, verbosity: u8, con: &mut Connection) {
+	let log_commands = verbosity > 0;
+	let log_packets = verbosity > 1;
+	let log_udp_packets = verbosity > 2;
+	add_logger(logger, log_commands, log_packets, log_udp_packets, con);
+}
 
-	con.event_listeners.push(listener);
+pub fn add_logger(
+	logger: Logger, log_commands: bool, log_packets: bool, log_udp_packets: bool,
+	con: &mut Connection,
+)
+{
+	if log_commands || log_packets || log_udp_packets {
+		let is_client = con.is_client;
+		let listener = Box::new(move |event: &Event| match event {
+			Event::ReceiveUdpPacket(packet) => {
+				if log_udp_packets {
+					log_udp_packet(&logger, is_client, true, packet);
+				}
+			}
+			Event::ReceivePacket(packet) => {
+				if log_packets {
+					log_packet(&logger, is_client, true, packet);
+				} else if log_commands {
+					let p_type = packet.header().packet_type();
+					if p_type.is_command() {
+						if let Ok(s) = str::from_utf8(packet.content()) {
+							log_command(&logger, is_client, true, p_type, s);
+						}
+					}
+				}
+			}
+			Event::SendUdpPacket(packet) => {
+				if log_udp_packets {
+					log_out_udp_packet(&logger, is_client, false, packet);
+				}
+			}
+			Event::SendPacket(packet) => {
+				if log_packets {
+					log_packet(&logger, is_client, false, &packet.packet());
+				} else if log_commands {
+					let p_type = packet.header().packet_type();
+					if p_type.is_command() {
+						if let Ok(s) = str::from_utf8(packet.content()) {
+							log_command(&logger, is_client, false, p_type, s);
+						}
+					}
+				}
+			}
+		});
+
+		con.event_listeners.push(listener);
+	}
 }

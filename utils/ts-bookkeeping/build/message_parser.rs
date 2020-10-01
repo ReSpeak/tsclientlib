@@ -230,8 +230,9 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 			if rust_type == "Uid" { "&" } else { "" },
 			name,
 		),
-		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId"
-		| "IconId" => format!("&{}.0", name),
+		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId" | "IconId" => {
+			format!("&{}.0", name)
+		}
 		"ClientType" => format!(
 			"match {} {{
 				ClientType::Normal => &\"0\",

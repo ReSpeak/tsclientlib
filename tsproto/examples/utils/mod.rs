@@ -29,7 +29,7 @@ pub async fn create_client(
 	let mut con = Client::new(logger, remote_address, Box::new(udp_socket), private_key);
 
 	if verbose >= 1 {
-		tsproto::log::add_logger(con.logger.clone(), verbose - 1, &mut con)
+		tsproto::log::add_logger_with_verbosity(con.logger.clone(), verbose, &mut con)
 	}
 
 	Ok(con)
