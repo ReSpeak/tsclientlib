@@ -121,6 +121,18 @@ pub enum Error {
 	ServerUidMismatch(Uid),
 }
 
+/// The reason for a temporary disconnect.
+#[derive(Clone, Copy, Debug)]
+pub enum TemporaryDisconnectReason {
+	/// Timed out because the server did not respond to packets in time.
+	Timeout(&'static str),
+	/// The server terminated our connection because it shut down.
+	///
+	/// This corresponds to the `Serverstop` and `ClientdisconnectServerShutdown` reasons.
+	/// This often happens on server restarts, so the connection will try to reconnect.
+	Serverstop,
+}
+
 pub trait OutCommandExt {
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
@@ -183,7 +195,7 @@ pub enum StreamItem {
 	IdentityLevelIncreased,
 	/// The connection timed out or the server shut down. The connection will be
 	/// rebuilt automatically.
-	DisconnectedTemporarily,
+	DisconnectedTemporarily(TemporaryDisconnectReason),
 	/// The result of sending a message.
 	///
 	/// The [`MessageHandle`] is the return value of
@@ -919,19 +931,21 @@ impl Connection {
 
 						if let client::Error::TsProto(tsproto::Error::Timeout(reason)) = e {
 							// Reconnect on timeout
-							warn!(self.logger, "Connection failed, reconnecting"; "timout" => reason);
+							warn!(self.logger, "Connection failed, reconnecting";
+								"timout" => reason);
 							let fut =
 								Self::connect(self.logger.clone(), self.options.clone(), true);
 							self.state = ConnectionState::Connecting(Box::pin(fut), true);
-							return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily)));
+							return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily(
+								TemporaryDisconnectReason::Timeout(reason),
+							))));
 						} else {
 							break Poll::Ready(Some(Err(Error::ConnectionFailed(e))));
 						}
 					}
 					Poll::Ready(Some(Ok(item))) => match item {
 						ProtoStreamItem::Error(e) => {
-							warn!(self.logger, "Connection got a non-fatal error";
-									"error" => %e);
+							warn!(self.logger, "Connection got a non-fatal error"; "error" => %e);
 						}
 						ProtoStreamItem::Audio(audio) => {
 							#[cfg(feature = "audio")]
@@ -944,7 +958,17 @@ impl Connection {
 							}
 						}
 						ProtoStreamItem::Command(cmd) => {
-							con.handle_command(&self.logger, book, &mut self.stream_items, cmd);
+							if let Some(reason) =
+								con.handle_command(&self.logger, book, &mut self.stream_items, cmd)
+							{
+								warn!(self.logger, "Server shut down, reconnecting");
+								let fut =
+									Self::connect(self.logger.clone(), self.options.clone(), true);
+								self.state = ConnectionState::Connecting(Box::pin(fut), true);
+								self.stream_items
+									.push_back(Ok(StreamItem::DisconnectedTemporarily(reason)));
+								return Poll::Ready(Some(self.stream_items.pop_front().unwrap()));
+							}
 							if let Some(item) = self.stream_items.pop_front() {
 								break Poll::Ready(Some(item));
 							}
@@ -998,7 +1022,7 @@ impl ConnectedConnection {
 	fn handle_command(
 		&mut self, logger: &Logger, book: &mut data::Connection,
 		stream_items: &mut VecDeque<Result<StreamItem>>, cmd: InCommandBuf,
-	)
+	) -> Option<TemporaryDisconnectReason>
 	{
 		let msg = match InMessage::new(
 			logger,
@@ -1008,15 +1032,15 @@ impl ConnectedConnection {
 			Ok(r) => r,
 			Err(e) => {
 				warn!(logger, "Failed to parse message"; "error" => %e);
-				return;
+				return None;
 			}
 		};
 
 		// Handle error messages
-		if let InMessage::CommandError(e) = &msg {
-			for e in e.iter() {
-				if let Some(ret_code) = e.return_code.as_ref().and_then(|r| r.parse().ok()) {
-					let res = if e.id == TsError::Ok { Ok(()) } else { Err(e.id) };
+		if let InMessage::CommandError(msg) = &msg {
+			for msg in msg.iter() {
+				if let Some(ret_code) = msg.return_code.as_ref().and_then(|r| r.parse().ok()) {
+					let res = if msg.id == TsError::Ok { Ok(()) } else { Err(msg.id) };
 					stream_items
 						.push_back(Ok(StreamItem::MessageResult(MessageHandle(ret_code), res)));
 				}
@@ -1150,7 +1174,7 @@ impl ConnectedConnection {
 				Ok(r) => r,
 				Err(e) => {
 					warn!(logger, "Failed to handle message"; "error" => %e);
-					return;
+					Vec::new()
 				}
 			};
 			self.client.hand_back_buffer(cmd.into_buffer());
@@ -1158,6 +1182,19 @@ impl ConnectedConnection {
 				stream_items.push_back(Ok(StreamItem::ConEvents(events)));
 			}
 		}
+
+		if let InMessage::ClientLeftView(msg) = &msg {
+			for msg in msg.iter() {
+				if msg.client_id == book.own_client
+					&& matches!(
+						msg.reason,
+						Some(Reason::Serverstop) | Some(Reason::ClientdisconnectServerShutdown)
+					) {
+					return Some(TemporaryDisconnectReason::Serverstop);
+				}
+			}
+		}
+		None
 	}
 
 	fn send_command(&mut self, mut packet: OutCommand) -> Result<MessageHandle> {

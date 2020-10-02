@@ -16,7 +16,7 @@ use tsproto_packets::packets::InAudioBuf;
 #[cfg(feature = "unstable")]
 use tsproto_packets::packets::OutCommand;
 
-use crate::{events, DisconnectOptions, Error, Result, StreamItem};
+use crate::{events, DisconnectOptions, Error, Result, StreamItem, TemporaryDisconnectReason};
 
 enum SyncConMessage {
 	RunFn(Box<dyn FnOnce(&mut SyncConnection) + Send>),
@@ -66,7 +66,7 @@ pub enum SyncStreamItem {
 	IdentityLevelIncreased,
 	/// The connection timed out or the server shut down. The connection will be
 	/// rebuilt automatically.
-	DisconnectedTemporarily,
+	DisconnectedTemporarily(TemporaryDisconnectReason),
 	/// The network statistics were updated.
 	///
 	/// This means e.g. the packet loss got a new value. Clients with audio probably want to update
@@ -235,8 +235,8 @@ impl Stream for SyncConnection {
 						StreamItem::IdentityLevelIncreased => {
 							SyncStreamItem::IdentityLevelIncreased
 						}
-						StreamItem::DisconnectedTemporarily => {
-							SyncStreamItem::DisconnectedTemporarily
+						StreamItem::DisconnectedTemporarily(reason) => {
+							SyncStreamItem::DisconnectedTemporarily(reason)
 						}
 						StreamItem::MessageResult(handle, res) => {
 							if let Some(send) = self.commands.remove(&handle) {
