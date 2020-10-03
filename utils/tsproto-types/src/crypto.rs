@@ -65,7 +65,7 @@ const IDENTITY_OBFUSCATION: [u8; 128] = *b"b9dfaa7bee6ac57ac7b65f1094a1c155\
 	e747327bc2fe5d51c512023fe54a280201004e90ad1daaae1075d53b7d571c30e063b5a\
 	62a4a017bb394833aa0983e6e";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum KeyType {
 	Public,
 	Private,
@@ -74,12 +74,12 @@ pub enum KeyType {
 /// A public ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct EccKeyPubP256(Vec<u8>);
 /// A private ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct EccKeyPrivP256(Vec<u8>);
 
 /// A public ecc key.
