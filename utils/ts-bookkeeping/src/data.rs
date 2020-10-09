@@ -652,6 +652,24 @@ impl Connection {
 		Ok(())
 	}
 
+	fn subscribe_channel_fun(
+		&mut self, client_id: ClientId, msg: &s2c::InClientMovedPart, events: &mut Vec<Event>,
+	) -> Result<()> {
+		if client_id == self.own_client {
+			if msg.target_channel_id.0 != 0 {
+				let channel = self.get_mut_channel(msg.target_channel_id)?;
+				events.push(Event::PropertyChanged {
+					id: PropertyId::ChannelSubscribed(msg.target_channel_id),
+					old: PropertyValue::Bool(channel.subscribed),
+					invoker: None,
+					extra: ExtraInfo { reason: None },
+				});
+				channel.subscribed = true;
+			}
+		}
+		Ok(())
+	}
+
 	// Book to messages
 	fn away_fun_b2m<'a>(msg: Option<&'a str>) -> (bool, &'a str) {
 		if let Some(msg) = msg { (true, msg) } else { (false, "") }
@@ -662,6 +680,21 @@ impl Client {
 	// Book to messages
 	fn password_b2m<'a>(password: &'a str) -> &'a str { password }
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
+
+	pub fn send_textmessage(&self, message: &str) -> OutCommand {
+		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
+			target: TextMessageTargetMode::Client,
+			target_client_id: Some(self.id),
+			message,
+		}))
+	}
+
+	pub fn poke(&self, message: &str) -> OutCommand {
+		c2s::OutClientPokeRequestMessage::new(&mut iter::once(c2s::OutClientPokeRequestPart {
+			client_id: self.id,
+			message,
+		}))
+	}
 }
 
 impl Channel {
@@ -941,23 +974,6 @@ impl Connection {
 		c2s::OutDisconnectMessage::new(&mut iter::once(c2s::OutDisconnectPart {
 			reason: options.reason,
 			reason_message: options.message.as_deref(),
-		}))
-	}
-}
-
-impl Client {
-	pub fn send_textmessage(&self, message: &str) -> OutCommand {
-		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
-			target: TextMessageTargetMode::Client,
-			target_client_id: Some(self.id),
-			message,
-		}))
-	}
-
-	pub fn poke(&self, message: &str) -> OutCommand {
-		c2s::OutClientPokeRequestMessage::new(&mut iter::once(c2s::OutClientPokeRequestPart {
-			client_id: self.id,
-			message,
 		}))
 	}
 }

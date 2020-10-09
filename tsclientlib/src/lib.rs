@@ -257,6 +257,8 @@ struct ConnectedConnection {
 	client: client::Client,
 	cur_return_code: u16,
 	cur_file_transfer_id: u16,
+	/// If we are subscribed to the server. This will automatically subscribe to new channels.
+	subscribed: bool,
 	/// If a file stream can be opened, it gets put in here until the tcp
 	/// connection is ready and the key is sent.
 	///
@@ -889,6 +891,7 @@ impl Connection {
 						client,
 						cur_return_code: 0,
 						cur_file_transfer_id: 0,
+						subscribed: false,
 						file_transfers: Default::default(),
 					};
 					self.state = ConnectionState::Connected { con, book };
@@ -1183,7 +1186,26 @@ impl ConnectedConnection {
 			}
 		}
 
-		if let InMessage::ClientLeftView(msg) = &msg {
+		// Handle subscriptions
+		// - If the client (server groups or permissions) change, he stays subscribed (even if he
+		//   does not have the power anymore).
+		// - If the channel is edited, the subscription status gets updated.
+		// - If we enter a channel, we get subscribed but there is no notification that we are
+		//   subscribed.
+		// - If we leave a channel, there is a notification that we unsubscribed.
+		// - If a new channel is created, we are not automatically subscribed.
+		if let InMessage::ChannelCreated(msg) = &msg {
+			if self.subscribed {
+				// Subscribe to new channels
+				let packet = c2s::OutChannelSubscribeMessage::new(&mut msg.iter().map(|msg| {
+					c2s::OutChannelSubscribePart { channel_id: msg.channel_id }
+				}));
+				if let Err(e) = self.client.send_packet(packet.into_packet()) {
+					warn!(logger, "Failed to send channel subscribe packet"; "error" => %e);
+				}
+			}
+		} else if let InMessage::ClientLeftView(msg) = &msg {
+			// Handle server restarts
 			for msg in msg.iter() {
 				if msg.client_id == book.own_client
 					&& matches!(
@@ -1201,6 +1223,13 @@ impl ConnectedConnection {
 		let code = self.cur_return_code;
 		self.cur_return_code += 1;
 		packet.write_arg("return_code", &code);
+
+		if packet.0.content().starts_with(b"channelsubscribeall ") {
+			self.subscribed = true;
+		} else if packet.0.content().starts_with(b"channelunsubscribeall ") {
+			self.subscribed = false;
+		}
+
 		self.client
 			.send_packet(packet.into_packet())
 			.map(|_| MessageHandle(code))
