@@ -6,9 +6,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::u16;
 
-use aes::block_cipher::generic_array::typenum::consts::U16;
-use aes::block_cipher::generic_array::GenericArray;
 use futures::prelude::*;
+use generic_array::typenum::consts::U16;
+use generic_array::GenericArray;
 use num_traits::ToPrimitive;
 use slog::{o, Logger};
 use tokio::net::UdpSocket;

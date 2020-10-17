@@ -1,11 +1,11 @@
 //! Handle packet splitting and cryptography
 use std::u64;
 
-use aes::block_cipher::generic_array::typenum::consts::U16;
-use aes::block_cipher::generic_array::GenericArray;
 use curve25519_dalek::edwards::EdwardsPoint;
 use eax::{AeadInPlace, Eax, NewAead};
+use eax::aead::consts::{U8, U16};
 use flakebi_ring::digest;
+use generic_array::GenericArray;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use omnom::WriteExt;
@@ -151,11 +151,11 @@ pub fn encrypt_key_nonce(
 	packet: &mut OutPacket, key: &GenericArray<u8, U16>, nonce: &GenericArray<u8, U16>,
 ) -> Result<()> {
 	let meta = packet.header().get_meta().to_vec();
-	let cipher = Eax::<aes::Aes128>::new(key);
+	let cipher = Eax::<aes::Aes128, U8>::new(key);
 	let mac = cipher
 		.encrypt_in_place_detached(nonce, &meta, packet.content_mut())
 		.map_err(|_| Error::MaxLengthExceeded("encryption data"))?;
-	packet.mac().copy_from_slice(&mac.as_slice()[..8]);
+	packet.mac().copy_from_slice(mac.as_slice());
 	Ok(())
 }
 
@@ -185,9 +185,9 @@ pub fn decrypt_key_nonce(
 	let meta = header.get_meta();
 	// TODO decrypt in-place in packet
 	let mut content = packet.content().to_vec();
-	let cipher = Eax::<aes::Aes128>::new(key);
+	let cipher = Eax::<aes::Aes128, U8>::new(key);
 	cipher
-		.decrypt_in_place_detached2(nonce, &meta, &mut content, header.mac())
+		.decrypt_in_place_detached(nonce, &meta, &mut content, header.mac().into())
 		.map(|()| content)
 		.map_err(|_| Error::WrongMac {
 			p_type: header.packet_type(),
