@@ -89,7 +89,7 @@ for struc in self.structs.iter().filter(|s| !s.opt) {
 		if !done.insert(inner_type.to_string()) {
 			continue;
 		}
-		let name = inner_type.to_name().to_camel_case();
+		let name = inner_type.to_name();
 		let has_ref = inner_type.lifetime(true).to_ref(true).uses_lifetime();
 		#>
 			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(<#= inner_type.wrap_ref().code_as_ref("s") #>),

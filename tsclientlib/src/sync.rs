@@ -94,8 +94,8 @@ pub struct SyncConnection {
 	connects: Vec<oneshot::Sender<Result<()>>>,
 	disconnects: Vec<oneshot::Sender<Result<()>>>,
 	downloads:
-		HashMap<super::FileTransferHandle, oneshot::Sender<Result<super::FileDownloadResult>>>,
-	uploads: HashMap<super::FileTransferHandle, oneshot::Sender<Result<super::FileUploadResult>>>,
+		HashMap<super::FiletransferHandle, oneshot::Sender<Result<super::FileDownloadResult>>>,
+	uploads: HashMap<super::FiletransferHandle, oneshot::Sender<Result<super::FileUploadResult>>>,
 }
 
 impl From<super::Connection> for SyncConnection {
@@ -262,7 +262,7 @@ impl Stream for SyncConnection {
 							}
 							continue;
 						}
-						StreamItem::FileTransferFailed(handle, res) => {
+						StreamItem::FiletransferFailed(handle, res) => {
 							if let Some(send) = self.downloads.remove(&handle) {
 								let _ = send.send(Err(res));
 							} else if let Some(send) = self.uploads.remove(&handle) {

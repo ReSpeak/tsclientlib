@@ -122,9 +122,17 @@ for e in &self.decls {
 impl <#= e.book_struct.name #> {
 	pub fn <#= change_name.to_snake_case() #><# if uses_lifetime { #><'a><# } #>(&self, <#=
 		get_all_id_arguments(e).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>
+	<# if e.msg.attributes.is_empty() { #>
+	) -> OutCommand
+	<# } else { #>
 	) -> c2s::Out<#= e.msg.name #>Part<# if uses_lifetime { #><'a><# } #>
+	<# } #>
 	{
+	<# if e.msg.attributes.is_empty() { #>
+		c2s::Out<#= e.msg.name #>Message::new()
+	<# } else { #>
 		<# create_message(_fmt, e, None, msg_group, &self.messages)?; #>
+	<# } #>
 	}
 }
 

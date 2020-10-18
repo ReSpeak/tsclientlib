@@ -66,7 +66,7 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MessageHandle(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct FileTransferHandle(pub u16);
+pub struct FiletransferHandle(pub u16);
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -85,7 +85,7 @@ pub enum Error {
 	#[error("Server refused connection: {0}")]
 	ConnectTs(#[source] tsproto_types::errors::Error),
 	#[error("File transfer failed: {0}")]
-	FileTransferIo(#[source] std::io::Error),
+	FiletransferIo(#[source] std::io::Error),
 	#[error("Failed to create identity: {0}")]
 	IdentityCreate(#[source] tsproto::Error),
 	#[error("The server needs an identity of level {0}, please increase your identity level")]
@@ -207,33 +207,33 @@ pub enum StreamItem {
 	/// A file download succeeded. This event contains the `TcpStream` where the
 	/// file can be downloaded.
 	///
-	/// The [`FileTransferHandle`] is the return value of
+	/// The [`FiletransferHandle`] is the return value of
 	/// [`Connection::download_file`].
 	///
-	/// [`FileTransferHandle`]: struct.FileTransferHandle.html
+	/// [`FiletransferHandle`]: struct.FiletransferHandle.html
 	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
-	FileDownload(FileTransferHandle, FileDownloadResult),
+	FileDownload(FiletransferHandle, FileDownloadResult),
 	/// A file upload succeeded. This event contains the `TcpStream` where the
 	/// file can be uploaded.
 	///
-	/// The [`FileTransferHandle`] is the return value of
+	/// The [`FiletransferHandle`] is the return value of
 	/// [`Connection::upload_file`].
 	///
-	/// [`FileTransferHandle`]: struct.FileTransferHandle.html
+	/// [`FiletransferHandle`]: struct.FiletransferHandle.html
 	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
-	FileUpload(FileTransferHandle, FileUploadResult),
+	FileUpload(FiletransferHandle, FileUploadResult),
 	/// A file download or upload failed.
 	///
 	/// This can happen if either the TeamSpeak server denied the file transfer
 	/// or the tcp connection failed.
 	///
-	/// The [`FileTransferHandle`] is the return value of
+	/// The [`FiletransferHandle`] is the return value of
 	/// [`Connection::download_file`] or [`Connection::upload_file`].
 	///
-	/// [`FileTransferHandle`]: struct.FileTransferHandle.html
+	/// [`FiletransferHandle`]: struct.FiletransferHandle.html
 	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
 	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
-	FileTransferFailed(FileTransferHandle, Error),
+	FiletransferFailed(FiletransferHandle, Error),
 	/// The network statistics were updated.
 	///
 	/// This means e.g. the packet loss got a new value. Clients with audio probably want to update
@@ -256,14 +256,14 @@ pub struct Connection {
 struct ConnectedConnection {
 	client: client::Client,
 	cur_return_code: u16,
-	cur_file_transfer_id: u16,
+	cur_filetransfer_id: u16,
 	/// If we are subscribed to the server. This will automatically subscribe to new channels.
 	subscribed: bool,
 	/// If a file stream can be opened, it gets put in here until the tcp
 	/// connection is ready and the key is sent.
 	///
 	/// Afterwards we can directly return a `TcpStream` in the event stream.
-	file_transfers: Vec<future::BoxFuture<'static, StreamItem>>,
+	filetransfers: Vec<future::BoxFuture<'static, StreamItem>>,
 }
 
 enum ConnectionState {
@@ -794,7 +794,7 @@ impl Connection {
 	pub fn download_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>,
 		seek_position: Option<u64>,
-	) -> Result<FileTransferHandle>
+	) -> Result<FiletransferHandle>
 	{
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.download_file(channel_id, path, channel_password, seek_position)
@@ -821,7 +821,7 @@ impl Connection {
 	pub fn upload_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>, size: u64,
 		overwrite: bool, resume: bool,
-	) -> Result<FileTransferHandle>
+	) -> Result<FiletransferHandle>
 	{
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.upload_file(channel_id, path, channel_password, size, overwrite, resume)
@@ -890,9 +890,9 @@ impl Connection {
 					let con = ConnectedConnection {
 						client,
 						cur_return_code: 0,
-						cur_file_transfer_id: 0,
+						cur_filetransfer_id: 0,
 						subscribed: false,
-						file_transfers: Default::default(),
+						filetransfers: Default::default(),
 					};
 					self.state = ConnectionState::Connected { con, book };
 					Poll::Ready(Some(Ok(StreamItem::ConEvents(vec![
@@ -986,14 +986,14 @@ impl Connection {
 				Poll::Ready(r) => Poll::Ready(r),
 				Poll::Pending => {
 					// Check file transfers
-					let ft = con.file_transfers.iter_mut().enumerate().find_map(|(i, ft)| match ft
+					let ft = con.filetransfers.iter_mut().enumerate().find_map(|(i, ft)| match ft
 						.poll_unpin(cx)
 					{
 						Poll::Pending => None,
 						Poll::Ready(r) => Some((i, r)),
 					});
 					if let Some((i, res)) = ft {
-						con.file_transfers.remove(i);
+						con.filetransfers.remove(i);
 						Poll::Ready(Some(Ok(res)))
 					} else {
 						Poll::Pending
@@ -1050,61 +1050,61 @@ impl ConnectedConnection {
 			}
 		} else if let InMessage::FileDownload(msg) = &msg {
 			for msg in msg.iter() {
-				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
+				let ft_id = FiletransferHandle(msg.client_filetransfer_id);
 				let ip = msg.ip.unwrap_or_else(|| self.client.address.ip());
 				let addr = SocketAddr::new(ip, msg.port);
-				let key = msg.file_transfer_key.clone();
+				let key = msg.filetransfer_key.clone();
 				let size = msg.size;
 
 				let fut = Box::new(async move {
 					let addr = addr;
 					let key = key;
 					let mut stream =
-						TcpStream::connect(&addr).await.map_err(Error::FileTransferIo)?;
-					stream.write_all(key.as_bytes()).await.map_err(Error::FileTransferIo)?;
-					stream.flush().await.map_err(Error::FileTransferIo)?;
+						TcpStream::connect(&addr).await.map_err(Error::FiletransferIo)?;
+					stream.write_all(key.as_bytes()).await.map_err(Error::FiletransferIo)?;
+					stream.flush().await.map_err(Error::FiletransferIo)?;
 					Ok(stream)
 				})
 				.map(move |res| match res {
 					Ok(stream) => {
 						StreamItem::FileDownload(ft_id, FileDownloadResult { size, stream })
 					}
-					Err(e) => StreamItem::FileTransferFailed(ft_id, e),
+					Err(e) => StreamItem::FiletransferFailed(ft_id, e),
 				});
 
-				self.file_transfers.push(Box::pin(fut));
+				self.filetransfers.push(Box::pin(fut));
 			}
 		} else if let InMessage::FileUpload(msg) = &msg {
 			for msg in msg.iter() {
-				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
+				let ft_id = FiletransferHandle(msg.client_filetransfer_id);
 				let ip = msg.ip.unwrap_or_else(|| self.client.address.ip());
 				let addr = SocketAddr::new(ip, msg.port);
-				let key = msg.file_transfer_key.clone();
+				let key = msg.filetransfer_key.clone();
 				let seek_position = msg.seek_position;
 
 				let fut = Box::new(async move {
 					let addr = addr;
 					let key = key;
 					let mut stream =
-						TcpStream::connect(&addr).await.map_err(Error::FileTransferIo)?;
-					stream.write_all(key.as_bytes()).await.map_err(Error::FileTransferIo)?;
-					stream.flush().await.map_err(Error::FileTransferIo)?;
+						TcpStream::connect(&addr).await.map_err(Error::FiletransferIo)?;
+					stream.write_all(key.as_bytes()).await.map_err(Error::FiletransferIo)?;
+					stream.flush().await.map_err(Error::FiletransferIo)?;
 					Ok(stream)
 				})
 				.map(move |res| match res {
 					Ok(stream) => {
 						StreamItem::FileUpload(ft_id, FileUploadResult { seek_position, stream })
 					}
-					Err(e) => StreamItem::FileTransferFailed(ft_id, e),
+					Err(e) => StreamItem::FiletransferFailed(ft_id, e),
 				});
 
-				self.file_transfers.push(Box::pin(fut));
+				self.filetransfers.push(Box::pin(fut));
 			}
-		} else if let InMessage::FileTransferStatus(msg) = &msg {
+		} else if let InMessage::FiletransferStatus(msg) = &msg {
 			for msg in msg.iter() {
-				let ft_id = FileTransferHandle(msg.client_file_transfer_id);
+				let ft_id = FiletransferHandle(msg.client_filetransfer_id);
 				stream_items
-					.push_back(Ok(StreamItem::FileTransferFailed(ft_id, msg.status.into())));
+					.push_back(Ok(StreamItem::FiletransferFailed(ft_id, msg.status.into())));
 			}
 		} else if let InMessage::ClientConnectionInfoUpdateRequest(_) = &msg {
 			let stats = &self.client.resender.stats;
@@ -1239,13 +1239,13 @@ impl ConnectedConnection {
 	fn download_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>,
 		seek_position: Option<u64>,
-	) -> Result<FileTransferHandle>
+	) -> Result<FiletransferHandle>
 	{
-		let ft_id = self.cur_file_transfer_id;
-		self.cur_file_transfer_id += 1;
+		let ft_id = self.cur_filetransfer_id;
+		self.cur_filetransfer_id += 1;
 		let packet =
 			c2s::OutFtInitDownloadMessage::new(&mut iter::once(c2s::OutFtInitDownloadPart {
-				client_file_transfer_id: ft_id,
+				client_filetransfer_id: ft_id,
 				name: path,
 				channel_id,
 				channel_password: channel_password.unwrap_or(""),
@@ -1253,19 +1253,19 @@ impl ConnectedConnection {
 				protocol: 1,
 			}));
 
-		self.send_command(packet).map(|_| FileTransferHandle(ft_id))
+		self.send_command(packet).map(|_| FiletransferHandle(ft_id))
 	}
 
 	fn upload_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>, size: u64,
 		overwrite: bool, resume: bool,
-	) -> Result<FileTransferHandle>
+	) -> Result<FiletransferHandle>
 	{
-		let ft_id = self.cur_file_transfer_id;
-		self.cur_file_transfer_id += 1;
+		let ft_id = self.cur_filetransfer_id;
+		self.cur_filetransfer_id += 1;
 
 		let packet = c2s::OutFtInitUploadMessage::new(&mut iter::once(c2s::OutFtInitUploadPart {
-			client_file_transfer_id: ft_id,
+			client_filetransfer_id: ft_id,
 			name: path,
 			channel_id,
 			channel_password: channel_password.unwrap_or(""),
@@ -1275,7 +1275,7 @@ impl ConnectedConnection {
 			protocol: 1,
 		}));
 
-		self.send_command(packet).map(|_| FileTransferHandle(ft_id))
+		self.send_command(packet).map(|_| FiletransferHandle(ft_id))
 	}
 }
 

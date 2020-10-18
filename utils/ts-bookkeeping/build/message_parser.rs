@@ -166,6 +166,15 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				}})?)",
 					field.pretty
 				)
+			} else if field.type_s == "DurationMillisecondsFloat" {
+				format!(
+					"Duration::milliseconds((1000.0 * val.parse::<f32>().map_err(|e| ParseError::ParseFloat {{
+					arg: \"{}\",
+					value: val.to_string(),
+					source: e,
+				}})?) as i64)",
+					field.pretty
+				)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
 			}
@@ -258,6 +267,8 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 				format!("&{}.whole_seconds()", name)
 			} else if field.type_s == "DurationMilliseconds" {
 				format!("&{}.whole_milliseconds()", name)
+			} else if field.type_s == "DurationMillisecondsFloat" {
+				format!("&({}.whole_microseconds() as f32 / 1000.0)", name)
 			} else {
 				panic!("Unknown original time type {} found.", field.type_s);
 			}

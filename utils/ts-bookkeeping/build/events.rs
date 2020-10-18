@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::default::Default;
 use std::ops::Deref;
 
-use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::book::*;
 use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};

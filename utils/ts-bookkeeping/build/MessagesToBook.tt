@@ -123,10 +123,16 @@ impl Connection {
 	fn handle_command_generated(&mut self, msg: &InMessage) -> Result<(bool, Vec<Event>)> {
 		let mut events = Vec::new();
 		match msg {
-<# for event in &self.decls {
-	let msg_name = &event.msg.name;
-	let book_name = &event.book_struct.name;
-#>
+<#
+// Group events by message
+let mut groups = HashMap::new();
+for event in &self.decls {
+	let group = groups.entry(event.msg.name.as_str()).or_insert_with(Vec::new);
+	group.push(event);
+}
+
+for (msg_name, group) in groups {
+	let event = &group[0]; #>
 			InMessage::<#= msg_name #>(m) => for m in m.iter() {
 				#[allow(unused_variables)]
 				let invoker = m.get_invoker();
@@ -138,6 +144,10 @@ impl Connection {
 				<# } else { #>
 				let reason: Option<Reason> = None;
 				<# } #>
+<#
+	for event in group {
+		let book_name = &event.book_struct.name;
+#>
 
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", book_name.to_snake_case());
@@ -223,7 +233,7 @@ impl Connection {
 					id: <#= event.get_property_id(to, from, "m") #>,
 					invoker: invoker.clone(),
 					extra: ExtraInfo { reason },
-				})
+				});
 								<# }
 								RuleOp::Remove => {
 									if to.is_set() { #>
@@ -251,19 +261,161 @@ impl Connection {
 			} else if event.op == RuleOp::Update && event.book_struct.opt {
 				// Optional structs that get only updated as a whole
 
-				create_add_rule(_fmt, event)?;
+				// Create a new object
+				// First, call all functions
+				for fun in event.rules.iter().filter(|r| r.is_function()) {
+					if let RuleKind::Function { name, to } = fun {
+						let return_match = if to.len() == 1 {
+							to[0].name.to_snake_case()
+						} else {
+							format!("({})", to.iter().map(|p| p.name.to_snake_case()).collect::<Vec<_>>().join(", "))
+						}; #>
+				let <#= return_match #> = self.<#= name.to_snake_case() #>(m, &mut events)?;
+					<# }
+				}
+
+				// Check if all required data are available
+				// Pairs of (property, string to get the propery)
+				let mut opt_props = Vec::new();
+				let mut props = Vec::new();
+				let v = Vec::new();
+				// Function return values
+				for p in event.rules.iter()
+					.flat_map(|f| if let RuleKind::Function { to, .. } = f {
+						to
+					} else {
+						&v
+					}) {
+					opt_props.push((p.name.to_snake_case(), p.name.to_snake_case()));
+				}
+
+				for p in event.rules.iter() {
+					if let RuleKind::Map { from, to, op } = p {
+						if *op != RuleOp::Update {
+							panic!("Cannot add or remove when adding a new struct");
+						}
+						let transform_func = if to.is_set() {
+							// Convert to set
+							".iter().cloned().collect()"
+						} else if !to.get_type()?.is_primitive() {
+							".clone()"
+						} else {
+							""
+						};
+						let from_opt = from.is_opt(&event.msg);
+						if to.opt && !from_opt {
+							// to is optional, but from not
+							let getter = format!("Some(m.{}{})", from.get_rust_name(), transform_func);
+							props.push((to.name.to_snake_case(), getter));
+						} else {
+							let getter = format!("m.{}{}", from.get_rust_name(), transform_func);
+							if from_opt && !to.opt {
+								opt_props.push((to.name.to_snake_case(), getter));
+							} else {
+								props.push((to.name.to_snake_case(), getter));
+							}
+						}
+					}
+				}
+
+				if !opt_props.is_empty() {
+					let mut matcher = opt_props.iter().map(|(p, _)| format!("Some({})", p)).collect::<Vec<_>>().join(", ");
+					let mut getter = opt_props.iter().map(|(_, p)| p.as_str()).collect::<Vec<_>>().join(", ");
+					if opt_props.len() > 1 {
+						matcher = format!("({})", matcher);
+						getter = format!("({})", getter);
+					}
+				#>
+				if let <#= matcher #> = <#= getter #> {
+				<# } #>
+				let r = <#= event.book_struct.name #> {
+				<#
+				// Add ids
+				for (id, fld) in event.book_struct.id.iter().zip(event.id.iter()) { #>
+					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: m.<#= fld.get_rust_name() #>.clone(),
+				<# }
+				for (p, _) in &opt_props { #>
+					<#= p #>,
+				<# }
+				for (p, g) in &props {
+					if p != g { #>
+					<#= p #>: <#= g #>,
+					<# } else { #>
+					<#= p #>,
+					<# }
+				} #>
+				};
+				<#
 				let function_name = format!("replace_{}", book_name.to_snake_case());
 				let ids = event.get_id_args("m");
+				let comma = if ids.is_empty() { "" } else { ", " };
 				#>
-				let old = self.<#= function_name #>(<#= ids #>, r, &mut events)?;
+				let old = self.<#= function_name #>(<#= ids #><#= comma #>r, &mut events)?;
 				<# create_event(_fmt, event, "Changed", true)?;
+				if !opt_props.is_empty() { #>
+				}
+				<# }
 			} else if event.op == RuleOp::Add {
-				create_add_rule(_fmt, event)?;
+				// Create a new object
+				// First, call all functions
+				for fun in event.rules.iter().filter(|r| r.is_function()) {
+					if let RuleKind::Function { name, to } = fun {
+						let return_match = if to.len() == 1 {
+							to[0].name.to_snake_case()
+						} else {
+							format!("({})", to.iter().map(|p| p.name.to_snake_case()).collect::<Vec<_>>().join(", "))
+						}; #>
+				let <#= return_match #> = self.<#= name.to_snake_case() #>(m, &mut events)?;
+					<# }
+				} #>
+				let r = <#= event.book_struct.name #> {
+				<#
+				// Add ids
+				for (id, fld) in event.book_struct.id.iter().zip(event.id.iter()) { #>
+					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: m.<#= fld.get_rust_name() #>.clone(),
+				<# }
+
+				let v = vec![];
+				// Function return values
+				for p in event.rules.iter()
+					.flat_map(|f| if let RuleKind::Function { to, .. } = f {
+						to
+					} else {
+						&v
+					}) { #>
+					<#= p.name.to_snake_case() #>,
+				<# }
+				for p in event.rules.iter() {
+					if let RuleKind::Map { from, to, op } = p {
+						if *op != RuleOp::Update {
+							panic!("Cannot add or remove when adding a new struct");
+						}
+						let transform_func = if to.is_set() {
+							// Convert to set
+							".iter().cloned().collect()"
+						} else if !to.get_type()?.is_primitive() {
+							".clone()"
+						} else {
+							""
+						};
+						// to is optional, but from not
+						let from_opt = from.is_opt(&event.msg); #>
+					<#= to.name.to_snake_case() #>: <#
+						if to.opt && !from_opt {
+						#>Some(m.<#= from.get_rust_name() #><#= transform_func #>),<#
+						} else {
+						#>m.<#= from.get_rust_name() #><#= transform_func #>,<# }
+					}
+				} #>
+				};
+				<#
+				// TODO Previous function end
 				let function_name = format!("add_{}", book_name.to_snake_case());
 				let ids = event.get_id_args("m"); #>
 				self.<#= function_name #>(<#= ids #>, r, &mut events)?;
 				<# create_event(_fmt, event, "Added", false)?;
 			} #>
+<# } #>
 			}
 <# } #>
 			_ => {

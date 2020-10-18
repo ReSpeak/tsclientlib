@@ -304,6 +304,7 @@ impl Connection {
 
 	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> { Ok(false) }
 	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> { Ok(None) }
+	fn return_some_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<Option<O>>> { Ok(Some(None)) }
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
@@ -532,11 +533,14 @@ impl Connection {
 
 	fn address_fun(
 		&self, msg: &s2c::InClientConnectionInfoPart, _: &mut Vec<Event>,
-	) -> Result<Option<SocketAddr>> {
+	) -> Result<Option<Option<SocketAddr>>> {
 		if !msg.ip.is_empty() {
-			Ok(Some(SocketAddr::new(msg.ip.parse().map_err(Error::InvalidConnectionIp)?, msg.port)))
+			Ok(Some(Some(SocketAddr::new(msg.ip
+				.trim_matches(&['[', ']'][..])
+				.parse()
+				.map_err(Error::InvalidConnectionIp)?, msg.port))))
 		} else {
-			Ok(None)
+			Ok(Some(None))
 		}
 	}
 

@@ -16,6 +16,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use heck::*;
 use serde::Deserialize;
 
 type Result<T> = std::result::Result<T, fmt::Error>;
@@ -39,7 +40,6 @@ pub struct EnumValue {
 #[derive(Clone, Debug)]
 pub enum InnerRustType {
 	Primitive(String),
-	/// String is always saved as Struct("str")
 	Struct(String),
 	Ref(Box<InnerRustType>),
 	Option(Box<InnerRustType>),
@@ -118,6 +118,7 @@ impl InnerRustType {
 	pub fn to_ref(&self) -> Self {
 		match self {
 			Self::Struct(s) if s == "Uid" => Self::Struct("UidRef".into()),
+			Self::Struct(s) if s == "String" => Self::Ref(Box::new(Self::Struct("str".into()))),
 			Self::Struct(_) | Self::Map(_, _) | Self::Set(_) | Self::Vec(_) => {
 				Self::Ref(Box::new(self.clone()))
 			}
@@ -130,6 +131,8 @@ impl InnerRustType {
 	pub fn code_as_ref(&self, name: &str) -> String {
 		match self {
 			Self::Struct(s) if s == "Uid" || s == "str" => format!("{}.as_ref()", name),
+			Self::Struct(s) if s == "String" => format!("{}.as_str()", name),
+			Self::Struct(s) if s == "str" => name.into(),
 			Self::Struct(_) => format!("&{}", name),
 			Self::Map(_, _) | Self::Set(_) | Self::Vec(_) => format!("{}.as_ref()", name),
 			Self::Primitive(_) => name.into(),
@@ -144,13 +147,19 @@ impl InnerRustType {
 				}
 			}
 			Self::Option(i) => {
-				let inner = i.code_as_ref(name);
-				if inner == name {
-					inner
-				} else if inner.starts_with('&') && &inner[1..] == name {
-					format!("{0}.as_ref()", name)
-				} else {
-					format!("{0}.as_ref().map(|{0}| {1})", name, inner)
+				match &**i {
+					// Shortcut
+					Self::Struct(s) if s == "String" => format!("{}.as_deref()", name),
+					_ => {
+						let inner = i.code_as_ref(name);
+						if inner == name {
+							inner
+						} else if inner.starts_with('&') && &inner[1..] == name {
+							format!("{0}.as_ref()", name)
+						} else {
+							format!("{0}.as_ref().map(|{0}| {1})", name, inner)
+						}
+					}
 				}
 			}
 		}
@@ -196,7 +205,7 @@ impl FromStr for InnerRustType {
 		{
 			Ok(Self::Primitive(s.into()))
 		} else if s == "str" || s == "String" {
-			Ok(Self::Struct("str".into()))
+			Ok(Self::Struct("String".into()))
 		} else if s.starts_with('&') {
 			let rest = if s.starts_with("&'") {
 				let i = s.find(' ').ok_or_else(|| {
@@ -313,6 +322,10 @@ impl RustType {
 		Self { inner: InnerRustType::Ref(Box::new(self.inner.clone())), lifetime: self.lifetime }
 	}
 
+	pub fn is_opt(&self) -> bool {
+		matches!(self.inner, InnerRustType::Option(_))
+	}
+
 	pub fn is_primitive(&self) -> bool {
 		matches!(self.inner, InnerRustType::Primitive(_))
 	}
@@ -325,8 +338,8 @@ impl RustType {
 		self.inner.uses_lifetime()
 	}
 
-	/// Returns an identifier from this type in TitleCase.
-	pub fn to_name(&self) -> String { self.to_string().replace('<', "_").replace('>', "") }
+	/// Returns an identifier from this type in camelCase.
+	pub fn to_name(&self) -> String { self.to_string().replace('<', "_").replace('>', "").to_camel_case() }
 
 	/// Get code snippet for `as_ref`.
 	pub fn code_as_ref(&self, name: &str) -> String { self.inner.code_as_ref(name) }
