@@ -58,8 +58,8 @@ lazy_static! {
 								}
 								panic!(
 									"No such (nested) property {} found in \
-									 struct",
-									name
+									 struct {}",
+									name, book_struct.name,
 								);
 							};
 
@@ -176,13 +176,13 @@ pub enum RuleOp {
 	Update,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct TomlStruct {
 	rule: Vec<Rule>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct Rule {
 	id: Vec<String>,
@@ -193,7 +193,7 @@ struct Rule {
 	properties: Vec<RuleProperty>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
 struct RuleProperty {
 	from: Option<String>,
@@ -214,7 +214,7 @@ impl Event<'_> {
 			if !res.is_empty() {
 				res.push_str(", ");
 			}
-			if is_ref_type(&f.get_rust_type("", false)) {
+			if !f.get_type("").unwrap().is_primitive() {
 				res.push('&');
 			}
 			res.push_str(&format!("{}.{}", msg, f.get_rust_name()));
@@ -256,8 +256,8 @@ impl RuleProperty {
 }
 
 impl FromStr for RuleOp {
-	type Err = String;
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
+	type Err = fmt::Error;
+	fn from_str(s: &str) -> Result<Self> {
 		if s == "add" {
 			Ok(RuleOp::Add)
 		} else if s == "remove" {
@@ -265,7 +265,8 @@ impl FromStr for RuleOp {
 		} else if s == "update" {
 			Ok(RuleOp::Update)
 		} else {
-			Err("Cannot parse operation, needs to be add, remove or update".to_string())
+			eprintln!("Cannot parse operation, needs to be add, remove or update");
+			Err(fmt::Error)
 		}
 	}
 }

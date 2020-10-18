@@ -50,16 +50,13 @@ impl MessageDeclarations {
 	}
 
 	pub fn uses_lifetime(&self, msg: &Message) -> bool {
-		let mut uses_lifetime = false;
 		for a in &msg.attributes {
 			let field = self.get_field(a);
-			let res = field.get_rust_type(a, true);
-			if res.contains("&") || res.contains("UidRef") {
-				uses_lifetime = true;
-				break;
+			if field.get_type(a).unwrap().to_ref(true).uses_lifetime() {
+				return true;
 			}
 		}
-		uses_lifetime
+		false
 	}
 }
 
@@ -109,40 +106,12 @@ impl Field {
 	pub fn get_rust_name(&self) -> String { self.pretty.to_snake_case() }
 
 	/// Takes the attribute to look if it is optional
-	pub fn get_rust_type(&self, a: &str, is_ref: bool) -> String {
-		let mut res = convert_type(&self.type_s, is_ref);
-
-		if self.is_array() {
-			res = format!("Vec<{}>", res);
-		}
-		if a.ends_with('?') {
-			res = format!("Option<{}>", res);
-		}
-		res
+	pub fn get_type(&self, a: &str) -> Result<RustType> {
+		RustType::with(&self.type_s, a.ends_with('?'), None, false, self.is_array())
 	}
 
 	/// Returns if this field is optional in the message.
 	pub fn is_opt(&self, msg: &Message) -> bool { !msg.attributes.iter().any(|a| *a == self.map) }
 
 	pub fn is_array(&self) -> bool { self.modifier.as_ref().map(|s| s == "array").unwrap_or(false) }
-
-	pub fn get_as_ref(&self, a: &str) -> String {
-		let res = self.get_rust_type(a, true);
-
-		let append;
-		if res.contains('&') || res.contains("Uid") {
-			if a.ends_with('?') {
-				append = ".as_ref().map(|f| f.as_ref())";
-			} else if self.is_array() {
-				append = ".clone()";
-			} else {
-				append = ".as_ref()";
-			}
-		} else if self.is_array() {
-			append = ".clone()";
-		} else {
-			append = "";
-		}
-		append.into()
-	}
 }

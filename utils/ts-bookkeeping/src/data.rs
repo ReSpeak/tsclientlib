@@ -198,12 +198,18 @@ impl Connection {
 		Ok(self.server_groups.insert(group, r))
 	}
 
-	fn get_optional_server_data(&self) -> Result<&OptionalServerData> {
-		self.server.optional_data.as_ref().ok_or(Error::None)
+	fn get_optional_server_data(&self) -> Result<Option<&OptionalServerData>> {
+		Ok(self.server.optional_data.as_ref())
+	}
+	fn replace_optional_server_data(&mut self, r: OptionalServerData, _: &mut Vec<Event>) -> Result<Option<OptionalServerData>> {
+		Ok(mem::replace(&mut self.server.optional_data, Some(r)))
 	}
 
-	fn get_connection_server_data(&self) -> Result<&ConnectionServerData> {
-		self.server.connection_data.as_ref().ok_or(Error::None)
+	fn get_connection_server_data(&self) -> Result<Option<&ConnectionServerData>> {
+		Ok(self.server.connection_data.as_ref())
+	}
+	fn replace_connection_server_data(&mut self, r: ConnectionServerData, _: &mut Vec<Event>) -> Result<Option<ConnectionServerData>> {
+		Ok(mem::replace(&mut self.server.connection_data, Some(r)))
 	}
 
 	fn get_connection(&self) -> Result<&Connection> { Ok(&self) }
@@ -223,14 +229,14 @@ impl Connection {
 		Ok(self.clients.remove(&client))
 	}
 
-	fn get_connection_client_data(&self, client: ClientId) -> Result<&ConnectionClientData> {
+	fn get_connection_client_data(&self, client: ClientId) -> Result<Option<&ConnectionClientData>> {
 		if let Some(c) = self.clients.get(&client) {
-			c.connection_data.as_ref().ok_or(Error::None)
+			Ok(c.connection_data.as_ref())
 		} else {
 			Err(Error::NotFound("Client", client.to_string()))
 		}
 	}
-	fn add_connection_client_data(
+	fn replace_connection_client_data(
 		&mut self, client: ClientId, r: ConnectionClientData, _: &mut Vec<Event>,
 	) -> Result<Option<ConnectionClientData>> {
 		if let Some(client) = self.clients.get_mut(&client) {
@@ -240,9 +246,16 @@ impl Connection {
 		}
 	}
 
-	fn get_optional_client_data(&self, client: ClientId) -> Result<&OptionalClientData> {
+	fn get_optional_client_data(&self, client: ClientId) -> Result<Option<&OptionalClientData>> {
 		if let Some(c) = self.clients.get(&client) {
-			c.optional_data.as_ref().ok_or(Error::None)
+			Ok(c.optional_data.as_ref())
+		} else {
+			Err(Error::NotFound("Client", client.to_string()))
+		}
+	}
+	fn replace_optional_client_data(&mut self, client: ClientId, r: OptionalClientData, _: &mut Vec<Event>) -> Result<Option<OptionalClientData>> {
+		if let Some(c) = self.clients.get_mut(&client) {
+			Ok(mem::replace(&mut c.optional_data, Some(r)))
 		} else {
 			Err(Error::NotFound("Client", client.to_string()))
 		}
@@ -272,9 +285,16 @@ impl Connection {
 		Ok(old)
 	}
 
-	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<&OptionalChannelData> {
+	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<Option<&OptionalChannelData>> {
 		if let Some(c) = self.channels.get(&channel) {
-			c.optional_data.as_ref().ok_or(Error::None)
+			Ok(c.optional_data.as_ref())
+		} else {
+			Err(Error::NotFound("Channel", channel.to_string()))
+		}
+	}
+	fn replace_optional_channel_data(&mut self, channel: ChannelId, r: OptionalChannelData, _: &mut Vec<Event>) -> Result<Option<OptionalChannelData>> {
+		if let Some(c) = self.channels.get_mut(&channel) {
+			Ok(mem::replace(&mut c.optional_data, Some(r)))
 		} else {
 			Err(Error::NotFound("Channel", channel.to_string()))
 		}
@@ -411,6 +431,12 @@ impl Connection {
 		} else {
 			Ok(ChannelType::Temporary)
 		}
+	}
+
+	fn channel_codec_cc_fun(
+		&self, msg: &s2c::InChannelCreatedPart, _: &mut Vec<Event>,
+	) -> Result<Codec> {
+		Ok(msg.codec.unwrap_or(Codec::OpusVoice))
 	}
 
 	fn away_cev_fun(

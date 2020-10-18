@@ -32,8 +32,6 @@ pub enum Error {
 	NotFound(&'static str, String),
 	#[error("{0} should be removed but does not exist")]
 	RemoveNotFound(&'static str),
-	#[error("Value is None")]
-	None,
 	#[error("Failed to parse connection ip: {0}")]
 	InvalidConnectionIp(#[source] std::net::AddrParseError),
 }

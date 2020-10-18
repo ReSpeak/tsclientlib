@@ -1,5 +1,3 @@
-use std::net::SocketAddr;
-
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 use tsproto_types::crypto::EccKeyPubP256;

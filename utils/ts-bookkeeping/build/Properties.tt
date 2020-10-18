@@ -10,9 +10,9 @@ impl Connection {
 			PropertyId::<#= struc.name #><#= ids #> => PropertyValueRef::<#= struc.name #>(self.get_<#= struc.name.to_snake_case() #><#= ids2 #>?),
 <# } #>
 
-<# for struc in &self.0.structs {
+<# for struc in self.0.structs.iter().filter(|s| !s.opt) {
 	for p in struc.get_properties(&self.0.structs) {
-		let type_s = p.get_inner_rust_type_as_name();
+		let type_s = p.get_inner_type_as_name()?;
 
 		let mut ids = get_ids(struc);
 		if p.modifier.is_some() {

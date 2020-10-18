@@ -2,8 +2,7 @@ use std::default::Default;
 
 use itertools::Itertools;
 use t4rust_derive::Template;
-use tsproto_structs::indent;
-use tsproto_structs::messages;
+use tsproto_structs::{indent, messages, InnerRustType, RustType};
 use tsproto_structs::messages::*;
 
 #[derive(Template)]
@@ -30,11 +29,11 @@ impl Default for MessageDeclarations<'static> {
 }
 
 pub fn generate_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("", false);
-	if rust_type.starts_with("Vec<") {
-		vector_value_deserializer(field)
+	let rust_type = field.get_type("").unwrap();
+	if let InnerRustType::Vec(inner) = rust_type.inner {
+		vector_value_deserializer(field, (*inner).into())
 	} else {
-		single_value_deserializer(field, &rust_type)
+		single_value_deserializer(field, &rust_type.to_string())
 	}
 }
 
@@ -185,10 +184,8 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 	if res.contains('\n') { indent(&res, 2) } else { res }
 }
 
-pub fn vector_value_deserializer(field: &Field) -> String {
-	let rust_type = field.get_rust_type("", true);
-	let inner_type = &rust_type[4..rust_type.len() - 1];
-	String::from(format!(
+pub fn vector_value_deserializer(field: &Field, rust_type: RustType) -> String {
+	format!(
 		"val.split(',')
 						.filter_map(|val| {{
 							let val = val.trim();
@@ -201,18 +198,18 @@ pub fn vector_value_deserializer(field: &Field) -> String {
 							let val = val.trim();
 							Ok({})
 						}}).collect::<Result<Vec<{}>>>()?",
-		single_value_deserializer(field, inner_type),
-		inner_type
-	))
+		single_value_deserializer(field, &rust_type.to_string()),
+		rust_type,
+	)
 }
 
-pub fn generate_serializer(field: &Field, name: &str, is_ref: bool) -> String {
-	let rust_type = field.get_rust_type("", false);
-	if rust_type.starts_with("Vec<") {
-		let inner_type = &rust_type[4..rust_type.len() - 1];
-		vector_value_serializer(field, inner_type, name, is_ref)
+pub fn generate_serializer(field: &Field, name: &str) -> String {
+	let rust_type = field.get_type("").unwrap();
+	if let InnerRustType::Vec(inner) = rust_type.inner {
+		let inner_type: RustType = (*inner).into();
+		vector_value_serializer(field, &inner_type.to_string(), name)
 	} else {
-		single_value_serializer(field, &rust_type, name, is_ref)
+		single_value_serializer(field, &rust_type.to_string(), name, false)
 	}
 }
 
@@ -271,18 +268,17 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 }
 
 pub fn vector_value_serializer(
-	field: &Field, inner_type: &str, name: &str, is_ref: bool,
+	field: &Field, inner_type: &str, name: &str,
 ) -> String {
 	// TODO Vector serialization creates an intermediate string which is not necessary
 	format!(
 		"&{{ let mut s = String::new();
-				for val in {}{} {{
+				for val in {} {{
 					if !s.is_empty() {{ s += \",\" }}
 					write!(&mut s, \"{{}}\", {}).unwrap();
 				}}
 				s
 			}}",
-		if is_ref { "" } else { "&" },
 		name,
 		single_value_serializer(field, inner_type, "val", true)
 	)

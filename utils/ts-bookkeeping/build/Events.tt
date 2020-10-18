@@ -13,7 +13,7 @@ pub enum PropertyId {
 	<#= struc.name #><#= struc.get_ids(&self.structs) #>,
 <# } #>
 
-<# for struc in &self.structs {
+<# for struc in self.structs.iter().filter(|s| !s.opt) {
 	for p in struc.get_properties(&self.structs) { #>
 	<#= struc.name #><#= p.get_name() #><#= p.get_ids(&self.structs, struc) #>,
 <# }
@@ -30,19 +30,19 @@ pub enum PropertyId {
 #[non_exhaustive]
 pub enum PropertyValue {
 <# for struc in &self.structs { #>
-	<#= struc.name #>(<#= struc.name #>),
+	<#= struc.name #>(<#= struc.get_type()? #>),
 <# } #>
 
 <#
 let mut done = HashSet::new();
-for struc in &self.structs {
+for struc in self.structs.iter().filter(|s| !s.opt) {
 	for p in struc.get_properties(&self.structs) {
-		let type_s = p.get_inner_rust_type(false);
-		if !done.insert(type_s.clone()) {
+		let type_s = p.get_inner_type()?;
+		if !done.insert(type_s.to_string()) {
 			continue;
 		}
 		#>
-	<#= p.get_inner_rust_type_as_name() #>(<#= type_s #>),
+	<#= p.get_inner_type_as_name()? #>(<#= type_s #>),
 <# }
 } #>
 }
@@ -57,19 +57,19 @@ for struc in &self.structs {
 #[non_exhaustive]
 pub enum PropertyValueRef<'a> {
 <# for struc in &self.structs { #>
-	<#= struc.name #>(&'a <#= struc.name #>),
+	<#= struc.name #>(<#= struc.get_type()?.lifetime(true).to_ref(true) #>),
 <# } #>
 
 <#
 let mut done = HashSet::new();
-for struc in &self.structs {
+for struc in self.structs.iter().filter(|s| !s.opt) {
 	for p in struc.get_properties(&self.structs) {
-		let type_s = p.get_inner_rust_type(false);
-		if !done.insert(type_s.clone()) {
+		let type_s = p.get_inner_type()?;
+		if !done.insert(type_s.to_string()) {
 			continue;
 		}
 		#>
-	<#= p.get_inner_rust_type_as_name() #>(<#= p.get_inner_rust_type_lifetime() #>),
+	<#= p.get_inner_type_as_name()? #>(<#= p.get_inner_type()?.lifetime(true).to_ref(true) #>),
 <# }
 } #>
 }
@@ -78,34 +78,22 @@ impl PropertyValue {
 	pub fn as_ref(&self) -> PropertyValueRef {
 		match self {
 <# for struc in &self.structs { #>
-			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(s),
+			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(<#= struc.get_type()?.code_as_ref("s") #>),
 <# } #>
 
 <#
 let mut done = HashSet::new();
-for struc in &self.structs {
+for struc in self.structs.iter().filter(|s| !s.opt) {
 	for p in struc.get_properties(&self.structs) {
-		let type_s = p.get_inner_rust_type(false);
-		if !done.insert(type_s.clone()) {
+		let inner_type = p.get_inner_type()?;
+		if !done.insert(inner_type.to_string()) {
 			continue;
 		}
-		let name = p.get_inner_rust_type_as_name();
-		let ref_name = p.get_inner_rust_type_lifetime();
-		let has_ref = ref_name.contains('&');
-		if p.opt && p.type_s == "str" { #>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref().map(String::as_ref)),
-		<# } else if p.opt && p.type_s == "Uid" { #>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref().map(Uid::as_ref)),
-		<# } else if p.type_s == "Uid" { #>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
-		<# } else if p.opt && has_ref { #>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s.as_ref()),
-		<# } else if has_ref { #>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(s),
-		<# } else { #>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(*s),
-		<# }
-	}
+		let name = inner_type.to_name().to_camel_case();
+		let has_ref = inner_type.lifetime(true).to_ref(true).uses_lifetime();
+		#>
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(<#= inner_type.wrap_ref().code_as_ref("s") #>),
+<# }
 } #>
 		}
 	}

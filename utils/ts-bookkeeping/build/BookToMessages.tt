@@ -57,12 +57,7 @@ fn create_message(
 			let from = match found {
 				Some(RuleKind::Map { from, .. }) => {
 					let from_self = if from_rule { "" } else { "self." };
-					let from_type = from.get_as_ref();
-					let mut from_type = from_type.as_str();
-					if from_type.starts_with("Option<") {
-						from_type = &from_type[7..(from_type.len() - 1)];
-					}
-					Some(format!("{}{}{}", from_self, from.name.to_snake_case(), from_type))
+					Some(format!("{}{}", from_self, from.name.to_snake_case()))
 				}
 				Some(found@RuleKind::ArgumentMap { .. }) => Some(found.from_name().to_snake_case()),
 				Some(RuleKind::Function { .. })
@@ -149,13 +144,7 @@ impl<# if uses_lifetime { #><'a><# } #> M2B<#= e.msg.name #>Ext<# if uses_lifeti
 	let from_name;
 	match r {
 		RuleKind::Map { from, .. } => {
-			let from_self = "self.";
-			let from_type = from.get_as_ref();
-			let mut from_type = from_type.as_str();
-			if from_type.starts_with("Option<") {
-				from_type = &from_type[7..(from_type.len() - 1)];
-			}
-			from_name = format!("{}{}{}", from_self, from.name.to_snake_case(), from_type);
+			from_name = format!("self.{}", from.name.to_snake_case());
 		}
 		RuleKind::ArgumentMap { .. } => from_name = r.from_name().to_snake_case(),
 		RuleKind::Function { .. }

@@ -23,5 +23,5 @@ impl Default for MessagesToBookDeclarations<'static> {
 }
 
 fn get_property(p: &Property, name: &str) -> String {
-	format!("PropertyValue::{}({})", p.get_inner_rust_type_as_name(), name)
+	format!("PropertyValue::{}({})", p.get_inner_type_as_name().unwrap(), name)
 }

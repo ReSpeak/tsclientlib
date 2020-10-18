@@ -77,7 +77,7 @@ pub struct In<#= msg.name #>Part {
 	if field.get_rust_name() != field.ts { #>
 	/// `<#= field.ts #>` in TeamSpeak
 	<# } #>
-	pub <#= field.get_rust_name() #>: <#= field.get_rust_type(a, false) #>,
+	pub <#= field.get_rust_name() #>: <#= field.get_type(a)? #>,
 <# }
 #>
 }
@@ -215,8 +215,11 @@ impl In<#= msg.name #>Part {
 		<#
 		let mut uses_lifetime = false;
 		for a in &msg.attributes {
-			let field = self.0.get_field(a); #>
-			<#= field.get_rust_name() #>: self.<#= field.get_rust_name() #><#= field.get_as_ref(a) #>,
+			let field = self.0.get_field(a);
+			let from = field.get_type(a)?
+				.code_as_ref("field")
+				.replacen("field", &format!("self.{}", field.get_rust_name()), 1); #>
+			<#= field.get_rust_name() #>: <#= from #>,
 		<# } #>
 		}
 	}
@@ -251,10 +254,7 @@ pub struct Out<#= msg.name #>Part<# if uses_lifetime { #><'a><# } #> {
 	if field.get_rust_name() != field.ts { #>
 	/// `<#= field.ts #>` in TeamSpeak
 	<# } #>
-	pub <#= field.get_rust_name() #>: <#= {
-		let res = field.get_rust_type(a, true).replace("&", "&'a ").replace("UidRef", "UidRef<'a>");
-		res
-	} #>,
+	pub <#= field.get_rust_name() #>: <#= field.get_type(a)?.to_ref(true).lifetime(true) #>,
 <# } #>
 }
 
@@ -306,9 +306,9 @@ impl Out<#= msg.name #>Message {
 		<# for a in &msg.attributes {
 			let field = self.0.get_field(a);
 			if a.ends_with('?') { #>
-			if let Some(val) = &p.<#= field.get_rust_name() #> { packet.write_arg("<#= field.ts #>", <#= generate_serializer(field, "val", true) #>); }
+			if let Some(val) = p.<#= field.get_rust_name() #> { packet.write_arg("<#= field.ts #>", <#= generate_serializer(field, "val") #>); }
 			<# } else { #>
-			packet.write_arg("<#= field.ts #>", <#= generate_serializer(field, &format!("p.{}", field.get_rust_name()), false) #>);
+			packet.write_arg("<#= field.ts #>", <#= generate_serializer(field, &format!("p.{}", field.get_rust_name())) #>);
 			<# } #>
 		<# } #>
 		}

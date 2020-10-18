@@ -14,7 +14,7 @@ pub struct <#= struc.name #> {
 	if let Some(ref doc) = p.get_doc() { #>
 <#= indent(doc_comment(doc), 1) #>
 <# } #>
-	pub <#= p.get_attr_name(&struc) #>: <#= p.get_rust_type(&self.0.structs) #>,
+	pub <#= p.get_attr_name(&struc) #>: <#= p.get_type(&self.0.structs)? #>,
 <# } #>
 }
 

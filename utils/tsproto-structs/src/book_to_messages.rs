@@ -268,8 +268,8 @@ impl RuleProperty {
 }
 
 impl FromStr for RuleOp {
-	type Err = String;
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
+	type Err = fmt::Error;
+	fn from_str(s: &str) -> Result<Self> {
 		if s == "add" {
 			Ok(RuleOp::Add)
 		} else if s == "remove" {
@@ -277,7 +277,8 @@ impl FromStr for RuleOp {
 		} else if s == "update" {
 			Ok(RuleOp::Update)
 		} else {
-			Err("Cannot parse operation, needs to be add, remove or update".to_string())
+			eprintln!("Cannot parse operation, needs to be add, remove or update");
+			Err(fmt::Error)
 		}
 	}
 }
@@ -329,44 +330,31 @@ impl<'a> RuleKind<'a> {
 		}
 	}
 
-	pub fn get_type(&self) -> String {
+	pub fn get_type(&self) -> RustType {
 		match self {
-			RuleKind::Map { .. } | RuleKind::Function { .. } => self.from().get_rust_type(true),
-			RuleKind::ArgumentMap { to, .. } => convert_type(&to.type_s, true),
-			RuleKind::ArgumentFunction { type_s, .. } => convert_type(type_s, true),
+			RuleKind::Map { .. } | RuleKind::Function { .. } => self.from().get_type().unwrap(),
+			RuleKind::ArgumentMap { to, .. } => to.get_type("").unwrap(),
+			RuleKind::ArgumentFunction { type_s, .. } => type_s.parse().unwrap(),
 		}
 	}
 
-	pub fn get_type_no_option_owned(&self) -> String {
+	pub fn get_type_no_option(&self) -> RustType {
 		match self {
 			RuleKind::Map { .. } => {
 				let mut rust_type = self.from().clone();
 				rust_type.opt = false;
-				rust_type.get_rust_type(false)
-			}
-			RuleKind::Function { .. } => self.from().get_rust_type(false),
-			RuleKind::ArgumentMap { to, .. } => convert_type(&to.type_s, false),
-			RuleKind::ArgumentFunction { type_s, .. } => convert_type(type_s, false),
-		}
-	}
-
-	pub fn get_type_no_option(&self) -> String {
-		match self {
-			RuleKind::Map { .. } => {
-				let mut rust_type = self.from().clone();
-				rust_type.opt = false;
-				rust_type.get_rust_type(true)
+				rust_type.get_type().unwrap()
 			}
 			_ => self.get_type(),
 		}
 	}
 
 	pub fn get_argument(&self) -> String {
-		format!("{}: {}", self.from_name().to_snake_case(), self.get_type())
+		format!("{}: {}", self.from_name().to_snake_case(), self.get_type().to_ref(true))
 	}
 
 	pub fn get_argument_no_option(&self) -> String {
-		format!("{}: {}", self.from_name().to_snake_case(), self.get_type_no_option())
+		format!("{}: {}", self.from_name().to_snake_case(), self.get_type_no_option().to_ref(true))
 	}
 }
 
