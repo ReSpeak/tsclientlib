@@ -322,6 +322,10 @@ impl RustType {
 		Self { inner: InnerRustType::Ref(Box::new(self.inner.clone())), lifetime: self.lifetime }
 	}
 
+	pub fn wrap_opt(&self) -> Self {
+		Self { inner: InnerRustType::Option(Box::new(self.inner.clone())), lifetime: self.lifetime }
+	}
+
 	pub fn is_opt(&self) -> bool {
 		matches!(self.inner, InnerRustType::Option(_))
 	}
