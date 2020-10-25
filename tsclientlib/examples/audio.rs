@@ -68,7 +68,7 @@ async fn real_main() -> Result<()> {
 
 	let r = con
 		.events()
-		.try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+		.try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 		.next()
 		.await;
 	if let Some(r) = r {

@@ -55,8 +55,6 @@ pub enum Event {
 		extra: ExtraInfo,
 	},
 
-	/// All channels are available and we can subscribe them now.
-	ChannelListFinished,
 	Message {
 		/// Where this message was sent to, in the server or channel chat or
 		/// directly to client.
@@ -76,7 +74,6 @@ impl Event {
 			Event::PropertyAdded { invoker, .. }
 			| Event::PropertyChanged { invoker, .. }
 			| Event::PropertyRemoved { invoker, .. } => invoker.as_ref(),
-			Event::ChannelListFinished => None,
 			Event::Message { invoker, .. } => Some(invoker),
 		}
 	}

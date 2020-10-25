@@ -31,7 +31,6 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
 use ts_bookkeeping::messages::c2s;
-use ts_bookkeeping::messages::s2c::InMessage;
 use ts_bookkeeping::messages::OutMessageTrait;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
@@ -54,6 +53,7 @@ mod tests;
 
 // Reexports
 pub use ts_bookkeeping::*;
+pub use ts_bookkeeping::messages::s2c::InMessage;
 pub use tsproto::resend::{ConnectionStats, PacketStat};
 pub use tsproto::Identity;
 pub use tsproto_types::errors::Error as TsError;
@@ -175,11 +175,17 @@ pub struct FileUploadResult {
 /// [`Connection::events`]: struct.Connection.html#method.events
 #[derive(Debug)]
 pub enum StreamItem {
-	/// All the incoming events.
+	/// All the incoming book events.
 	///
-	/// If a connection to the server was established this will contain an added
-	/// event of a server.
-	ConEvents(Vec<events::Event>),
+	/// If a connection to the server was established this will contain an added event of a server.
+	BookEvents(Vec<events::Event>),
+	/// All incoming messages that are not related to the book.
+	///
+	/// This contains messages like `ChannelListFinished` or `ClientChatComposing`.
+	/// All events related to channels or clients are returned as events in the `BookEvents`
+	/// variant. Other messages handled by tsclientlib, e.g. for filetransfer are also not included
+	/// in these events.
+	MessageEvent(InMessage),
 	/// Received an audio packet.
 	///
 	/// Audio packets can be handled by the [`AudioHandler`], which builds a
@@ -320,8 +326,8 @@ enum IdentityIncreaseLevelState {
 ///     let mut con = Connection::build("localhost").connect().unwrap();
 ///     // Wait until connected
 ///     con.events()
-///         // We are connected when we receive the first ConEvents
-///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+///         // We are connected when we receive the first BookEvents
+///         .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 ///         .next()
 ///         .await
 ///         .unwrap();
@@ -353,8 +359,8 @@ impl Connection {
 	///     let mut con = Connection::build("localhost").connect().unwrap();
 	///     // Wait until connected
 	///     con.events()
-	///         // We are connected when we receive the first ConEvents
-	///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///         // We are connected when we receive the first BookEvents
+	///         .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 	///         .next()
 	///         .await
 	///         .unwrap();
@@ -404,8 +410,8 @@ impl Connection {
 	///     let mut con = Connection::new(ConnectOptions::new("localhost")).unwrap();
 	///     // Wait until connected
 	///     con.events()
-	///         // We are connected when we receive the first ConEvents
-	///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///         // We are connected when we receive the first BookEvents
+	///         .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 	///         .next()
 	///         .await
 	///         .unwrap();
@@ -732,8 +738,8 @@ impl Connection {
 	/// let mut con = Connection::build("localhost").connect().unwrap();
 	/// // Wait until connected
 	/// con.events()
-	///     // We are connected when we receive the first ConEvents
-	///     .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///     // We are connected when we receive the first BookEvents
+	///     .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 	///     .next()
 	///     .await
 	///     .unwrap();
@@ -755,8 +761,8 @@ impl Connection {
 	/// let mut con = Connection::build("localhost").connect().unwrap();
 	/// // Wait until connected
 	/// con.events()
-	///     // We are connected when we receive the first ConEvents
-	///     .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///     // We are connected when we receive the first BookEvents
+	///     .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 	///     .next()
 	///     .await
 	///     .unwrap();
@@ -895,7 +901,7 @@ impl Connection {
 						filetransfers: Default::default(),
 					};
 					self.state = ConnectionState::Connected { con, book };
-					Poll::Ready(Some(Ok(StreamItem::ConEvents(vec![
+					Poll::Ready(Some(Ok(StreamItem::BookEvents(vec![
 						events::Event::PropertyAdded {
 							id: events::PropertyId::Server,
 							invoker: None,
@@ -1039,8 +1045,9 @@ impl ConnectedConnection {
 			}
 		};
 
-		// Handle error messages
+		let mut handled = true;
 		if let InMessage::CommandError(msg) = &msg {
+			// Handle error messages
 			for msg in msg.iter() {
 				if let Some(ret_code) = msg.return_code.as_ref().and_then(|r| r.parse().ok()) {
 					let res = if msg.id == TsError::Ok { Ok(()) } else { Err(msg.id) };
@@ -1173,16 +1180,17 @@ impl ConnectedConnection {
 				stream_items.push_back(Err(Error::SendPacket(e)));
 			}
 		} else {
-			let events = match book.handle_command(logger, &msg) {
+			let (events, book_handled) = match book.handle_command(&msg) {
 				Ok(r) => r,
 				Err(e) => {
 					warn!(logger, "Failed to handle message"; "error" => %e);
-					Vec::new()
+					(Vec::new(), false)
 				}
 			};
+			handled = book_handled;
 			self.client.hand_back_buffer(cmd.into_buffer());
 			if !events.is_empty() {
-				stream_items.push_back(Ok(StreamItem::ConEvents(events)));
+				stream_items.push_back(Ok(StreamItem::BookEvents(events)));
 			}
 		}
 
@@ -1215,6 +1223,10 @@ impl ConnectedConnection {
 					return Some(TemporaryDisconnectReason::Serverstop);
 				}
 			}
+		}
+
+		if !handled {
+			stream_items.push_back(Ok(StreamItem::MessageEvent(msg)));
 		}
 		None
 	}
@@ -1343,8 +1355,8 @@ impl ConnectOptions {
 	///     let mut con = Connection::build("localhost").connect().unwrap();
 	///     // Wait until connected
 	///     con.events()
-	///         // We are connected when we receive the first ConEvents
-	///         .try_filter(|e| future::ready(matches!(e, StreamItem::ConEvents(_))))
+	///         // We are connected when we receive the first BookEvents
+	///         .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 	///         .next()
 	///         .await
 	///         .unwrap();

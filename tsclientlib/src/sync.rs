@@ -16,7 +16,9 @@ use tsproto_packets::packets::InAudioBuf;
 #[cfg(feature = "unstable")]
 use tsproto_packets::packets::OutCommand;
 
-use crate::{events, DisconnectOptions, Error, Result, StreamItem, TemporaryDisconnectReason};
+use crate::{
+	events, DisconnectOptions, Error, InMessage, Result, StreamItem, TemporaryDisconnectReason,
+};
 
 enum SyncConMessage {
 	RunFn(Box<dyn FnOnce(&mut SyncConnection) + Send>),
@@ -46,11 +48,17 @@ enum SyncConMessage {
 ///
 /// [`StreamItem`]: ../enum.StreamItem.html
 pub enum SyncStreamItem {
-	/// All the incoming events.
+	/// All the incoming book events.
 	///
-	/// If a connection to the server was established this will contain an added
-	/// event of a server.
-	ConEvents(Vec<events::Event>),
+	/// If a connection to the server was established this will contain an added event of a server.
+	BookEvents(Vec<events::Event>),
+	/// All incoming messages that are not related to the book.
+	///
+	/// This contains messages like `ChannelListFinished` or `ClientChatComposing`.
+	/// All events related to channels or clients are returned as events in the `BookEvents`
+	/// variant. Other messages handled by tsclientlib, e.g. for filetransfer are also not included
+	/// in these events.
+	MessageEvent(InMessage),
 	/// Received an audio packet.
 	///
 	/// Audio packets can be handled by the [`AudioHandler`], which builds a
@@ -221,12 +229,13 @@ impl Stream for SyncConnection {
 			break if let Poll::Ready(item) = self.con.poll_next(ctx) {
 				Poll::Ready(match item {
 					Some(Ok(item)) => Some(Ok(match item {
-						StreamItem::ConEvents(i) => {
+						StreamItem::BookEvents(i) => {
 							self.connects.drain(..).for_each(|send| {
 								let _ = send.send(Ok(()));
 							});
-							SyncStreamItem::ConEvents(i)
+							SyncStreamItem::BookEvents(i)
 						}
+						StreamItem::MessageEvent(i) => SyncStreamItem::MessageEvent(i),
 						#[cfg(feature = "audio")]
 						StreamItem::Audio(i) => SyncStreamItem::Audio(i),
 						StreamItem::IdentityLevelIncreasing(i) => {

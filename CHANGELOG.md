@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 📂 Filetransfer: Download and upload files from and to TeamSpeak servers
 - Most structs can be serialized with `serde` now
 - `Reason` to events that support it, that allows distinguishing between client joins and subscription events
+- Add ability to check server identity when connecting as `ConnectOptions::server`
+- `StreamItem::MessageEvent` for non-book events
 
 ### ℹ Changed
 - ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 0.2 for `async`/`await` support
@@ -21,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 	- New command parser, 2×–2.5× faster than the old one
 	- New command serializer, 2× faster than the old one
 - Switched error handling library from `failure` to `thiserror`
+- Now licensed under MIT/Apache 2.0 (before under OSL 2.0)
+- Commands are now sent with `command.send(&mut connection)?`
+- A new connection should now be created with `ConnectOptions::connect` instead of `Connection::new`
+- Multiple renamings in the book
+- Rename `StreamItem::ConEvents` to `StreamItem::BookEvents`
 
 ### ❌ Removed
 - The `ConnectionManager` in `tsproto` was removed
@@ -32,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use `git-testament` instead of `built`, this removes building libgit
 - Fix encoding newlines in commands
 - The last `Ack` packet is sent reliably now, previously it was sometimes lost
+- Fix connecting to servers behind certain protections by restart sending init packets
+- Try to reconnect infinitely after a timeout
+- Automatically subscribe to new channels when the server is subscribed
 
 ## [0.1.0] - 2019-04-14
 ### Added

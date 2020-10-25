@@ -3,7 +3,6 @@ use std::net::{IpAddr, SocketAddr};
 use std::{iter, mem, u16};
 
 use serde::{Deserialize, Serialize};
-use slog::{debug, Logger};
 use time::{Duration, OffsetDateTime};
 use tsproto_packets::packets::OutCommand;
 use tsproto_types::crypto::EccKeyPubP256;
@@ -95,7 +94,9 @@ impl Connection {
 		}
 	}
 
-	pub fn handle_command(&mut self, logger: &Logger, msg: &s2c::InMessage) -> Result<Vec<Event>> {
+	pub fn handle_command(
+		&mut self, msg: &s2c::InMessage,
+	) -> Result<(Vec<Event>, bool)> {
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
 		let (mut handled, mut events) = self.handle_command_generated(msg)?;
@@ -145,10 +146,6 @@ impl Connection {
 				}
 			}
 			InMessage::CommandError(_) => handled = true,
-			InMessage::ChannelListFinished(_) => {
-				events.push(Event::ChannelListFinished);
-				handled = true;
-			}
 			_ => {}
 		}
 
@@ -167,11 +164,7 @@ impl Connection {
 			}
 		}
 
-		if !handled {
-			debug!(logger, "Unhandled message"; "message" => msg.get_command_name());
-		}
-
-		Ok(events)
+		Ok((events, handled))
 	}
 
 	fn get_server(&self) -> Result<&Server> { Ok(&self.server) }
@@ -201,14 +194,18 @@ impl Connection {
 	fn get_optional_server_data(&self) -> Result<Option<&OptionalServerData>> {
 		Ok(self.server.optional_data.as_ref())
 	}
-	fn replace_optional_server_data(&mut self, r: OptionalServerData, _: &mut Vec<Event>) -> Result<Option<OptionalServerData>> {
+	fn replace_optional_server_data(
+		&mut self, r: OptionalServerData, _: &mut Vec<Event>,
+	) -> Result<Option<OptionalServerData>> {
 		Ok(mem::replace(&mut self.server.optional_data, Some(r)))
 	}
 
 	fn get_connection_server_data(&self) -> Result<Option<&ConnectionServerData>> {
 		Ok(self.server.connection_data.as_ref())
 	}
-	fn replace_connection_server_data(&mut self, r: ConnectionServerData, _: &mut Vec<Event>) -> Result<Option<ConnectionServerData>> {
+	fn replace_connection_server_data(
+		&mut self, r: ConnectionServerData, _: &mut Vec<Event>,
+	) -> Result<Option<ConnectionServerData>> {
 		Ok(mem::replace(&mut self.server.connection_data, Some(r)))
 	}
 
@@ -229,7 +226,9 @@ impl Connection {
 		Ok(self.clients.remove(&client))
 	}
 
-	fn get_connection_client_data(&self, client: ClientId) -> Result<Option<&ConnectionClientData>> {
+	fn get_connection_client_data(
+		&self, client: ClientId,
+	) -> Result<Option<&ConnectionClientData>> {
 		if let Some(c) = self.clients.get(&client) {
 			Ok(c.connection_data.as_ref())
 		} else {
@@ -253,7 +252,9 @@ impl Connection {
 			Err(Error::NotFound("Client", client.to_string()))
 		}
 	}
-	fn replace_optional_client_data(&mut self, client: ClientId, r: OptionalClientData, _: &mut Vec<Event>) -> Result<Option<OptionalClientData>> {
+	fn replace_optional_client_data(
+		&mut self, client: ClientId, r: OptionalClientData, _: &mut Vec<Event>,
+	) -> Result<Option<OptionalClientData>> {
 		if let Some(c) = self.clients.get_mut(&client) {
 			Ok(mem::replace(&mut c.optional_data, Some(r)))
 		} else {
@@ -285,14 +286,18 @@ impl Connection {
 		Ok(old)
 	}
 
-	fn get_optional_channel_data(&self, channel: ChannelId) -> Result<Option<&OptionalChannelData>> {
+	fn get_optional_channel_data(
+		&self, channel: ChannelId,
+	) -> Result<Option<&OptionalChannelData>> {
 		if let Some(c) = self.channels.get(&channel) {
 			Ok(c.optional_data.as_ref())
 		} else {
 			Err(Error::NotFound("Channel", channel.to_string()))
 		}
 	}
-	fn replace_optional_channel_data(&mut self, channel: ChannelId, r: OptionalChannelData, _: &mut Vec<Event>) -> Result<Option<OptionalChannelData>> {
+	fn replace_optional_channel_data(
+		&mut self, channel: ChannelId, r: OptionalChannelData, _: &mut Vec<Event>,
+	) -> Result<Option<OptionalChannelData>> {
 		if let Some(c) = self.channels.get_mut(&channel) {
 			Ok(mem::replace(&mut c.optional_data, Some(r)))
 		} else {
@@ -304,7 +309,9 @@ impl Connection {
 
 	fn return_false<T>(&self, _: T, _: &mut Vec<Event>) -> Result<bool> { Ok(false) }
 	fn return_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<O>> { Ok(None) }
-	fn return_some_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<Option<O>>> { Ok(Some(None)) }
+	fn return_some_none<T, O>(&self, _: T, _: &mut Vec<Event>) -> Result<Option<Option<O>>> {
+		Ok(Some(None))
+	}
 	fn void_fun<T, U, V>(&self, _: T, _: U, _: V) -> Result<()> { Ok(()) }
 
 	fn max_clients_cc_fun(
@@ -535,10 +542,10 @@ impl Connection {
 		&self, msg: &s2c::InClientConnectionInfoPart, _: &mut Vec<Event>,
 	) -> Result<Option<Option<SocketAddr>>> {
 		if !msg.ip.is_empty() {
-			Ok(Some(Some(SocketAddr::new(msg.ip
-				.trim_matches(&['[', ']'][..])
-				.parse()
-				.map_err(Error::InvalidConnectionIp)?, msg.port))))
+			Ok(Some(Some(SocketAddr::new(
+				msg.ip.trim_matches(&['[', ']'][..]).parse().map_err(Error::InvalidConnectionIp)?,
+				msg.port,
+			))))
 		} else {
 			Ok(Some(None))
 		}
@@ -969,13 +976,9 @@ impl Server {
 		}
 	}
 
-	fn zero_channel_id(&self) -> ChannelId {
-		ChannelId(0)
-	}
+	fn zero_channel_id(&self) -> ChannelId { ChannelId(0) }
 
-	fn empty_string(&self) -> &'static str {
-		""
-	}
+	fn empty_string(&self) -> &'static str { "" }
 }
 
 impl Connection {
