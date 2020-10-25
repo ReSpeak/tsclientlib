@@ -1244,7 +1244,7 @@ impl ConnectedConnection {
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
 		let packet =
-			c2s::OutFtInitDownloadMessage::new(&mut iter::once(c2s::OutFtInitDownloadPart {
+			c2s::OutInitDownloadMessage::new(&mut iter::once(c2s::OutInitDownloadPart {
 				client_filetransfer_id: ft_id,
 				name: path,
 				channel_id,
@@ -1264,7 +1264,7 @@ impl ConnectedConnection {
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
 
-		let packet = c2s::OutFtInitUploadMessage::new(&mut iter::once(c2s::OutFtInitUploadPart {
+		let packet = c2s::OutInitUploadMessage::new(&mut iter::once(c2s::OutInitUploadPart {
 			client_filetransfer_id: ft_id,
 			name: path,
 			channel_id,

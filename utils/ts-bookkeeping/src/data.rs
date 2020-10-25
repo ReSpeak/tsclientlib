@@ -968,6 +968,14 @@ impl Server {
 			c2s::OutChannelUnsubscribeAllMessage::new()
 		}
 	}
+
+	fn zero_channel_id(&self) -> ChannelId {
+		ChannelId(0)
+	}
+
+	fn empty_string(&self) -> &'static str {
+		""
+	}
 }
 
 impl Connection {
