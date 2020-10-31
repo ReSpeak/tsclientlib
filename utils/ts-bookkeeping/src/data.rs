@@ -668,24 +668,26 @@ impl Connection {
 		events: &mut Vec<Event>,
 	) -> Result<()>
 	{
-		let old_order;
-		let new_parent;
-		{
-			let channel = self.get_mut_channel(channel_id)?;
-			old_order = channel.order;
-			new_parent = parent.unwrap_or(channel.parent);
-			if let Some(order) = new_order {
-				events.push(Event::PropertyChanged {
-					id: PropertyId::ChannelOrder(channel.id),
-					old: PropertyValue::ChannelId(channel.order),
-					invoker: None,
-					extra: ExtraInfo { reason: None },
-				});
-				channel.order = order;
+		if new_order.is_some() || parent.is_some() {
+			let old_order;
+			let new_parent;
+			{
+				let channel = self.get_mut_channel(channel_id)?;
+				old_order = channel.order;
+				new_parent = parent.unwrap_or(channel.parent);
+				if let Some(order) = new_order {
+					events.push(Event::PropertyChanged {
+						id: PropertyId::ChannelOrder(channel.id),
+						old: PropertyValue::ChannelId(channel.order),
+						invoker: None,
+						extra: ExtraInfo { reason: None },
+					});
+					channel.order = order;
+				}
 			}
+			self.channel_order_remove(channel_id, old_order, events);
+			self.channel_order_insert(channel_id, new_order.unwrap_or(old_order), new_parent, events);
 		}
-		self.channel_order_remove(channel_id, old_order, events);
-		self.channel_order_insert(channel_id, new_order.unwrap_or(old_order), new_parent, events);
 		Ok(())
 	}
 
