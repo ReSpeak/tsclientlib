@@ -136,7 +136,10 @@ pub enum TemporaryDisconnectReason {
 pub trait OutCommandExt {
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
-	fn send(self, con: &mut Connection) -> Result<MessageHandle>;
+	fn send_with_result(self, con: &mut Connection) -> Result<MessageHandle>;
+
+	/// Sends the command without asking for an answer.
+	fn send(self, con: &mut Connection) -> Result<()>;
 }
 
 /// The result of a download request.
@@ -204,11 +207,10 @@ pub enum StreamItem {
 	DisconnectedTemporarily(TemporaryDisconnectReason),
 	/// The result of sending a message.
 	///
-	/// The [`MessageHandle`] is the return value of
-	/// [`Connection::send_command`].
+	/// The [`MessageHandle`] is the return value of [`OutCommandExt::send_with_result`].
 	///
 	/// [`MessageHandle`]: struct.MessageHandle.html
-	/// [`Connection::send_command`]: struct.Connection.html#method.send_command
+	/// [`OutCommandExt::send_with_result`]: trait.OutCommandExt.html#method.send_with_result
 	MessageResult(MessageHandle, std::result::Result<(), TsError>),
 	/// A file download succeeded. This event contains the `TcpStream` where the
 	/// file can be downloaded.
@@ -653,7 +655,15 @@ impl Connection {
 
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
-	fn send_command(&mut self, packet: OutCommand) -> Result<MessageHandle> {
+	fn send_command_with_result(&mut self, packet: OutCommand) -> Result<MessageHandle> {
+		if let ConnectionState::Connected { con, .. } = &mut self.state {
+			con.send_command_with_result(packet)
+		} else {
+			Err(Error::NotConnected)
+		}
+	}
+
+	fn send_command(&mut self, packet: OutCommand) -> Result<()> {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.send_command(packet)
 		} else {
@@ -1011,7 +1021,11 @@ impl Connection {
 }
 
 impl<T: OutMessageTrait> OutCommandExt for T {
-	fn send(self, con: &mut Connection) -> Result<MessageHandle> {
+	fn send_with_result(self, con: &mut Connection) -> Result<MessageHandle> {
+		con.send_command_with_result(self.to_packet())
+	}
+
+	fn send(self, con: &mut Connection) -> Result<()> {
 		con.send_command(self.to_packet())
 	}
 }
@@ -1231,11 +1245,15 @@ impl ConnectedConnection {
 		None
 	}
 
-	fn send_command(&mut self, mut packet: OutCommand) -> Result<MessageHandle> {
+	fn send_command_with_result(&mut self, mut packet: OutCommand) -> Result<MessageHandle> {
 		let code = self.cur_return_code;
 		self.cur_return_code += 1;
 		packet.write_arg("return_code", &code);
 
+		self.send_command(packet).map(|_| MessageHandle(code))
+	}
+
+	fn send_command(&mut self, packet: OutCommand) -> Result<()> {
 		if packet.0.content().starts_with(b"channelsubscribeall ") {
 			self.subscribed = true;
 		} else if packet.0.content().starts_with(b"channelunsubscribeall ") {
@@ -1244,7 +1262,7 @@ impl ConnectedConnection {
 
 		self.client
 			.send_packet(packet.into_packet())
-			.map(|_| MessageHandle(code))
+			.map(|_| ())
 			.map_err(Error::SendPacket)
 	}
 
@@ -1265,7 +1283,7 @@ impl ConnectedConnection {
 				protocol: 1,
 			}));
 
-		self.send_command(packet).map(|_| FiletransferHandle(ft_id))
+		self.send_command_with_result(packet).map(|_| FiletransferHandle(ft_id))
 	}
 
 	fn upload_file(
@@ -1287,7 +1305,7 @@ impl ConnectedConnection {
 			protocol: 1,
 		}));
 
-		self.send_command(packet).map(|_| FiletransferHandle(ft_id))
+		self.send_command_with_result(packet).map(|_| FiletransferHandle(ft_id))
 	}
 }
 

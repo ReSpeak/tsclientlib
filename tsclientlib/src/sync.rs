@@ -144,7 +144,7 @@ impl Stream for SyncConnection {
 						SyncConMessage::RunFn(f) => f(&mut *self),
 						#[cfg(feature = "unstable")]
 						SyncConMessage::SendCommand(arg, send) => {
-							let handle = match self.con.send_command(arg) {
+							let handle = match self.con.send_command_with_result(arg) {
 								Ok(r) => r,
 								Err(e) => {
 									let _ = send.send(Err(e));
