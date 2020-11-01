@@ -52,8 +52,8 @@ git_testament::git_testament!(TESTAMENT);
 mod tests;
 
 // Reexports
-pub use ts_bookkeeping::*;
 pub use ts_bookkeeping::messages::s2c::InMessage;
+pub use ts_bookkeeping::*;
 pub use tsproto::resend::{ConnectionStats, PacketStat};
 pub use tsproto::Identity;
 pub use tsproto_types::errors::Error as TsError;
@@ -68,11 +68,19 @@ pub struct MessageHandle(pub u16);
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct FiletransferHandle(pub u16);
 
+#[derive(Clone, Debug, Error, Eq, Hash, PartialEq)]
+#[error("{}", error)]
+pub struct CommandError {
+	#[source]
+	pub error: TsError,
+	pub missing_permission: Option<Permission>,
+}
+
 #[derive(Debug, Error)]
 pub enum Error {
 	/// A command return an error.
 	#[error(transparent)]
-	CommandError(#[from] tsproto_types::errors::Error),
+	CommandError(#[from] CommandError),
 	#[error("Failed to connect: {0}")]
 	Connect(#[source] tsproto::client::Error),
 	#[error("Failed to connect to server at {address:?}: {errors:?}")]
@@ -211,7 +219,7 @@ pub enum StreamItem {
 	///
 	/// [`MessageHandle`]: struct.MessageHandle.html
 	/// [`OutCommandExt::send_with_result`]: trait.OutCommandExt.html#method.send_with_result
-	MessageResult(MessageHandle, std::result::Result<(), TsError>),
+	MessageResult(MessageHandle, std::result::Result<(), CommandError>),
 	/// A file download succeeded. This event contains the `TcpStream` where the
 	/// file can be downloaded.
 	///
@@ -1025,9 +1033,7 @@ impl<T: OutMessageTrait> OutCommandExt for T {
 		con.send_command_with_result(self.to_packet())
 	}
 
-	fn send(self, con: &mut Connection) -> Result<()> {
-		con.send_command(self.to_packet())
-	}
+	fn send(self, con: &mut Connection) -> Result<()> { con.send_command(self.to_packet()) }
 }
 
 impl Drop for Connection {
@@ -1064,7 +1070,14 @@ impl ConnectedConnection {
 			// Handle error messages
 			for msg in msg.iter() {
 				if let Some(ret_code) = msg.return_code.as_ref().and_then(|r| r.parse().ok()) {
-					let res = if msg.id == TsError::Ok { Ok(()) } else { Err(msg.id) };
+					let res = if msg.id == TsError::Ok {
+						Ok(())
+					} else {
+						Err(CommandError {
+							error: msg.id,
+							missing_permission: msg.missing_permission_id,
+						})
+					};
 					stream_items
 						.push_back(Ok(StreamItem::MessageResult(MessageHandle(ret_code), res)));
 				}
@@ -1124,8 +1137,11 @@ impl ConnectedConnection {
 		} else if let InMessage::FiletransferStatus(msg) = &msg {
 			for msg in msg.iter() {
 				let ft_id = FiletransferHandle(msg.client_filetransfer_id);
-				stream_items
-					.push_back(Ok(StreamItem::FiletransferFailed(ft_id, msg.status.into())));
+				let err = CommandError {
+					error: msg.status,
+					missing_permission: None,
+				};
+				stream_items.push_back(Ok(StreamItem::FiletransferFailed(ft_id, err.into())));
 			}
 		} else if let InMessage::ClientConnectionInfoUpdateRequest(_) = &msg {
 			let stats = &self.client.resender.stats;
@@ -1219,9 +1235,11 @@ impl ConnectedConnection {
 		if let InMessage::ChannelCreated(msg) = &msg {
 			if self.subscribed {
 				// Subscribe to new channels
-				let packet = c2s::OutChannelSubscribeMessage::new(&mut msg.iter().map(|msg| {
-					c2s::OutChannelSubscribePart { channel_id: msg.channel_id }
-				}));
+				let packet = c2s::OutChannelSubscribeMessage::new(
+					&mut msg
+						.iter()
+						.map(|msg| c2s::OutChannelSubscribePart { channel_id: msg.channel_id }),
+				);
 				if let Err(e) = self.client.send_packet(packet.into_packet()) {
 					warn!(logger, "Failed to send channel subscribe packet"; "error" => %e);
 				}
@@ -1260,10 +1278,7 @@ impl ConnectedConnection {
 			self.subscribed = false;
 		}
 
-		self.client
-			.send_packet(packet.into_packet())
-			.map(|_| ())
-			.map_err(Error::SendPacket)
+		self.client.send_packet(packet.into_packet()).map(|_| ()).map_err(Error::SendPacket)
 	}
 
 	fn download_file(
@@ -1273,15 +1288,14 @@ impl ConnectedConnection {
 	{
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
-		let packet =
-			c2s::OutInitDownloadMessage::new(&mut iter::once(c2s::OutInitDownloadPart {
-				client_filetransfer_id: ft_id,
-				name: path,
-				channel_id,
-				channel_password: channel_password.unwrap_or(""),
-				seek_position: seek_position.unwrap_or_default(),
-				protocol: 1,
-			}));
+		let packet = c2s::OutInitDownloadMessage::new(&mut iter::once(c2s::OutInitDownloadPart {
+			client_filetransfer_id: ft_id,
+			name: path,
+			channel_id,
+			channel_password: channel_password.unwrap_or(""),
+			seek_position: seek_position.unwrap_or_default(),
+			protocol: 1,
+		}));
 
 		self.send_command_with_result(packet).map(|_| FiletransferHandle(ft_id))
 	}
