@@ -1137,10 +1137,7 @@ impl ConnectedConnection {
 		} else if let InMessage::FiletransferStatus(msg) = &msg {
 			for msg in msg.iter() {
 				let ft_id = FiletransferHandle(msg.client_filetransfer_id);
-				let err = CommandError {
-					error: msg.status,
-					missing_permission: None,
-				};
+				let err = CommandError { error: msg.status, missing_permission: None };
 				stream_items.push_back(Ok(StreamItem::FiletransferFailed(ft_id, err.into())));
 			}
 		} else if let InMessage::ClientConnectionInfoUpdateRequest(_) = &msg {

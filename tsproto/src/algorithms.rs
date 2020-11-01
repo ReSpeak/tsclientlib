@@ -2,8 +2,8 @@
 use std::u64;
 
 use curve25519_dalek::edwards::EdwardsPoint;
+use eax::aead::consts::{U16, U8};
 use eax::{AeadInPlace, Eax, NewAead};
-use eax::aead::consts::{U8, U16};
 use flakebi_ring::digest;
 use generic_array::GenericArray;
 use num_bigint::BigUint;

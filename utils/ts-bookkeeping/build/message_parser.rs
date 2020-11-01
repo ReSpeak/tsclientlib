@@ -2,8 +2,8 @@ use std::default::Default;
 
 use itertools::Itertools;
 use t4rust_derive::Template;
-use tsproto_structs::{indent, messages, InnerRustType, RustType};
 use tsproto_structs::messages::*;
+use tsproto_structs::{indent, messages, InnerRustType, RustType};
 
 #[derive(Template)]
 #[TemplatePath = "build/MessageDeclarations.tt"]
@@ -168,7 +168,8 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				)
 			} else if field.type_s == "DurationMillisecondsFloat" {
 				format!(
-					"Duration::milliseconds((1000.0 * val.parse::<f32>().map_err(|e| ParseError::ParseFloat {{
+					"Duration::milliseconds((1000.0 * val.parse::<f32>().map_err(|e| \
+					 ParseError::ParseFloat {{
 					arg: \"{}\",
 					value: val.to_string(),
 					source: e,
@@ -278,9 +279,7 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 	}
 }
 
-pub fn vector_value_serializer(
-	field: &Field, inner_type: &str, name: &str,
-) -> String {
+pub fn vector_value_serializer(field: &Field, inner_type: &str, name: &str) -> String {
 	// TODO Vector serialization creates an intermediate string which is not necessary
 	format!(
 		"&{{ let mut s = String::new();

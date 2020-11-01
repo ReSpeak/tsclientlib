@@ -94,9 +94,7 @@ impl Connection {
 		}
 	}
 
-	pub fn handle_command(
-		&mut self, msg: &s2c::InMessage,
-	) -> Result<(Vec<Event>, bool)> {
+	pub fn handle_command(&mut self, msg: &s2c::InMessage) -> Result<(Vec<Event>, bool)> {
 		// Returns if it handled the message so we can warn if a message is
 		// unhandled.
 		let (mut handled, mut events) = self.handle_command_generated(msg)?;
@@ -686,7 +684,12 @@ impl Connection {
 				}
 			}
 			self.channel_order_remove(channel_id, old_order, events);
-			self.channel_order_insert(channel_id, new_order.unwrap_or(old_order), new_parent, events);
+			self.channel_order_insert(
+				channel_id,
+				new_order.unwrap_or(old_order),
+				new_parent,
+				events,
+			);
 		}
 		Ok(())
 	}

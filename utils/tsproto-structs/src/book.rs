@@ -117,9 +117,7 @@ impl Property {
 	}
 
 	/// Gets the type as a name, used for storing it in an enum.
-	pub fn get_inner_type_as_name(&self) -> Result<String> {
-		Ok(self.get_inner_type()?.to_name())
-	}
+	pub fn get_inner_type_as_name(&self) -> Result<String> { Ok(self.get_inner_type()?.to_name()) }
 
 	pub fn get_ids(&self, structs: &[Struct], struc: &Struct) -> String {
 		let mut ids = struc.get_ids(structs);

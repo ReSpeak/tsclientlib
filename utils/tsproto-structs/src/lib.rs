@@ -193,7 +193,6 @@ impl FromStr for InnerRustType {
 			|| s.ends_with("Id")
 			|| s.ends_with("Type")
 			|| s.ends_with("Mode")
-
 			|| s == "ChannelPermissionHint"
 			|| s == "ClientPermissionHint"
 			|| s == "Codec"
@@ -326,33 +325,25 @@ impl RustType {
 		Self { inner: InnerRustType::Option(Box::new(self.inner.clone())), lifetime: self.lifetime }
 	}
 
-	pub fn is_opt(&self) -> bool {
-		matches!(self.inner, InnerRustType::Option(_))
-	}
+	pub fn is_opt(&self) -> bool { matches!(self.inner, InnerRustType::Option(_)) }
 
-	pub fn is_primitive(&self) -> bool {
-		matches!(self.inner, InnerRustType::Primitive(_))
-	}
+	pub fn is_primitive(&self) -> bool { matches!(self.inner, InnerRustType::Primitive(_)) }
 
-	pub fn is_vec(&self) -> bool {
-		matches!(self.inner, InnerRustType::Vec(_))
-	}
+	pub fn is_vec(&self) -> bool { matches!(self.inner, InnerRustType::Vec(_)) }
 
-	pub fn uses_lifetime(&self) -> bool {
-		self.inner.uses_lifetime()
-	}
+	pub fn uses_lifetime(&self) -> bool { self.inner.uses_lifetime() }
 
 	/// Returns an identifier from this type in camelCase.
-	pub fn to_name(&self) -> String { self.to_string().replace('<', "_").replace('>', "").to_camel_case() }
+	pub fn to_name(&self) -> String {
+		self.to_string().replace('<', "_").replace('>', "").to_camel_case()
+	}
 
 	/// Get code snippet for `as_ref`.
 	pub fn code_as_ref(&self, name: &str) -> String { self.inner.code_as_ref(name) }
 }
 
 impl From<InnerRustType> for RustType {
-	fn from(inner: InnerRustType) -> Self {
-		Self { inner, lifetime: false }
-	}
+	fn from(inner: InnerRustType) -> Self { Self { inner, lifetime: false } }
 }
 
 impl fmt::Display for RustType {
