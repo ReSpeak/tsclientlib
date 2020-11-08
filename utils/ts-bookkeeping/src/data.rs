@@ -396,13 +396,7 @@ impl Connection {
 	fn channel_type_cc_fun(
 		&self, msg: &s2c::InChannelCreatedPart, _: &mut Vec<Event>,
 	) -> Result<ChannelType> {
-		if msg.is_permanent.unwrap_or_default() {
-			Ok(ChannelType::Permanent)
-		} else if msg.is_semi_permanent.unwrap_or_default() {
-			Ok(ChannelType::SemiPermanent)
-		} else {
-			Ok(ChannelType::Temporary)
-		}
+		Ok(Self::channel_flags_to_type(msg.is_permanent, msg.is_semi_permanent))
 	}
 
 	fn channel_type_ce_fun(
@@ -410,13 +404,11 @@ impl Connection {
 	) -> Result<()> {
 		let channel = self.get_mut_channel(channel_id)?;
 
-		let typ = if let Some(perm) = msg.is_permanent {
-			if perm { ChannelType::Permanent } else { ChannelType::Temporary }
-		} else if msg.is_semi_permanent.unwrap_or_default() {
-			ChannelType::SemiPermanent
-		} else {
+		if !msg.is_permanent.is_some() && !msg.is_semi_permanent.is_some() {
 			return Ok(());
-		};
+		}
+
+		let typ = Self::channel_flags_to_type(msg.is_permanent, msg.is_semi_permanent);
 		events.push(Event::PropertyChanged {
 			id: PropertyId::ChannelChannelType(channel_id),
 			old: PropertyValue::ChannelType(channel.channel_type),
@@ -430,12 +422,14 @@ impl Connection {
 	fn channel_type_cl_fun(
 		&self, msg: &s2c::InChannelListPart, _: &mut Vec<Event>,
 	) -> Result<ChannelType> {
-		if msg.is_permanent {
-			Ok(ChannelType::Permanent)
-		} else if msg.is_semi_permanent {
-			Ok(ChannelType::SemiPermanent)
-		} else {
-			Ok(ChannelType::Temporary)
+		Ok(Self::channel_flags_to_type(Some(msg.is_permanent), Some(msg.is_semi_permanent)))
+	}
+
+	fn channel_flags_to_type(perm: Option<bool>, semi: Option<bool>) -> ChannelType {
+		match (perm.unwrap_or_default(), semi.unwrap_or_default()) {
+			(true, _) => ChannelType::Permanent,
+			(_, true) => ChannelType::SemiPermanent,
+			(false, false) => ChannelType::Temporary,
 		}
 	}
 
