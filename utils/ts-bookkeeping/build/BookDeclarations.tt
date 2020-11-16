@@ -1,16 +1,9 @@
 <#@ template cleanws="true" #>
-<# for struc in &self.0.structs {
-	let all_props = struc.id.iter()
-		// Only foreign ids, others are also stored in the properties
-		.filter_map(|i| if i.struct_name != struc.name { Some(PropId::from(i)) }
-			else { None })
-		.chain(struc.properties.iter().map(|p| p.into()));
-
-#>
+<# for struc in &self.0.structs { #>
 <#= doc_comment(&struc.doc) #>
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct <#= struc.name #> {
-<# for p in all_props {
+<# for p in struc.get_all_properties() {
 	if let Some(ref doc) = p.get_doc() { #>
 <#= indent(doc_comment(doc), 1) #>
 <# } #>

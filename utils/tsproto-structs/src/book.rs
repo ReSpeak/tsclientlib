@@ -99,6 +99,15 @@ impl Struct {
 	pub fn get_properties(&self, structs: &[Struct]) -> Vec<&Property> {
 		self.properties.iter().filter(|p| !structs.iter().any(|s| s.name == p.type_s)).collect()
 	}
+
+	/// Get all properties, including foreign ids (own ids are listed in properties).
+	pub fn get_all_properties(&self) -> impl Iterator<Item=PropId> {
+		self.id.iter()
+			// Only foreign ids, others are also stored in the properties
+			.filter_map(move |i| if i.struct_name != self.name { Some(PropId::from(i)) }
+				else { None })
+			.chain(self.properties.iter().map(|p| p.into()))
+	}
 }
 
 impl Property {

@@ -107,9 +107,10 @@ fn create_add_rule(_fmt: &mut std::fmt::Formatter, event: &Event) -> std::fmt::R
 			let from_opt = from.is_opt(&event.msg); #>
 					<#= to.name.to_snake_case() #>: <#
 			if to.opt && !from_opt {
-			#>Some(m.<#= from.get_rust_name() #><#= transform_func #>),<#
-			} else {
-			#>m.<#= from.get_rust_name() #><#= transform_func #>,<# }
+			#>Some(m.<#= from.get_rust_name() #><#= transform_func #>),
+			<# } else {
+			#>m.<#= from.get_rust_name() #><#= transform_func #>,
+		<# }
 		}
 	} #>
 				};
@@ -151,10 +152,14 @@ for (msg_name, group) in groups {
 
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", book_name.to_snake_case());
-				let ids = event.get_id_args("m"); #>
+				let ids = event.get_id_args("m");
+				if !event.book_struct.opt { #>
 				let old = self.<#= function_name #>(<#= ids #>, &mut events)?
 					.ok_or(Error::RemoveNotFound("<#= book_name #>"))?;
-				<# create_event(_fmt, event, "Removed", true)?;
+				<# } else { #>
+				let old = self.<#= function_name #>(<#= ids #>, &mut events)?;
+				<# }
+				create_event(_fmt, event, "Removed", true)?;
 			} else if event.op == RuleOp::Update && !event.book_struct.opt {
 				// Update the object
 				// Functions first
@@ -402,9 +407,10 @@ for (msg_name, group) in groups {
 						let from_opt = from.is_opt(&event.msg); #>
 					<#= to.name.to_snake_case() #>: <#
 						if to.opt && !from_opt {
-						#>Some(m.<#= from.get_rust_name() #><#= transform_func #>),<#
-						} else {
-						#>m.<#= from.get_rust_name() #><#= transform_func #>,<# }
+						#>Some(m.<#= from.get_rust_name() #><#= transform_func #>),
+						<# } else {
+						#>m.<#= from.get_rust_name() #><#= transform_func #>,
+					<# }
 					}
 				} #>
 				};

@@ -302,6 +302,15 @@ impl Connection {
 			Err(Error::NotFound("Channel", channel.to_string()))
 		}
 	}
+	fn remove_optional_channel_data(
+		&mut self, channel: ChannelId, _: &mut Vec<Event>,
+	) -> Result<Option<OptionalChannelData>> {
+		if let Some(c) = self.channels.get_mut(&channel) {
+			Ok(c.optional_data.take())
+		} else {
+			Err(Error::NotFound("Channel", channel.to_string()))
+		}
+	}
 
 	// Backing functions for MessageToBook declarations
 
