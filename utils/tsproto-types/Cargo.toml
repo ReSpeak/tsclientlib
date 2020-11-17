@@ -11,16 +11,16 @@ edition = "2018"
 
 [dependencies]
 arrayref = "0.3"
-base64 = "0.12"
+base64 = "0.13"
 bitflags = "1"
 curve25519-dalek = "3"
 flakebi-ring = "0.16.15"
-num-bigint = "0.2"
+num-bigint = "0.3"
 num-derive = "0.3"
 num-traits = "0.2"
 rand = "0.7"
 serde = { version = "1", features = ["derive"] }
-simple_asn1 = "0.4"
+simple_asn1 = "0.5"
 thiserror = "1"
 time = { version = "0.2.15", features = ["serde"] }
 untrusted = "0.7"

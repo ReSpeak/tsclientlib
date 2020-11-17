@@ -22,7 +22,7 @@ include = [
 ]
 
 [dependencies]
-base64 = "0.12"
+base64 = "0.13"
 csv = "1"
 heck = "0.3"
 lazy_static = "1"

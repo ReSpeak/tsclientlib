@@ -29,7 +29,7 @@ bundled = ["sdl2/bundled"]
 
 [dependencies]
 audiopus = { version = "0.2", optional = true }
-base64 = "0.12"
+base64 = "0.13"
 futures = "0.3"
 git-testament = "0.1"
 itertools = "0.9"

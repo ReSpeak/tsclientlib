@@ -21,7 +21,7 @@ travis-ci = { repository = "ReSpeak/tsclientlib" }
 
 [dependencies]
 aes = "0.6"
-base64 = "0.12"
+base64 = "0.13"
 bitflags = "1"
 omnom = "3"
 curve25519-dalek = "3"
