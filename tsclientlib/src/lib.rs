@@ -18,6 +18,7 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::convert::TryInto;
 use std::iter;
+use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -36,8 +37,8 @@ use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
 use tsproto::resend::ResenderState;
 #[cfg(feature = "audio")]
-use tsproto_packets::packets::InAudioBuf;
-use tsproto_packets::packets::{InCommandBuf, OutCommand};
+use tsproto_packets::commands::{CommandItem, CommandParser};
+use tsproto_packets::packets::{InAudioBuf, InCommandBuf, OutCommand, OutPacket, PacketType};
 
 #[cfg(feature = "audio")]
 pub mod audio;
@@ -179,11 +180,28 @@ pub struct FileUploadResult {
 	pub stream: TcpStream,
 }
 
+/// Signals audio related changes.
+#[derive(Debug)]
+pub enum AudioEvent {
+	/// If this client can send audio or is muted.
+	///
+	/// If the client is muted, the server will drop any sent audio packets. A client counts as
+	/// muted if input or output is muted, he is marked away or the talk power is less than the
+	/// needed talk power in the current channel. Temporary disconnects also count as mutes.
+	///
+	/// Every time the mute state changes, this event is emitted.
+	CanSendAudio(bool),
+	/// If this client can receive audio or the output is muted.
+	///
+	/// Audio packets might still be received but should not be played.
+	///
+	/// Every time the mute state changes, this event is emitted.
+	CanReceiveAudio(bool),
+}
+
 /// An event that gets returned by the connection.
 ///
 /// A stream of these events is returned by [`Connection::events`].
-///
-/// [`Connection::events`]: struct.Connection.html#method.events
 #[derive(Debug)]
 pub enum StreamItem {
 	/// All the incoming book events.
@@ -199,10 +217,8 @@ pub enum StreamItem {
 	MessageEvent(InMessage),
 	/// Received an audio packet.
 	///
-	/// Audio packets can be handled by the [`AudioHandler`], which builds a
+	/// Audio packets can be handled by the [`AudioHandler`](audio::AudioHandler), which builds a
 	/// queue per client and handles packet loss and jitter.
-	///
-	/// [`AudioHandler`]: audio/structAudioHandler.html
 	#[cfg(feature = "audio")]
 	Audio(InAudioBuf),
 	/// The needed level.
@@ -216,45 +232,32 @@ pub enum StreamItem {
 	/// The result of sending a message.
 	///
 	/// The [`MessageHandle`] is the return value of [`OutCommandExt::send_with_result`].
-	///
-	/// [`MessageHandle`]: struct.MessageHandle.html
-	/// [`OutCommandExt::send_with_result`]: trait.OutCommandExt.html#method.send_with_result
 	MessageResult(MessageHandle, std::result::Result<(), CommandError>),
 	/// A file download succeeded. This event contains the `TcpStream` where the
 	/// file can be downloaded.
 	///
-	/// The [`FiletransferHandle`] is the return value of
-	/// [`Connection::download_file`].
-	///
-	/// [`FiletransferHandle`]: struct.FiletransferHandle.html
-	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
+	/// The [`FiletransferHandle`] is the return value of [`Connection::download_file`].
 	FileDownload(FiletransferHandle, FileDownloadResult),
 	/// A file upload succeeded. This event contains the `TcpStream` where the
 	/// file can be uploaded.
 	///
-	/// The [`FiletransferHandle`] is the return value of
-	/// [`Connection::upload_file`].
-	///
-	/// [`FiletransferHandle`]: struct.FiletransferHandle.html
-	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
+	/// The [`FiletransferHandle`] is the return value of [`Connection::upload_file`].
 	FileUpload(FiletransferHandle, FileUploadResult),
 	/// A file download or upload failed.
 	///
-	/// This can happen if either the TeamSpeak server denied the file transfer
-	/// or the tcp connection failed.
+	/// This can happen if either the TeamSpeak server denied the file transfer or the tcp
+	/// connection failed.
 	///
-	/// The [`FiletransferHandle`] is the return value of
-	/// [`Connection::download_file`] or [`Connection::upload_file`].
-	///
-	/// [`FiletransferHandle`]: struct.FiletransferHandle.html
-	/// [`Connection::download_file`]: struct.Connection.html#method.download_file
-	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
+	/// The [`FiletransferHandle`] is the return value of [`Connection::download_file`] or
+	/// [`Connection::upload_file`].
 	FiletransferFailed(FiletransferHandle, Error),
 	/// The network statistics were updated.
 	///
 	/// This means e.g. the packet loss got a new value. Clients with audio probably want to update
 	/// the packet loss option of opus.
 	NetworkStatsUpdated,
+	/// A change related to audio.
+	AudioChange(AudioEvent),
 }
 
 /// The `Connection` is the main interaction point with this library.
@@ -312,12 +315,12 @@ enum IdentityIncreaseLevelState {
 /// The main type of this crate, which represents a connection to a server.
 ///
 /// After creating a connection with [`Connection::new`], the main way to interact with it is
-/// [`get_state`]. It stores currently visible clients and channels on the server.
-/// The setter methods e.g. for the nickname or channel create a command that can be send to
-/// the server. The send method returns a handle which can then be used to check if
+/// [`get_state`](Connection::get_state). It stores currently visible clients and channels on the
+/// server.  The setter methods e.g. for the nickname or channel create a command that can be send
+/// to the server. The send method returns a handle which can then be used to check if
 /// the action succeeded or not.
 ///
-/// The second way of interaction is polling with [`events()`], which returns a
+/// The second way of interaction is polling with [`events()`](Connection::events), which returns a
 /// stream of [`StreamItem`]s.
 ///
 /// The connection will not do anything unless the event stream is polled. Even
@@ -343,17 +346,12 @@ enum IdentityIncreaseLevelState {
 ///         .unwrap();
 /// }
 /// ```
-///
-/// [`Connection::new`]: #method.new
-/// [`get_state`]: #method.get_state
-/// [`events()`]: #method.events
-/// [`StreamItem`]: enum.StreamItem.html
 impl Connection {
 	/// Start creating the configuration of a new connection.
 	///
 	/// # Arguments
 	/// The address of the server has to be supplied. The address can be a
-	/// [`SocketAddr`], a string or directly a [`ServerAddress`]. A string
+	/// [`SocketAddr`](std::net::SocketAddr), a string or directly a [`ServerAddress`]. A string
 	/// will automatically be resolved from all formats supported by TeamSpeak.
 	/// For details, see [`resolver::resolve`].
 	///
@@ -376,10 +374,6 @@ impl Connection {
 	///         .unwrap();
 	/// # }
 	/// ```
-	///
-	/// [`SocketAddr`]: ../../std/net/enum.SocketAddr.html
-	/// [`ServerAddress`]: enum.ServerAddress.html
-	/// [`resolver::resolve`]: resolver/method.resolve.html
 	#[inline]
 	pub fn build<A: Into<ServerAddress>>(address: A) -> ConnectOptions {
 		ConnectOptions {
@@ -393,6 +387,11 @@ impl Connection {
 			channel: None,
 			channel_password: None,
 			password: None,
+			input_muted: false,
+			output_muted: false,
+			input_hardware_enabled: true,
+			output_hardware_enabled: true,
+			away: None,
 			logger: None,
 			log_commands: false,
 			log_packets: false,
@@ -427,8 +426,6 @@ impl Connection {
 	///         .unwrap();
 	/// # }
 	/// ```
-	///
-	/// [`ConnectOptions`]: struct.ConnectOptions.html
 	// TODO Remove
 	#[deprecated(since = "0.2.0", note = "ConnectOptions::connect should be used instead")]
 	pub fn new(options: ConnectOptions) -> Result<Self> { options.connect() }
@@ -544,8 +541,12 @@ impl Connection {
 			name: &options.name,
 			version: &client_version,
 			platform: &client_platform,
-			input_hardware_enabled: true,
-			output_hardware_enabled: true,
+			input_muted: if options.input_muted { Some(true) } else { None },
+			output_muted: if options.output_muted { Some(true) } else { None },
+			input_hardware_enabled: options.input_hardware_enabled,
+			output_hardware_enabled: options.output_hardware_enabled,
+			is_away: if options.away.is_some() { Some(true) } else { None },
+			away_message: options.away.as_ref().map(AsRef::as_ref),
 			default_channel: options.channel.as_ref().map(AsRef::as_ref).unwrap_or_default(),
 			default_channel_password: options
 				.channel_password
@@ -664,6 +665,7 @@ impl Connection {
 	/// Adds a `return_code` to the command and returns if the corresponding
 	/// answer is received. If an error occurs, the future will return an error.
 	fn send_command_with_result(&mut self, packet: OutCommand) -> Result<MessageHandle> {
+		self.update_on_outgoing_command(&packet);
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.send_command_with_result(packet)
 		} else {
@@ -672,10 +674,138 @@ impl Connection {
 	}
 
 	fn send_command(&mut self, packet: OutCommand) -> Result<()> {
+		self.update_on_outgoing_command(&packet);
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.send_command(packet)
 		} else {
 			Err(Error::NotConnected)
+		}
+	}
+
+	/// Update for outgoing commands.
+	///
+	/// Updates subscription and muted state.
+	///
+	/// Muted state needs to be handled at the following places:
+	/// - Outgoing packet to change mute/away state: Immediately apply and add book event, update
+	///   CanTalk, save in ConnectOptions
+	/// - Incoming event to change channel/own name, edit current channel/own client permissions,
+	///   server settings: Update CanTalk/Play, save in ConnectOptions
+	/// - Incoming packet to change mute/away state: Ignore for own client
+	/// - Connect, temporary disconnect: Update CanTalk/Play
+	fn update_on_outgoing_command(&mut self, cmd: &OutCommand) {
+		if let ConnectionState::Connected { con, book } = &mut self.state {
+			let (cmd_name, parser) = CommandParser::new(cmd.0.content());
+
+			if cmd_name == b"channelsubscribeall" {
+				con.subscribed = true;
+			} else if cmd_name == b"channelunsubscribeall" {
+				con.subscribed = false;
+			} else if cmd_name == b"clientupdate" {
+				let prev_can_send = Self::intern_can_send_audio(book, &self.options);
+				let prev_can_receive = Self::intern_can_receive_audio(book, &self.options);
+				let mut own_client = book.clients.get_mut(&book.own_client);
+				let mut has_away_message = false;
+				let mut has_is_away = false;
+				let mut events = Vec::new();
+
+				for arg in parser {
+					if let CommandItem::Argument(arg) = arg {
+						macro_rules! set_prop {
+							($prop:ident, $event:ident, $event_value:ident) => {
+								self.options.$prop = arg.value().get_raw() == b"1";
+								if let Some(own_client) = &mut own_client {
+									if own_client.$prop != self.options.$prop {
+										let old = own_client.$prop;
+										own_client.$prop = self.options.$prop;
+										events.push(events::Event::PropertyChanged {
+											id: events::PropertyId::$event(own_client.id),
+											old: events::PropertyValue::$event_value(old),
+											invoker: None,
+											extra: Default::default(),
+										});
+										}
+									}
+							};
+						}
+
+						match arg.name() {
+							b"client_input_muted" => {
+								set_prop!(input_muted, ClientInputMuted, Bool);
+							}
+							b"client_output_muted" => {
+								set_prop!(output_muted, ClientOutputMuted, Bool);
+							}
+							b"client_away" => {
+								if arg.value().get_raw() == b"1" {
+									if !has_away_message {
+										self.options.away = Some("".into());
+									}
+								} else {
+									self.options.away = None;
+								}
+								has_is_away = true;
+							}
+							b"client_away_message" => {
+								if has_is_away && self.options.away.is_some() {
+									match arg.value().get_str() {
+										Ok(r) => self.options.away = Some(r.to_string().into()),
+										Err(e) => {
+											warn!(self.logger, "Failed to parse sent away message";
+												"error" => %e, "message" => ?arg.value());
+										}
+									}
+									has_away_message = true;
+								}
+							}
+							b"client_input_hardware" => {
+								set_prop!(input_hardware_enabled, ClientInputHardwareEnabled, Bool);
+							}
+							b"client_output_hardware" => {
+								set_prop!(
+									output_hardware_enabled,
+									ClientOutputHardwareEnabled,
+									Bool
+								);
+							}
+							_ => {}
+						}
+						if let Some(own_client) = &mut own_client {
+							if own_client.away_message.as_deref()
+								!= self.options.away.as_ref().map(|s| s.as_ref())
+							{
+								let old = mem::replace(
+									&mut own_client.away_message,
+									self.options.away.as_ref().map(|s| s.to_string()),
+								);
+								events.push(events::Event::PropertyChanged {
+									id: events::PropertyId::ClientAwayMessage(own_client.id),
+									old: events::PropertyValue::OptionString(old),
+									invoker: None,
+									extra: Default::default(),
+								});
+							}
+						}
+					}
+				}
+
+				if !events.is_empty() {
+					self.stream_items.push_back(Ok(StreamItem::BookEvents(events)));
+				}
+
+				let new_can_send = Self::intern_can_send_audio(book, &self.options);
+				let new_can_receive = Self::intern_can_receive_audio(book, &self.options);
+				if new_can_send != prev_can_send {
+					self.stream_items.push_back(Ok(StreamItem::AudioChange(
+						AudioEvent::CanSendAudio(new_can_send),
+					)));
+				}
+				if new_can_receive != prev_can_receive {
+					self.stream_items.push_back(Ok(StreamItem::AudioChange(
+						AudioEvent::CanReceiveAudio(new_can_receive),
+					)));
+				}
+			}
 		}
 	}
 
@@ -801,11 +931,43 @@ impl Connection {
 		Ok(())
 	}
 
+	/// Send audio to the server.
+	///
+	/// This function does only accept `Voice` and `VoiceWhisper` packets. Commands should be send
+	/// with [`command.send(&mut connection)`](OutCommandExt::send) or
+	/// [`command.send_with_result(&mut connection)`](OutCommandExt::send_with_result).
+	///
+	/// # Examples
+	///
+	/// ```no_run
+	/// # let con: tsclientlib::Connection = panic!();
+	/// use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
+	/// let codec = CodecType::OpusVoice;
+	/// // Send an empty packet to signal audio end
+	/// let packet = OutAudio::new(&AudioData::C2S { id: 0, codec, data: &[] });
+	/// con.send_audio(packet).unwrap();
+	/// ```
+	pub fn send_audio(&mut self, packet: OutPacket) -> Result<()> {
+		assert!(
+			[PacketType::Voice, PacketType::VoiceWhisper].contains(&packet.header().packet_type()),
+			"Can only send audio packets with send_audio"
+		);
+		if let ConnectionState::Connected { con, book } = &mut self.state {
+			if !Self::intern_can_send_audio(book, &self.options) {
+				warn!(self.logger, "Sending audio while muted");
+			}
+			con.client.send_packet(packet).map_err(Error::SendPacket)?;
+			Ok(())
+		} else {
+			Err(Error::NotConnected)
+		}
+	}
+
 	/// Download a file from a channel of the connected TeamSpeak server.
 	///
 	/// Returns the size of the file and a tcp stream of the requested file.
 	///
-	/// # Example
+	/// # Examples
 	/// Download an icon.
 	///
 	/// ```no_run
@@ -832,7 +994,7 @@ impl Connection {
 	/// Returns the size of the part which is already uploaded (when resume is
 	/// specified) and a tcp stream where the requested file should be uploaded.
 	///
-	/// # Example
+	/// # Examples
 	/// Upload an avatar.
 	///
 	/// ```no_run
@@ -871,6 +1033,92 @@ impl Connection {
 			Ok(&con.client.resender.stats)
 		} else {
 			Err(Error::NotConnected)
+		}
+	}
+
+	/// If this client can send audio or is muted.
+	///
+	/// If the client is muted, the server will drop any sent audio packets. A client counts as
+	/// muted if input or output is muted, he is marked away or the talk power is less than the
+	/// needed talk power in the current channel. Temporary disconnects also count as mutes.
+	///
+	/// If this changes, the [`AudioEvent::CanSendAudio`] event is emitted.
+	pub fn can_send_audio(&self) -> bool {
+		if let ConnectionState::Connected { book, .. } = &self.state {
+			Self::intern_can_send_audio(book, &self.options)
+		} else {
+			false
+		}
+	}
+
+	fn intern_can_send_audio(book: &data::Connection, options: &ConnectOptions) -> bool {
+		if let Some(own_client) = book.clients.get(&book.own_client) {
+			if own_client.input_muted
+				|| !own_client.input_hardware_enabled
+				|| own_client.away_message.is_some()
+				|| own_client.output_muted
+				|| !own_client.output_hardware_enabled
+			{
+				return false;
+			}
+			if let Some(own_channel) = book.channels.get(&own_client.channel) {
+				if let Some(needed_talk_power) = own_channel.needed_talk_power {
+					return own_client.talk_power_granted
+						|| own_client.talk_power > needed_talk_power;
+				}
+			}
+			true
+		} else {
+			!options.input_muted
+				&& options.input_hardware_enabled
+				&& options.away.is_none()
+				&& !options.output_muted
+				&& options.output_hardware_enabled
+		}
+	}
+
+	/// If this client can receive audio or the output is muted.
+	///
+	/// This will return `false` if the client is currently not connected to the server.
+	/// Audio packets might still be received but should not be played.
+	///
+	/// If this changes, the [`AudioEvent::CanReceiveAudio`] event is emitted.
+	pub fn can_receive_audio(&self) -> bool {
+		if let ConnectionState::Connected { book, .. } = &self.state {
+			Self::intern_can_receive_audio(book, &self.options)
+		} else {
+			false
+		}
+	}
+
+	fn intern_can_receive_audio(book: &data::Connection, options: &ConnectOptions) -> bool {
+		if let Some(own_client) = book.clients.get(&book.own_client) {
+			!own_client.output_muted
+				&& !own_client.output_only_muted
+				&& own_client.output_hardware_enabled
+		} else {
+			!options.output_muted && options.output_hardware_enabled
+		}
+	}
+
+	/// If the current channel (and server) allow unencrypted voice packets.
+	///
+	/// For whisper packets, only the server setting is checked.
+	fn intern_can_receive_unencrypted_audio(book: &data::Connection, whisper: bool) -> bool {
+		match book.server.codec_encryption_mode {
+			CodecEncryptionMode::ForcedOn => false,
+			CodecEncryptionMode::ForcedOff => true,
+			CodecEncryptionMode::PerChannel => {
+				if whisper {
+					return true;
+				}
+				if let Some(own_client) = book.clients.get(&book.own_client) {
+					if let Some(own_channel) = book.channels.get(&own_client.channel) {
+						return own_channel.is_unencrypted.unwrap_or(true);
+					}
+				}
+				true
+			}
 		}
 	}
 
@@ -918,6 +1166,15 @@ impl Connection {
 						subscribed: false,
 						filetransfers: Default::default(),
 					};
+					if Self::intern_can_send_audio(&book, &self.options) {
+						self.stream_items
+							.push_back(Ok(StreamItem::AudioChange(AudioEvent::CanSendAudio(true))));
+					}
+					if Self::intern_can_receive_audio(&book, &self.options) {
+						self.stream_items.push_back(Ok(StreamItem::AudioChange(
+							AudioEvent::CanReceiveAudio(true),
+						)));
+					}
 					self.state = ConnectionState::Connected { con, book };
 					Poll::Ready(Some(Ok(StreamItem::BookEvents(vec![
 						events::Event::PropertyAdded {
@@ -974,27 +1231,77 @@ impl Connection {
 						ProtoStreamItem::Error(e) => {
 							warn!(self.logger, "Connection got a non-fatal error"; "error" => %e);
 						}
+						#[cfg(feature = "audio")]
 						ProtoStreamItem::Audio(audio) => {
-							#[cfg(feature = "audio")]
-							{
-								return Poll::Ready(Some(Ok(StreamItem::Audio(audio))));
-							}
-							#[cfg(not(feature = "audio"))]
-							{
-								let _ = audio;
+							if !Self::intern_can_receive_audio(book, &self.options) {
+								info!(
+									self.logger,
+									"Received audio packet while output is muted, ignoring"
+								);
+							} else {
+								let encrypted = !audio
+									.data()
+									.packet()
+									.header()
+									.flags()
+									.contains(tsproto_packets::packets::Flags::UNENCRYPTED);
+								let whisper = audio.data().packet().header().packet_type()
+									== PacketType::VoiceWhisper;
+								if encrypted
+									|| Self::intern_can_receive_unencrypted_audio(book, whisper)
+								{
+									return Poll::Ready(Some(Ok(StreamItem::Audio(audio))));
+								} else {
+									info!(
+										self.logger,
+										"Received unencrypted audio packet but only encrypted \
+										 packets are allowed, ignoring"
+									);
+								}
 							}
 						}
 						ProtoStreamItem::Command(cmd) => {
-							if let Some(reason) =
-								con.handle_command(&self.logger, book, &mut self.stream_items, cmd)
-							{
+							let prev_can_send = Self::intern_can_send_audio(book, &self.options);
+							let prev_can_receive =
+								Self::intern_can_receive_audio(book, &self.options);
+							if let Some(reason) = con.handle_command(
+								&self.logger,
+								book,
+								&mut self.stream_items,
+								&mut self.options,
+								cmd,
+							) {
 								warn!(self.logger, "Server shut down, reconnecting");
 								let fut =
 									Self::connect(self.logger.clone(), self.options.clone(), true);
 								self.state = ConnectionState::Connecting(Box::pin(fut), true);
+								if prev_can_send {
+									self.stream_items.push_back(Ok(StreamItem::AudioChange(
+										AudioEvent::CanSendAudio(false),
+									)));
+								}
+								if prev_can_receive {
+									self.stream_items.push_back(Ok(StreamItem::AudioChange(
+										AudioEvent::CanReceiveAudio(false),
+									)));
+								}
 								self.stream_items
 									.push_back(Ok(StreamItem::DisconnectedTemporarily(reason)));
 								return Poll::Ready(Some(self.stream_items.pop_front().unwrap()));
+							}
+
+							let new_can_send = Self::intern_can_send_audio(book, &self.options);
+							let new_can_receive =
+								Self::intern_can_receive_audio(book, &self.options);
+							if new_can_send != prev_can_send {
+								self.stream_items.push_back(Ok(StreamItem::AudioChange(
+									AudioEvent::CanSendAudio(new_can_send),
+								)));
+							}
+							if new_can_receive != prev_can_receive {
+								self.stream_items.push_back(Ok(StreamItem::AudioChange(
+									AudioEvent::CanReceiveAudio(new_can_receive),
+								)));
 							}
 							if let Some(item) = self.stream_items.pop_front() {
 								break Poll::Ready(Some(item));
@@ -1050,7 +1357,8 @@ impl<'a> Stream for EventStream<'a> {
 impl ConnectedConnection {
 	fn handle_command(
 		&mut self, logger: &Logger, book: &mut data::Connection,
-		stream_items: &mut VecDeque<Result<StreamItem>>, cmd: InCommandBuf,
+		stream_items: &mut VecDeque<Result<StreamItem>>, options: &mut ConnectOptions,
+		cmd: InCommandBuf,
 	) -> Option<TemporaryDisconnectReason>
 	{
 		let msg = match InMessage::new(
@@ -1207,7 +1515,7 @@ impl ConnectedConnection {
 				stream_items.push_back(Err(Error::SendPacket(e)));
 			}
 		} else {
-			let (events, book_handled) = match book.handle_command(&msg) {
+			let (mut events, book_handled) = match book.handle_command(&msg) {
 				Ok(r) => r,
 				Err(e) => {
 					warn!(logger, "Failed to handle message"; "error" => %e);
@@ -1217,19 +1525,54 @@ impl ConnectedConnection {
 			handled = book_handled;
 			self.client.hand_back_buffer(cmd.into_buffer());
 			if !events.is_empty() {
+				// Ignore mute state update for own client
+				let own_id = book.own_client;
+				if let Some(own_client) = book.clients.get_mut(&own_id) {
+					events.retain(|e| {
+						match e {
+							events::Event::PropertyChanged { id, old, .. } => {
+								macro_rules! reset {
+									($msg:ident, $obj:ident) => {
+										if *id == events::PropertyId::$msg(own_id) {
+											if let events::PropertyValue::Bool(b) = old {
+												own_client.$obj = *b;
+												}
+											return false;
+											}
+									};
+								}
+
+								reset!(ClientInputMuted, input_muted);
+								reset!(ClientOutputMuted, output_muted);
+								reset!(ClientInputHardwareEnabled, input_muted);
+								reset!(ClientOutputHardwareEnabled, output_muted);
+
+								if *id == events::PropertyId::ClientAwayMessage(own_id) {
+									if let events::PropertyValue::OptionString(s) = old {
+										own_client.away_message = s.clone();
+									}
+									return false;
+								}
+							}
+							_ => {}
+						}
+						true
+					});
+				}
+
 				stream_items.push_back(Ok(StreamItem::BookEvents(events)));
 			}
 		}
 
-		// Handle subscriptions
-		// - If the client (server groups or permissions) change, he stays subscribed (even if he
-		//   does not have the power anymore).
-		// - If the channel is edited, the subscription status gets updated.
-		// - If we enter a channel, we get subscribed but there is no notification that we are
-		//   subscribed.
-		// - If we leave a channel, there is a notification that we unsubscribed.
-		// - If a new channel is created, we are not automatically subscribed.
 		if let InMessage::ChannelCreated(msg) = &msg {
+			// Handle subscriptions
+			// - If the client (server groups or permissions) change, he stays subscribed (even if he
+			//   does not have the power anymore).
+			// - If the channel is edited, the subscription status gets updated.
+			// - If we enter a channel, we get subscribed but there is no notification that we are
+			//   subscribed.
+			// - If we leave a channel, there is a notification that we unsubscribed.
+			// - If a new channel is created, we are not automatically subscribed.
 			if self.subscribed {
 				// Subscribe to new channels
 				let packet = c2s::OutChannelSubscribeMessage::new(
@@ -1252,6 +1595,23 @@ impl ConnectedConnection {
 					return Some(TemporaryDisconnectReason::Serverstop);
 				}
 			}
+		} else if let InMessage::ClientMoved(msg) = &msg {
+			// Save channel switches in options
+			for msg in msg.iter() {
+				if msg.client_id == book.own_client && msg.target_channel_id.0 != 0 {
+					options.channel = Some(format!("/{}", msg.target_channel_id.0).into());
+					break;
+				}
+			}
+		} else if let InMessage::ClientUpdated(msg) = &msg {
+			// Save name change in options
+			for msg in msg.iter() {
+				if msg.client_id == book.own_client {
+					if let Some(name) = &msg.name {
+						options.name = name.to_string().into();
+					}
+				}
+			}
 		}
 
 		if !handled {
@@ -1269,12 +1629,6 @@ impl ConnectedConnection {
 	}
 
 	fn send_command(&mut self, packet: OutCommand) -> Result<()> {
-		if packet.0.content().starts_with(b"channelsubscribeall ") {
-			self.subscribed = true;
-		} else if packet.0.content().starts_with(b"channelunsubscribeall ") {
-			self.subscribed = false;
-		}
-
 		self.client.send_packet(packet.into_packet()).map(|_| ()).map_err(Error::SendPacket)
 	}
 
@@ -1344,6 +1698,11 @@ pub struct ConnectOptions {
 	channel: Option<Cow<'static, str>>,
 	channel_password: Option<Cow<'static, str>>,
 	password: Option<Cow<'static, str>>,
+	input_muted: bool,
+	output_muted: bool,
+	input_hardware_enabled: bool,
+	output_hardware_enabled: bool,
+	away: Option<Cow<'static, str>>,
 	logger: Option<Logger>,
 	log_commands: bool,
 	log_packets: bool,
@@ -1569,6 +1928,71 @@ impl ConnectOptions {
 		self
 	}
 
+	/// Connect to the server in a muted state.
+	///
+	/// # Example
+	/// ```
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").input_muted(true);
+	/// ```
+	#[inline]
+	pub fn input_muted(mut self, input_muted: bool) -> Self {
+		self.input_muted = input_muted;
+		self
+	}
+
+	/// Connect to the server with the output muted.
+	///
+	/// # Example
+	/// ```
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").output_muted(true);
+	/// ```
+	#[inline]
+	pub fn output_muted(mut self, output_muted: bool) -> Self {
+		self.output_muted = output_muted;
+		self
+	}
+
+	/// Connect to the server with input hardware disabled state.
+	///
+	/// # Example
+	/// ```
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").input_hardware_enabled(true);
+	/// ```
+	#[inline]
+	pub fn input_hardware_enabled(mut self, input_hardware_enabled: bool) -> Self {
+		self.input_hardware_enabled = input_hardware_enabled;
+		self
+	}
+
+	/// Connect to the server with output hardware disabled stat.
+	///
+	/// # Example
+	/// ```
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").output_hardware_enabled(true);
+	/// ```
+	#[inline]
+	pub fn output_hardware_enabled(mut self, output_hardware_enabled: bool) -> Self {
+		self.output_hardware_enabled = output_hardware_enabled;
+		self
+	}
+
+	/// Connect to the server with an away message.
+	///
+	/// # Example
+	/// ```
+	/// # use tsclientlib::Connection;
+	/// let opts = Connection::build("localhost").away("Buying groceries");
+	/// ```
+	#[inline]
+	pub fn away<S: Into<Cow<'static, str>>>(mut self, message: S) -> Self {
+		self.away = Some(message.into());
+		self
+	}
+
 	/// If the content of all commands should be written to the logger.
 	///
 	/// # Default
@@ -1633,6 +2057,16 @@ impl ConnectOptions {
 	}
 	#[inline]
 	pub fn get_password(&self) -> Option<&str> { self.password.as_ref().map(AsRef::as_ref) }
+	#[inline]
+	pub fn get_input_muted(&self) -> bool { self.input_muted }
+	#[inline]
+	pub fn get_output_muted(&self) -> bool { self.output_muted }
+	#[inline]
+	pub fn get_input_hardware_enabled(&self) -> bool { self.input_hardware_enabled }
+	#[inline]
+	pub fn get_output_hardware_enabled(&self) -> bool { self.output_hardware_enabled }
+	#[inline]
+	pub fn get_away(&self) -> Option<&str> { self.away.as_ref().map(AsRef::as_ref) }
 	#[inline]
 	pub fn get_logger(&self) -> Option<&Logger> { self.logger.as_ref() }
 	#[inline]

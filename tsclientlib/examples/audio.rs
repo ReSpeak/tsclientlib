@@ -104,15 +104,7 @@ async fn real_main() -> Result<()> {
 		tokio::select! {
 			send_audio = recv.next() => {
 				if let Some(packet) = send_audio {
-					#[cfg(feature = "unstable")]
-					{
-						con.get_tsproto_client_mut()?.send_packet(packet)?;
-					}
-					#[cfg(not(feature = "unstable"))]
-					{
-						let _ = packet;
-						info!(logger, "Audio sending currently works only on unstable");
-					}
+					con.send_audio(packet)?;
 				} else {
 					info!(logger, "Audio sending stream was canceled");
 					break;

@@ -101,7 +101,7 @@ impl Struct {
 	}
 
 	/// Get all properties, including foreign ids (own ids are listed in properties).
-	pub fn get_all_properties(&self) -> impl Iterator<Item=PropId> {
+	pub fn get_all_properties(&self) -> impl Iterator<Item = PropId> {
 		self.id.iter()
 			// Only foreign ids, others are also stored in the properties
 			.filter_map(move |i| if i.struct_name != self.name { Some(PropId::from(i)) }

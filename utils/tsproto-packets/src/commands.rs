@@ -32,6 +32,7 @@ pub struct CommandArgumentValue<'a> {
 
 impl<'a> CommandParser<'a> {
 	/// Returns the name and arguments of the given command.
+	#[inline]
 	pub fn new(data: &'a [u8]) -> (&'a [u8], Self) {
 		let mut name_end = 0;
 		while name_end < data.len() {
@@ -111,7 +112,9 @@ impl<'a> Iterator for CommandParser<'a> {
 }
 
 impl<'a> CommandArgument<'a> {
+	#[inline]
 	pub fn name(&self) -> &'a [u8] { self.name }
+	#[inline]
 	pub fn value(&self) -> &CommandArgumentValue<'a> { &self.value }
 }
 
@@ -143,11 +146,14 @@ impl<'a> CommandArgumentValue<'a> {
 		res
 	}
 
+	#[inline]
 	pub fn get_raw(&self) -> &'a [u8] { self.raw }
+	#[inline]
 	pub fn get(&self) -> Cow<'a, [u8]> {
 		if self.escapes == 0 { Cow::Borrowed(self.raw) } else { Cow::Owned(self.unescape()) }
 	}
 
+	#[inline]
 	pub fn get_str(&self) -> Result<Cow<'a, str>> {
 		if self.escapes == 0 {
 			Ok(Cow::Borrowed(str::from_utf8(self.raw)?))
@@ -156,6 +162,7 @@ impl<'a> CommandArgumentValue<'a> {
 		}
 	}
 
+	#[inline]
 	pub fn get_parse<E, T: FromStr>(&self) -> std::result::Result<T, E>
 	where
 		E: From<<T as FromStr>::Err>,

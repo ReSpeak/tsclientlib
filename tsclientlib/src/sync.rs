@@ -17,7 +17,8 @@ use tsproto_packets::packets::InAudioBuf;
 use tsproto_packets::packets::OutCommand;
 
 use crate::{
-	events, DisconnectOptions, Error, InMessage, Result, StreamItem, TemporaryDisconnectReason,
+	events, AudioEvent, DisconnectOptions, Error, InMessage, Result, StreamItem,
+	TemporaryDisconnectReason,
 };
 
 enum SyncConMessage {
@@ -80,6 +81,8 @@ pub enum SyncStreamItem {
 	/// This means e.g. the packet loss got a new value. Clients with audio probably want to update
 	/// the packet loss option of opus.
 	NetworkStatsUpdated,
+	/// A change related to audio.
+	AudioChange(AudioEvent),
 }
 
 /// A handle for a [`SyncConnection`] which can be sent across threads.
@@ -282,6 +285,7 @@ impl Stream for SyncConnection {
 							continue;
 						}
 						StreamItem::NetworkStatsUpdated => SyncStreamItem::NetworkStatsUpdated,
+						StreamItem::AudioChange(change) => SyncStreamItem::AudioChange(change),
 					})),
 					Some(Err(e)) => Some(Err(e)),
 					None => {
