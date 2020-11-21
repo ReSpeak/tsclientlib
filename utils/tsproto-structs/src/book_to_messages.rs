@@ -360,7 +360,10 @@ impl<'a> RuleKind<'a> {
 
 impl<'a> Event<'a> {
 	/// The name of the change, could be a keyword.
-	pub fn get_small_name(&self) -> String { self.msg.name.replace(&self.book_struct.name, "") }
+	pub fn get_small_name(&self) -> String {
+		// Strip own struct name and 'Request'
+		self.msg.name.replace(&self.book_struct.name, "").replace("Request", "")
+	}
 
 	/// The small name, not a keyword
 	pub fn get_change_name(&self) -> String {
