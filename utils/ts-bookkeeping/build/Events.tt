@@ -1,11 +1,6 @@
 <#@ template cleanws="true" #>
 /// A `PropertyId` identifies a single attribute in the data structure of a
 /// connection.
-///
-/// This is used in [`EventListener`]s to reference e.g. a newly created
-/// channel.
-///
-/// [`EventListener`]: ../type.EventListener.html
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[non_exhaustive]
 pub enum PropertyId {
@@ -21,11 +16,6 @@ pub enum PropertyId {
 }
 
 /// A `PropertyValue` contains the value of an attribute in the data structures.
-///
-/// This is used in [`EventListener`]s to get e.g. the attributes of a deleted
-/// channel.
-///
-/// [`EventListener`]: ../type.EventListener.html
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[non_exhaustive]
 pub enum PropertyValue {
@@ -51,8 +41,6 @@ for struc in self.structs.iter().filter(|s| !s.opt) {
 /// the data structures.
 ///
 /// See [`PropertyValue`] for the owned variant.
-///
-/// [`PropertyValue`]: enum.PropertyValue.html
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum PropertyValueRef<'a> {

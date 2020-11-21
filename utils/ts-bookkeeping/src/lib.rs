@@ -89,13 +89,9 @@ impl ConnectOptions {
 	///
 	/// # Arguments
 	/// The address of the server has to be supplied. The address can be a
-	/// [`SocketAddr`], a string or directly a [`ServerAddress`]. A string
+	/// [`SocketAddr`](std::net::SocketAddr), a string or directly a [`ServerAddress`]. A string
 	/// will automatically be resolved from all formats supported by TeamSpeak.
 	/// For details, see [`resolver::resolve`].
-	///
-	/// [`SocketAddr`]: ../../std/net/enum.SocketAddr.html
-	/// [`ServerAddress`]: enum.ServerAddress.html
-	/// [`resolver::resolve`]: resolver/method.resolve.html
 	#[inline]
 	pub fn new<A: Into<ServerAddress>>(address: A) -> Self {
 		Self {

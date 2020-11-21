@@ -792,8 +792,6 @@ impl Channel {
 /// A channel can be created with [`ServerMut::add_channel`]. The only necessary
 /// property of a channel is the name, all other properties will be set to their
 /// default value.
-///
-/// [`ServerMut::add_channel`]: struct.ServerMut.html#method.add_channel
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ChannelOptions<'a> {
 	name: &'a str,

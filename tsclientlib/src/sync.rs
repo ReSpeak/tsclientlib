@@ -45,9 +45,7 @@ enum SyncConMessage {
 	},
 }
 
-/// This is a subset of [`StreamItem`].
-///
-/// [`StreamItem`]: ../enum.StreamItem.html
+/// This is a subset of [`StreamItem`](crate::StreamItem).
 pub enum SyncStreamItem {
 	/// All the incoming book events.
 	///
@@ -62,10 +60,8 @@ pub enum SyncStreamItem {
 	MessageEvent(InMessage),
 	/// Received an audio packet.
 	///
-	/// Audio packets can be handled by the [`AudioHandler`], which builds a
-	/// queue per client and handles packet loss and jitter.
-	///
-	/// [`AudioHandler`]: audio/structAudioHandler.html
+	/// Audio packets can be handled by the [`AudioHandler`](crate::audio::AudioHandler), which
+	/// builds a queue per client and handles packet loss and jitter.
 	#[cfg(feature = "audio")]
 	Audio(InAudioBuf),
 	/// The needed level.
@@ -89,8 +85,6 @@ pub enum SyncStreamItem {
 ///
 /// All actions like sending messages, downloading and uploading happens through
 /// a handle.
-///
-/// [`SyncConnection`]: struct.SyncConnection.html
 #[derive(Clone)]
 pub struct SyncConnectionHandle {
 	send: mpsc::Sender<SyncConMessage>,

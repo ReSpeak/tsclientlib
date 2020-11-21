@@ -9,7 +9,6 @@
 //! The base class of this library is the [`Connection`]. One instance of this
 //! struct manages a single connection to a server.
 //!
-//! [`Connection`]: struct.Connection.html
 //! [Qint]: https://github.com/ReSpeak/Qint
 // Needed for futures on windows.
 #![recursion_limit = "128"]
@@ -154,8 +153,6 @@ pub trait OutCommandExt {
 /// The result of a download request.
 ///
 /// A file download can be started by [`Connection::download_file`].
-///
-/// [`Connection::download_file`]: struct.Connection.html#method.download_file
 #[derive(Debug)]
 pub struct FileDownloadResult {
 	/// The size of the requested file.
@@ -168,13 +165,10 @@ pub struct FileDownloadResult {
 /// The result of an upload request.
 ///
 /// A file upload can be started by [`Connection::upload_file`].
-/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 #[derive(Debug)]
 pub struct FileUploadResult {
 	/// The size of the already uploaded part when `resume` was set to `true`
 	/// in [`Connection::upload_file`].
-	///
-	/// [`Connection::upload_file`]: struct.Connection.html#method.upload_file
 	pub seek_position: u64,
 	/// The stream where the file can be uploaded.
 	pub stream: TcpStream,
@@ -1714,13 +1708,9 @@ impl ConnectOptions {
 	///
 	/// # Arguments
 	/// The address of the server has to be supplied. The address can be a
-	/// [`SocketAddr`], a string or directly a [`ServerAddress`]. A string
+	/// [`SocketAddr`](std::net::SocketAddr), a string or directly a [`ServerAddress`]. A string
 	/// will automatically be resolved from all formats supported by TeamSpeak.
 	/// For details, see [`resolver::resolve`].
-	///
-	/// [`SocketAddr`]: ../../std/net/enum.SocketAddr.html
-	/// [`ServerAddress`]: enum.ServerAddress.html
-	/// [`resolver::resolve`]: resolver/method.resolve.html
 	#[inline]
 	// TODO Remove
 	#[deprecated(since = "0.2.0", note = "Connection::build should be used instead")]
@@ -1750,9 +1740,6 @@ impl ConnectOptions {
 	///         .unwrap();
 	/// # }
 	/// ```
-	///
-	/// [`ConnectOptions`]: struct.ConnectOptions.html
-	/// [`Connection::build`]: struct.Connection.html#method.build
 	pub fn connect(mut self) -> Result<Connection> {
 		let logger = self.logger.take().unwrap_or_else(|| {
 			let decorator = slog_term::TermDecorator::new().build();

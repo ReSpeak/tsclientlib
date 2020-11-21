@@ -4,8 +4,6 @@
 //! client. It decodes the audio, handles out-of-order packets and missing
 //! packets. It automatically adjusts the queue length based on the jitter of
 //! incoming packets.
-//!
-//! [`AudioHandler`]: struct.AudioHandler.html
 
 use std::cmp::Reverse;
 use std::collections::{HashMap, VecDeque};
@@ -128,8 +126,6 @@ pub struct AudioQueue {
 }
 
 /// Handles incoming audio, has one [`AudioQueue`] per sending client.
-///
-/// [`AudioQueue`]: struct.AudioQueue.html
 pub struct AudioHandler<Id: Clone + Debug + Eq + Hash + PartialEq = ClientId> {
 	logger: Logger,
 	queues: HashMap<Id, AudioQueue>,
