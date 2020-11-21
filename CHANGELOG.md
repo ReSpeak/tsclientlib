@@ -7,7 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### ✨ Added
 - 🎵 An audio queue that automatically sort, decode and handle lost audio packets
-- 🎵Audio example for `tsclientlib`
+- Audio example for `tsclientlib`
+- Send audio packets with `Connection::send_audio`
 - ⏫ Automatically improve identity level if it is not high enough
 - 🔓 Add `channel`, `channel_password` and (server-)`password` to `ConnectOptions`
 - 📂 Filetransfer: Download and upload files from and to TeamSpeak servers
@@ -41,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The last `Ack` packet is sent reliably now, previously it was sometimes lost
 - Fix connecting to servers behind certain protections by restart sending init packets
 - Try to reconnect infinitely after a timeout
+- Keep channel and muted state when reconnecting
 - Automatically subscribe to new channels when the server is subscribed
 
 ## [0.1.0] - 2019-04-14

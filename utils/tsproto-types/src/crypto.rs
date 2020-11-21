@@ -1,7 +1,7 @@
 //! This module contains cryptography related code.
+use std::convert::TryInto;
 use std::{cmp, fmt, str};
 
-use arrayref::array_ref;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -441,7 +441,7 @@ impl EccKeyPubEd25519 {
 		if decoded.len() != 32 {
 			return Err(Error::WrongKeyLength);
 		}
-		Ok(Self::from_bytes(*array_ref!(decoded, 0, 32)))
+		Ok(Self::from_bytes(decoded[..32].try_into().unwrap()))
 	}
 
 	pub fn to_base64(&self) -> String {
@@ -461,7 +461,7 @@ impl EccKeyPrivEd25519 {
 		if decoded.len() != 32 {
 			return Err(Error::WrongKeyLength);
 		}
-		Ok(Self::from_bytes(*array_ref!(decoded, 0, 32)))
+		Ok(Self::from_bytes(decoded[..32].try_into().unwrap()))
 	}
 
 	pub fn from_bytes(data: [u8; 32]) -> Self {

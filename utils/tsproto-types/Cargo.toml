@@ -10,7 +10,6 @@ build = "build/build.rs"
 edition = "2018"
 
 [dependencies]
-arrayref = "0.3"
 base64 = "0.13"
 bitflags = "1"
 curve25519-dalek = "3"

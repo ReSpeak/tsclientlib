@@ -1,7 +1,7 @@
+use std::convert::TryInto;
 use std::io::prelude::*;
 use std::{fmt, io, str};
 
-use arrayref::{array_mut_ref, array_ref};
 use bitflags::bitflags;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
@@ -375,18 +375,18 @@ impl<'a> InPacket<'a> {
 				return Err(Error::PacketContentTooShort(self.content.len()));
 			}
 			data = S2CInitData::Init1 {
-				random1: array_ref!(self.content, 1, 16),
-				random0_r: array_ref!(self.content, 17, 4),
+				random1: (&self.content[1..17]).try_into().unwrap(),
+				random0_r: (&self.content[17..21]).try_into().unwrap(),
 			};
 		} else if self.content[0] == 3 {
 			if self.content.len() < 233 {
 				return Err(Error::PacketContentTooShort(self.content.len()));
 			}
 			data = S2CInitData::Init3 {
-				x: array_ref!(self.content, 1, 64),
-				n: array_ref!(self.content, 65, 64),
+				x: (&self.content[1..65]).try_into().unwrap(),
+				n: (&self.content[65..129]).try_into().unwrap(),
 				level: (&self.content[129..]).read_be()?,
-				random2: array_ref!(self.content, 133, 100),
+				random2: (&self.content[133..233]).try_into().unwrap(),
 			};
 		} else if self.content[0] == 127 {
 			data = S2CInitData::Init127 {};
@@ -423,7 +423,7 @@ impl<'a> InPacket<'a> {
 			data = C2SInitData::Init0 {
 				version,
 				timestamp: (&self.content[5..]).read_be()?,
-				random0: array_ref!(self.content, 9, 4),
+				random0: (&self.content[9..13]).try_into().unwrap(),
 			};
 		} else if self.content[4] == 2 {
 			if self.content.len() < 25 {
@@ -431,8 +431,8 @@ impl<'a> InPacket<'a> {
 			}
 			data = C2SInitData::Init2 {
 				version,
-				random1: array_ref!(self.content, 5, 16),
-				random0_r: array_ref!(self.content, 21, 4),
+				random1: (&self.content[5..21]).try_into().unwrap(),
+				random0_r: (&self.content[21..25]).try_into().unwrap(),
 			};
 		} else if self.content[4] == 4 {
 			let len = 5 + 128 + 4 + 100 + 64;
@@ -441,11 +441,11 @@ impl<'a> InPacket<'a> {
 			}
 			data = C2SInitData::Init4 {
 				version,
-				x: array_ref!(self.content, 5, 64),
-				n: array_ref!(self.content, 69, 64),
-				level: (&self.content[128 + 5..]).read_be()?,
-				random2: array_ref!(self.content, 128 + 9, 100),
-				y: array_ref!(self.content, 228 + 9, 64),
+				x: (&self.content[5..69]).try_into().unwrap(),
+				n: (&self.content[69..133]).try_into().unwrap(),
+				level: (&self.content[133..]).read_be()?,
+				random2: (&self.content[137..237]).try_into().unwrap(),
+				y: (&self.content[237..301]).try_into().unwrap(),
 				command: &self.content[len..],
 			};
 		} else {
@@ -553,7 +553,7 @@ impl<'a> InHeader<'a> {
 	#[inline]
 	pub fn data(&self) -> &'a [u8] { self.data }
 	#[inline]
-	pub fn mac(&self) -> &'a [u8; 8] { array_ref![self.data, 0, 8] }
+	pub fn mac(&self) -> &'a [u8; 8] { (&self.data[..8]).try_into().unwrap() }
 	#[inline]
 	pub fn packet_id(&self) -> u16 { (&self.data[8..10]).read_be().unwrap() }
 
@@ -906,7 +906,7 @@ impl OutPacket {
 	pub fn packet(&self) -> InPacket { InPacket::new(self.dir, &self.data) }
 
 	#[inline]
-	pub fn mac(&mut self) -> &mut [u8; 8] { array_mut_ref!(self.data, 0, 8) }
+	pub fn mac(&mut self) -> &mut [u8; 8] { (&mut self.data[0..8]).try_into().unwrap() }
 	#[inline]
 	pub fn packet_id(&mut self, packet_id: u16) {
 		(&mut self.data[8..10]).write_be(packet_id).unwrap();
