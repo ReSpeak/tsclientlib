@@ -700,17 +700,15 @@ impl Connection {
 	fn subscribe_channel_fun(
 		&mut self, client_id: ClientId, msg: &s2c::InClientMovedPart, events: &mut Vec<Event>,
 	) -> Result<()> {
-		if client_id == self.own_client {
-			if msg.target_channel_id.0 != 0 {
-				let channel = self.get_mut_channel(msg.target_channel_id)?;
-				events.push(Event::PropertyChanged {
-					id: PropertyId::ChannelSubscribed(msg.target_channel_id),
-					old: PropertyValue::Bool(channel.subscribed),
-					invoker: None,
-					extra: ExtraInfo { reason: None },
-				});
-				channel.subscribed = true;
-			}
+		if client_id == self.own_client && msg.target_channel_id.0 != 0 {
+			let channel = self.get_mut_channel(msg.target_channel_id)?;
+			events.push(Event::PropertyChanged {
+				id: PropertyId::ChannelSubscribed(msg.target_channel_id),
+				old: PropertyValue::Bool(channel.subscribed),
+				invoker: None,
+				extra: ExtraInfo { reason: None },
+			});
+			channel.subscribed = true;
 		}
 		Ok(())
 	}
