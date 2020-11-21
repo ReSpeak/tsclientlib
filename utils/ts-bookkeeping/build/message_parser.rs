@@ -274,7 +274,7 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 				panic!("Unknown original time type {} found.", field.type_s);
 			}
 		}
-		"OffsetDateTime" => format!("&{}.timestamp()", name),
+		"OffsetDateTime" => format!("&{}.unix_timestamp()", name),
 		_ => panic!("Unknown type '{}'", rust_type),
 	}
 }

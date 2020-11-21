@@ -349,9 +349,9 @@ impl License {
 		// Type
 		w.write_be(self.inner.type_id()).map_err(Error::Serialize)?;
 
-		w.write_be((self.not_valid_before.timestamp() - TIMESTAMP_OFFSET) as u32)
+		w.write_be((self.not_valid_before.unix_timestamp() - TIMESTAMP_OFFSET) as u32)
 			.map_err(Error::Serialize)?;
-		w.write_be((self.not_valid_after.timestamp() - TIMESTAMP_OFFSET) as u32)
+		w.write_be((self.not_valid_after.unix_timestamp() - TIMESTAMP_OFFSET) as u32)
 			.map_err(Error::Serialize)?;
 
 		match self.inner {

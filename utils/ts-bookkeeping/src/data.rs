@@ -504,7 +504,7 @@ impl Connection {
 	fn talk_power_cev_fun(
 		&self, msg: &s2c::InClientEnterViewPart, _: &mut Vec<Event>,
 	) -> Result<Option<TalkPowerRequest>> {
-		if msg.talk_power_request_time.timestamp() > 0 {
+		if msg.talk_power_request_time.unix_timestamp() > 0 {
 			Ok(Some(TalkPowerRequest {
 				time: msg.talk_power_request_time,
 				message: msg.talk_power_request_message.clone(),
@@ -520,7 +520,7 @@ impl Connection {
 		if let Some(talk_request) = msg.talk_power_request_time {
 			let client = self.get_mut_client(client_id)?;
 
-			let talk_request = if talk_request.timestamp() > 0 {
+			let talk_request = if talk_request.unix_timestamp() > 0 {
 				Some(TalkPowerRequest {
 					time: talk_request,
 					message: msg.talk_power_request_message.clone().unwrap_or_else(String::new),

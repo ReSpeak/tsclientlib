@@ -35,9 +35,10 @@ use ts_bookkeeping::messages::OutMessageTrait;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
 use tsproto::resend::ResenderState;
-#[cfg(feature = "audio")]
 use tsproto_packets::commands::{CommandItem, CommandParser};
-use tsproto_packets::packets::{InAudioBuf, InCommandBuf, OutCommand, OutPacket, PacketType};
+#[cfg(feature = "audio")]
+use tsproto_packets::packets::InAudioBuf;
+use tsproto_packets::packets::{InCommandBuf, OutCommand, OutPacket, PacketType};
 
 #[cfg(feature = "audio")]
 pub mod audio;
@@ -1098,6 +1099,7 @@ impl Connection {
 	/// If the current channel (and server) allow unencrypted voice packets.
 	///
 	/// For whisper packets, only the server setting is checked.
+	#[cfg(feature = "audio")]
 	fn intern_can_receive_unencrypted_audio(book: &data::Connection, whisper: bool) -> bool {
 		match book.server.codec_encryption_mode {
 			CodecEncryptionMode::ForcedOn => false,

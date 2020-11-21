@@ -243,7 +243,7 @@ impl Client {
 		// Send the first init packet
 		// Get the current timestamp
 		let now = OffsetDateTime::now_utc();
-		let timestamp = now.timestamp() as u32;
+		let timestamp = now.unix_timestamp() as u32;
 		// TeamSpeak offsets the timestamp for the version by some years
 		let version = timestamp - 1356998400;
 
