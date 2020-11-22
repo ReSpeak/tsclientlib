@@ -1384,6 +1384,8 @@ impl ConnectedConnection {
 					};
 					stream_items
 						.push_back(Ok(StreamItem::MessageResult(MessageHandle(ret_code), res)));
+				} else {
+					handled = false;
 				}
 			}
 		} else if let InMessage::FileDownload(msg) = &msg {
