@@ -57,7 +57,9 @@ const MAX_QUEUE_LEN: u16 = 200;
 /// The maximum decompressed size of a packet.
 #[allow(clippy::unreadable_literal)]
 
-const MAX_DECOMPRESSED_SIZE: u32 = 40960;
+/// On large servers with more than 2000 channels, the notifychannelsubscribed packet can be
+/// 50 kB large (uncompressed). A maximum size to 2 MiB should allow for even larger servers.
+const MAX_DECOMPRESSED_SIZE: u32 = 2 * 1024 * 1024;
 const FAKE_KEY: [u8; 16] = *b"c:\\windows\\syste";
 const FAKE_NONCE: [u8; 16] = *b"m\\firewall32.cpl";
 

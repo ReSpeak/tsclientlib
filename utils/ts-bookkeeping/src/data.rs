@@ -325,7 +325,7 @@ impl Connection {
 		&self, msg: &s2c::InChannelCreatedPart, _: &mut Vec<Event>,
 	) -> Result<(Option<MaxClients>, Option<MaxClients>)> {
 		let ch = max_clients!(msg);
-		let ch_fam = if msg.is_max_family_clients_unlimited {
+		let ch_fam = if msg.is_max_family_clients_unlimited.unwrap_or_default() {
 			Some(MaxClients::Unlimited)
 		} else if msg.inherits_max_family_clients.unwrap_or_default() {
 			Some(MaxClients::Inherited)
