@@ -152,12 +152,13 @@ for (msg_name, group) in groups {
 
 			<# if event.op == RuleOp::Remove {
 				let function_name = format!("remove_{}", book_name.to_snake_case());
-				let ids = event.get_id_args("m");
+				let mut ids = event.get_id_args("m");
+				if !ids.is_empty() { ids.push_str(", "); }
 				if !event.book_struct.opt { #>
-				let old = self.<#= function_name #>(<#= ids #>, &mut events)?
+				let old = self.<#= function_name #>(<#= ids #>&mut events)?
 					.ok_or(Error::RemoveNotFound("<#= book_name #>"))?;
 				<# } else { #>
-				let old = self.<#= function_name #>(<#= ids #>, &mut events)?;
+				let old = self.<#= function_name #>(<#= ids #>&mut events)?;
 				<# }
 				create_event(_fmt, event, "Removed", true)?;
 			} else if event.op == RuleOp::Update && !event.book_struct.opt {

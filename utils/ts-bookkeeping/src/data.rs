@@ -197,6 +197,11 @@ impl Connection {
 	) -> Result<Option<OptionalServerData>> {
 		Ok(mem::replace(&mut self.server.optional_data, Some(r)))
 	}
+	fn remove_optional_server_data(
+		&mut self, _: &mut Vec<Event>,
+	) -> Result<Option<OptionalServerData>> {
+		Ok(self.server.optional_data.take())
+	}
 
 	fn get_connection_server_data(&self) -> Result<Option<&ConnectionServerData>> {
 		Ok(self.server.connection_data.as_ref())
