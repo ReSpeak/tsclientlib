@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 
 use crate::book::{BookDeclarations, Property, Struct};
@@ -10,141 +10,139 @@ use crate::*;
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/MessagesToBook.toml"));
 
-lazy_static! {
-	pub static ref DATA: MessagesToBookDeclarations<'static> = {
-		let rules: TomlStruct = toml::from_str(DATA_STR).unwrap();
-		let book = &book::DATA;
-		let messages = &messages::DATA;
+pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
+	let rules: TomlStruct = toml::from_str(DATA_STR).unwrap();
+	let book = &book::DATA;
+	let messages = &messages::DATA;
 
-		let mut decls: Vec<_> = rules
-			.rule
-			.into_iter()
-			.map(|r| {
-				let msg = messages.get_message(&r.from);
-				let msg_fields = msg
-					.attributes
+	let mut decls: Vec<_> = rules
+		.rule
+		.into_iter()
+		.map(|r| {
+			let msg = messages.get_message(&r.from);
+			let msg_fields = msg
+				.attributes
+				.iter()
+				.map(|a| messages.get_field(a))
+				.collect::<Vec<_>>();
+			let book_struct = book
+				.structs
+				.iter()
+				.find(|s| s.name == r.to)
+				.unwrap_or_else(|| panic!("Cannot find struct {}", r.to));
+
+			let mut ev = Event {
+				op: r.operation.parse().expect("Failed to parse operation"),
+				id: r
+					.id
 					.iter()
-					.map(|a| messages.get_field(a))
-					.collect::<Vec<_>>();
-				let book_struct = book
-					.structs
-					.iter()
-					.find(|s| s.name == r.to)
-					.unwrap_or_else(|| panic!("Cannot find struct {}", r.to));
+					.map(|s| find_field(s, &msg_fields))
+					.collect(),
+				msg,
+				book_struct,
+				rules: r.properties
+					.into_iter()
+					.map(|p| {
+						assert!(p.is_valid());
 
-				let mut ev = Event {
-					op: r.operation.parse().expect("Failed to parse operation"),
-					id: r
-						.id
-						.iter()
-						.map(|s| find_field(s, &msg_fields))
-						.collect(),
-					msg,
-					book_struct,
-					rules: r.properties
-						.into_iter()
-						.map(|p| {
-							assert!(p.is_valid());
-
-							let find_prop = |name,
-											 book_struct: &'static Struct|
-							 -> &'static Property {
-								if let Some(prop) = book_struct
-									.properties
-									.iter()
-									.find(|p| p.name == name)
-								{
-									return prop;
-								}
-								panic!(
-									"No such (nested) property {} found in \
-									 struct {}",
-									name, book_struct.name,
-								);
-							};
-
-							if p.function.is_some() {
-								RuleKind::Function {
-									name: p.function.unwrap(),
-									to: p.tolist.unwrap()
-										.into_iter()
-										.map(|p| find_prop(p, book_struct))
-										.collect(),
-								}
-							} else {
-								RuleKind::Map {
-									from: find_field(
-										&p.from.unwrap(),
-										&msg_fields,
-									),
-									to: find_prop(p.to.unwrap(), book_struct),
-									op: p
-										.operation
-										.map(|s| {
-											s.parse().expect(
-												"Invalid operation for \
-												 property",
-											)
-										}).unwrap_or(RuleOp::Update),
-								}
+						let find_prop = |name,
+										 book_struct: &'static Struct|
+						 -> &'static Property {
+							if let Some(prop) = book_struct
+								.properties
+								.iter()
+								.find(|p| p.name == name)
+							{
+								return prop;
 							}
-						}).collect(),
-				};
+							panic!(
+								"No such (nested) property {} found in \
+								 struct {}",
+								name, book_struct.name,
+							);
+						};
 
-				// Add attributes with the same name automatically (if they are not
-				// yet there).
-				let used_flds = ev
-					.rules
-					.iter()
-					.filter_map(|f| match *f {
-						RuleKind::Map { from, .. } => Some(from),
-						_ => None,
-					}).collect::<Vec<_>>();
-
-				let mut used_props = vec![];
-				for rule in &ev.rules {
-					if let RuleKind::Function { to, .. } = rule {
-						for p in to {
-							used_props.push(p.name.clone());
+						if p.function.is_some() {
+							RuleKind::Function {
+								name: p.function.unwrap(),
+								to: p.tolist.unwrap()
+									.into_iter()
+									.map(|p| find_prop(p, book_struct))
+									.collect(),
+							}
+						} else {
+							RuleKind::Map {
+								from: find_field(
+									&p.from.unwrap(),
+									&msg_fields,
+								),
+								to: find_prop(p.to.unwrap(), book_struct),
+								op: p
+									.operation
+									.map(|s| {
+										s.parse().expect(
+											"Invalid operation for \
+											 property",
+										)
+									}).unwrap_or(RuleOp::Update),
+							}
 						}
+					}).collect(),
+			};
+
+			// Add attributes with the same name automatically (if they are not
+			// yet there).
+			let used_flds = ev
+				.rules
+				.iter()
+				.filter_map(|f| match *f {
+					RuleKind::Map { from, .. } => Some(from),
+					_ => None,
+				}).collect::<Vec<_>>();
+
+			let mut used_props = vec![];
+			for rule in &ev.rules {
+				if let RuleKind::Function { to, .. } = rule {
+					for p in to {
+						used_props.push(p.name.clone());
 					}
 				}
+			}
 
-				for fld in &msg_fields {
-					if used_flds.contains(&fld) {
+			for fld in &msg_fields {
+				if used_flds.contains(&fld) {
+					continue;
+				}
+				if let Some(prop) = book
+					.get_struct(&ev.book_struct.name)
+					.properties
+					.iter()
+					.find(|p| p.name == fld.pretty)
+				{
+					if used_props.contains(&prop.name) {
 						continue;
 					}
-					if let Some(prop) = book
-						.get_struct(&ev.book_struct.name)
-						.properties
-						.iter()
-						.find(|p| p.name == fld.pretty)
-					{
-						if used_props.contains(&prop.name) {
-							continue;
-						}
 
-						ev.rules.push(RuleKind::Map {
-							from: fld,
-							to: prop,
-							op: RuleOp::Update,
-						});
-					}
+					ev.rules.push(RuleKind::Map {
+						from: fld,
+						to: prop,
+						op: RuleOp::Update,
+					});
 				}
+			}
 
-				ev
-			}).collect();
+			ev
+		}).collect();
 
-		// InitServer is done manually
-		decls.retain(|ev| ev.msg.name != "InitServer");
+	// InitServer is done manually
+	decls.retain(|ev| ev.msg.name != "InitServer");
 
-		MessagesToBookDeclarations {
-			book,
-			messages,
-			decls,
-		}
-	};
-}
+	MessagesToBookDeclarations {
+		book,
+		messages,
+		decls,
+	}
+});
 
 #[derive(Debug)]
 pub struct MessagesToBookDeclarations<'a> {

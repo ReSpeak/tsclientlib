@@ -1,12 +1,10 @@
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Enums.toml"));
 
-lazy_static! {
-	pub static ref DATA: Enums = toml::from_str(DATA_STR).unwrap();
-}
+pub static DATA: Lazy<Enums> = Lazy::new(|| toml::from_str(DATA_STR).unwrap());
 
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]

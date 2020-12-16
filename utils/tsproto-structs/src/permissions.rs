@@ -1,19 +1,18 @@
 use std::result::Result;
 
 use crate::*;
-use lazy_static::lazy_static;
+
+use once_cell::sync::Lazy;
 
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Permissions.csv"));
 
-lazy_static! {
-	pub static ref DATA: Permissions = Permissions(
-		csv::Reader::from_reader(DATA_STR.as_bytes())
-			.deserialize()
-			.collect::<Result<Vec<_>, _>>()
-			.unwrap()
-	);
-}
+pub static DATA: Lazy<Permissions> = Lazy::new(|| Permissions(
+	csv::Reader::from_reader(DATA_STR.as_bytes())
+		.deserialize()
+		.collect::<Result<Vec<_>, _>>()
+		.unwrap()
+));
 
 #[derive(Debug, Deserialize)]
 pub struct EnumValue {

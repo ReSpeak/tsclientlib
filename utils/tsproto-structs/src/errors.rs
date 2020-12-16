@@ -1,19 +1,18 @@
 use std::result::Result;
 
 use crate::*;
-use lazy_static::lazy_static;
+
+use once_cell::sync::Lazy;
 
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Errors.csv"));
 
-lazy_static! {
-	pub static ref DATA: Errors = Errors(
-		csv::Reader::from_reader(DATA_STR.as_bytes())
-			.deserialize()
-			.collect::<Result<Vec<_>, _>>()
-			.unwrap()
-	);
-}
+pub static DATA: Lazy<Errors> = Lazy::new(|| Errors(
+	csv::Reader::from_reader(DATA_STR.as_bytes())
+		.deserialize()
+		.collect::<Result<Vec<_>, _>>()
+		.unwrap()
+));
 
 #[derive(Default, Debug)]
 pub struct Errors(pub Vec<EnumValue>);

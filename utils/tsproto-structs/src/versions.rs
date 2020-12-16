@@ -2,37 +2,36 @@ use std::collections::HashMap;
 use std::result::Result;
 
 use crate::*;
-use lazy_static::lazy_static;
+
+use once_cell::sync::Lazy;
 
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Versions.csv"));
 
-lazy_static! {
-	pub static ref DATA: Versions = {
-		let mut table = csv::Reader::from_reader(DATA_STR.as_bytes());
-		let mut vs = Versions(
-			table.deserialize().collect::<Result<Vec<_>, _>>().unwrap(),
-		);
+pub static DATA: Lazy<Versions> = Lazy::new(|| {
+	let mut table = csv::Reader::from_reader(DATA_STR.as_bytes());
+	let mut vs = Versions(
+		table.deserialize().collect::<Result<Vec<_>, _>>().unwrap(),
+	);
 
-		// Add count if necessary
-		let mut counts: HashMap<_, u32> = HashMap::new();
-		for v in &vs.0 {
-			let key = VersionKey::new(v);
-			*counts.entry(key).or_default() += 1;
+	// Add count if necessary
+	let mut counts: HashMap<_, u32> = HashMap::new();
+	for v in &vs.0 {
+		let key = VersionKey::new(v);
+		*counts.entry(key).or_default() += 1;
+	}
+	counts.retain(|_, c| *c > 1);
+
+	for v in vs.0.iter_mut().rev() {
+		let key = VersionKey::new(v);
+		if let Some(count) = counts.get_mut(&key) {
+			v.count = *count;
+			*count -= 1;
 		}
-		counts.retain(|_, c| *c > 1);
+	}
 
-		for v in vs.0.iter_mut().rev() {
-			let key = VersionKey::new(v);
-			if let Some(count) = counts.get_mut(&key) {
-				v.count = *count;
-				*count -= 1;
-			}
-		}
-
-		vs
-	};
-}
+	vs
+});
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]

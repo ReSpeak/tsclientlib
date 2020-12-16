@@ -1,7 +1,7 @@
 use std::str::FromStr;
 
 use heck::*;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 
 use crate::book::{BookDeclarations, Property, Struct};
@@ -11,156 +11,154 @@ use crate::*;
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/BookToMessages.toml"));
 
-lazy_static! {
-	pub static ref DATA: BookToMessagesDeclarations<'static> = {
-		let rules: TomlStruct = toml::from_str(DATA_STR).unwrap();
-		let book = &book::DATA;
-		let messages = &messages::DATA;
+pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
+	let rules: TomlStruct = toml::from_str(DATA_STR).unwrap();
+	let book = &book::DATA;
+	let messages = &messages::DATA;
 
-		let decls: Vec<_> = rules
-			.rule
-			.into_iter()
-			.map(|r| {
-				let msg = messages.get_message(&r.to);
-				let msg_fields = msg
-					.attributes
-					.iter()
-					.map(|a| messages.get_field(a))
-					.collect::<Vec<_>>();
-				let book_struct = book
-					.structs
-					.iter()
-					.find(|s| s.name == r.from)
-					.unwrap_or_else(|| panic!("Cannot find struct {}", r.from));
+	let decls: Vec<_> = rules
+		.rule
+		.into_iter()
+		.map(|r| {
+			let msg = messages.get_message(&r.to);
+			let msg_fields = msg
+				.attributes
+				.iter()
+				.map(|a| messages.get_field(a))
+				.collect::<Vec<_>>();
+			let book_struct = book
+				.structs
+				.iter()
+				.find(|s| s.name == r.from)
+				.unwrap_or_else(|| panic!("Cannot find struct {}", r.from));
 
-				let find_prop = |name: &str, book_struct: &'static Struct|
-				 -> Option<&'static Property> {
-					if let Some(prop) = book_struct
+			let find_prop = |name: &str, book_struct: &'static Struct|
+			 -> Option<&'static Property> {
+				if let Some(prop) = book_struct
+					.properties
+					.iter()
+					.find(|p| p.name == *name)
+				{
+					Some(prop)
+				} else {
+					None
+				}
+			};
+
+			// Map RuleProperty to RuleKind
+			let to_rule_kind = |p: RuleProperty| {
+				p.assert_valid();
+
+				if p.function.is_some() {
+					if p.type_s.is_some() {
+						RuleKind::ArgumentFunction {
+							type_s: p.type_s.unwrap(),
+							from: p.from.unwrap(),
+							name: p.function.unwrap(),
+							to: p.tolist.unwrap()
+								.into_iter()
+								.map(|p| find_field(&p, &msg_fields))
+								.collect(),
+						}
+					} else {
+						RuleKind::Function {
+							from: p.from.as_ref().map(|p|
+								find_prop(p, book_struct)
+								.unwrap_or_else(|| panic!("No such (nested) \
+									property {} found in struct", p))),
+							name: p.function.unwrap(),
+							to: p.tolist.unwrap()
+								.into_iter()
+								.map(|p| find_field(&p, &msg_fields))
+								.collect(),
+						}
+					}
+				} else if let Some(prop) = find_prop(
+					p.from.as_ref().unwrap(),
+					book_struct,
+				) {
+					RuleKind::Map {
+						from: prop,
+						to: find_field(&p.to.unwrap(), &msg_fields),
+					}
+				} else {
+					RuleKind::ArgumentMap {
+						from: p.from.unwrap(),
+						to: find_field(&p.to.unwrap(), &msg_fields),
+					}
+				}
+			};
+
+			let mut ev = Event {
+				op: r.operation.parse().expect("Failed to parse operation"),
+				ids: r.ids.into_iter().map(to_rule_kind).collect(),
+				msg,
+				book_struct: book_struct,
+				rules: r.properties.into_iter().map(to_rule_kind).collect(),
+			};
+
+			// Add ids, which are required fields in the message.
+			// The filter checks that the message is not optional.
+			for field in msg_fields.iter()
+				.filter(|f| msg.attributes.iter().any(|a| *a == f.map)) {
+				if !ev.ids.iter().any(|i| match i {
+					RuleKind::Map { to, .. } => to == field,
+					RuleKind::ArgumentMap { to, .. } => to == field,
+					RuleKind::Function { to, .. } |
+					RuleKind::ArgumentFunction { to, .. } => to.contains(field),
+				}) {
+					// Try to find matching property
+					if let Some(prop) = book
+						.get_struct(&ev.book_struct.name)
 						.properties
 						.iter()
-						.find(|p| p.name == *name)
-					{
-						Some(prop)
-					} else {
-						None
-					}
-				};
-
-				// Map RuleProperty to RuleKind
-				let to_rule_kind = |p: RuleProperty| {
-					p.assert_valid();
-
-					if p.function.is_some() {
-						if p.type_s.is_some() {
-							RuleKind::ArgumentFunction {
-								type_s: p.type_s.unwrap(),
-								from: p.from.unwrap(),
-								name: p.function.unwrap(),
-								to: p.tolist.unwrap()
-									.into_iter()
-									.map(|p| find_field(&p, &msg_fields))
-									.collect(),
-							}
-						} else {
-							RuleKind::Function {
-								from: p.from.as_ref().map(|p|
-									find_prop(p, book_struct)
-									.unwrap_or_else(|| panic!("No such (nested) \
-										property {} found in struct", p))),
-								name: p.function.unwrap(),
-								to: p.tolist.unwrap()
-									.into_iter()
-									.map(|p| find_field(&p, &msg_fields))
-									.collect(),
-							}
-						}
-					} else if let Some(prop) = find_prop(
-						p.from.as_ref().unwrap(),
-						book_struct,
-					) {
-						RuleKind::Map {
+						.find(|p| !p.opt && p.name == field.pretty) {
+						ev.ids.push(RuleKind::Map {
 							from: prop,
-							to: find_field(&p.to.unwrap(), &msg_fields),
-						}
-					} else {
-						RuleKind::ArgumentMap {
-							from: p.from.unwrap(),
-							to: find_field(&p.to.unwrap(), &msg_fields),
-						}
+							to: field,
+						})
 					}
-				};
+					// The property may be in the properties
+				}
+			}
 
-				let mut ev = Event {
-					op: r.operation.parse().expect("Failed to parse operation"),
-					ids: r.ids.into_iter().map(to_rule_kind).collect(),
-					msg,
-					book_struct: book_struct,
-					rules: r.properties.into_iter().map(to_rule_kind).collect(),
-				};
-
-				// Add ids, which are required fields in the message.
-				// The filter checks that the message is not optional.
-				for field in msg_fields.iter()
-					.filter(|f| msg.attributes.iter().any(|a| *a == f.map)) {
-					if !ev.ids.iter().any(|i| match i {
-						RuleKind::Map { to, .. } => to == field,
-						RuleKind::ArgumentMap { to, .. } => to == field,
-						RuleKind::Function { to, .. } |
-						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
-					}) {
-						// Try to find matching property
-						if let Some(prop) = book
-							.get_struct(&ev.book_struct.name)
-							.properties
-							.iter()
-							.find(|p| !p.opt && p.name == field.pretty) {
-							ev.ids.push(RuleKind::Map {
+			// Add properties
+			for field in msg_fields.iter()
+				.filter(|f| !msg.attributes.iter().any(|a| *a == f.map)) {
+				if !ev.ids.iter().chain(ev.rules.iter()).any(|i| match i {
+					RuleKind::Map { to, .. } => to == field,
+					RuleKind::ArgumentMap { to, .. } => to == field,
+					RuleKind::Function { to, .. } |
+					RuleKind::ArgumentFunction { to, .. } => to.contains(field),
+				}) {
+					// We ignore that properties are set as option. In all current cases, it
+					// makes no sense to set them to `None`, so we handle them the same way as
+					// non-optional properties.
+					if let Some(prop) = book
+						.get_struct(&ev.book_struct.name)
+						.properties
+						.iter()
+						.find(|p| p.name == field.pretty) {
+						if !ev.ids.iter().chain(ev.rules.iter())
+							.any(|i| i.from_name() == prop.name) {
+							ev.rules.push(RuleKind::Map {
 								from: prop,
 								to: field,
 							})
 						}
-						// The property may be in the properties
 					}
 				}
+			}
 
-				// Add properties
-				for field in msg_fields.iter()
-					.filter(|f| !msg.attributes.iter().any(|a| *a == f.map)) {
-					if !ev.ids.iter().chain(ev.rules.iter()).any(|i| match i {
-						RuleKind::Map { to, .. } => to == field,
-						RuleKind::ArgumentMap { to, .. } => to == field,
-						RuleKind::Function { to, .. } |
-						RuleKind::ArgumentFunction { to, .. } => to.contains(field),
-					}) {
-						// We ignore that properties are set as option. In all current cases, it
-						// makes no sense to set them to `None`, so we handle them the same way as
-						// non-optional properties.
-						if let Some(prop) = book
-							.get_struct(&ev.book_struct.name)
-							.properties
-							.iter()
-							.find(|p| p.name == field.pretty) {
-							if !ev.ids.iter().chain(ev.rules.iter())
-								.any(|i| i.from_name() == prop.name) {
-								ev.rules.push(RuleKind::Map {
-									from: prop,
-									to: field,
-								})
-							}
-						}
-					}
-				}
+			ev
+		}).collect();
 
-				ev
-			}).collect();
-
-		BookToMessagesDeclarations {
-			book,
-			messages,
-			decls,
-		}
-	};
-}
+	BookToMessagesDeclarations {
+		book,
+		messages,
+		decls,
+	}
+});
 
 #[derive(Debug)]
 pub struct BookToMessagesDeclarations<'a> {

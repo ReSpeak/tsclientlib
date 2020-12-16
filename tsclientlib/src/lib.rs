@@ -1447,6 +1447,7 @@ impl ConnectedConnection {
 				stream_items.push_back(Ok(StreamItem::FiletransferFailed(ft_id, err.into())));
 			}
 		} else if let InMessage::ClientConnectionInfoUpdateRequest(_) = &msg {
+			// Answer with connection stats
 			let stats = &self.client.resender.stats;
 			let last_second_bytes = stats.get_last_second_bytes();
 			let last_minute_bytes = stats.get_last_minute_bytes();

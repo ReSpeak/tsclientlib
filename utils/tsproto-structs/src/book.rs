@@ -1,5 +1,5 @@
 use heck::*;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use serde::Deserialize;
 
 use crate::*;
@@ -7,9 +7,7 @@ use crate::*;
 pub const DATA_STR: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/declarations/Book.toml"));
 
-lazy_static! {
-	pub static ref DATA: BookDeclarations = toml::from_str(DATA_STR).unwrap();
-}
+pub static DATA: Lazy<BookDeclarations> = Lazy::new(|| toml::from_str(DATA_STR).unwrap());
 
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
