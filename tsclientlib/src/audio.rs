@@ -199,8 +199,7 @@ impl AudioQueue {
 			self.last_buffer_size_min.push(size);
 			self.last_buffer_size_max.push(Reverse(size));
 		} else {
-			warn!(self.logger, "Failed to put amount of packets into an u8";
-				"size" => size);
+			warn!(self.logger, "Failed to put amount of packets into an u8"; "size" => size);
 		}
 	}
 
@@ -266,8 +265,7 @@ impl AudioQueue {
 	}
 
 	fn decode_packet(&mut self, packet: Option<&QueuePacket>, fec: bool) -> Result<()> {
-		trace!(self.logger, "Decoding packet"; "has_packet" => packet.is_some(),
-			"fec" => fec);
+		trace!(self.logger, "Decoding packet"; "has_packet" => packet.is_some(), "fec" => fec);
 		let packet_data;
 		let len;
 		if let Some(p) = packet {
@@ -370,8 +368,7 @@ impl AudioQueue {
 						cur_id
 					);
 					// Packet loss
-					debug!(self.logger, "Audio packet loss"; "need" => cur_id,
-						"have" => packet.id);
+					debug!(self.logger, "Audio packet loss"; "need" => cur_id, "have" => packet.id);
 					if packet.id == self.next_id {
 						// Can use forward-error-correction
 						self.decode_packet(Some(&packet), true)?;
@@ -449,12 +446,21 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	///
 	/// Returns the clients that are not talking anymore.
 	pub fn fill_buffer(&mut self, buf: &mut [f32]) -> Vec<Id> {
+		self.fill_buffer_with_proc(buf, |_, _| {})
+	}
+
+	/// `buf` is not cleared before filling it.
+	///
+	/// Same as [`fill_buffer`] but before merging a queue into the output buffer, a preprocessor
+	/// function is called. The queue volume is applied after calling the preprocessor.
+	///
+	/// Returns the clients that are not talking anymore.
+	pub fn fill_buffer_with_proc<F: FnMut(&Id, &[f32])>(&mut self, buf: &mut [f32], mut handle: F) -> Vec<Id> {
 		trace!(self.logger, "Filling audio buffer"; "len" => buf.len());
 		let mut to_remove = Vec::new();
 		for (id, queue) in self.queues.iter_mut() {
 			if queue.packet_loss_num >= MAX_PACKET_LOSSES {
-				debug!(self.logger, "Removing talker";
-					"packet_loss_num" => queue.packet_loss_num);
+				debug!(self.logger, "Removing talker"; "packet_loss_num" => queue.packet_loss_num);
 				to_remove.push(id.clone());
 				continue;
 			}
@@ -462,10 +468,10 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 			let vol = queue.volume;
 			match queue.get_next_data(buf.len()) {
 				Err(e) => {
-					warn!(self.logger, "Failed to decode audio packet";
-						"error" => %e);
+					warn!(self.logger, "Failed to decode audio packet"; "error" => %e);
 				}
 				Ok((r, is_end)) => {
+					handle(id, &r);
 					for i in 0..r.len() {
 						buf[i] += r[i] * vol;
 					}
