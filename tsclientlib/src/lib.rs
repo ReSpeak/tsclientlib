@@ -532,6 +532,16 @@ impl Connection {
 		let client_platform = options.version.get_platform();
 		let client_version_sign = base64::encode(options.version.get_signature());
 
+		let default_channel_password = options
+			.channel_password
+			.as_ref()
+			.map(|p| tsproto_types::crypto::encode_password(p.as_bytes()))
+			.unwrap_or_default();
+		let password = options
+			.password
+			.as_ref()
+			.map(|p| tsproto_types::crypto::encode_password(p.as_bytes()))
+			.unwrap_or_default();
 		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
 			name: &options.name,
 			version: &client_version,
@@ -541,14 +551,10 @@ impl Connection {
 			input_hardware_enabled: options.input_hardware_enabled,
 			output_hardware_enabled: options.output_hardware_enabled,
 			is_away: if options.away.is_some() { Some(true) } else { None },
-			away_message: options.away.as_ref().map(AsRef::as_ref),
-			default_channel: options.channel.as_ref().map(AsRef::as_ref).unwrap_or_default(),
-			default_channel_password: options
-				.channel_password
-				.as_ref()
-				.map(AsRef::as_ref)
-				.unwrap_or_default(),
-			password: options.password.as_ref().map(AsRef::as_ref).unwrap_or_default(),
+			away_message: options.away.as_deref(),
+			default_channel: options.channel.as_deref().unwrap_or_default(),
+			default_channel_password: &default_channel_password,
+			password: &password,
 			metadata: "",
 			version_sign: &client_version_sign,
 			client_key_offset: counter,
@@ -1638,11 +1644,14 @@ impl ConnectedConnection {
 	{
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
+		let pass = channel_password
+			.map(|p| tsproto_types::crypto::encode_password(p.as_bytes()))
+			.unwrap_or_default();
 		let packet = c2s::OutInitDownloadMessage::new(&mut iter::once(c2s::OutInitDownloadPart {
 			client_filetransfer_id: ft_id,
 			name: path,
 			channel_id,
-			channel_password: channel_password.unwrap_or(""),
+			channel_password: &pass,
 			seek_position: seek_position.unwrap_or_default(),
 			protocol: 1,
 		}));
@@ -1658,11 +1667,14 @@ impl ConnectedConnection {
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
 
+		let pass = channel_password
+			.map(|p| tsproto_types::crypto::encode_password(p.as_bytes()))
+			.unwrap_or_default();
 		let packet = c2s::OutInitUploadMessage::new(&mut iter::once(c2s::OutInitUploadPart {
 			client_filetransfer_id: ft_id,
 			name: path,
 			channel_id,
-			channel_password: channel_password.unwrap_or(""),
+			channel_password: &pass,
 			overwrite,
 			resume,
 			size,

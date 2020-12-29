@@ -93,6 +93,12 @@ pub struct EccKeyPubEd25519(pub CompressedEdwardsY);
 #[derive(Clone)]
 pub struct EccKeyPrivEd25519(pub Scalar);
 
+/// Passwords are encoded as base64(sha1(password)).
+pub fn encode_password(password: &[u8]) -> String {
+	let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, password);
+	base64::encode(hash.as_ref())
+}
+
 impl fmt::Debug for EccKeyPubP256 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		write!(f, "EccKeyPubP256({})", self.to_ts().unwrap())
