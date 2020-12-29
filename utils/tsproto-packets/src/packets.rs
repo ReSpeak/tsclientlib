@@ -1060,8 +1060,7 @@ impl OutC2SInit4 {
 	pub fn new(
 		version: u32, x: &[u8; 64], n: &[u8; 64], level: u32, random2: &[u8; 100], y: &[u8; 64],
 		alpha: &[u8], omega: &[u8], ip: &str,
-	) -> OutPacket
-	{
+	) -> OutPacket {
 		let mut res = OutPacket::new_with_dir(Direction::C2S, Flags::empty(), PacketType::Init);
 		res.mac().copy_from_slice(b"TS3INIT1");
 		res.packet_id(0x65);

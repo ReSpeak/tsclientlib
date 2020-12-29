@@ -116,8 +116,7 @@ pub fn compress_and_split(is_client: bool, packet: OutPacket) -> Vec<OutPacket> 
 fn create_key_nonce(
 	p_type: PacketType, c_id: Option<u16>, p_id: u16, generation_id: u32, iv: &[u8; 64],
 	cache: &mut [[CachedKey; 2]; 8],
-) -> (GenericArray<u8, U16>, GenericArray<u8, U16>)
-{
+) -> (GenericArray<u8, U16>, GenericArray<u8, U16>) {
 	// Check if this generation is cached
 	let cache = &mut cache[p_type.to_usize().unwrap()][if c_id.is_some() { 1 } else { 0 }];
 	if cache.generation_id != generation_id {

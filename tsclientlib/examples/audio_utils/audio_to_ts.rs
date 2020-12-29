@@ -62,8 +62,7 @@ impl AudioToTs {
 	fn open_capture(
 		logger: Logger, audio_subsystem: &AudioSubsystem,
 		listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>, volume: Arc<Mutex<f32>>,
-	) -> Result<AudioDevice<SdlCallback>>
-	{
+	) -> Result<AudioDevice<SdlCallback>> {
 		let desired_spec = AudioSpecDesired {
 			freq: Some(48000),
 			channels: Some(1),

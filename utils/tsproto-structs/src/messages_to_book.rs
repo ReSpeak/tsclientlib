@@ -20,11 +20,8 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 		.into_iter()
 		.map(|r| {
 			let msg = messages.get_message(&r.from);
-			let msg_fields = msg
-				.attributes
-				.iter()
-				.map(|a| messages.get_field(a))
-				.collect::<Vec<_>>();
+			let msg_fields =
+				msg.attributes.iter().map(|a| messages.get_field(a)).collect::<Vec<_>>();
 			let book_struct = book
 				.structs
 				.iter()
@@ -33,31 +30,23 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 
 			let mut ev = Event {
 				op: r.operation.parse().expect("Failed to parse operation"),
-				id: r
-					.id
-					.iter()
-					.map(|s| find_field(s, &msg_fields))
-					.collect(),
+				id: r.id.iter().map(|s| find_field(s, &msg_fields)).collect(),
 				msg,
 				book_struct,
-				rules: r.properties
+				rules: r
+					.properties
 					.into_iter()
 					.map(|p| {
 						assert!(p.is_valid());
 
-						let find_prop = |name,
-										 book_struct: &'static Struct|
-						 -> &'static Property {
-							if let Some(prop) = book_struct
-								.properties
-								.iter()
-								.find(|p| p.name == name)
+						let find_prop = |name, book_struct: &'static Struct| -> &'static Property {
+							if let Some(prop) =
+								book_struct.properties.iter().find(|p| p.name == name)
 							{
 								return prop;
 							}
 							panic!(
-								"No such (nested) property {} found in \
-								 struct {}",
+								"No such (nested) property {} found in struct {}",
 								name, book_struct.name,
 							);
 						};
@@ -65,29 +54,25 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 						if p.function.is_some() {
 							RuleKind::Function {
 								name: p.function.unwrap(),
-								to: p.tolist.unwrap()
+								to: p
+									.tolist
+									.unwrap()
 									.into_iter()
 									.map(|p| find_prop(p, book_struct))
 									.collect(),
 							}
 						} else {
 							RuleKind::Map {
-								from: find_field(
-									&p.from.unwrap(),
-									&msg_fields,
-								),
+								from: find_field(&p.from.unwrap(), &msg_fields),
 								to: find_prop(p.to.unwrap(), book_struct),
 								op: p
 									.operation
-									.map(|s| {
-										s.parse().expect(
-											"Invalid operation for \
-											 property",
-										)
-									}).unwrap_or(RuleOp::Update),
+									.map(|s| s.parse().expect("Invalid operation for property"))
+									.unwrap_or(RuleOp::Update),
 							}
 						}
-					}).collect(),
+					})
+					.collect(),
 			};
 
 			// Add attributes with the same name automatically (if they are not
@@ -98,7 +83,8 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 				.filter_map(|f| match *f {
 					RuleKind::Map { from, .. } => Some(from),
 					_ => None,
-				}).collect::<Vec<_>>();
+				})
+				.collect::<Vec<_>>();
 
 			let mut used_props = vec![];
 			for rule in &ev.rules {
@@ -123,25 +109,18 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 						continue;
 					}
 
-					ev.rules.push(RuleKind::Map {
-						from: fld,
-						to: prop,
-						op: RuleOp::Update,
-					});
+					ev.rules.push(RuleKind::Map { from: fld, to: prop, op: RuleOp::Update });
 				}
 			}
 
 			ev
-		}).collect();
+		})
+		.collect();
 
 	// InitServer is done manually
 	decls.retain(|ev| ev.msg.name != "InitServer");
 
-	MessagesToBookDeclarations {
-		book,
-		messages,
-		decls,
-	}
+	MessagesToBookDeclarations { book, messages, decls }
 });
 
 #[derive(Debug)]

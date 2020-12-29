@@ -21,29 +21,22 @@ pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
 		.into_iter()
 		.map(|r| {
 			let msg = messages.get_message(&r.to);
-			let msg_fields = msg
-				.attributes
-				.iter()
-				.map(|a| messages.get_field(a))
-				.collect::<Vec<_>>();
+			let msg_fields =
+				msg.attributes.iter().map(|a| messages.get_field(a)).collect::<Vec<_>>();
 			let book_struct = book
 				.structs
 				.iter()
 				.find(|s| s.name == r.from)
 				.unwrap_or_else(|| panic!("Cannot find struct {}", r.from));
 
-			let find_prop = |name: &str, book_struct: &'static Struct|
-			 -> Option<&'static Property> {
-				if let Some(prop) = book_struct
-					.properties
-					.iter()
-					.find(|p| p.name == *name)
-				{
-					Some(prop)
-				} else {
-					None
-				}
-			};
+			let find_prop =
+				|name: &str, book_struct: &'static Struct| -> Option<&'static Property> {
+					if let Some(prop) = book_struct.properties.iter().find(|p| p.name == *name) {
+						Some(prop)
+					} else {
+						None
+					}
+				};
 
 			// Map RuleProperty to RuleKind
 			let to_rule_kind = |p: RuleProperty| {
@@ -55,32 +48,31 @@ pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
 							type_s: p.type_s.unwrap(),
 							from: p.from.unwrap(),
 							name: p.function.unwrap(),
-							to: p.tolist.unwrap()
+							to: p
+								.tolist
+								.unwrap()
 								.into_iter()
 								.map(|p| find_field(&p, &msg_fields))
 								.collect(),
 						}
 					} else {
 						RuleKind::Function {
-							from: p.from.as_ref().map(|p|
-								find_prop(p, book_struct)
-								.unwrap_or_else(|| panic!("No such (nested) \
-									property {} found in struct", p))),
+							from: p.from.as_ref().map(|p| {
+								find_prop(p, book_struct).unwrap_or_else(|| {
+									panic!("No such (nested) property {} found in struct", p)
+								})
+							}),
 							name: p.function.unwrap(),
-							to: p.tolist.unwrap()
+							to: p
+								.tolist
+								.unwrap()
 								.into_iter()
 								.map(|p| find_field(&p, &msg_fields))
 								.collect(),
 						}
 					}
-				} else if let Some(prop) = find_prop(
-					p.from.as_ref().unwrap(),
-					book_struct,
-				) {
-					RuleKind::Map {
-						from: prop,
-						to: find_field(&p.to.unwrap(), &msg_fields),
-					}
+				} else if let Some(prop) = find_prop(p.from.as_ref().unwrap(), book_struct) {
+					RuleKind::Map { from: prop, to: find_field(&p.to.unwrap(), &msg_fields) }
 				} else {
 					RuleKind::ArgumentMap {
 						from: p.from.unwrap(),
@@ -99,37 +91,35 @@ pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
 
 			// Add ids, which are required fields in the message.
 			// The filter checks that the message is not optional.
-			for field in msg_fields.iter()
-				.filter(|f| msg.attributes.iter().any(|a| *a == f.map)) {
+			for field in msg_fields.iter().filter(|f| msg.attributes.iter().any(|a| *a == f.map)) {
 				if !ev.ids.iter().any(|i| match i {
 					RuleKind::Map { to, .. } => to == field,
 					RuleKind::ArgumentMap { to, .. } => to == field,
-					RuleKind::Function { to, .. } |
-					RuleKind::ArgumentFunction { to, .. } => to.contains(field),
+					RuleKind::Function { to, .. } | RuleKind::ArgumentFunction { to, .. } => {
+						to.contains(field)
+					}
 				}) {
 					// Try to find matching property
 					if let Some(prop) = book
 						.get_struct(&ev.book_struct.name)
 						.properties
 						.iter()
-						.find(|p| !p.opt && p.name == field.pretty) {
-						ev.ids.push(RuleKind::Map {
-							from: prop,
-							to: field,
-						})
+						.find(|p| !p.opt && p.name == field.pretty)
+					{
+						ev.ids.push(RuleKind::Map { from: prop, to: field })
 					}
 					// The property may be in the properties
 				}
 			}
 
 			// Add properties
-			for field in msg_fields.iter()
-				.filter(|f| !msg.attributes.iter().any(|a| *a == f.map)) {
+			for field in msg_fields.iter().filter(|f| !msg.attributes.iter().any(|a| *a == f.map)) {
 				if !ev.ids.iter().chain(ev.rules.iter()).any(|i| match i {
 					RuleKind::Map { to, .. } => to == field,
 					RuleKind::ArgumentMap { to, .. } => to == field,
-					RuleKind::Function { to, .. } |
-					RuleKind::ArgumentFunction { to, .. } => to.contains(field),
+					RuleKind::Function { to, .. } | RuleKind::ArgumentFunction { to, .. } => {
+						to.contains(field)
+					}
 				}) {
 					// We ignore that properties are set as option. In all current cases, it
 					// makes no sense to set them to `None`, so we handle them the same way as
@@ -138,26 +128,21 @@ pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
 						.get_struct(&ev.book_struct.name)
 						.properties
 						.iter()
-						.find(|p| p.name == field.pretty) {
-						if !ev.ids.iter().chain(ev.rules.iter())
-							.any(|i| i.from_name() == prop.name) {
-							ev.rules.push(RuleKind::Map {
-								from: prop,
-								to: field,
-							})
+						.find(|p| p.name == field.pretty)
+					{
+						if !ev.ids.iter().chain(ev.rules.iter()).any(|i| i.from_name() == prop.name)
+						{
+							ev.rules.push(RuleKind::Map { from: prop, to: field })
 						}
 					}
 				}
 			}
 
 			ev
-		}).collect();
+		})
+		.collect();
 
-	BookToMessagesDeclarations {
-		book,
-		messages,
-		decls,
-	}
+	BookToMessagesDeclarations { book, messages, decls }
 });
 
 #[derive(Debug)]

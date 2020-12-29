@@ -32,8 +32,8 @@ macro_rules! max_clients {
 		} else {
 			// Max clients is less than zero or too high so ignore it
 			None
-			}
-		}};
+		}
+	}};
 }
 
 macro_rules! copy_attrs {
@@ -574,8 +574,7 @@ impl Connection {
 	fn channel_unsubscribe_fun(
 		&mut self, channel_id: ChannelId, _: &s2c::InChannelUnsubscribedPart,
 		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+	) -> Result<()> {
 		let channel = self.get_mut_channel(channel_id)?;
 		events.push(Event::PropertyChanged {
 			id: PropertyId::ChannelSubscribed(channel_id),
@@ -627,8 +626,7 @@ impl Connection {
 	fn channel_order_insert(
 		&mut self, channel_id: ChannelId, channel_order: ChannelId, channel_parent: ChannelId,
 		events: &mut Vec<Event>,
-	)
-	{
+	) {
 		// [ C:7 | O:_ ]
 		// [            <── (New: C:5 | O:7)
 		// [ C:_ | O:7 ]    (Upd: O -> 5)
@@ -672,8 +670,7 @@ impl Connection {
 	fn channel_order_move_fun(
 		&mut self, channel_id: ChannelId, new_order: Option<ChannelId>, parent: Option<ChannelId>,
 		events: &mut Vec<Event>,
-	) -> Result<()>
-	{
+	) -> Result<()> {
 		if new_order.is_some() || parent.is_some() {
 			let old_order;
 			let new_parent;

@@ -725,8 +725,8 @@ impl Connection {
 											invoker: None,
 											extra: Default::default(),
 										});
-										}
 									}
+								}
 							};
 						}
 
@@ -981,8 +981,7 @@ impl Connection {
 	pub fn download_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>,
 		seek_position: Option<u64>,
-	) -> Result<FiletransferHandle>
-	{
+	) -> Result<FiletransferHandle> {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.download_file(channel_id, path, channel_password, seek_position)
 		} else {
@@ -1008,8 +1007,7 @@ impl Connection {
 	pub fn upload_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>, size: u64,
 		overwrite: bool, resume: bool,
-	) -> Result<FiletransferHandle>
-	{
+	) -> Result<FiletransferHandle> {
 		if let ConnectionState::Connected { con, .. } = &mut self.state {
 			con.upload_file(channel_id, path, channel_password, size, overwrite, resume)
 		} else {
@@ -1361,8 +1359,7 @@ impl ConnectedConnection {
 		&mut self, logger: &Logger, book: &mut data::Connection,
 		stream_items: &mut VecDeque<Result<StreamItem>>, options: &mut ConnectOptions,
 		cmd: InCommandBuf,
-	) -> Option<TemporaryDisconnectReason>
-	{
+	) -> Option<TemporaryDisconnectReason> {
 		let msg = match InMessage::new(
 			logger,
 			&cmd.data().packet().header(),
@@ -1541,9 +1538,9 @@ impl ConnectedConnection {
 										if *id == events::PropertyId::$msg(own_id) {
 											if let events::PropertyValue::Bool(b) = old {
 												own_client.$obj = *b;
-												}
-											return false;
 											}
+											return false;
+										}
 									};
 								}
 
@@ -1640,8 +1637,7 @@ impl ConnectedConnection {
 	fn download_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>,
 		seek_position: Option<u64>,
-	) -> Result<FiletransferHandle>
-	{
+	) -> Result<FiletransferHandle> {
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
 		let pass = channel_password
@@ -1662,8 +1658,7 @@ impl ConnectedConnection {
 	fn upload_file(
 		&mut self, channel_id: ChannelId, path: &str, channel_password: Option<&str>, size: u64,
 		overwrite: bool, resume: bool,
-	) -> Result<FiletransferHandle>
-	{
+	) -> Result<FiletransferHandle> {
 		let ft_id = self.cur_filetransfer_id;
 		self.cur_filetransfer_id += 1;
 

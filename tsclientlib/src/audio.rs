@@ -455,7 +455,9 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	/// function is called. The queue volume is applied after calling the preprocessor.
 	///
 	/// Returns the clients that are not talking anymore.
-	pub fn fill_buffer_with_proc<F: FnMut(&Id, &[f32])>(&mut self, buf: &mut [f32], mut handle: F) -> Vec<Id> {
+	pub fn fill_buffer_with_proc<F: FnMut(&Id, &[f32])>(
+		&mut self, buf: &mut [f32], mut handle: F,
+	) -> Vec<Id> {
 		trace!(self.logger, "Filling audio buffer"; "len" => buf.len());
 		let mut to_remove = Vec::new();
 		for (id, queue) in self.queues.iter_mut() {

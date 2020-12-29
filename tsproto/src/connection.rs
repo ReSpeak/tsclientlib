@@ -374,8 +374,7 @@ impl Connection {
 	pub fn static_poll_send_udp_packet(
 		udp_socket: &dyn Socket, address: &SocketAddr, event_listeners: &[EventListener],
 		cx: &mut Context, packet: &OutUdpPacket,
-	) -> Poll<Result<()>>
-	{
+	) -> Poll<Result<()>> {
 		let data = packet.data().data();
 		match udp_socket.poll_send_to(cx, data, address).map_err(Error::Network)? {
 			Poll::Pending => Poll::Pending,

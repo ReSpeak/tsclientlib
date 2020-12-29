@@ -418,8 +418,7 @@ impl SyncConnectionHandle {
 	pub async fn download_file(
 		&mut self, channel_id: ChannelId, path: String, channel_password: Option<String>,
 		seek_position: Option<u64>,
-	) -> Result<super::FileDownloadResult>
-	{
+	) -> Result<super::FileDownloadResult> {
 		let (send, recv) = oneshot::channel();
 		self.send
 			.send(SyncConMessage::DownloadFile {
@@ -451,8 +450,7 @@ impl SyncConnectionHandle {
 	pub async fn upload_file(
 		&mut self, channel_id: ChannelId, path: String, channel_password: Option<String>,
 		size: u64, overwrite: bool, resume: bool,
-	) -> Result<super::FileUploadResult>
-	{
+	) -> Result<super::FileUploadResult> {
 		let (send, recv) = oneshot::channel();
 		self.send
 			.send(SyncConMessage::UploadFile {

@@ -70,8 +70,7 @@ pub fn add_logger_with_verbosity(logger: Logger, verbosity: u8, con: &mut Connec
 pub fn add_logger(
 	logger: Logger, log_commands: bool, log_packets: bool, log_udp_packets: bool,
 	con: &mut Connection,
-)
-{
+) {
 	if log_commands || log_packets || log_udp_packets {
 		let is_client = con.is_client;
 		let listener = Box::new(move |event: &Event| match event {

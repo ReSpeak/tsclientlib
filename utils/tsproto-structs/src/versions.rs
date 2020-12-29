@@ -10,9 +10,7 @@ pub const DATA_STR: &str =
 
 pub static DATA: Lazy<Versions> = Lazy::new(|| {
 	let mut table = csv::Reader::from_reader(DATA_STR.as_bytes());
-	let mut vs = Versions(
-		table.deserialize().collect::<Result<Vec<_>, _>>().unwrap(),
-	);
+	let mut vs = Versions(table.deserialize().collect::<Result<Vec<_>, _>>().unwrap());
 
 	// Add count if necessary
 	let mut counts: HashMap<_, u32> = HashMap::new();

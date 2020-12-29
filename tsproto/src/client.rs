@@ -86,8 +86,7 @@ impl Client {
 	pub fn new(
 		logger: Logger, address: SocketAddr, udp_socket: Box<dyn Socket + Send>,
 		private_key: EccKeyPrivP256,
-	) -> Self
-	{
+	) -> Self {
 		Self { con: Connection::new(true, logger, address, udp_socket), private_key }
 	}
 

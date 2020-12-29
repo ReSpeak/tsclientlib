@@ -33,9 +33,7 @@ pub fn read_hex(s: &str) -> Result<Vec<u8>> {
 		// Own dumps
 		Ok(s[2..]
 			.split(',')
-			.map(|s| {
-				u8::from_str_radix(s.trim_start_matches("0x"), 16)
-			})
+			.map(|s| u8::from_str_radix(s.trim_start_matches("0x"), 16))
 			.collect::<::std::result::Result<Vec<_>, _>>()
 			.map_err(Error::InvalidHex)?)
 	} else {
