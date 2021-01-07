@@ -61,6 +61,7 @@ audiopus = "0.2"
 quickcheck = "0.9"
 quickcheck_macros = "0.9"
 sdl2 = "0.34"
+slog-envlogger = "2"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "0.2", features = ["rt-threaded", "rt-util", "signal"] }
 tokio-signal = "0.2"
