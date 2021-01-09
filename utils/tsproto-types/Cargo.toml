@@ -20,7 +20,7 @@ num-traits = "0.2"
 rand = "0.7"
 ref-cast = "1"
 serde = { version = "1", features = ["derive"] }
-simple_asn1 = "0.5"
+simple_asn1 = "0.5.1"
 thiserror = "1"
 time = { version = "0.2.15", features = ["serde"] }
 untrusted = "0.7"

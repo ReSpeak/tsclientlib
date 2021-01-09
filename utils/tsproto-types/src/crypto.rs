@@ -50,8 +50,8 @@ pub enum Error {
 	#[error("Wrong signature")]
 	WrongSignature { key: EccKeyPubP256, data: Vec<u8>, signature: Vec<u8> },
 
-	#[error("Failed to decode ASN.1: {0}")]
-	Asn1Decode(simple_asn1::ASN1DecodeErr),
+	#[error(transparent)]
+	Asn1Decode(#[from] simple_asn1::ASN1DecodeErr),
 	#[error(transparent)]
 	Asn1Encode(#[from] simple_asn1::ASN1EncodeErr),
 	#[error(transparent)]
@@ -141,7 +141,7 @@ impl EccKeyPubP256 {
 	/// - `Integer`: X coordinate of the public key
 	/// - `Integer`: Y coordinate of the public key
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
-		let blocks = simple_asn1::from_der(data).map_err(Error::Asn1Decode)?;
+		let blocks = simple_asn1::from_der(data)?;
 		if blocks.len() != 1 {
 			return Err(Error::TooManyAsn1Blocks);
 		}
@@ -332,7 +332,7 @@ impl EccKeyPrivP256 {
 	/// The TS3AudioBot stores two 1 bits in the first `BitString` and omits the
 	/// public key.
 	pub fn from_tomcrypt(data: &[u8]) -> Result<Self> {
-		let blocks = simple_asn1::from_der(data).map_err(Error::Asn1Decode)?;
+		let blocks = simple_asn1::from_der(data)?;
 		if blocks.len() != 1 {
 			return Err(Error::TooManyAsn1Blocks);
 		}
