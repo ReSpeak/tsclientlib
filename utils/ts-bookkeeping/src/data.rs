@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::{iter, mem, u16};
@@ -723,29 +724,43 @@ impl Connection {
 
 impl Client {
 	// Book to messages
-	fn password_b2m<'a>(password: &'a str) -> &'a str { password }
+	fn password_b2m<'a>(password: &'a str) -> String {
+		tsproto_types::crypto::encode_password(password.as_bytes()).into()
+	}
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 
 	pub fn send_textmessage(&self, message: &str) -> OutCommand {
 		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 			target: TextMessageTargetMode::Client,
 			target_client_id: Some(self.id),
-			message,
+			message: message.into(),
 		}))
 	}
 
 	pub fn poke(&self, message: &str) -> OutCommand {
 		c2s::OutClientPokeRequestMessage::new(&mut iter::once(c2s::OutClientPokeRequestPart {
 			client_id: self.id,
-			message,
+			message: message.into(),
 		}))
 	}
 }
 
 impl Channel {
 	// Book to messages
-	fn password_flagged_b2m<'a>(password: Option<&'a str>) -> (bool, &'a str) {
-		if let Some(password) = password { (true, password) } else { (false, "") }
+	fn password_b2m<'a>(&self, password: &'a str) -> String {
+		tsproto_types::crypto::encode_password(password.as_bytes()).into()
+	}
+
+	fn password_b2m2<'a>(password: &'a str) -> String {
+		tsproto_types::crypto::encode_password(password.as_bytes()).into()
+	}
+
+	fn password_flagged_b2m<'a>(password: Option<&'a str>) -> (bool, Cow<'static, str>) {
+		if let Some(password) = password {
+			(true, tsproto_types::crypto::encode_password(password.as_bytes()).into())
+		} else {
+			(false, "".into())
+		}
 	}
 
 	fn channel_type_fun_b2m(channel_type: ChannelType) -> (bool, bool) {
@@ -942,8 +957,8 @@ impl Server {
 			.and_then(|t| if *t == ChannelType::SemiPermanent { Some(true) } else { None });
 
 		c2s::OutChannelCreateMessage::new(&mut iter::once(c2s::OutChannelCreatePart {
-			name: options.name,
-			description: options.description,
+			name: options.name.into(),
+			description: options.description.map(Into::into),
 			parent_id: options.parent_id,
 			codec: options.codec,
 			codec_quality: options.codec_quality,
@@ -959,9 +974,11 @@ impl Server {
 			max_clients,
 			is_unencrypted: options.is_unencrypted,
 			order: options.order,
-			password: options.password,
-			phonetic_name: options.phonetic_name,
-			topic: options.topic,
+			password: options
+				.password
+				.map(|p| tsproto_types::crypto::encode_password(p.as_bytes()).into()),
+			phonetic_name: options.phonetic_name.map(Into::into),
+			topic: options.topic.map(Into::into),
 		}))
 	}
 
@@ -969,7 +986,7 @@ impl Server {
 		c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 			target: TextMessageTargetMode::Server,
 			target_client_id: None,
-			message,
+			message: message.into(),
 		}))
 	}
 
@@ -985,6 +1002,15 @@ impl Server {
 	fn zero_channel_id(&self) -> ChannelId { ChannelId(0) }
 
 	fn empty_string(&self) -> &'static str { "" }
+
+	// Book to messages
+	fn password_b2m<'a>(password: Option<&'a str>) -> Cow<'static, str> {
+		if let Some(password) = password {
+			tsproto_types::crypto::encode_password(password.as_bytes()).into()
+		} else {
+			"".into()
+		}
+	}
 }
 
 impl Connection {
@@ -994,25 +1020,25 @@ impl Connection {
 				c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Server,
 					target_client_id: None,
-					message,
+					message: message.into(),
 				}))
 			}
 			MessageTarget::Channel => {
 				c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Channel,
 					target_client_id: None,
-					message,
+					message: message.into(),
 				}))
 			}
 			MessageTarget::Client(id) => {
 				c2s::OutSendTextMessageMessage::new(&mut iter::once(c2s::OutSendTextMessagePart {
 					target: TextMessageTargetMode::Client,
 					target_client_id: Some(id),
-					message,
+					message: message.into(),
 				}))
 			}
 			MessageTarget::Poke(id) => c2s::OutClientPokeRequestMessage::new(&mut iter::once(
-				c2s::OutClientPokeRequestPart { client_id: id, message },
+				c2s::OutClientPokeRequestPart { client_id: id, message: message.into() },
 			)),
 		}
 	}
@@ -1020,7 +1046,7 @@ impl Connection {
 	pub fn disconnect(&self, options: crate::DisconnectOptions) -> OutCommand {
 		c2s::OutDisconnectMessage::new(&mut iter::once(c2s::OutDisconnectPart {
 			reason: options.reason,
-			reason_message: options.message.as_deref(),
+			reason_message: options.message.map(Into::into),
 		}))
 	}
 }

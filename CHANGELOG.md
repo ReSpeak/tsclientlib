@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ℹ Changed
 - ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 0.2 for `async`/`await` support
-- 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks.
+- 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks
 - 🚀 Many performance improvements
 	- New command parser, 2×–2.5× faster than the old one
 	- New command serializer, 2× faster than the old one
@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A new connection should now be created with `ConnectOptions::connect` instead of `Connection::new`
 - Multiple renamings in the book
 - Rename `StreamItem::ConEvents` to `StreamItem::BookEvents`
+- Rename `UidRef` to `Uid` and make it a dynamically sized type. The previously owned `Uid` type is now called `UidBuf`
 
 ### ❌ Removed
 - The `ConnectionManager` in `tsproto` was removed

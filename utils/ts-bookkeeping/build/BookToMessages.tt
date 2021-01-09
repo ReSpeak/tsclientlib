@@ -67,9 +67,9 @@ fn create_message(
 
 			if let Some(from) = from {
 				if field.is_opt(&e.msg) { #>
-			<#= field.get_rust_name() #>: Some(<#= from #>),
+			<#= field.get_rust_name() #>: Some(<#= from #>.into()),
 				<# } else { #>
-			<#= field.get_rust_name() #>: <#= from #>,
+			<#= field.get_rust_name() #>: <#= from #>.into(),
 				<# }
 			} else { #>
 			<#= field.get_rust_name() #>: None,
@@ -121,7 +121,7 @@ for e in &self.decls {
 
 impl <#= e.book_struct.name #> {
 	pub fn <#= change_name.to_snake_case() #><# if uses_lifetime { #><'a><# } #>(&self, <#=
-		get_all_id_arguments(e).replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>
+		get_all_id_arguments(e).replace('&', "&'a ") #>
 	<# if e.msg.attributes.is_empty() { #>
 	) -> OutCommand
 	<# } else { #>
@@ -142,7 +142,7 @@ pub trait M2B<#= e.msg.name #>Ext<# if uses_lifetime { #><'a><# } #> {
 	let name = r.from_name();
 	#>
 	fn set_<#= name.to_snake_case() #>(self, <#= r.get_argument_no_option()
-		.replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>) -> Self;
+		.replace('&', "&'a ") #>) -> Self;
 <# } #>
 }
 
@@ -160,17 +160,17 @@ impl<# if uses_lifetime { #><'a><# } #> M2B<#= e.msg.name #>Ext<# if uses_lifeti
 	}
 	#>
 	fn set_<#= name.to_snake_case() #>(mut self, <#= r.get_argument_no_option()
-		.replace('&', "&'a ").replace("UidRef", "UidRef<'a>") #>) -> Self {
+		.replace('&', "&'a ") #>) -> Self {
 	<# call_func2(_fmt, &e.book_struct.name, r)?; #>
 	<# match r {
 		RuleKind::Map { to, .. }
 		| RuleKind::ArgumentMap { to, .. } => { #>
-		self.<#= to.get_rust_name() #> = Some(<#= r.from_name().to_snake_case() #>);
+		self.<#= to.get_rust_name() #> = Some(<#= r.from_name().to_snake_case() #>.into());
 		<# }
 		RuleKind::Function { to, .. }
 		| RuleKind::ArgumentFunction { to, .. } => {
 			for t in to { #>
-		self.<#= t.get_rust_name() #> = Some(<#= t.get_rust_name() #>);
+		self.<#= t.get_rust_name() #> = Some(<#= t.get_rust_name() #>.into());
 			<# }
 		}
 	} #>

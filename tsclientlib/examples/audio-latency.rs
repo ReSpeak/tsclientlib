@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 
 use tsclientlib::ClientId;
-use tsproto_packets::packets::{InAudioBuf, Direction};
+use tsproto_packets::packets::{Direction, InAudioBuf};
 
 mod audio_utils;
 

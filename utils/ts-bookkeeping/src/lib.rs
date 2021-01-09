@@ -16,7 +16,7 @@ pub use tsproto_types::{
 	ClientPermissionHint, ClientType, Codec, CodecEncryptionMode, GroupNamingMode, GroupType,
 	HostBannerMode, HostMessageMode, IconId, Invoker, InvokerRef, LicenseType, LogLevel,
 	MaxClients, Permission, PermissionType, PluginTargetMode, Reason, ServerGroupId,
-	TalkPowerRequest, TextMessageTargetMode, TokenType, Uid, UidRef,
+	TalkPowerRequest, TextMessageTargetMode, TokenType, Uid, UidBuf,
 };
 
 type Result<T> = std::result::Result<T, Error>;

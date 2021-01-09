@@ -1,9 +1,11 @@
+use std::borrow::{Borrow, Cow};
 use std::fmt;
 use std::u64;
 
 use bitflags::bitflags;
 use num_derive::{FromPrimitive, ToPrimitive};
-use serde::{Deserialize, Serialize};
+use ref_cast::RefCast;
+use serde::{Deserialize, Deserializer, Serialize};
 use time::OffsetDateTime;
 
 pub mod crypto;
@@ -23,40 +25,55 @@ pub struct ClientId(pub u16);
 ///
 /// This is saved raw, so the base64-decoded TeamSpeak uid.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct Uid(pub Vec<u8>);
+pub struct UidBuf(pub Vec<u8>);
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct UidRef<'a>(pub &'a [u8]);
-impl<'a> Into<Uid> for UidRef<'a> {
-	fn into(self) -> Uid { Uid(self.0.into()) }
+#[derive(Debug, Eq, PartialEq, RefCast, Serialize)]
+#[repr(transparent)]
+pub struct Uid(pub [u8]);
+
+impl ToOwned for Uid {
+	type Owned = UidBuf;
+	fn to_owned(&self) -> Self::Owned { UidBuf(self.0.to_owned()) }
 }
+impl Borrow<Uid> for UidBuf {
+	fn borrow(&self) -> &Uid { Uid::ref_cast(self.0.borrow()) }
+}
+impl AsRef<Uid> for UidBuf {
+	fn as_ref(&self) -> &Uid { self.borrow() }
+}
+impl core::ops::Deref for UidBuf {
+	type Target = Uid;
+	fn deref(&self) -> &Self::Target { self.borrow() }
+}
+impl<'a> From<&'a Uid> for Cow<'a, Uid> {
+	fn from(u: &'a Uid) -> Self { Cow::Borrowed(u) }
+}
+
 impl Uid {
-	pub fn as_ref(&self) -> UidRef { UidRef(self.0.as_ref()) }
+	pub fn from_bytes<'a>(data: &'a [u8]) -> &Self { Uid::ref_cast(data) }
 
-	/// TeamSpeak uses a different encoding of the uid for fetching avatars.
-	///
-	/// The raw data (base64-decoded) is encoded in hex, but instead of using
-	/// [0-9a-f] with [a-p].
-	pub fn as_avatar(&self) -> String { self.as_ref().as_avatar() }
-
-	pub fn is_server_admin(&self) -> bool { self.as_ref().is_server_admin() }
-}
-
-impl UidRef<'_> {
 	/// TeamSpeak uses a different encoding of the uid for fetching avatars.
 	///
 	/// The raw data (base64-decoded) is encoded in hex, but instead of using
 	/// [0-9a-f] with [a-p].
 	pub fn as_avatar(&self) -> String {
 		let mut res = String::with_capacity(self.0.len() * 2);
-		for b in self.0 {
+		for b in &self.0 {
 			res.push((b'a' + (b >> 4)) as char);
 			res.push((b'a' + (b & 0xf)) as char);
 		}
 		res
 	}
 
-	pub fn is_server_admin(&self) -> bool { self.0 == b"ServerAdmin" }
+	pub fn is_server_admin(&self) -> bool { &self.0 == b"ServerAdmin" }
+}
+
+impl<'a, 'de: 'a> Deserialize<'de> for &'a Uid {
+	fn deserialize<D>(d: D) -> Result<&'a Uid, D::Error>
+	where D: Deserializer<'de> {
+		let data = <&[u8]>::deserialize(d)?;
+		Ok(Uid::from_bytes(data))
+	}
 }
 
 /// The database id of a client.
@@ -116,14 +133,14 @@ pub struct TalkPowerRequest {
 pub struct Invoker {
 	pub name: String,
 	pub id: ClientId,
-	pub uid: Option<Uid>,
+	pub uid: Option<UidBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct InvokerRef<'a> {
 	pub name: &'a str,
 	pub id: ClientId,
-	pub uid: Option<UidRef<'a>>,
+	pub uid: Option<&'a Uid>,
 }
 
 impl Invoker {

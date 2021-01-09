@@ -47,6 +47,7 @@ pub enum InnerRustType {
 	Map(Box<InnerRustType>, Box<InnerRustType>),
 	Set(Box<InnerRustType>),
 	Vec(Box<InnerRustType>),
+	Cow(Box<InnerRustType>),
 }
 
 #[derive(Clone, Debug)]
@@ -69,12 +70,8 @@ impl InnerRustType {
 					write!(f, "String")?;
 				}
 			}
-			Self::Struct(s) if s == "UidRef" => {
-				if lifetime {
-					write!(f, "UidRef<'a>")?;
-				} else {
-					write!(f, "{}", s)?;
-				}
+			Self::Struct(s) if s == "Uid" => {
+				write!(f, "{}", s)?;
 			}
 			Self::Primitive(s) | Self::Struct(s) => write!(f, "{}", s)?,
 			Self::Ref(i) => {
@@ -109,32 +106,51 @@ impl InnerRustType {
 					write!(f, ">")?;
 				}
 			}
+			Self::Cow(i) => {
+				write!(f, "Cow<{}, ", lifetime_str.trim())?;
+				i.fmt(f, false, true)?;
+				write!(f, ">")?;
+			}
 		}
 		Ok(())
 	}
 
-	/// Returns a converted type and a boolean, saying if the type was converted or if we need to
-	/// wrap it into an option.
+	/// Returns a converted type.
 	pub fn to_ref(&self) -> Self {
 		match self {
-			Self::Struct(s) if s == "Uid" => Self::Struct("UidRef".into()),
+			Self::Struct(s) if s == "UidBuf" => Self::Ref(Box::new(Self::Struct("Uid".into()))),
 			Self::Struct(s) if s == "String" => Self::Ref(Box::new(Self::Struct("str".into()))),
 			Self::Struct(_) | Self::Map(_, _) | Self::Set(_) | Self::Vec(_) => {
 				Self::Ref(Box::new(self.clone()))
 			}
-			Self::Primitive(_) | Self::Ref(_) => self.clone(),
+			Self::Primitive(_) | Self::Ref(_) | Self::Cow(_) => self.clone(),
 			Self::Option(i) => Self::Option(Box::new(i.to_ref())),
+		}
+	}
+
+	/// Returns a converted type.
+	pub fn to_cow(&self) -> Self {
+		match self {
+			Self::Struct(s) if s == "UidBuf" => Self::Cow(Box::new(Self::Struct("Uid".into()))),
+			Self::Struct(s) if s == "String" => Self::Cow(Box::new(Self::Struct("str".into()))),
+			Self::Struct(_) | Self::Map(_, _) | Self::Set(_) | Self::Vec(_) => {
+				Self::Cow(Box::new(self.clone()))
+			}
+			Self::Primitive(_) | Self::Ref(_) | Self::Cow(_) => self.clone(),
+			Self::Option(i) => Self::Option(Box::new(i.to_cow())),
 		}
 	}
 
 	/// Get code snippet for `as_ref`.
 	pub fn code_as_ref(&self, name: &str) -> String {
 		match self {
-			Self::Struct(s) if s == "Uid" || s == "str" => format!("{}.as_ref()", name),
+			Self::Struct(s) if s == "UidBuf" || s == "str" => format!("{}.as_ref()", name),
 			Self::Struct(s) if s == "String" => format!("{}.as_str()", name),
 			Self::Struct(s) if s == "str" => name.into(),
 			Self::Struct(_) => format!("&{}", name),
-			Self::Map(_, _) | Self::Set(_) | Self::Vec(_) => format!("{}.as_ref()", name),
+			Self::Map(_, _) | Self::Set(_) | Self::Vec(_) | Self::Cow(_) => {
+				format!("{}.as_ref()", name)
+			}
 			Self::Primitive(_) => name.into(),
 			Self::Ref(i) => {
 				let inner = i.code_as_ref(name);
@@ -167,8 +183,8 @@ impl InnerRustType {
 
 	pub fn uses_lifetime(&self) -> bool {
 		match self {
-			Self::Struct(s) if s == "UidRef" => true,
-			Self::Ref(_) => true,
+			Self::Struct(s) if s == "Uid" => true,
+			Self::Ref(_) | Self::Cow(_) => true,
 			Self::Map(_, i) | Self::Set(i) | Self::Vec(i) | Self::Option(i) => i.uses_lifetime(),
 			_ => false,
 		}
@@ -203,6 +219,8 @@ impl FromStr for InnerRustType {
 			|| s == "SocketAddr"
 		{
 			Ok(Self::Primitive(s.into()))
+		} else if s == "Uid" {
+			Ok(Self::Struct("UidBuf".into()))
 		} else if s == "str" || s == "String" {
 			Ok(Self::Struct("String".into()))
 		} else if s.starts_with('&') {
@@ -311,6 +329,8 @@ impl RustType {
 		}
 	}
 
+	pub fn to_cow(&self) -> Self { Self { inner: self.inner.to_cow(), lifetime: self.lifetime } }
+
 	pub fn lifetime(&self, lifetime: bool) -> Self {
 		let mut r = self.clone();
 		r.lifetime = lifetime;
@@ -330,6 +350,11 @@ impl RustType {
 	pub fn is_primitive(&self) -> bool { matches!(self.inner, InnerRustType::Primitive(_)) }
 
 	pub fn is_vec(&self) -> bool { matches!(self.inner, InnerRustType::Vec(_)) }
+
+	pub fn is_cow(&self) -> bool {
+		let inner = if let InnerRustType::Option(i) = &self.inner { &*i } else { &self.inner };
+		matches!(inner, InnerRustType::Cow(_))
+	}
 
 	pub fn uses_lifetime(&self) -> bool { self.inner.uses_lifetime() }
 

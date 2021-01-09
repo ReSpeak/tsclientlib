@@ -216,9 +216,17 @@ impl In<#= msg.name #>Part {
 		let mut uses_lifetime = false;
 		for a in &msg.attributes {
 			let field = self.0.get_field(a);
-			let from = field.get_type(a)?
+			let ty = field.get_type(a)?;
+			let mut from = ty
 				.code_as_ref("field")
-				.replacen("field", &format!("self.{}", field.get_rust_name()), 1); #>
+				.replacen("field", &format!("self.{}", field.get_rust_name()), 1);
+			if ty.to_cow().is_cow() {
+				if ty.is_opt() {
+					from.push_str(".map(Cow::Borrowed)");
+				} else {
+					from = format!("Cow::Borrowed({})", from);
+				}
+			} #>
 			<#= field.get_rust_name() #>: <#= from #>,
 		<# } #>
 		}
@@ -254,7 +262,7 @@ pub struct Out<#= msg.name #>Part<# if uses_lifetime { #><'a><# } #> {
 	if field.get_rust_name() != field.ts { #>
 	/// `<#= field.ts #>` in TeamSpeak
 	<# } #>
-	pub <#= field.get_rust_name() #>: <#= field.get_type(a)?.to_ref(true).lifetime(true) #>,
+	pub <#= field.get_rust_name() #>: <#= field.get_type(a)?.to_cow().lifetime(true) #>,
 <# } #>
 }
 

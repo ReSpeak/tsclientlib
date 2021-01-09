@@ -127,7 +127,7 @@ pub enum Error {
 	#[error("Failed to send packet: {0}")]
 	SendPacket(#[source] tsproto::client::Error),
 	#[error("The server changed its identity")]
-	ServerUidMismatch(Uid),
+	ServerUidMismatch(UidBuf),
 }
 
 /// The reason for a temporary disconnect.
@@ -517,7 +517,7 @@ impl Connection {
 			} else {
 				return Err(Error::InitserverParamsMissing);
 			};
-			let real_uid = Uid(params.public_key.get_uid_no_base64().map_err(|e| {
+			let real_uid = UidBuf(params.public_key.get_uid_no_base64().map_err(|e| {
 				Error::Connect(tsproto::client::Error::TsProto(tsproto::Error::IdentityCrypto(
 					e.into(),
 				)))
@@ -543,24 +543,24 @@ impl Connection {
 			.map(|p| tsproto_types::crypto::encode_password(p.as_bytes()))
 			.unwrap_or_default();
 		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
-			name: &options.name,
-			version: &client_version,
-			platform: &client_platform,
+			name: Cow::Borrowed(options.name.as_ref()),
+			version: Cow::Borrowed(client_version.as_ref()),
+			platform: Cow::Borrowed(client_platform.as_ref()),
 			input_muted: if options.input_muted { Some(true) } else { None },
 			output_muted: if options.output_muted { Some(true) } else { None },
 			input_hardware_enabled: options.input_hardware_enabled,
 			output_hardware_enabled: options.output_hardware_enabled,
 			is_away: if options.away.is_some() { Some(true) } else { None },
-			away_message: options.away.as_deref(),
-			default_channel: options.channel.as_deref().unwrap_or_default(),
-			default_channel_password: &default_channel_password,
-			password: &password,
-			metadata: "",
-			version_sign: &client_version_sign,
+			away_message: options.away.as_deref().map(Cow::Borrowed),
+			default_channel: Cow::Borrowed(options.channel.as_deref().unwrap_or_default()),
+			default_channel_password: Cow::Borrowed(default_channel_password.as_ref()),
+			password: Cow::Borrowed(password.as_ref()),
+			metadata: "".into(),
+			version_sign: Cow::Borrowed(client_version_sign.as_ref()),
 			client_key_offset: counter,
-			phonetic_name: "",
-			default_token: "",
-			hardware_id: &options.hardware_id,
+			phonetic_name: "".into(),
+			default_token: "".into(),
+			hardware_id: Cow::Borrowed(options.hardware_id.as_ref()),
 			badges: None,
 			signed_badges: None,
 			integrations: None,
@@ -1645,9 +1645,9 @@ impl ConnectedConnection {
 			.unwrap_or_default();
 		let packet = c2s::OutInitDownloadMessage::new(&mut iter::once(c2s::OutInitDownloadPart {
 			client_filetransfer_id: ft_id,
-			name: path,
+			name: Cow::Borrowed(path),
 			channel_id,
-			channel_password: &pass,
+			channel_password: Cow::Borrowed(&pass),
 			seek_position: seek_position.unwrap_or_default(),
 			protocol: 1,
 		}));
@@ -1667,9 +1667,9 @@ impl ConnectedConnection {
 			.unwrap_or_default();
 		let packet = c2s::OutInitUploadMessage::new(&mut iter::once(c2s::OutInitUploadPart {
 			client_filetransfer_id: ft_id,
-			name: path,
+			name: Cow::Borrowed(path),
 			channel_id,
-			channel_password: &pass,
+			channel_password: Cow::Borrowed(&pass),
 			overwrite,
 			resume,
 			size,
@@ -1697,7 +1697,7 @@ pub struct ConnectOptions {
 	address: ServerAddress,
 	local_address: Option<SocketAddr>,
 	identity: Option<Identity>,
-	server: Option<Uid>,
+	server: Option<UidBuf>,
 	name: Cow<'static, str>,
 	version: Version,
 	hardware_id: Cow<'static, str>,
@@ -1830,7 +1830,7 @@ impl ConnectOptions {
 	/// # Default
 	/// Allow the server to have any identity.
 	#[inline]
-	pub fn server(mut self, server: Uid) -> Self {
+	pub fn server(mut self, server: UidBuf) -> Self {
 		self.server = Some(server);
 		self
 	}
@@ -2041,7 +2041,7 @@ impl ConnectOptions {
 	#[inline]
 	pub fn get_identity(&self) -> Option<&Identity> { self.identity.as_ref() }
 	#[inline]
-	pub fn get_server(&self) -> Option<UidRef> { self.server.as_ref().map(Uid::as_ref) }
+	pub fn get_server(&self) -> Option<&Uid> { self.server.as_deref() }
 	#[inline]
 	pub fn get_name(&self) -> &str { &self.name }
 	#[inline]

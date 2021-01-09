@@ -62,9 +62,9 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}}), }}",
 			field.pretty
 		),
-		"Uid" => "Uid(if let Ok(uid) = base64::decode(val) { uid } else { val.as_bytes().to_vec() \
-		          })"
-		.into(),
+		"UidBuf" => "UidBuf(if let Ok(uid) = base64::decode(val) { uid } else { \
+		             val.as_bytes().to_vec() })"
+			.into(),
 		"&str" => "val".into(),
 		"String" => "val.to_string()".into(),
 		"IconId" => format!(
@@ -231,10 +231,9 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 		| "IpAddr" | "SocketAddr" => format!("{}{}", ref_amp, name),
 		"bool" => format!("if {}{} {{ &\"1\" }} else {{ &\"0\" }}", ref_star, name),
 		"&str" => name.to_string(),
-		"UidRef" | "Uid" => format!(
-			"&if {1}.0 == b\"ServerAdmin\" {{ Cow::Borrowed(\"ServerAdmin\") }}
-			else {{ Cow::<str>::Owned(base64::encode({0}{1}.0)) }}",
-			if rust_type == "Uid" { "&" } else { "" },
+		"UidBuf" | "&Uid" => format!(
+			"&if {0}.is_server_admin() {{ Cow::Borrowed(\"ServerAdmin\") }}
+			else {{ Cow::<str>::Owned(base64::encode(&{0}.0)) }}",
 			name,
 		),
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId" | "IconId" => {
@@ -283,7 +282,7 @@ pub fn vector_value_serializer(field: &Field, inner_type: &str, name: &str) -> S
 	// TODO Vector serialization creates an intermediate string which is not necessary
 	format!(
 		"&{{ let mut s = String::new();
-				for val in {} {{
+				for val in {}.as_ref() {{
 					if !s.is_empty() {{ s += \",\" }}
 					write!(&mut s, \"{{}}\", {}).unwrap();
 				}}
