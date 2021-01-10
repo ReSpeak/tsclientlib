@@ -624,7 +624,7 @@ impl Resender {
 		// Rtt (non-smoothed)
 		let diff = if rtt > self.stats.rtt { rtt - self.stats.rtt } else { self.stats.rtt - rtt };
 		self.stats.rtt_dev = self.stats.rtt_dev * 3 / 4 + diff / 4;
-		self.stats.rtt = self.stats.rtt * 7 / 8 + rtt / 8;
+		self.stats.rtt = self.stats.rtt / 2 + rtt / 2;
 	}
 
 	pub fn send_packet(con: &mut Connection, packet: OutUdpPacket) {

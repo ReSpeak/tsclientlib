@@ -548,14 +548,15 @@ impl Connection {
 	fn address_fun(
 		&self, msg: &s2c::InClientConnectionInfoPart, _: &mut Vec<Event>,
 	) -> Result<Option<Option<SocketAddr>>> {
-		if !msg.ip.is_empty() {
-			Ok(Some(Some(SocketAddr::new(
-				msg.ip.trim_matches(&['[', ']'][..]).parse().map_err(Error::InvalidConnectionIp)?,
-				msg.port,
-			))))
-		} else {
-			Ok(Some(None))
+		if let (Some(ip), Some(port)) = (&msg.ip, &msg.port) {
+			if !ip.is_empty() {
+				return Ok(Some(Some(SocketAddr::new(
+					ip.trim_matches(&['[', ']'][..]).parse().map_err(Error::InvalidConnectionIp)?,
+					*port,
+				))));
+			}
 		}
+		Ok(Some(None))
 	}
 
 	fn channel_subscribe_fun(
