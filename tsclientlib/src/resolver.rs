@@ -26,6 +26,7 @@ const TIMEOUT_SECONDS: u64 = 10;
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
 	#[error("Failed to create system resolver ({system}) and fallback resolver ({fallback})")]
 	CreateResolver {

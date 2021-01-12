@@ -43,6 +43,7 @@ const USUAL_FRAME_SIZE: usize = 48000 / 50;
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
 	#[error("Failed to create opus decoder: {0}")]
 	CreateDecoder(#[source] audiopus::Error),

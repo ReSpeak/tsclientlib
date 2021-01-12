@@ -78,6 +78,7 @@ pub struct CommandError {
 }
 
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum Error {
 	/// A command return an error.
 	#[error(transparent)]

@@ -12,7 +12,6 @@ include!(concat!(env!("OUT_DIR"), "/events.rs"));
 
 /// Additional data for some events.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-#[non_exhaustive]
 pub struct ExtraInfo {
 	/// Set for e.g. new clients to distinguish if they joined or are made available because we
 	/// subscribed to a channel.

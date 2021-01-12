@@ -11,6 +11,7 @@ use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
 
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum InMessage {
 <# for msg_group in &self.0.msg_group {
 	for msg in &msg_group.msg { #>

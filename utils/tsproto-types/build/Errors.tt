@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, PartialEq, Serialize, ToPrimitive)]
+#[non_exhaustive]
 pub enum Error {
 <# for e in &**self { #>
 	<# if !e.doc.is_empty() { #>

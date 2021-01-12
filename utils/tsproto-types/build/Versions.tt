@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[non_exhaustive]
 #[allow(non_camel_case_types)]
 pub enum Version {
 <# for v in &**self { #>

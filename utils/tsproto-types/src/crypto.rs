@@ -16,6 +16,7 @@ use untrusted::Input;
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone, Error)]
+#[non_exhaustive]
 pub enum Error {
 	#[error("More than one ASN.1 block")]
 	TooManyAsn1Blocks,
