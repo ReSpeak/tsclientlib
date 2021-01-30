@@ -34,17 +34,19 @@ futures = "0.3"
 git-testament = "0.1"
 itertools = "0.9"
 num-traits = "0.2"
+# TODO pin-utils?
 pin-utils = "0.1.0-alpha.4"
 rand = "0.7"
-reqwest = "0.10"
+reqwest = "0.11"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 thiserror = "1"
 time = "0.2.15"
-tokio = { version = "0.2", features = ["stream", "time"] }
-trust-dns-proto = "0.19"
-trust-dns-resolver = "0.19"
+tokio = { version = "1", features = ["time"] }
+tokio-stream = "0.1"
+trust-dns-proto = "0.20"
+trust-dns-resolver = "0.20"
 ts-bookkeeping = { path = "../utils/ts-bookkeeping" }
 tsproto = { path = "../tsproto", version = "=0.1.0" }
 tsproto-packets = { path = "../utils/tsproto-packets" }
@@ -63,5 +65,4 @@ quickcheck_macros = "0.9"
 sdl2 = "0.34"
 slog-envlogger = "2"
 structopt = { version = "0.3", default-features = false }
-tokio = { version = "0.2", features = ["rt-threaded", "rt-util", "signal"] }
-tokio-signal = "0.2"
+tokio = { version = "1", features = ["io-util", "net", "rt-multi-thread", "rt", "signal"] }

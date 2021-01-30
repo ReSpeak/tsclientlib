@@ -4,12 +4,14 @@ use std::convert::From;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Sub};
+use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures::prelude::*;
 use num_traits::ToPrimitive;
+use pin_project_lite::pin_project;
 use slog::{info, trace, warn, Logger};
-use tokio::time::{Delay, Duration, Instant};
+use tokio::time::{Duration, Instant, Sleep};
 use tsproto_packets::packets::*;
 
 use crate::connection::{Connection, StreamItem};
@@ -181,6 +183,25 @@ struct ConnectionStatsCounter {
 	packet_loss: [u32; 13],
 }
 
+pin_project! {
+	/// Timers are extra because they need to be pinned.
+	#[derive(Debug)]
+	struct Timers {
+		// The future to wake us up when the next packet should be resent.
+		#[pin]
+		timeout: Sleep,
+		// The timer used for sending ping packets.
+		#[pin]
+		ping_timeout: Sleep,
+		// The timer used for disconnecting the connection.
+		#[pin]
+		state_timeout: Sleep,
+		// The timer used to update network statistics.
+		#[pin]
+		stats_timeout: Sleep,
+	}
+}
+
 /// Resend command and init packets until the other side acknowledges them.
 #[derive(Debug)]
 pub struct Resender {
@@ -229,14 +250,7 @@ pub struct Resender {
 	/// When the statistics were last reset.
 	last_stat: Instant,
 
-	/// The future to wake us up when the next packet should be resent.
-	timeout: Delay,
-	/// The timer used for sending ping packets.
-	ping_timeout: Delay,
-	/// The timer used for disconnecting the connection.
-	state_timeout: Delay,
-	/// The timer used to update network statistics.
-	stats_timeout: Delay,
+	timers: Pin<Box<Timers>>,
 }
 
 #[derive(Clone, Debug)]
@@ -383,13 +397,16 @@ impl Default for Resender {
 			last_loss: now,
 			no_congestion_since: Some(now),
 
-			timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
 			last_receive: now,
 			last_send: now,
 			last_stat: now,
-			ping_timeout: tokio::time::delay_for(std::time::Duration::from_secs(PING_SECONDS)),
-			state_timeout: tokio::time::delay_for(std::time::Duration::from_secs(1)),
-			stats_timeout: tokio::time::delay_for(std::time::Duration::from_secs(STAT_SECONDS)),
+
+			timers: Box::pin(Timers {
+				timeout: tokio::time::sleep(std::time::Duration::from_secs(1)),
+				ping_timeout: tokio::time::sleep(std::time::Duration::from_secs(PING_SECONDS)),
+				state_timeout: tokio::time::sleep(std::time::Duration::from_secs(1)),
+				stats_timeout: tokio::time::sleep(std::time::Duration::from_secs(STAT_SECONDS)),
+			}),
 		}
 	}
 }
@@ -532,7 +549,9 @@ impl Resender {
 		self.state = state;
 
 		self.last_send = Instant::now();
-		self.state_timeout.reset(self.last_send + self.get_timeout());
+		let new_timeout = self.last_send + self.get_timeout();
+		let timers = self.timers.as_mut().project();
+		timers.state_timeout.reset(new_timeout);
 	}
 
 	pub fn get_state(&self) -> ResenderState { self.state }
@@ -691,8 +710,10 @@ impl Resender {
 			if rec.tries != 0 && rec.last > last_threshold {
 				// Schedule next send
 				let dur = rec.last - last_threshold;
-				con.resender.timeout.reset(now + dur);
-				if let Poll::Ready(()) = con.resender.timeout.poll_unpin(cx) {
+				let timers = con.resender.timers.as_mut().project();
+				timers.timeout.reset(now + dur);
+				let timers = con.resender.timers.as_mut().project();
+				if let Poll::Ready(()) = timers.timeout.poll(cx) {
 					continue;
 				}
 				break;
@@ -706,7 +727,7 @@ impl Resender {
 			trace!(con.logger, "Try sending packet");
 			match Connection::static_poll_send_udp_packet(
 				&*con.udp_socket,
-				&con.address,
+				con.address,
 				&con.event_listeners,
 				cx,
 				&full_rec.packet,
@@ -775,8 +796,10 @@ impl Resender {
 				return Err(Error::Timeout("No disconnect ack received"));
 			}
 
-			con.resender.state_timeout.reset(con.resender.last_send + timeout);
-			if let Poll::Ready(()) = con.resender.state_timeout.poll_unpin(cx) {
+			let timers = con.resender.timers.as_mut().project();
+			timers.state_timeout.reset(con.resender.last_send + timeout);
+			let timers = con.resender.timers.as_mut().project();
+			if let Poll::Ready(()) = timers.state_timeout.poll(cx) {
 				return Err(Error::Timeout("No disconnect ack received"));
 			}
 		}
@@ -784,9 +807,11 @@ impl Resender {
 		// Update stats
 		loop {
 			let next_reset = con.resender.last_stat + Duration::from_secs(STAT_SECONDS);
-			con.resender.stats_timeout.reset(next_reset);
+			let timers = con.resender.timers.as_mut().project();
+			timers.stats_timeout.reset(next_reset);
 
-			if let Poll::Ready(()) = con.resender.stats_timeout.poll_unpin(cx) {
+			let timers = con.resender.timers.as_mut().project();
+			if let Poll::Ready(()) = timers.stats_timeout.poll(cx) {
 				// Reset stats
 				con.resender.last_stat = Instant::now();
 				let stats = &mut con.resender.stats;
@@ -818,9 +843,11 @@ impl Resender {
 						con.resender.last_pings.clear();
 					}
 				}
-				con.resender.ping_timeout.reset(next_ping);
+				let timers = con.resender.timers.as_mut().project();
+				timers.ping_timeout.reset(next_ping);
 
-				if let Poll::Ready(()) = con.resender.ping_timeout.poll_unpin(cx) {
+				let timers = con.resender.timers.as_mut().project();
+				if let Poll::Ready(()) = timers.ping_timeout.poll(cx) {
 					// Check for timeouts
 					if con.resender.last_pings.len() >= PING_COUNT {
 						let diff = con.resender.last_pings.last().unwrap().id

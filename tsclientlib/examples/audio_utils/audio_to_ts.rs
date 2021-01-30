@@ -9,6 +9,7 @@ use slog::{debug, error, o, Logger};
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tokio::time::{self, Duration};
+use tokio_stream::wrappers::IntervalStream;
 use tsproto_packets::packets::{AudioData, CodecType, OutAudio, OutPacket};
 
 use super::*;
@@ -113,30 +114,32 @@ impl AudioToTs {
 	}
 
 	fn start(a2t: Arc<Mutex<Self>>, local_set: &LocalSet) {
-		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(move |_| {
-			let mut a2t = a2t.lock().unwrap();
-			if a2t.device.status() == AudioStatus::Stopped {
-				// Try to reconnect to audio
-				match Self::open_capture(
-					a2t.logger.clone(),
-					&a2t.audio_subsystem,
-					a2t.listener.clone(),
-					a2t.volume.clone(),
-				) {
-					Ok(d) => {
-						a2t.device = d;
-						debug!(a2t.logger, "Reconnected to capture device");
-						if a2t.is_playing {
-							a2t.device.resume();
+		local_set.spawn_local(
+			IntervalStream::new(time::interval(Duration::from_secs(1))).for_each(move |_| {
+				let mut a2t = a2t.lock().unwrap();
+				if a2t.device.status() == AudioStatus::Stopped {
+					// Try to reconnect to audio
+					match Self::open_capture(
+						a2t.logger.clone(),
+						&a2t.audio_subsystem,
+						a2t.listener.clone(),
+						a2t.volume.clone(),
+					) {
+						Ok(d) => {
+							a2t.device = d;
+							debug!(a2t.logger, "Reconnected to capture device");
+							if a2t.is_playing {
+								a2t.device.resume();
+							}
 						}
-					}
-					Err(e) => {
-						error!(a2t.logger, "Failed to open capture device"; "error" => %e);
-					}
-				};
-			}
-			future::ready(())
-		}));
+						Err(e) => {
+							error!(a2t.logger, "Failed to open capture device"; "error" => %e);
+						}
+					};
+				}
+				future::ready(())
+			}),
+		);
 	}
 }
 

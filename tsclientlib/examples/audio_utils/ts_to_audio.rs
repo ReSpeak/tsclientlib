@@ -7,6 +7,7 @@ use sdl2::AudioSubsystem;
 use slog::{debug, error, o, Logger};
 use tokio::task::LocalSet;
 use tokio::time::{self, Duration};
+use tokio_stream::wrappers::IntervalStream;
 use tsclientlib::ClientId;
 use tsproto_packets::packets::InAudioBuf;
 
@@ -63,36 +64,38 @@ impl TsToAudio {
 	}
 
 	fn start(t2a: Arc<Mutex<Self>>, local_set: &LocalSet) {
-		local_set.spawn_local(time::interval(Duration::from_secs(1)).for_each(move |_| {
-			let mut t2a = t2a.lock().unwrap();
+		local_set.spawn_local(
+			IntervalStream::new(time::interval(Duration::from_secs(1))).for_each(move |_| {
+				let mut t2a = t2a.lock().unwrap();
 
-			if t2a.device.status() == AudioStatus::Stopped {
-				// Try to reconnect to audio
-				match Self::open_playback(
-					t2a.logger.clone(),
-					&t2a.audio_subsystem,
-					t2a.data.clone(),
-				) {
-					Ok(d) => {
-						t2a.device = d;
-						debug!(t2a.logger, "Reconnected to playback device");
-					}
-					Err(e) => {
-						error!(t2a.logger, "Failed to open playback device"; "error" => %e);
-					}
-				};
-			}
+				if t2a.device.status() == AudioStatus::Stopped {
+					// Try to reconnect to audio
+					match Self::open_playback(
+						t2a.logger.clone(),
+						&t2a.audio_subsystem,
+						t2a.data.clone(),
+					) {
+						Ok(d) => {
+							t2a.device = d;
+							debug!(t2a.logger, "Reconnected to playback device");
+						}
+						Err(e) => {
+							error!(t2a.logger, "Failed to open playback device"; "error" => %e);
+						}
+					};
+				}
 
-			let data_empty = t2a.data.lock().unwrap().get_queues().is_empty();
-			if t2a.device.status() == AudioStatus::Paused && !data_empty {
-				debug!(t2a.logger, "Resuming playback");
-				t2a.device.resume();
-			} else if t2a.device.status() == AudioStatus::Playing && data_empty {
-				debug!(t2a.logger, "Pausing playback");
-				t2a.device.pause();
-			}
-			future::ready(())
-		}));
+				let data_empty = t2a.data.lock().unwrap().get_queues().is_empty();
+				if t2a.device.status() == AudioStatus::Paused && !data_empty {
+					debug!(t2a.logger, "Resuming playback");
+					t2a.device.resume();
+				} else if t2a.device.status() == AudioStatus::Playing && data_empty {
+					debug!(t2a.logger, "Pausing playback");
+					t2a.device.pause();
+				}
+				future::ready(())
+			}),
+		);
 	}
 
 	pub(crate) fn play_packet(&mut self, id: Id, packet: InAudioBuf) -> Result<()> {

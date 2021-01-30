@@ -57,7 +57,7 @@ async fn real_main() -> Result<()> {
 	// Wait some time
 	let mut events = con.events().try_filter(|_| future::ready(false));
 	tokio::select! {
-		_ = &mut time::delay_for(Duration::from_secs(1)) => {}
+		_ = time::sleep(Duration::from_secs(1)) => {}
 		_ = events.next() => {
 			bail!("Disconnected");
 		}

@@ -55,7 +55,7 @@ async fn real_main() -> Result<()> {
 
 				// Wait some time
 				tokio::select! {
-					_ = &mut time::delay_for(Duration::from_secs(2)) => {}
+					_ = time::sleep(Duration::from_secs(2)) => {}
 					_ = con.wait_disconnect() => {
 						panic!("Disconnected");
 					}

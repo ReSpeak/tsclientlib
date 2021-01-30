@@ -56,7 +56,7 @@ async fn real_main() -> Result<()> {
 	println!("Server welcome message: {}", sanitize(&welcome_message));
 
 	// Wait some time
-	time::delay_for(Duration::from_secs(1)).await;
+	time::sleep(Duration::from_secs(1)).await;
 
 	// Disconnect
 	handle.disconnect(DisconnectOptions::new()).await?;

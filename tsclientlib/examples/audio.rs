@@ -102,7 +102,7 @@ async fn real_main() -> Result<()> {
 
 		// Wait for ctrl + c
 		tokio::select! {
-			send_audio = recv.next() => {
+			send_audio = recv.recv() => {
 				if let Some(packet) = send_audio {
 					con.send_audio(packet)?;
 				} else {

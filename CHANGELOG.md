@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StreamItem::MessageEvent` for non-book events
 
 ### ℹ Changed
-- ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 0.2 for `async`/`await` support
+- ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 1.0 for `async`/`await` support
 - 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks
 - 🚀 Many performance improvements
 	- New command parser, 2×–2.5× faster than the old one

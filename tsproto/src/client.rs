@@ -693,7 +693,7 @@ impl Stream for Client {
 	type Item = Result<StreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
 		loop {
-			match Pin::new(&mut **self).poll_next(cx) {
+			match Pin::new(&mut self.con).poll_next(cx) {
 				Poll::Ready(Some(Ok(StreamItem::Command(command)))) => {
 					match self.handle_command(command) {
 						Err(e) => return Poll::Ready(Some(Err(e))),
@@ -723,6 +723,7 @@ mod tests {
 	use anyhow::{bail, Result};
 	use num_traits::ToPrimitive;
 	use slog::{debug, o, Drain};
+	use tokio::io::ReadBuf;
 	use tokio::sync::oneshot;
 	use tokio::time::{self, Duration};
 
@@ -770,14 +771,14 @@ mod tests {
 
 	impl Socket for SimulatedSocket {
 		fn poll_recv_from(
-			&self, cx: &mut Context, buf: &mut [u8],
-		) -> Poll<io::Result<(usize, SocketAddr)>> {
+			&self, cx: &mut Context, buf: &mut ReadBuf,
+		) -> Poll<io::Result<SocketAddr>> {
 			let mut state = self.state.lock().unwrap();
 			if let Some(packet) = state.buffer[self.i].pop_front() {
-				let len = std::cmp::min(buf.len(), packet.len());
-				buf[..len].copy_from_slice(&packet[..len]);
+				let len = std::cmp::min(buf.remaining(), packet.len());
+				buf.put_slice(&packet[..len]);
 				debug!(state.logger, "{} receives packet", self.i);
-				Poll::Ready(Ok((len, self.addr)))
+				Poll::Ready(Ok(self.addr))
 			} else {
 				state.wakers[self.i] = Some(cx.waker().clone());
 				Poll::Pending
@@ -785,7 +786,7 @@ mod tests {
 		}
 
 		fn poll_send_to(
-			&self, _: &mut Context, buf: &[u8], _: &SocketAddr,
+			&self, _: &mut Context, buf: &[u8], _: SocketAddr,
 		) -> Poll<io::Result<usize>> {
 			let mut state = self.state.lock().unwrap();
 			debug!(state.logger, "{} sends packet", self.i);

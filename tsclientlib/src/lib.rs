@@ -27,7 +27,7 @@ use std::time::Duration;
 use futures::prelude::*;
 use slog::{debug, info, o, warn, Drain, Logger};
 use thiserror::Error;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
 use ts_bookkeeping::messages::c2s;
@@ -448,7 +448,7 @@ impl Connection {
 		logger: Logger, options: ConnectOptions, is_reconnect: bool,
 	) -> Result<(client::Client, data::Connection)> {
 		if is_reconnect {
-			tokio::time::delay_for(Duration::from_secs(10)).await;
+			tokio::time::sleep(Duration::from_secs(10)).await;
 		}
 
 		let resolved = match &options.address {

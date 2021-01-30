@@ -11,6 +11,7 @@ use generic_array::typenum::consts::U16;
 use generic_array::GenericArray;
 use num_traits::ToPrimitive;
 use slog::{o, Logger};
+use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
 use tsproto_packets::packets::*;
 use tsproto_types::crypto::EccKeyPubP256;
@@ -22,11 +23,9 @@ use crate::{Error, Result, MAX_UDP_PACKET_LENGTH, UDP_SINK_CAPACITY};
 /// The needed functions, this can be used to abstract from the underlying
 /// transport and allows simulation.
 pub trait Socket {
-	fn poll_recv_from(
-		&self, cx: &mut Context, buf: &mut [u8],
-	) -> Poll<io::Result<(usize, SocketAddr)>>;
+	fn poll_recv_from(&self, cx: &mut Context, buf: &mut ReadBuf) -> Poll<io::Result<SocketAddr>>;
 	fn poll_send_to(
-		&self, cx: &mut Context, buf: &[u8], target: &SocketAddr,
+		&self, cx: &mut Context, buf: &[u8], target: SocketAddr,
 	) -> Poll<io::Result<usize>>;
 	fn local_addr(&self) -> io::Result<SocketAddr>;
 }
@@ -117,14 +116,12 @@ pub struct Connection {
 }
 
 impl Socket for UdpSocket {
-	fn poll_recv_from(
-		&self, cx: &mut Context, buf: &mut [u8],
-	) -> Poll<io::Result<(usize, SocketAddr)>> {
+	fn poll_recv_from(&self, cx: &mut Context, buf: &mut ReadBuf) -> Poll<io::Result<SocketAddr>> {
 		self.poll_recv_from(cx, buf)
 	}
 
 	fn poll_send_to(
-		&self, cx: &mut Context, buf: &[u8], target: &SocketAddr,
+		&self, cx: &mut Context, buf: &[u8], target: SocketAddr,
 	) -> Poll<io::Result<usize>> {
 		self.poll_send_to(cx, buf, target)
 	}
@@ -254,8 +251,10 @@ impl Connection {
 				self.udp_buffer.resize(MAX_UDP_PACKET_LENGTH, 0);
 			}
 
-			match self.udp_socket.poll_recv_from(cx, &mut self.udp_buffer) {
-				Poll::Ready(Ok((size, addr))) => {
+			let mut read_buf = ReadBuf::new(&mut self.udp_buffer);
+			match self.udp_socket.poll_recv_from(cx, &mut &mut read_buf) {
+				Poll::Ready(Ok(addr)) => {
+					let size = read_buf.filled().len();
 					let mut udp_buffer = mem::replace(&mut self.udp_buffer, Vec::new());
 					udp_buffer.truncate(size);
 					match self.handle_udp_packet(cx, udp_buffer, addr) {
@@ -363,7 +362,7 @@ impl Connection {
 	) -> Poll<Result<()>> {
 		Self::static_poll_send_udp_packet(
 			&*self.udp_socket,
-			&self.address,
+			self.address,
 			&self.event_listeners,
 			cx,
 			packet,
@@ -372,7 +371,7 @@ impl Connection {
 
 	/// Remember to add the size of the sent packet to the stats in the resender.
 	pub fn static_poll_send_udp_packet(
-		udp_socket: &dyn Socket, address: &SocketAddr, event_listeners: &[EventListener],
+		udp_socket: &dyn Socket, address: SocketAddr, event_listeners: &[EventListener],
 		cx: &mut Context, packet: &OutUdpPacket,
 	) -> Poll<Result<()>> {
 		let data = packet.data().data();

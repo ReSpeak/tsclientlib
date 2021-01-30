@@ -10,8 +10,8 @@ use itertools::Itertools;
 use rand::Rng;
 use slog::{debug, o, warn, Logger};
 use thiserror::Error;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
-use tokio::prelude::*;
 use tokio::time::Duration;
 use trust_dns_resolver::config::ResolverConfig;
 use trust_dns_resolver::{Name, TokioAsyncResolver};
@@ -127,7 +127,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	let logger2 = logger.clone();
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver(&logger2).await?;
+			let resolver = create_resolver(&logger2)?;
 
 			// Try to get the address by an SRV record
 			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Canot parse udp domain prefix");
@@ -145,7 +145,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	let logger2 = logger.clone();
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver(&logger2).await?;
+			let resolver = create_resolver(&logger2)?;
 			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Canot parse udp domain prefix");
 			let mut name =
 				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
@@ -182,7 +182,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 		.try_flatten(),
 	);
 
-	tokio::stream::StreamExt::timeout(res, Duration::from_secs(TIMEOUT_SECONDS))
+	tokio_stream::StreamExt::timeout(res, Duration::from_secs(TIMEOUT_SECONDS))
 		.filter_map(move |r: std::result::Result<Result<SocketAddr>, _>| {
 			future::ready(match r {
 				// Timeout
@@ -199,14 +199,13 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 		.right_stream()
 }
 
-async fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
-	match TokioAsyncResolver::tokio_from_system_conf().await {
+fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
+	match TokioAsyncResolver::tokio_from_system_conf() {
 		Ok(r) => Ok(r),
 		Err(e) => {
 			warn!(logger, "Failed to use system dns resolver config"; "error" => %e);
 			// Fallback
 			Ok(TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), Default::default())
-				.await
 				.map_err(|e2| Error::CreateResolver { system: e, fallback: e2 })?)
 		}
 	}

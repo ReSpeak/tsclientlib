@@ -1,5 +1,4 @@
 use anyhow::Result;
-use futures::prelude::*;
 use slog::{debug, info, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::sync::mpsc;
@@ -64,7 +63,7 @@ async fn real_main() -> Result<()> {
 	loop {
 		// Wait for ctrl + c
 		tokio::select! {
-			send_audio = recv.next() => {
+			send_audio = recv.recv() => {
 				if let Some(packet) = send_audio {
 					let from = ClientId(0);
 					let mut t2a = t2a.lock().unwrap();

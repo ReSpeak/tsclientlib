@@ -135,7 +135,7 @@ impl Stream for SyncConnection {
 	type Item = Result<SyncStreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
 		loop {
-			if let Poll::Ready(msg) = self.recv.poll_next_unpin(ctx) {
+			if let Poll::Ready(msg) = self.recv.poll_recv(ctx) {
 				if let Some(msg) = msg {
 					match msg {
 						SyncConMessage::RunFn(f) => f(&mut *self),
