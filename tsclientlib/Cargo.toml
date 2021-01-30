@@ -32,7 +32,7 @@ audiopus = { version = "0.2", optional = true }
 base64 = "0.13"
 futures = "0.3"
 git-testament = "0.1"
-itertools = "0.9"
+itertools = "0.10"
 num-traits = "0.2"
 # TODO pin-utils?
 pin-utils = "0.1.0-alpha.4"
@@ -60,8 +60,8 @@ features = ["max_level_trace", "release_max_level_debug"]
 [dev-dependencies]
 anyhow = "1"
 audiopus = "0.2"
-quickcheck = "0.9"
-quickcheck_macros = "0.9"
+quickcheck = "1"
+quickcheck_macros = "1"
 sdl2 = "0.34"
 slog-envlogger = "2"
 structopt = { version = "0.3", default-features = false }

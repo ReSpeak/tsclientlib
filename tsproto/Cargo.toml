@@ -39,9 +39,7 @@ rand = "0.7"
 rug = { version = "1", optional = true, default-features = false, features = ["integer"] }
 serde = { version = "1", features = ["derive"] }
 slog = "2"
-slog-async = "2"
 slog-perf = "0.2"
-slog-term = "2"
 stable_deref_trait = "1"
 thiserror = "1"
 time = "0.2.23"
@@ -54,6 +52,8 @@ quicklz = "0.3"
 [dev-dependencies]
 anyhow = "1"
 criterion = "0.3"
+slog-async = "2"
+slog-term = "2"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["rt", "signal"] }
 

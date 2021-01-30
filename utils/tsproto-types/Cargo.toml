@@ -27,6 +27,5 @@ untrusted = "0.7"
 
 [build-dependencies]
 heck = "0.3"
-itertools = "0.9"
 t4rust-derive = "0.3"
 tsproto-structs = { path = "../tsproto-structs", version = "=0.1.0" }
