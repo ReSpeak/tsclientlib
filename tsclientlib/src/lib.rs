@@ -1549,6 +1549,7 @@ impl ConnectedConnection {
 								reset!(ClientOutputMuted, output_muted);
 								reset!(ClientInputHardwareEnabled, input_muted);
 								reset!(ClientOutputHardwareEnabled, output_muted);
+								reset!(ClientOutputOnlyMuted, output_only_muted);
 
 								if *id == events::PropertyId::ClientAwayMessage(own_id) {
 									if let events::PropertyValue::OptionString(s) = old {

@@ -29,7 +29,7 @@ pub struct Enum {
 #[serde(deny_unknown_fields)]
 pub struct Variant {
 	pub name: String,
-	pub doc: Option<String>,
+	pub doc: String,
 	pub value: Option<u64>,
 }
 
