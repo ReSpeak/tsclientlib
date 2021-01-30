@@ -436,9 +436,7 @@ impl Connection {
 	/// nothing will happen in a connection, not even sending packets will work.
 	///
 	/// The returned stream can be dropped and recreated if needed.
-	pub fn events<'a>(&'a mut self) -> impl Stream<Item = Result<StreamItem>> + 'a {
-		EventStream(self)
-	}
+	pub fn events(&mut self) -> impl Stream<Item = Result<StreamItem>> + '_ { EventStream(self) }
 
 	/// Connect to a server.
 	///
@@ -519,9 +517,7 @@ impl Connection {
 				return Err(Error::InitserverParamsMissing);
 			};
 			let real_uid = UidBuf(params.public_key.get_uid_no_base64().map_err(|e| {
-				Error::Connect(tsproto::client::Error::TsProto(tsproto::Error::IdentityCrypto(
-					e.into(),
-				)))
+				Error::Connect(tsproto::client::Error::TsProto(tsproto::Error::IdentityCrypto(e)))
 			})?);
 			if real_uid != *server_uid {
 				return Err(Error::ServerUidMismatch(real_uid));
@@ -545,8 +541,8 @@ impl Connection {
 			.unwrap_or_default();
 		let packet = c2s::OutClientInitMessage::new(&mut iter::once(c2s::OutClientInitPart {
 			name: Cow::Borrowed(options.name.as_ref()),
-			version: Cow::Borrowed(client_version.as_ref()),
-			platform: Cow::Borrowed(client_platform.as_ref()),
+			version: Cow::Borrowed(client_version),
+			platform: Cow::Borrowed(client_platform),
 			input_muted: if options.input_muted { Some(true) } else { None },
 			output_muted: if options.output_muted { Some(true) } else { None },
 			input_hardware_enabled: options.input_hardware_enabled,
@@ -1532,33 +1528,30 @@ impl ConnectedConnection {
 				let own_id = book.own_client;
 				if let Some(own_client) = book.clients.get_mut(&own_id) {
 					events.retain(|e| {
-						match e {
-							events::Event::PropertyChanged { id, old, .. } => {
-								macro_rules! reset {
-									($msg:ident, $obj:ident) => {
-										if *id == events::PropertyId::$msg(own_id) {
-											if let events::PropertyValue::Bool(b) = old {
-												own_client.$obj = *b;
-											}
-											return false;
+						if let events::Event::PropertyChanged { id, old, .. } = e {
+							macro_rules! reset {
+								($msg:ident, $obj:ident) => {
+									if *id == events::PropertyId::$msg(own_id) {
+										if let events::PropertyValue::Bool(b) = old {
+											own_client.$obj = *b;
 										}
-									};
-								}
-
-								reset!(ClientInputMuted, input_muted);
-								reset!(ClientOutputMuted, output_muted);
-								reset!(ClientInputHardwareEnabled, input_muted);
-								reset!(ClientOutputHardwareEnabled, output_muted);
-								reset!(ClientOutputOnlyMuted, output_only_muted);
-
-								if *id == events::PropertyId::ClientAwayMessage(own_id) {
-									if let events::PropertyValue::OptionString(s) = old {
-										own_client.away_message = s.clone();
+										return false;
 									}
-									return false;
-								}
+								};
 							}
-							_ => {}
+
+							reset!(ClientInputMuted, input_muted);
+							reset!(ClientOutputMuted, output_muted);
+							reset!(ClientInputHardwareEnabled, input_muted);
+							reset!(ClientOutputHardwareEnabled, output_muted);
+							reset!(ClientOutputOnlyMuted, output_only_muted);
+
+							if *id == events::PropertyId::ClientAwayMessage(own_id) {
+								if let events::PropertyValue::OptionString(s) = old {
+									own_client.away_message = s.clone();
+								}
+								return false;
+							}
 						}
 						true
 					});

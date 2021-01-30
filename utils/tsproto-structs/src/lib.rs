@@ -223,25 +223,23 @@ impl FromStr for InnerRustType {
 			Ok(Self::Struct("UidBuf".into()))
 		} else if s == "str" || s == "String" {
 			Ok(Self::Struct("String".into()))
-		} else if s.starts_with('&') {
-			let rest = if s.starts_with("&'") {
-				let i = s.find(' ').ok_or_else(|| {
+		} else if let Some(rest) = s.strip_prefix('&') {
+			let rest = if rest.starts_with('\'') {
+				let i = rest.find(' ').ok_or_else(|| {
 					eprintln!("Reference type with lifetime has no inner type: {:?}", s);
 					fmt::Error
 				})?;
-				&s[i + 1..]
+				&rest[i + 1..]
 			} else {
-				&s[1..]
+				rest
 			};
 			Ok(Self::Ref(Box::new(rest.parse()?)))
-		} else if s.ends_with("?") {
-			let rest = &s[..s.len() - 1];
+		} else if let Some(rest) = s.strip_suffix('?') {
 			Ok(Self::Option(Box::new(rest.parse()?)))
 		} else if s.starts_with("Option<") {
 			let rest = &s[7..s.len() - 1];
 			Ok(Self::Option(Box::new(rest.parse()?)))
-		} else if s.ends_with("[]") {
-			let rest = &s[..s.len() - 2];
+		} else if let Some(rest) = s.strip_suffix("[]") {
 			Ok(Self::Vec(Box::new(rest.parse()?)))
 		} else if s.starts_with("HashMap<") {
 			let rest = &s[8..s.len() - 1];
@@ -256,7 +254,7 @@ impl FromStr for InnerRustType {
 		} else if s.starts_with("Vec<") {
 			let rest = &s[4..s.len() - 1];
 			Ok(Self::Vec(Box::new(rest.parse()?)))
-		} else if s.starts_with("[") {
+		} else if s.starts_with('[') {
 			let rest = &s[1..s.len() - 1];
 			if rest.contains(';') {
 				// Slice with explicit length, take as struct
@@ -264,8 +262,8 @@ impl FromStr for InnerRustType {
 			} else {
 				Ok(Self::Vec(Box::new(rest.parse()?)))
 			}
-		} else if s.ends_with('T') {
-			(&s[..s.len() - 1]).parse()
+		} else if let Some(rest) = s.strip_suffix('T') {
+			rest.parse()
 		} else {
 			Ok(Self::Struct(s.into()))
 		}

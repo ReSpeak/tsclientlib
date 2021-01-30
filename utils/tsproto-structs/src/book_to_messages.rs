@@ -85,7 +85,7 @@ pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
 				op: r.operation.parse().expect("Failed to parse operation"),
 				ids: r.ids.into_iter().map(to_rule_kind).collect(),
 				msg,
-				book_struct: book_struct,
+				book_struct,
 				rules: r.properties.into_iter().map(to_rule_kind).collect(),
 			};
 
@@ -225,27 +225,25 @@ impl RuleProperty {
 				"to-property '{}' is invalid. It must not have a 'type'",
 				to
 			);
+		} else if let Some(fun) = &self.function {
+			assert!(
+				self.tolist.is_some(),
+				"function-property '{}' is invalid. It needs 'tolist'",
+				fun
+			);
+			assert!(
+				self.type_s.is_none() || self.from.is_some(),
+				"function-property '{}' is invalid. If the type ({:?}) is set, from must be set \
+				 too",
+				fun,
+				self.type_s
+			);
 		} else {
-			if let Some(fun) = &self.function {
-				assert!(
-					self.tolist.is_some(),
-					"function-property '{}' is invalid. It needs 'tolist'",
-					fun
-				);
-				assert!(
-					self.type_s.is_none() || self.from.is_some(),
-					"function-property '{}' is invalid. If the type ({:?}) is set, from must be \
-					 set too",
-					fun,
-					self.type_s
-				);
-			} else {
-				panic!(
-					"Property is invalid. It needs either a 'to' or 'tolist'+'function'.Info: \
-					 tolist={:?} type={:?} from={:?}",
-					self.tolist, self.type_s, self.from
-				);
-			}
+			panic!(
+				"Property is invalid. It needs either a 'to' or 'tolist'+'function'.Info: \
+				 tolist={:?} type={:?} from={:?}",
+				self.tolist, self.type_s, self.from
+			);
 		}
 	}
 }
@@ -288,7 +286,7 @@ impl<'a> RuleKind<'a> {
 
 	pub fn from_name_singular(&'a self) -> &'a str {
 		let name = self.from_name();
-		if name.ends_with('s') { &name[..name.len() - 1] } else { name }
+		if let Some(s) = name.strip_suffix('s') { s } else { name }
 	}
 
 	pub fn from(&self) -> &'a Property {
@@ -304,13 +302,7 @@ impl<'a> RuleKind<'a> {
 	}
 
 	pub fn is_function(&self) -> bool {
-		if let RuleKind::Function { .. } = *self {
-			true
-		} else if let RuleKind::ArgumentFunction { .. } = *self {
-			true
-		} else {
-			false
-		}
+		matches!(self, RuleKind::Function { .. } | RuleKind::ArgumentFunction { .. })
 	}
 
 	pub fn get_type(&self) -> RustType {

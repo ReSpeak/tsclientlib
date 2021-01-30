@@ -257,7 +257,5 @@ fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
 }
 
 impl<'a> RuleKind<'a> {
-	pub fn is_function(&self) -> bool {
-		if let RuleKind::Function { .. } = *self { true } else { false }
-	}
+	pub fn is_function(&self) -> bool { matches!(self, RuleKind::Function { .. }) }
 }

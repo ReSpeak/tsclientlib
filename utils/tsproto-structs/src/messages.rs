@@ -28,7 +28,7 @@ impl MessageDeclarations {
 	pub fn get_message_group(&self, msg: &Message) -> &MessageGroup {
 		for g in &self.msg_group {
 			for m in &g.msg {
-				if m as *const Message == msg as *const Message {
+				if std::ptr::eq(m, msg) {
 					return g;
 				}
 			}
