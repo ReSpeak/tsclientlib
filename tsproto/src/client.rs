@@ -113,6 +113,7 @@ impl Client {
 					None
 				}
 				StreamItem::AckPacket(_) => None,
+				StreamItem::NetworkStatsUpdated => None,
 				i => {
 					warn!(con.logger, "Unexpected packet, wanted S2CInit"; "got" => ?i);
 					None
@@ -139,6 +140,7 @@ impl Client {
 					None
 				}
 				StreamItem::AckPacket(_) => None,
+				StreamItem::NetworkStatsUpdated => None,
 				i => {
 					warn!(con.logger, "Unexpected packet, wanted Command"; "got" => ?i);
 					None
@@ -175,6 +177,7 @@ impl Client {
 						None
 					}
 				}
+				StreamItem::NetworkStatsUpdated => None,
 				i => {
 					warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
 					None
@@ -214,6 +217,7 @@ impl Client {
 						None
 					}
 				}
+				StreamItem::NetworkStatsUpdated => None,
 				i => {
 					warn!(con.logger, "Unexpected packet, wanted Ack"; "got" => ?i);
 					None

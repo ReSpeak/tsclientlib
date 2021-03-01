@@ -55,7 +55,7 @@ criterion = "0.3"
 slog-async = "2"
 slog-term = "2"
 structopt = { version = "0.3", default-features = false }
-tokio = { version = "1", features = ["rt", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
 
 [dev-dependencies.slog]
 version = "2"
