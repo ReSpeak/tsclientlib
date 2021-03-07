@@ -54,7 +54,6 @@ url = "2"
 
 [dependencies.slog]
 version = "2"
-features = ["max_level_trace", "release_max_level_debug"]
 
 [dev-dependencies]
 anyhow = "1"

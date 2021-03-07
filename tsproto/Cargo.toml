@@ -59,7 +59,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
 
 [dev-dependencies.slog]
 version = "2"
-features = ["max_level_debug", "release_max_level_debug"]
 
 [[bench]]
 name = "modpow"
