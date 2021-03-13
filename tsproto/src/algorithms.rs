@@ -4,12 +4,13 @@ use std::u64;
 use curve25519_dalek::edwards::EdwardsPoint;
 use eax::aead::consts::{U16, U8};
 use eax::{AeadInPlace, Eax, NewAead};
-use flakebi_ring::digest;
 use generic_array::GenericArray;
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use omnom::WriteExt;
 use quicklz::CompressionLevel;
+use sha1::Sha1;
+use sha2::{Digest, Sha256, Sha512};
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubP256};
 
 use crate::connection::CachedKey;
@@ -131,8 +132,8 @@ fn create_key_nonce(
 		(&mut temp[2..6]).write_be(generation_id).unwrap();
 		temp[6..].copy_from_slice(iv);
 
-		let keynonce = digest::digest(&digest::SHA256, &temp[..]);
-		let keynonce = keynonce.as_ref();
+		let keynonce = Sha256::digest(&temp[..]);
+		let keynonce = keynonce.as_slice();
 		cache.generation_id = generation_id;
 		cache.key.copy_from_slice(&keynonce[..16]);
 		cache.nonce.copy_from_slice(&keynonce[16..]);
@@ -226,7 +227,7 @@ pub fn compute_iv_mac(
 ) -> Result<([u8; 64], [u8; 8])> {
 	let shared_secret = our_key.create_shared_secret(other_key).map_err(Error::ComputeIv)?;
 	let mut shared_iv = [0; 64];
-	shared_iv.copy_from_slice(digest::digest(&digest::SHA512, &shared_secret).as_ref());
+	shared_iv.copy_from_slice(Sha512::digest(&shared_secret).as_slice());
 	for i in 0..10 {
 		shared_iv[i] ^= alpha[i];
 	}
@@ -234,9 +235,7 @@ pub fn compute_iv_mac(
 		shared_iv[i + 10] ^= beta[i];
 	}
 	let mut shared_mac = [0; 8];
-	shared_mac.copy_from_slice(
-		&digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &shared_iv).as_ref()[..8],
-	);
+	shared_mac.copy_from_slice(&Sha1::digest(&shared_iv).as_slice()[..8]);
 	Ok((shared_iv, shared_mac))
 }
 
@@ -251,12 +250,9 @@ pub fn hash_cash(key: &EccKeyPubP256, level: u8) -> Result<u64> {
 
 #[inline]
 pub fn get_hash_cash_level(omega: &str, offset: u64) -> u8 {
-	let data = digest::digest(
-		&digest::SHA1_FOR_LEGACY_USE_ONLY,
-		format!("{}{}", omega, offset).as_bytes(),
-	);
+	let data = Sha1::digest(format!("{}{}", omega, offset).as_bytes());
 	let mut res = 0;
-	for &d in data.as_ref() {
+	for &d in data.as_slice() {
 		if d == 0 {
 			res += 8;
 		} else {
@@ -385,7 +381,7 @@ mod tests {
 		];
 		assert!(&temp as &[u8] == &temporary as &[u8]);
 
-		let keynonce = digest::digest(&digest::SHA256, &temp);
+		let keynonce = Sha256::digest(&temp);
 
 		let expected_keynonce: [u8; 32] = [
 			0xf3, 0x70, 0xd3, 0x43, 0xe7, 0x78, 0x15, 0x70, 0x7a, 0xff, 0x60, 0x48, 0xfb, 0xd9,
@@ -393,7 +389,7 @@ mod tests {
 			0xe9, 0x9e, 0x77, 0x5c,
 		];
 
-		assert!(keynonce.as_ref() == &expected_keynonce as &[u8]);
+		assert!(keynonce.as_slice() == &expected_keynonce as &[u8]);
 	}
 
 	#[test]
@@ -403,7 +399,7 @@ mod tests {
 			 7B DD 58 AD",
 		)
 		.unwrap();
-		let mut shared_iv = digest::digest(&digest::SHA512, &shared_iv).as_ref().to_vec();
+		let mut shared_iv = Sha512::digest(&shared_iv).as_slice().to_vec();
 		assert_eq!(
 			utils::read_hex(
 				"4D 3F DA B7 D8 B0 2C 82 70 6A 39 3E 97 17 61 09 FA 03 AB 30 5C BB 78 7A 9A 82 D5 \
@@ -433,8 +429,8 @@ mod tests {
 		temp[1] = 0x2 & 0xf;
 		temp[6..].copy_from_slice(&shared_iv);
 
-		let keynonce = digest::digest(&digest::SHA256, &temp);
-		let keynonce = keynonce.as_ref();
+		let keynonce = Sha256::digest(&temp);
+		let keynonce = keynonce.as_slice();
 
 		let all = utils::read_hex("2b982443ab38be6b00020000329abf64d4572e1349897b5e1e96fbc4a763a4c4ce1f64f0c1e3febd0a5f04a82ab1f2bc2344bb374fd16181beb8233b5b06944280470e9b6893290a1da0776ffcd89f3beec2ce23b9694930c09efaaea0d88a6895a08ede4d5cbfea61291fc553ac651f1e2bc1d2bd277a8bd9ab5386415579a9e56fac46d8b6b119f454bebd99179cd317dec60af205341d11f274d02bbacdd7e9773f72a426358ca1d39016dd95bde2409cd81bf99b340887e997ea982370c6790cf4d23150460820224766838ea4ec4d71dd102ede701ea0001f392623aa410dd9ab0e45874da82e29e6e370515ec30a37dd73f5a364c233ff014384beab5f1708c9f48dfba33a520f8fcdcef055789c54693c3fe72c5bfaca7cb4ca1fed77b8624660b8abc882f4b95b1284cb6dc55019c6082dd6dd146fa50383662d7298bef04ababaf1af80e15cd4c1f81326f085788e2918e00324147dce39b23db71326abc3de4b94df10f1531e9cce202bba71fa3ebeefd77b21fa3260a62e92eeee2183421d384a8c48777e2f9efbc58d4f442c5f0529c7c0e27e81b2b6b1b05eb8fa19256886248d553582dfd24c7cfab3c3f7317a5cebc6504b53fa0e86fc8c1100fc1d506fcf96caa76a7c0b6a27e577f2efdecd4070e847a559bf37d75bfdbe9e814c702426ce696d8645bc300b5f28f9e7f1ce").unwrap();
 

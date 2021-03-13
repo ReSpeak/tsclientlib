@@ -31,11 +31,7 @@ pub static DATA: Lazy<BookToMessagesDeclarations<'static>> = Lazy::new(|| {
 
 			let find_prop =
 				|name: &str, book_struct: &'static Struct| -> Option<&'static Property> {
-					if let Some(prop) = book_struct.properties.iter().find(|p| p.name == *name) {
-						Some(prop)
-					} else {
-						None
-					}
+					book_struct.properties.iter().find(|p| p.name == *name)
 				};
 
 			// Map RuleProperty to RuleKind

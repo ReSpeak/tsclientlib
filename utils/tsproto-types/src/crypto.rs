@@ -1,19 +1,21 @@
 //! This module contains cryptography related code.
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::{cmp, fmt, str};
 
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek::scalar::Scalar;
-use flakebi_ring::digest;
-use flakebi_ring::signature::{self, KeyPair};
+use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
+use generic_array::typenum::Unsigned;
+use generic_array::GenericArray;
 use num_bigint::{BigInt, Sign};
-use serde::{Deserialize, Serialize};
+use p256::ecdsa::signature::{Signer, Verifier};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sha1::{Digest, Sha1};
 use simple_asn1::ASN1Block;
 use thiserror::Error;
-use untrusted::Input;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, Clone, Error)]
 #[non_exhaustive]
@@ -30,8 +32,6 @@ pub enum Error {
 	ExpectedBitString,
 	#[error("Invalid ASN.1: Expected a sequence")]
 	ExpectedSequence,
-	#[error("Failed to generate key")]
-	KeyGenerationFailed,
 	#[error("Key data is empty")]
 	EmptyKeyData,
 	#[error("Any known methods to decode the key failed")]
@@ -42,6 +42,8 @@ pub enum Error {
 	NoObfuscatedKey,
 	#[error("Failed to parse public key")]
 	ParsePublicKeyFailed,
+	#[error("Failed to encode public key")]
+	EncodePublicKeyFailed,
 	#[error("Failed to complete key exchange")]
 	KeyExchangeFailed,
 	#[error("Failed to create signature")]
@@ -75,13 +77,19 @@ pub enum KeyType {
 /// A public ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-#[derive(Clone, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct EccKeyPubP256(Vec<u8>);
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EccKeyPubP256(
+	#[serde(
+		deserialize_with = "deserialize_ecc_key_pub_p256",
+		serialize_with = "serialize_ecc_key_pub_p256"
+	)]
+	p256::PublicKey,
+);
 /// A private ecc key.
 ///
 /// The curve of this key is P-256, or PRIME256v1 as it is called by openssl.
-#[derive(Clone, Deserialize, Eq, Hash, PartialEq, Serialize)]
-pub struct EccKeyPrivP256(Vec<u8>);
+#[derive(Clone)]
+pub struct EccKeyPrivP256(p256::SecretKey);
 
 /// A public ecc key.
 ///
@@ -96,8 +104,23 @@ pub struct EccKeyPrivEd25519(pub Scalar);
 
 /// Passwords are encoded as base64(sha1(password)).
 pub fn encode_password(password: &[u8]) -> String {
-	let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, password);
-	base64::encode(hash.as_ref())
+	base64::encode(Sha1::digest(password).as_slice())
+}
+
+fn deserialize_ecc_key_pub_p256<'de, D: Deserializer<'de>>(
+	de: D,
+) -> Result<p256::PublicKey, D::Error> {
+	let data: Vec<u8> = Deserialize::deserialize(de)?;
+	Ok(EccKeyPubP256::from_short(&data).map_err(serde::de::Error::custom)?.0)
+}
+
+fn serialize_ecc_key_pub_p256<S: Serializer>(
+	key: &p256::PublicKey, ser: S,
+) -> Result<S::Ok, S::Error> {
+	Serialize::serialize(
+		&EccKeyPubP256(*key).to_short().map_err(serde::ser::Error::custom)?.as_slice(),
+		ser,
+	)
 }
 
 impl fmt::Debug for EccKeyPubP256 {
@@ -129,7 +152,15 @@ impl EccKeyPubP256 {
 	///
 	/// This is just the `BigNum` of the x and y coordinates concatenated in
 	/// this order. Each of the coordinates takes half of the size.
-	pub fn from_short(data: Vec<u8>) -> Self { Self(data) }
+	pub fn from_short(data: &[u8]) -> Result<Self> {
+		if data.len() != elliptic_curve::sec1::UntaggedPointSize::<p256::NistP256>::to_usize() {
+			return Err(Error::ParsePublicKeyFailed);
+		}
+		let enc_point = p256::EncodedPoint::from_untagged_bytes(GenericArray::from_slice(data));
+		Ok(Self(
+			p256::PublicKey::from_encoded_point(&enc_point).ok_or(Error::ParsePublicKeyFailed)?,
+		))
+	}
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
@@ -154,15 +185,22 @@ impl EccKeyPubP256 {
 				if let (Some(ASN1Block::Integer(_, x)), Some(ASN1Block::Integer(_, y))) =
 					(blocks.get(2), blocks.get(3))
 				{
-					// Store as uncompressed coordinates:
-					// 0x04
-					// x: 32 bytes
-					// y: 32 bytes
-					let mut data = Vec::with_capacity(65);
-					data.push(4);
-					data.extend_from_slice(&x.to_bytes_be().1);
-					data.extend_from_slice(&y.to_bytes_be().1);
-					Ok(EccKeyPubP256(data))
+					let x_bytes = x.to_bytes_be().1;
+					let y_bytes = y.to_bytes_be().1;
+					let field_size =
+						<p256::NistP256 as elliptic_curve::Curve>::FieldSize::to_usize();
+					if x_bytes.len() != field_size || y_bytes.len() != field_size {
+						return Err(Error::ParsePublicKeyFailed);
+					}
+					let enc_point = p256::EncodedPoint::from_affine_coordinates(
+						GenericArray::from_slice(x_bytes.as_slice()),
+						GenericArray::from_slice(y_bytes.as_slice()),
+						false,
+					);
+					Ok(Self(
+						p256::PublicKey::from_encoded_point(&enc_point)
+							.ok_or(Error::ParsePublicKeyFailed)?,
+					))
 				} else {
 					Err(Error::PublicKeyNotFound)
 				}
@@ -178,9 +216,11 @@ impl EccKeyPubP256 {
 	pub fn to_ts(&self) -> Result<String> { Ok(base64::encode(&self.to_tomcrypt()?)) }
 
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
-		let pub_len = (self.0.len() - 1) / 2;
-		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &self.0[1..=pub_len]);
-		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &self.0[1 + pub_len..]);
+		let enc_point = self.0.as_affine().to_encoded_point(false);
+		let pubkey_x =
+			BigInt::from_bytes_be(Sign::Plus, enc_point.x().ok_or(Error::EncodePublicKeyFailed)?);
+		let pubkey_y =
+			BigInt::from_bytes_be(Sign::Plus, enc_point.y().ok_or(Error::EncodePublicKeyFailed)?);
 
 		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0]),
@@ -194,14 +234,21 @@ impl EccKeyPubP256 {
 	///
 	/// This is just the `BigNum` of the x and y coordinates concatenated in
 	/// this order. Each of the coordinates takes half of the size.
-	pub fn to_short(&self) -> &[u8] { &self.0 }
+	pub fn to_short(
+		&self,
+	) -> Result<GenericArray<u8, elliptic_curve::sec1::UntaggedPointSize<p256::NistP256>>> {
+		self.0
+			.as_affine()
+			.to_encoded_point(false)
+			.to_untagged_bytes()
+			.ok_or(Error::EncodePublicKeyFailed)
+	}
 
 	/// Compute the uid of this key without encoding it in base64.
 	///
 	/// returns sha1(ts encoded key)
 	pub fn get_uid_no_base64(&self) -> Result<Vec<u8>> {
-		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, self.to_ts()?.as_bytes());
-		Ok(hash.as_ref().to_vec())
+		Ok(Sha1::digest(self.to_ts()?.as_bytes()).as_slice().to_vec())
 	}
 
 	/// Compute the uid of this key.
@@ -210,8 +257,14 @@ impl EccKeyPubP256 {
 	pub fn get_uid(&self) -> Result<String> { Ok(base64::encode(&self.get_uid_no_base64()?)) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
-		let key = signature::UnparsedPublicKey::new(&signature::ECDSA_P256_SHA256_ASN1, &self.0);
-		key.verify(data, signature).map_err(|_| Error::WrongSignature {
+		let sig =
+			p256::ecdsa::Signature::try_from(signature).map_err(|_| Error::WrongSignature {
+				key: self.clone(),
+				data: data.to_vec(),
+				signature: signature.to_vec(),
+			})?;
+		let key = p256::ecdsa::VerifyingKey::from(&self.0);
+		key.verify(data, &sig).map_err(|_| Error::WrongSignature {
 			key: self.clone(),
 			data: data.to_vec(),
 			signature: signature.to_vec(),
@@ -224,15 +277,7 @@ impl EccKeyPubP256 {
 
 impl EccKeyPrivP256 {
 	/// Create a new key key pair.
-	pub fn create() -> Result<Self> {
-		Ok(EccKeyPrivP256(
-			signature::EcdsaKeyPair::generate_private_key(
-				&signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-				&flakebi_ring::rand::SystemRandom::new(),
-			)
-			.map_err(|_| Error::KeyGenerationFailed)?,
-		))
-	}
+	pub fn create() -> Self { Self(p256::SecretKey::random(rand::rngs::OsRng)) }
 
 	/// Try to import the key from any of the known formats.
 	pub fn import(data: &[u8]) -> Result<Self> {
@@ -248,7 +293,7 @@ impl EccKeyPrivP256 {
 		if let Ok(r) = Self::from_tomcrypt(data) {
 			return Ok(r);
 		}
-		if let Ok(r) = Self::from_short(data.to_vec()) {
+		if let Ok(r) = Self::from_short(data) {
 			return Ok(r);
 		}
 		Err(Error::KeyDecodeError)
@@ -270,20 +315,14 @@ impl EccKeyPrivP256 {
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn from_short(data: Vec<u8>) -> Result<Self> {
-		// Check if the key is valid by converting it to a ring key
-		let _ = signature::EcdsaKeyPair::from_private_key(
-			&signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-			Input::from(&data),
-		)
-		.map_err(|_| Error::NoShortKey)?;
-		Ok(Self(data))
+	pub fn from_short(data: &[u8]) -> Result<Self> {
+		Ok(Self(p256::SecretKey::from_bytes(data).map_err(|_| Error::NoShortKey)?))
 	}
 
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn to_short(&self) -> &[u8] { &self.0 }
+	pub fn to_short(&self) -> elliptic_curve::FieldBytes<p256::NistP256> { self.0.to_bytes() }
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
@@ -306,8 +345,8 @@ impl EccKeyPrivP256 {
 		// Hash everything until the first 0 byte, starting after the first 20
 		// bytes.
 		let pos = data[20..].iter().position(|b| *b == b'\0').unwrap_or(data.len() - 20);
-		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
-		let hash = hash.as_ref();
+		let hash = Sha1::digest(&data[20..20 + pos]);
+		let hash = hash.as_slice();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
 			data[i] ^= hash[i];
@@ -344,12 +383,12 @@ impl EccKeyPrivP256 {
 				}
 				if *len == 1 {
 					if let Some(ASN1Block::Integer(_, i)) = blocks.get(4) {
-						Self::from_short(i.to_bytes_be().1)
+						Self::from_short(&i.to_bytes_be().1)
 					} else {
 						Err(Error::NoPrivateKey)
 					}
 				} else if let Some(ASN1Block::Integer(_, i)) = blocks.get(2) {
-					Self::from_short(i.to_bytes_be().1)
+					Self::from_short(&i.to_bytes_be().1)
 				} else {
 					Err(Error::NoPrivateKey)
 				}
@@ -376,8 +415,8 @@ impl EccKeyPrivP256 {
 		// Hash everything until the first 0 byte, starting after the first 20
 		// bytes.
 		let pos = data[20..].iter().position(|b| *b == b'\0').unwrap_or(data.len() - 20);
-		let hash = digest::digest(&digest::SHA1_FOR_LEGACY_USE_ONLY, &data[20..20 + pos]);
-		let hash = hash.as_ref();
+		let hash = Sha1::digest(&data[20..20 + pos]);
+		let hash = hash.as_slice();
 		// Xor first 20 bytes of data with the hash
 		for i in 0..20 {
 			data[i] ^= hash[i];
@@ -386,12 +425,12 @@ impl EccKeyPrivP256 {
 	}
 
 	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
-		let pubkey_bin = self.to_pub().0;
-		let pub_len = (pubkey_bin.len() - 1) / 2;
-		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1..=pub_len]);
-		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, &pubkey_bin[1 + pub_len..]);
-
-		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0);
+		let enc_point = self.0.public_key().as_affine().to_encoded_point(false);
+		let pubkey_x =
+			BigInt::from_bytes_be(Sign::Plus, enc_point.x().ok_or(Error::EncodePublicKeyFailed)?);
+		let pubkey_y =
+			BigInt::from_bytes_be(Sign::Plus, enc_point.y().ok_or(Error::EncodePublicKeyFailed)?);
+		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.to_bytes());
 
 		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0x80]),
@@ -402,42 +441,23 @@ impl EccKeyPrivP256 {
 		]))?)
 	}
 
-	/// Create a `ring` key from the stored private key.
-	fn to_ring(&self) -> signature::EcdsaKeyPair {
-		signature::EcdsaKeyPair::from_private_key(
-			&signature::ECDSA_P256_SHA256_ASN1_SIGNING,
-			Input::from(&self.0),
-		)
-		.unwrap()
-	}
-
 	/// This has to be the private key, the other one has to be the public key.
-	pub fn create_shared_secret(self, other: EccKeyPubP256) -> Result<Vec<u8>> {
-		use flakebi_ring::ec::keys::Seed;
-		use flakebi_ring::ec::suite_b::ecdh;
-
-		let seed =
-			Seed::from_p256_bytes(Input::from(&self.0)).map_err(|_| Error::ParsePublicKeyFailed)?;
-		let mut res = vec![0; 32];
-		ecdh::p256_ecdh(&mut res, &seed, Input::from(&other.0))
-			.map_err(|_| Error::KeyExchangeFailed)?;
-		Ok(res)
+	pub fn create_shared_secret(
+		self, other: EccKeyPubP256,
+	) -> elliptic_curve::ecdh::SharedSecret<p256::NistP256> {
+		elliptic_curve::ecdh::diffie_hellman(self.0.secret_scalar(), other.0.as_affine())
 	}
 
-	pub fn sign(self, data: &[u8]) -> Result<Vec<u8>> {
-		let key = self.to_ring();
-		Ok(key
-			.sign(&flakebi_ring::rand::SystemRandom::new(), data)
-			.map_err(|_| Error::CreateSignatureFailed)?
-			.as_ref()
-			.to_vec())
+	pub fn sign(self, data: &[u8]) -> Vec<u8> {
+		let key = p256::ecdsa::SigningKey::from(self.0);
+		key.sign(data).as_ref().to_vec()
 	}
 
 	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }
 }
 
-impl<'a> Into<EccKeyPubP256> for &'a EccKeyPrivP256 {
-	fn into(self) -> EccKeyPubP256 { EccKeyPubP256(self.to_ring().public_key().as_ref().to_vec()) }
+impl<'a> From<&'a EccKeyPrivP256> for EccKeyPubP256 {
+	fn from(priv_key: &'a EccKeyPrivP256) -> Self { Self(priv_key.0.public_key()) }
 }
 
 impl EccKeyPubEd25519 {
@@ -486,9 +506,9 @@ impl EccKeyPrivEd25519 {
 	pub fn to_pub(&self) -> EccKeyPubEd25519 { self.into() }
 }
 
-impl<'a> Into<EccKeyPubEd25519> for &'a EccKeyPrivEd25519 {
-	fn into(self) -> EccKeyPubEd25519 {
-		EccKeyPubEd25519((&constants::ED25519_BASEPOINT_TABLE * &self.0).compress())
+impl<'a> From<&'a EccKeyPrivEd25519> for EccKeyPubEd25519 {
+	fn from(priv_key: &'a EccKeyPrivEd25519) -> Self {
+		Self((&constants::ED25519_BASEPOINT_TABLE * &priv_key.0).compress())
 	}
 }
 
@@ -505,14 +525,14 @@ mod tests {
 
 	#[test]
 	fn p256_ecdh() {
-		let priv_key1 = EccKeyPrivP256::create().unwrap();
+		let priv_key1 = EccKeyPrivP256::create();
 		let pub_key1 = priv_key1.to_pub();
-		let priv_key2 = EccKeyPrivP256::create().unwrap();
+		let priv_key2 = EccKeyPrivP256::create();
 		let pub_key2 = priv_key2.to_pub();
 
-		let res1 = priv_key1.create_shared_secret(pub_key2).unwrap();
-		let res2 = priv_key2.create_shared_secret(pub_key1).unwrap();
-		assert_eq!(res1, res2);
+		let res1 = priv_key1.create_shared_secret(pub_key2);
+		let res2 = priv_key2.create_shared_secret(pub_key1);
+		assert_eq!(res1.as_bytes(), res2.as_bytes());
 	}
 
 	#[test]
@@ -536,7 +556,7 @@ mod tests {
 	fn test_p256_priv_key_short() {
 		let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
 		let short = key.to_short();
-		let key = EccKeyPrivP256::from_short(short.to_vec()).unwrap();
+		let key = EccKeyPrivP256::from_short(short.as_slice()).unwrap();
 		let short2 = key.to_short();
 		assert_eq!(short, short2);
 	}

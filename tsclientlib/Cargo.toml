@@ -37,6 +37,7 @@ num-traits = "0.2"
 pin-utils = "0.1"
 rand = "0.7"
 reqwest = "0.11"
+slog = "2"
 slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
@@ -51,9 +52,6 @@ tsproto = { path = "../tsproto", version = "=0.1.0" }
 tsproto-packets = { path = "../utils/tsproto-packets" }
 tsproto-types = { path = "../utils/tsproto-types" }
 url = "2"
-
-[dependencies.slog]
-version = "2"
 
 [dev-dependencies]
 anyhow = "1"

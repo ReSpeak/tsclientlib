@@ -27,7 +27,6 @@ omnom = "3"
 curve25519-dalek = "3"
 #eax = "0.2.0-pre"
 eax = { git = "https://github.com/RustCrypto/AEADs", rev = "9a6dc685ae4f4f23c628cedab46480baf5ed475d" }
-flakebi-ring = "0.16.15"
 futures = "0.3"
 generic-array = "0.14"
 git-testament = "0.1"
@@ -38,6 +37,8 @@ pin-project-lite = "0.2"
 rand = "0.7"
 rug = { version = "1", optional = true, default-features = false, features = ["integer"] }
 serde = { version = "1", features = ["derive"] }
+sha-1 = "0.9"
+sha2 = "0.9"
 slog = "2"
 slog-perf = "0.2"
 stable_deref_trait = "1"
@@ -46,7 +47,6 @@ time = "0.2.23"
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 tsproto-packets = { path = "../utils/tsproto-packets" }
 tsproto-types = { path = "../utils/tsproto-types" }
-untrusted = "0.7"
 quicklz = "0.3"
 
 [dev-dependencies]
@@ -56,9 +56,6 @@ slog-async = "2"
 slog-term = "2"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
-
-[dev-dependencies.slog]
-version = "2"
 
 [[bench]]
 name = "modpow"

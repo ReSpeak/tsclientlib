@@ -13,17 +13,19 @@ edition = "2018"
 base64 = "0.13"
 bitflags = "1"
 curve25519-dalek = "3"
-flakebi-ring = "0.16.15"
+elliptic-curve = { version = "0.8", features = ["ecdh"] }
+generic-array = "0.14"
 num-bigint = "0.3"
 num-derive = "0.3"
 num-traits = "0.2"
+p256 = { version = "0.7", features = ["ecdsa"] }
 rand = "0.7"
 ref-cast = "1"
 serde = { version = "1", features = ["derive"] }
+sha-1 = "0.9"
 simple_asn1 = "0.5.1"
 thiserror = "1"
 time = { version = "0.2.15", features = ["serde"] }
-untrusted = "0.7"
 
 [build-dependencies]
 heck = "0.3"

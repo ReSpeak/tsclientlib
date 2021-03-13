@@ -6,9 +6,9 @@ use std::str;
 use curve25519_dalek::constants;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
-use flakebi_ring::digest;
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
+use sha2::{Digest, Sha512};
 use thiserror::Error;
 use time::OffsetDateTime;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
@@ -255,9 +255,9 @@ impl License {
 		// Compute hash
 		let mut data = Vec::new();
 		self.write(&mut data).unwrap();
-		let hash_out = digest::digest(&digest::SHA512, &data[1..]);
+		let hash_out = Sha512::digest(&data[1..]);
 		let mut hash = [0; 32];
-		hash.copy_from_slice(&hash_out.as_ref()[..32]);
+		hash.copy_from_slice(&hash_out.as_slice()[..32]);
 		self.hash = hash;
 	}
 
@@ -322,9 +322,9 @@ impl License {
 		};
 
 		let all_len = MIN_LEN + extra_len;
-		let hash_out = digest::digest(&digest::SHA512, &data[1..all_len]);
+		let hash_out = Sha512::digest(&data[1..all_len]);
 		let mut hash = [0; 32];
-		hash.copy_from_slice(&hash_out.as_ref()[..32]);
+		hash.copy_from_slice(&hash_out.as_slice()[..32]);
 
 		Ok((
 			License {

@@ -150,7 +150,7 @@ fn deserialize_id_key<'de, D: Deserializer<'de>>(
 impl Identity {
 	#[inline]
 	pub fn create() -> Result<Self> {
-		let mut res = Self::new(EccKeyPrivP256::create().map_err(Error::IdentityCrypto)?, 0);
+		let mut res = Self::new(EccKeyPrivP256::create(), 0);
 		res.upgrade_level(8)?;
 		Ok(res)
 	}

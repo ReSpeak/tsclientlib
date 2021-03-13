@@ -69,8 +69,6 @@ pub enum Error {
 	RsaPuzzleTooHighLevel(u32),
 	#[error("Failed to serialize key: {0}")]
 	SerializeKey(#[source] tsproto_types::crypto::Error),
-	#[error("Failed to sign ephemeral key: {0}")]
-	SignKey(#[source] tsproto_types::crypto::Error),
 	#[error(transparent)]
 	TsProto(#[from] crate::Error),
 	#[error("Expected {0} but got {1}")]
@@ -475,7 +473,7 @@ impl Client {
 			let mut all = Vec::with_capacity(32 + 54);
 			all.extend_from_slice(ek_pub.0.as_bytes());
 			all.extend_from_slice(&beta);
-			let proof = self.private_key.clone().sign(&all).map_err(Error::SignKey)?;
+			let proof = self.private_key.clone().sign(&all);
 			let proof_s = base64::encode(&proof);
 
 			// Send clientek
@@ -819,8 +817,8 @@ mod tests {
 			};
 
 			let addr = "127.0.0.1:0".parse()?;
-			let client_key = EccKeyPrivP256::create()?;
-			let server_key = EccKeyPrivP256::create()?;
+			let client_key = EccKeyPrivP256::create();
+			let server_key = EccKeyPrivP256::create();
 
 			let (socket0, socket1) = SimulatedSocket::pair(logger.clone(), addr, addr);
 			let mut client = Client::new(logger.clone(), addr, Box::new(socket0), client_key);
