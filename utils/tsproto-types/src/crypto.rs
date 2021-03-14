@@ -234,7 +234,8 @@ impl EccKeyPubP256 {
 
 	/// Get the SEC1 encoding of the public key point on the curve.
 	pub fn to_short(&self) -> Vec<u8> {
-		self.0.as_affine().to_encoded_point(true).as_bytes().to_vec()
+		// TODO Maybe compress?
+		self.0.as_affine().to_encoded_point(false).as_bytes().to_vec()
 	}
 
 	/// Compute the uid of this key without encoding it in base64.
