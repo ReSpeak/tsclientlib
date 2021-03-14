@@ -1,5 +1,5 @@
 //! This module contains cryptography related code.
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::{cmp, fmt, str};
 
 use curve25519_dalek::constants;
@@ -258,7 +258,7 @@ impl EccKeyPubP256 {
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let sig =
-			p256::ecdsa::Signature::try_from(signature).map_err(|_| Error::WrongSignature {
+			p256::ecdsa::Signature::from_asn1(signature).map_err(|_| Error::WrongSignature {
 				key: self.clone(),
 				data: data.to_vec(),
 				signature: signature.to_vec(),
@@ -450,7 +450,7 @@ impl EccKeyPrivP256 {
 
 	pub fn sign(self, data: &[u8]) -> Vec<u8> {
 		let key = p256::ecdsa::SigningKey::from(self.0);
-		key.sign(data).as_ref().to_vec()
+		key.sign(data).to_asn1().as_bytes().to_vec()
 	}
 
 	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }
@@ -533,6 +533,20 @@ mod tests {
 		let res1 = priv_key1.create_shared_secret(pub_key2);
 		let res2 = priv_key2.create_shared_secret(pub_key1);
 		assert_eq!(res1.as_bytes(), res2.as_bytes());
+	}
+
+	#[test]
+	fn p256_signature() {
+		let license = "AQBM0LZCVmZ7CX/miewqdjOyuKa6kI78Fk43LoypifqOkAIOkvUAEn46gAcAAAAgQW5vbnltb3Vz\
+			AABoruUa34pO9zy1Z5zIOmrkIO06lKg/+mBrg6Mw1Rg4OyAPa7A3D2xY9w==";
+		let server_key = "MEwDAgcAAgEgAiEA96WgYeYU8zoPqXJqicita+rR92FvnTlxYcUUyIDkQ6cCIE/KPo+ms3BEz\
+			N/HBR71BJ/Z1Fv8918mdDKLetbOGKWt";
+		let signature = "MEUCIQC+ececxC0NCcuCtrXHAO5h7qbh1s/TGP/AaHa6+wV38wIgV9wwSppEdGjwuH3ETAME9t\
+			Dj3aNkNvL25i0ikF9vs8M=";
+		let license = base64::decode(license).unwrap();
+		let signature = base64::decode(signature).unwrap();
+		let server_key = EccKeyPubP256::from_ts(server_key).unwrap();
+		server_key.verify(&license, &signature).unwrap();
 	}
 
 	#[test]

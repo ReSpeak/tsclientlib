@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multiple renamings in the book
 - Rename `StreamItem::ConEvents` to `StreamItem::BookEvents`
 - Rename `UidRef` to `Uid` and make it a dynamically sized type. The previously owned `Uid` type is now called `UidBuf`
+- Replace `ring` with RustCrypto crates to get rid of the `flakebi-ring` crate
 
 ### ❌ Removed
 - The `ConnectionManager` in `tsproto` was removed
