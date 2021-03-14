@@ -42,6 +42,8 @@ pub enum Error {
 	NoObfuscatedKey,
 	#[error("Failed to parse public key")]
 	ParsePublicKeyFailed,
+	#[error("Failed to parse public key, expected length {expected} but got {got}")]
+	WrongPublicKeyLength { expected: usize, got: usize },
 	#[error("Failed to encode public key")]
 	EncodePublicKeyFailed,
 	#[error("Failed to complete key exchange")]
@@ -117,10 +119,7 @@ fn deserialize_ecc_key_pub_p256<'de, D: Deserializer<'de>>(
 fn serialize_ecc_key_pub_p256<S: Serializer>(
 	key: &p256::PublicKey, ser: S,
 ) -> Result<S::Ok, S::Error> {
-	Serialize::serialize(
-		&EccKeyPubP256(*key).to_short().map_err(serde::ser::Error::custom)?.as_slice(),
-		ser,
-	)
+	Serialize::serialize(&EccKeyPubP256(*key).to_short().as_slice(), ser)
 }
 
 impl fmt::Debug for EccKeyPubP256 {
@@ -153,13 +152,7 @@ impl EccKeyPubP256 {
 	/// This is just the `BigNum` of the x and y coordinates concatenated in
 	/// this order. Each of the coordinates takes half of the size.
 	pub fn from_short(data: &[u8]) -> Result<Self> {
-		if data.len() != elliptic_curve::sec1::UntaggedPointSize::<p256::NistP256>::to_usize() {
-			return Err(Error::ParsePublicKeyFailed);
-		}
-		let enc_point = p256::EncodedPoint::from_untagged_bytes(GenericArray::from_slice(data));
-		Ok(Self(
-			p256::PublicKey::from_encoded_point(&enc_point).ok_or(Error::ParsePublicKeyFailed)?,
-		))
+		p256::PublicKey::from_sec1_bytes(data).map_err(|_| Error::ParsePublicKeyFailed).map(Self)
 	}
 
 	/// From base64 encoded tomcrypt key.
@@ -189,8 +182,17 @@ impl EccKeyPubP256 {
 					let y_bytes = y.to_bytes_be().1;
 					let field_size =
 						<p256::NistP256 as elliptic_curve::Curve>::FieldSize::to_usize();
-					if x_bytes.len() != field_size || y_bytes.len() != field_size {
-						return Err(Error::ParsePublicKeyFailed);
+					if x_bytes.len() != field_size {
+						return Err(Error::WrongPublicKeyLength {
+							expected: field_size,
+							got: x_bytes.len(),
+						});
+					}
+					if y_bytes.len() != field_size {
+						return Err(Error::WrongPublicKeyLength {
+							expected: field_size,
+							got: y_bytes.len(),
+						});
 					}
 					let enc_point = p256::EncodedPoint::from_affine_coordinates(
 						GenericArray::from_slice(x_bytes.as_slice()),
@@ -230,18 +232,9 @@ impl EccKeyPubP256 {
 		]))?)
 	}
 
-	/// The shortest format of a public key.
-	///
-	/// This is just the `BigNum` of the x and y coordinates concatenated in
-	/// this order. Each of the coordinates takes half of the size.
-	pub fn to_short(
-		&self,
-	) -> Result<GenericArray<u8, elliptic_curve::sec1::UntaggedPointSize<p256::NistP256>>> {
-		self.0
-			.as_affine()
-			.to_encoded_point(false)
-			.to_untagged_bytes()
-			.ok_or(Error::EncodePublicKeyFailed)
+	/// Get the SEC1 encoding of the public key point on the curve.
+	pub fn to_short(&self) -> Vec<u8> {
+		self.0.as_affine().to_encoded_point(true).as_bytes().to_vec()
 	}
 
 	/// Compute the uid of this key without encoding it in base64.
@@ -537,12 +530,14 @@ mod tests {
 
 	#[test]
 	fn p256_signature() {
-		let license = "AQBM0LZCVmZ7CX/miewqdjOyuKa6kI78Fk43LoypifqOkAIOkvUAEn46gAcAAAAgQW5vbnltb3Vz\
-			AABoruUa34pO9zy1Z5zIOmrkIO06lKg/+mBrg6Mw1Rg4OyAPa7A3D2xY9w==";
-		let server_key = "MEwDAgcAAgEgAiEA96WgYeYU8zoPqXJqicita+rR92FvnTlxYcUUyIDkQ6cCIE/KPo+ms3BEz\
-			N/HBR71BJ/Z1Fv8918mdDKLetbOGKWt";
-		let signature = "MEUCIQC+ececxC0NCcuCtrXHAO5h7qbh1s/TGP/AaHa6+wV38wIgV9wwSppEdGjwuH3ETAME9t\
-			Dj3aNkNvL25i0ikF9vs8M=";
+		let license =
+			"AQBM0LZCVmZ7CX/\
+			 miewqdjOyuKa6kI78Fk43LoypifqOkAIOkvUAEn46gAcAAAAgQW5vbnltb3VzAABoruUa34pO9zy1Z5zIOmrkIO06lKg/\
+			 +mBrg6Mw1Rg4OyAPa7A3D2xY9w==";
+		let server_key = "MEwDAgcAAgEgAiEA96WgYeYU8zoPqXJqicita+rR92FvnTlxYcUUyIDkQ6cCIE/\
+		                  KPo+ms3BEzN/HBR71BJ/Z1Fv8918mdDKLetbOGKWt";
+		let signature = "MEUCIQC+ececxC0NCcuCtrXHAO5h7qbh1s/TGP/\
+		                 AaHa6+wV38wIgV9wwSppEdGjwuH3ETAME9tDj3aNkNvL25i0ikF9vs8M=";
 		let license = base64::decode(license).unwrap();
 		let signature = base64::decode(signature).unwrap();
 		let server_key = EccKeyPubP256::from_ts(server_key).unwrap();
