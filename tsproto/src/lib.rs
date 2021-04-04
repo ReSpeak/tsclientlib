@@ -167,9 +167,24 @@ impl Identity {
 
 	#[inline]
 	pub fn new_from_str(key: &str) -> Result<Self> {
+		if let Ok(identity) = Identity::new_from_ts_str(key) {
+			return Ok(identity);
+		}
 		let mut res = Self::new(EccKeyPrivP256::import_str(key).map_err(Error::IdentityCrypto)?, 0);
 		res.upgrade_level(8)?;
 		Ok(res)
+	}
+
+	pub fn new_from_ts_str(key: &str) -> Result<Self> {
+		let counter_separator = key
+			.find('V')
+			.ok_or_else(|| Error::IdentityCrypto(tsproto_types::crypto::Error::NoCounterBlock))?;
+		let counter = key[..counter_separator]
+			.parse::<u64>()
+			.map_err(|_| Error::IdentityCrypto(tsproto_types::crypto::Error::NoCounterBlock))?;
+		let ecc_key = EccKeyPrivP256::import_str(&key[(counter_separator + 1)..])
+			.map_err(Error::IdentityCrypto)?;
+		return Ok(Self::new(ecc_key, counter));
 	}
 
 	#[inline]
@@ -210,5 +225,31 @@ impl Identity {
 		self.counter = offset;
 		self.max_counter = offset;
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod identity_tests {
+	use super::*;
+
+	const TEST_PRIV_KEY: &str =
+		"MG8DAgeAAgEgAiEA6rtKxDn/o/Bo50rNtAE5Ph3h2RKLHQ0gbFkvm2yA79kCIQCrfzAZts/\
+		 vHP+3MOetKLjNnpZXt4c6U3UB4gWLKR4H9AIgYTyJofmztcTBjq3KZcDdxu+G4RPVwE5vg8VaN2jbQao=";
+	const TEST_UID: &str = "test/9PZ9vww/Bpf5vJxtJhpz80=";
+
+	#[test]
+	fn parse_ts_base64() {
+		let identity = Identity::new_from_str(TEST_PRIV_KEY).unwrap();
+		let uid = identity.key().to_pub().get_uid().unwrap();
+		assert_eq!(TEST_UID, &uid);
+	}
+
+	#[test]
+	fn parse_ts_base64_with_offset() {
+		let ident_str = String::from("2792354V") + TEST_PRIV_KEY;
+		let identity = Identity::new_from_str(&ident_str).unwrap();
+		let uid = identity.key().to_pub().get_uid().unwrap();
+		assert_eq!(TEST_UID, &uid);
+		assert_eq!(identity.level().ok(), Some(21u8));
 	}
 }

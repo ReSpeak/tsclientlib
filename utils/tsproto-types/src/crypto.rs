@@ -40,6 +40,8 @@ pub enum Error {
 	NoShortKey,
 	#[error("Not a obfuscated TeamSpeak key")]
 	NoObfuscatedKey,
+	#[error("Found no initial 'V' with a valid number before")]
+	NoCounterBlock,
 	#[error("Failed to parse public key")]
 	ParsePublicKeyFailed,
 	#[error("Failed to parse public key, expected length {expected} but got {got}")]
@@ -559,6 +561,17 @@ mod tests {
 		let uid = key.to_pub().get_uid().unwrap();
 
 		let expected_uid = "lks7QL5OVMKo4pZ79cEOI5r5oEA=";
+		assert_eq!(expected_uid, &uid);
+	}
+
+	#[test]
+	fn tsaudiobot_identity() {
+		let key = EccKeyPrivP256::import_str(
+			"MCkDAgbAAgEgAiBhPImh+bO1xMGOrcplwN3G74bhE9XATm+DxVo3aNtBqg==",
+		)
+		.unwrap();
+		let uid = key.to_pub().get_uid().unwrap();
+		let expected_uid = "test/9PZ9vww/Bpf5vJxtJhpz80=";
 		assert_eq!(expected_uid, &uid);
 	}
 
