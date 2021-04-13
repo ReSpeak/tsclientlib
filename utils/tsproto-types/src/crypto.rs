@@ -312,7 +312,13 @@ impl EccKeyPrivP256 {
 	///
 	/// This is just the `BigNum` of the private key.
 	pub fn from_short(data: &[u8]) -> Result<Self> {
-		Ok(Self(p256::SecretKey::from_bytes(data).map_err(|_| Error::NoShortKey)?))
+		// TODO !! p256::SecretKey::from_bytes panics when the data is not 32 long !!
+		// maybe create a pull request for that because das not good?!
+		if data.len() != 32 {
+			Err(Error::NoShortKey)
+		} else {
+			Ok(Self(p256::SecretKey::from_bytes(data).map_err(|_| Error::NoShortKey)?))
+		}
 	}
 
 	/// The shortest format of a private key.
