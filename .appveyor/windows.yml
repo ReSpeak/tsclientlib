@@ -30,11 +30,11 @@ install:
 - cargo -V
 
 build_script:
-- cargo -Zpackage-features check --features tsclientlib/bundled
+- cargo -Zpackage-features check --features "tsclientlib/bundled tsclientlib/static-link"
 - |
   cd tsclientlib
-  cargo check --no-default-features --features "unstable bundled"
+  cargo check --no-default-features --features "unstable bundled static-link"
   cd ..
 
 test_script:
-- cargo -Zpackage-features test --features tsclientlib/bundled
+- cargo -Zpackage-features test --features "tsclientlib/bundled tsclientlib/static-link"
