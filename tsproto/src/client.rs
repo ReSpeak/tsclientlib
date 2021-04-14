@@ -33,8 +33,6 @@ type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
 	#[error("Connection ended unexpectedly")]
 	ConnectionEnd,
-	#[error("Failed to create key: {0}")]
-	CreateKey(#[source] tsproto_types::crypto::Error),
 	#[error("Got initserver, but we have not yet a full connection")]
 	EarlyInitserver,
 	#[error("Cannot parse base64 argument {0}: {1}")]
@@ -67,8 +65,6 @@ pub enum Error {
 	RsaPuzzle,
 	#[error("Requested RSA puzzle level {0} is too high")]
 	RsaPuzzleTooHighLevel(u32),
-	#[error("Failed to serialize key: {0}")]
-	SerializeKey(#[source] tsproto_types::crypto::Error),
 	#[error(transparent)]
 	TsProto(#[from] crate::Error),
 	#[error("Expected {0} but got {1}")]
@@ -342,8 +338,7 @@ impl Client {
 						// Create the command string
 						// omega is an ASN.1-DER encoded public key from
 						// the ECDH parameters.
-						let omega =
-							self.private_key.to_pub().to_tomcrypt().map_err(Error::SerializeKey)?;
+						let omega = self.private_key.to_pub().to_tomcrypt();
 						let ip = if crate::utils::is_global_ip(&ip) {
 							ip.to_string()
 						} else {
@@ -460,9 +455,9 @@ impl Client {
 			let server_ek = licenses.derive_public_key(root).map_err(Error::ParseLicense)?;
 
 			// Create own ephemeral key
-			let ek = EccKeyPrivEd25519::create().map_err(Error::CreateKey)?;
+			let ek = EccKeyPrivEd25519::create();
 
-			let (iv, mac) = algs::compute_iv_mac(&alpha, &beta, &ek, &server_ek)?;
+			let (iv, mac) = algs::compute_iv_mac(&alpha, &beta, &ek, &server_ek);
 			self.con.params = Some(ConnectedParams::new(server_key, iv, mac));
 
 			// Send clientek
@@ -634,11 +629,13 @@ impl Client {
 			}
 		} else if name == b"notifyplugincmd" {
 			let mut is_getversion = false;
+			let mut is_getversion_request = false;
 			let mut sender: Option<u16> = None;
 			for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
 				match item {
 					CommandItem::Argument(arg) => match arg.name() {
 						b"name" => is_getversion = arg.value().get_raw() == b"getversion",
+						b"data" => is_getversion_request = arg.value().get_raw() == b"request",
 						b"invokerid" => {
 							if let Ok(id) = arg.value().get_parse::<tsproto_packets::Error, _>() {
 								sender = Some(id);
@@ -648,7 +645,7 @@ impl Client {
 					},
 					CommandItem::NextCommand => {
 						if let Some(sender) = sender {
-							if is_getversion {
+							if is_getversion && is_getversion_request {
 								let mut version = format!(
 									"{} {}",
 									env!("CARGO_PKG_NAME"),

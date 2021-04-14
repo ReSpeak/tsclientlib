@@ -78,8 +78,6 @@ const UDP_SINK_CAPACITY: usize = 50;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-	#[error("Failed to compute cryptographic parameters: {0}")]
-	ComputeIv(#[source] tsproto_types::crypto::Error),
 	#[error("Failed to create ack packet: {0}")]
 	CreateAck(#[source] tsproto_packets::Error),
 	#[error("Failed to decompress packet: {0}")]
@@ -149,10 +147,10 @@ fn deserialize_id_key<'de, D: Deserializer<'de>>(
 
 impl Identity {
 	#[inline]
-	pub fn create() -> Result<Self> {
+	pub fn create() -> Self {
 		let mut res = Self::new(EccKeyPrivP256::create(), 0);
-		res.upgrade_level(8)?;
-		Ok(res)
+		res.upgrade_level(8);
+		res
 	}
 
 	#[inline]
@@ -171,7 +169,7 @@ impl Identity {
 			return Ok(identity);
 		}
 		let mut res = Self::new(EccKeyPrivP256::import_str(key).map_err(Error::IdentityCrypto)?, 0);
-		res.upgrade_level(8)?;
+		res.upgrade_level(8);
 		Ok(res)
 	}
 
@@ -190,7 +188,7 @@ impl Identity {
 	#[inline]
 	pub fn new_from_bytes(key: &[u8]) -> Result<Self> {
 		let mut res = Self::new(EccKeyPrivP256::import(key).map_err(Error::IdentityCrypto)?, 0);
-		res.upgrade_level(8)?;
+		res.upgrade_level(8);
 		Ok(res)
 	}
 
@@ -210,21 +208,20 @@ impl Identity {
 
 	/// Compute the current hash cash level.
 	#[inline]
-	pub fn level(&self) -> Result<u8> {
-		let omega = self.key.to_pub().to_ts().map_err(Error::IdentityCrypto)?;
-		Ok(algs::get_hash_cash_level(&omega, self.counter))
+	pub fn level(&self) -> u8 {
+		let omega = self.key.to_pub().to_ts();
+		algs::get_hash_cash_level(&omega, self.counter)
 	}
 
 	/// Compute a better hash cash level.
-	pub fn upgrade_level(&mut self, target: u8) -> Result<()> {
-		let omega = self.key.to_pub().to_ts().map_err(Error::IdentityCrypto)?;
+	pub fn upgrade_level(&mut self, target: u8) {
+		let omega = self.key.to_pub().to_ts();
 		let mut offset = self.max_counter;
 		while offset < u64::max_value() && algs::get_hash_cash_level(&omega, offset) < target {
 			offset += 1;
 		}
 		self.counter = offset;
 		self.max_counter = offset;
-		Ok(())
 	}
 }
 
@@ -240,7 +237,7 @@ mod identity_tests {
 	#[test]
 	fn parse_ts_base64() {
 		let identity = Identity::new_from_str(TEST_PRIV_KEY).unwrap();
-		let uid = identity.key().to_pub().get_uid().unwrap();
+		let uid = identity.key().to_pub().get_uid();
 		assert_eq!(TEST_UID, &uid);
 	}
 
@@ -248,8 +245,8 @@ mod identity_tests {
 	fn parse_ts_base64_with_offset() {
 		let ident_str = String::from("2792354V") + TEST_PRIV_KEY;
 		let identity = Identity::new_from_str(&ident_str).unwrap();
-		let uid = identity.key().to_pub().get_uid().unwrap();
+		let uid = identity.key().to_pub().get_uid();
 		assert_eq!(TEST_UID, &uid);
-		assert_eq!(identity.level().ok(), Some(21u8));
+		assert_eq!(identity.level(), 21u8);
 	}
 }

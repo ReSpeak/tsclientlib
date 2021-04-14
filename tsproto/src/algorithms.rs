@@ -224,8 +224,8 @@ pub fn decrypt(
 /// Compute shared iv and shared mac.
 pub fn compute_iv_mac(
 	alpha: &[u8; 10], beta: &[u8; 54], our_key: &EccKeyPrivEd25519, other_key: &EdwardsPoint,
-) -> Result<([u8; 64], [u8; 8])> {
-	let shared_secret = our_key.create_shared_secret(other_key).map_err(Error::ComputeIv)?;
+) -> ([u8; 64], [u8; 8]) {
+	let shared_secret = our_key.create_shared_secret(other_key);
 	let mut shared_iv = [0; 64];
 	shared_iv.copy_from_slice(Sha512::digest(&shared_secret).as_slice());
 	for i in 0..10 {
@@ -236,16 +236,16 @@ pub fn compute_iv_mac(
 	}
 	let mut shared_mac = [0; 8];
 	shared_mac.copy_from_slice(&Sha1::digest(&shared_iv).as_slice()[..8]);
-	Ok((shared_iv, shared_mac))
+	(shared_iv, shared_mac)
 }
 
-pub fn hash_cash(key: &EccKeyPubP256, level: u8) -> Result<u64> {
-	let omega = key.to_ts().map_err(Error::IdentityCrypto)?;
+pub fn hash_cash(key: &EccKeyPubP256, level: u8) -> u64 {
+	let omega = key.to_ts();
 	let mut offset = 0;
 	while offset < u64::MAX && get_hash_cash_level(&omega, offset) < level {
 		offset += 1;
 	}
-	Ok(offset)
+	offset
 }
 
 #[inline]
@@ -353,8 +353,7 @@ mod tests {
 			0x38, 0xfd, 0x14, 0xae, 0x06, 0x67, 0x09, 0x16,
 		];
 
-		let (mut shared_iv, _shared_mac) =
-			compute_iv_mac(&alpha, &beta, &priv_key, &derived_key).unwrap();
+		let (mut shared_iv, _shared_mac) = compute_iv_mac(&alpha, &beta, &priv_key, &derived_key);
 
 		assert_eq!(&shared_iv as &[u8], &expected_xored_shared_shared_iv as &[u8]);
 

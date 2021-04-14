@@ -104,8 +104,6 @@ pub enum Error {
 		"The server requested an identity of level {needed}, but we already have level {have}"
 	)]
 	IdentityLevelCorrupted { needed: u8, have: u8 },
-	#[error("Failed to increase identity level: {0}")]
-	IdentityLevelIncreaseFailed(#[source] tsproto::Error),
 	#[error("Failed to increase identity level: Thread died")]
 	IdentityLevelIncreaseFailedThread,
 	#[error("We should be connected but the connection params do not exist")]
@@ -289,7 +287,7 @@ enum ConnectionState {
 	Connecting(future::BoxFuture<'static, Result<(client::Client, data::Connection)>>, bool),
 	IdentityLevelIncreasing {
 		/// We get the improved identity here.
-		recv: oneshot::Receiver<std::result::Result<Identity, tsproto::Error>>,
+		recv: oneshot::Receiver<Identity>,
 		state: Arc<Mutex<IdentityIncreaseLevelState>>,
 	},
 	Connected {
@@ -516,9 +514,7 @@ impl Connection {
 			} else {
 				return Err(Error::InitserverParamsMissing);
 			};
-			let real_uid = UidBuf(params.public_key.get_uid_no_base64().map_err(|e| {
-				Error::Connect(tsproto::client::Error::TsProto(tsproto::Error::IdentityCrypto(e)))
-			})?);
+			let real_uid = UidBuf(params.public_key.get_uid_no_base64());
 			if real_uid != *server_uid {
 				return Err(Error::ServerUidMismatch(real_uid));
 			}
@@ -640,7 +636,7 @@ impl Connection {
 		}
 
 		let identity = self.options.identity.as_ref().unwrap().clone();
-		let level = identity.level().map_err(Error::IdentityLevelIncreaseFailed)?;
+		let level = identity.level();
 		if level >= needed {
 			return Err(Error::IdentityLevelCorrupted { needed, have: level });
 		}
@@ -648,12 +644,13 @@ impl Connection {
 		// Increase identity level
 		let state = Arc::new(Mutex::new(IdentityIncreaseLevelState::Computing));
 		let (send, recv) = oneshot::channel();
+		// TODO Use tokio::blocking
 		// TODO Time estimate
 		std::thread::spawn(move || {
 			let mut identity = identity;
 			// TODO Check if canceled in between
-			let r = identity.upgrade_level(needed);
-			let _ = send.send(r.map(|()| identity));
+			identity.upgrade_level(needed);
+			let _ = send.send(identity);
 		});
 
 		self.state = ConnectionState::IdentityLevelIncreasing { recv, state };
@@ -1187,10 +1184,7 @@ impl Connection {
 				Poll::Ready(Err(_)) => {
 					Poll::Ready(Some(Err(Error::IdentityLevelIncreaseFailedThread)))
 				}
-				Poll::Ready(Ok(Err(e))) => {
-					Poll::Ready(Some(Err(Error::IdentityLevelIncreaseFailed(e))))
-				}
-				Poll::Ready(Ok(Ok(identity))) => {
+				Poll::Ready(Ok(identity)) => {
 					self.options.identity = Some(identity);
 					let fut = Self::connect(self.logger.clone(), self.options.clone(), false);
 					self.state = ConnectionState::Connecting(Box::pin(fut), false);
@@ -1770,21 +1764,13 @@ impl ConnectOptions {
 		let logger = logger.new(o!("addr" => self.address.to_string()));
 
 		let mut stream_items = VecDeque::new();
-		self.identity = Some(
-			self.identity
-				.take()
-				.map(Ok)
-				.unwrap_or_else(|| {
-					// Create new ECDH key
-					let id = Identity::create();
-					if id.is_ok() {
-						// Send event
-						stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
-					}
-					id
-				})
-				.map_err(Error::IdentityCreate)?,
-		);
+		self.identity = Some(self.identity.take().unwrap_or_else(|| {
+			// Create new ECDH key
+			let id = Identity::create();
+			// Send event
+			stream_items.push_back(Ok(StreamItem::IdentityLevelIncreased));
+			id
+		}));
 
 		// Try all addresses
 		let fut = Connection::connect(logger.clone(), self.clone(), false);

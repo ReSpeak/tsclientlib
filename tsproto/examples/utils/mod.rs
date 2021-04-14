@@ -53,8 +53,8 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 	);
 	time_reporter.start("Compute public key hash cash level");
 	let private_key_as_pub = private_key.to_pub();
-	let offset = algs::hash_cash(&private_key_as_pub, 8).unwrap();
-	let omega = private_key_as_pub.to_ts().unwrap();
+	let offset = algs::hash_cash(&private_key_as_pub, 8);
+	let omega = private_key_as_pub.to_ts();
 	time_reporter.finish();
 	info!(con.logger, "Computed hash cash level";
 		"level" => algs::get_hash_cash_level(&omega, offset),

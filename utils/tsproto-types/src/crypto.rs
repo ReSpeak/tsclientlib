@@ -44,16 +44,10 @@ pub enum Error {
 	NoCounterBlock,
 	#[error("Failed to parse public key")]
 	ParsePublicKeyFailed,
-	#[error("Failed to parse public key, expected length {expected} but got {got}")]
-	WrongPublicKeyLength { expected: usize, got: usize },
-	#[error("Failed to encode public key")]
-	EncodePublicKeyFailed,
-	#[error("Failed to complete key exchange")]
-	KeyExchangeFailed,
-	#[error("Failed to create signature")]
-	CreateSignatureFailed,
 	#[error("Wrong key length")]
 	WrongKeyLength,
+	#[error("Failed to parse public key, expected length {expected} but got {got}")]
+	WrongPublicKeyLength { expected: usize, got: usize },
 	#[error("Wrong signature")]
 	WrongSignature { key: EccKeyPubP256, data: Vec<u8>, signature: Vec<u8> },
 
@@ -126,7 +120,7 @@ fn serialize_ecc_key_pub_p256<S: Serializer>(
 
 impl fmt::Debug for EccKeyPubP256 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "EccKeyPubP256({})", self.to_ts().unwrap())
+		write!(f, "EccKeyPubP256({})", self.to_ts())
 	}
 }
 
@@ -217,21 +211,23 @@ impl EccKeyPubP256 {
 	}
 
 	/// Convert to base64 encoded public tomcrypt key.
-	pub fn to_ts(&self) -> Result<String> { Ok(base64::encode(&self.to_tomcrypt()?)) }
+	pub fn to_ts(&self) -> String { base64::encode(&self.to_tomcrypt()) }
 
-	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
+	pub fn to_tomcrypt(&self) -> Vec<u8> {
 		let enc_point = self.0.as_affine().to_encoded_point(false);
-		let pubkey_x =
-			BigInt::from_bytes_be(Sign::Plus, enc_point.x().ok_or(Error::EncodePublicKeyFailed)?);
-		let pubkey_y =
-			BigInt::from_bytes_be(Sign::Plus, enc_point.y().ok_or(Error::EncodePublicKeyFailed)?);
+		// We can unwrap here, creating the public key ensures that it is not the identity point,
+		// which is the only time this returns `None`.
+		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, enc_point.x().unwrap());
+		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, enc_point.y().unwrap());
 
-		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+		// Only returns an error when encoding wrong objects, so fine to unwrap.
+		simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0]),
 			ASN1Block::Integer(0, 32.into()),
 			ASN1Block::Integer(0, pubkey_x),
 			ASN1Block::Integer(0, pubkey_y),
-		]))?)
+		]))
+		.unwrap()
 	}
 
 	/// Get the SEC1 encoding of the public key point on the curve.
@@ -243,14 +239,14 @@ impl EccKeyPubP256 {
 	/// Compute the uid of this key without encoding it in base64.
 	///
 	/// returns sha1(ts encoded key)
-	pub fn get_uid_no_base64(&self) -> Result<Vec<u8>> {
-		Ok(Sha1::digest(self.to_ts()?.as_bytes()).as_slice().to_vec())
+	pub fn get_uid_no_base64(&self) -> Vec<u8> {
+		Sha1::digest(self.to_ts().as_bytes()).as_slice().to_vec()
 	}
 
 	/// Compute the uid of this key.
 	///
 	/// Uid = base64(sha1(ts encoded key))
-	pub fn get_uid(&self) -> Result<String> { Ok(base64::encode(&self.get_uid_no_base64()?)) }
+	pub fn get_uid(&self) -> String { base64::encode(&self.get_uid_no_base64()) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let sig =
@@ -403,11 +399,11 @@ impl EccKeyPrivP256 {
 	}
 
 	/// Convert to base64 encoded private tomcrypt key.
-	pub fn to_ts(&self) -> Result<String> { Ok(base64::encode(&self.to_tomcrypt()?)) }
+	pub fn to_ts(&self) -> String { base64::encode(&self.to_tomcrypt()) }
 
 	/// Store as obfuscated TeamSpeak identity.
-	pub fn to_ts_obfuscated(&self) -> Result<String> {
-		let mut data = self.to_ts()?.into_bytes();
+	pub fn to_ts_obfuscated(&self) -> String {
+		let mut data = self.to_ts().into_bytes();
 		// Xor first 100 bytes with a static value
 		#[allow(clippy::needless_range_loop)]
 		for i in 0..cmp::min(data.len(), 100) {
@@ -423,24 +419,26 @@ impl EccKeyPrivP256 {
 		for i in 0..20 {
 			data[i] ^= hash[i];
 		}
-		Ok(base64::encode(&data))
+		base64::encode(&data)
 	}
 
-	pub fn to_tomcrypt(&self) -> Result<Vec<u8>> {
+	pub fn to_tomcrypt(&self) -> Vec<u8> {
 		let enc_point = self.0.public_key().as_affine().to_encoded_point(false);
-		let pubkey_x =
-			BigInt::from_bytes_be(Sign::Plus, enc_point.x().ok_or(Error::EncodePublicKeyFailed)?);
-		let pubkey_y =
-			BigInt::from_bytes_be(Sign::Plus, enc_point.y().ok_or(Error::EncodePublicKeyFailed)?);
+		// We can unwrap here, creating the public key ensures that it is not the identity point,
+		// which is the only time this returns `None`.
+		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, enc_point.x().unwrap());
+		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, enc_point.y().unwrap());
 		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.to_bytes());
 
-		Ok(simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
+		// Only returns an error when encoding wrong objects, so fine to unwrap.
+		simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
 			ASN1Block::BitString(0, 1, vec![0x80]),
 			ASN1Block::Integer(0, 32.into()),
 			ASN1Block::Integer(0, pubkey_x),
 			ASN1Block::Integer(0, pubkey_y),
 			ASN1Block::Integer(0, privkey),
-		]))?)
+		]))
+		.unwrap()
 	}
 
 	/// This has to be the private key, the other one has to be the public key.
@@ -481,9 +479,7 @@ impl EccKeyPubEd25519 {
 
 impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
-	pub fn create() -> Result<Self> {
-		Ok(EccKeyPrivEd25519(Scalar::random(&mut rand::thread_rng())))
-	}
+	pub fn create() -> Self { EccKeyPrivEd25519(Scalar::random(&mut rand::thread_rng())) }
 
 	pub fn from_base64(data: &str) -> Result<Self> {
 		let decoded = base64::decode(data)?;
@@ -500,9 +496,9 @@ impl EccKeyPrivEd25519 {
 	pub fn to_base64(&self) -> String { base64::encode(self.0.as_bytes()) }
 
 	/// This has to be the private key, the other one has to be the public key.
-	pub fn create_shared_secret(&self, pub_key: &EdwardsPoint) -> Result<[u8; 32]> {
+	pub fn create_shared_secret(&self, pub_key: &EdwardsPoint) -> [u8; 32] {
 		let res = pub_key * self.0;
-		Ok(res.compress().0)
+		res.compress().0
 	}
 
 	pub fn to_pub(&self) -> EccKeyPubEd25519 { self.into() }
@@ -556,7 +552,7 @@ mod tests {
 	#[test]
 	fn obfuscated_priv_key() {
 		let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
-		let obf = key.to_ts_obfuscated().unwrap();
+		let obf = key.to_ts_obfuscated();
 		let key2 = EccKeyPrivP256::from_ts_obfuscated(&obf).unwrap();
 		assert_eq!(key.to_short(), key2.to_short());
 	}
@@ -564,7 +560,7 @@ mod tests {
 	#[test]
 	fn obfuscated_identity() {
 		let key = EccKeyPrivP256::from_ts(TEST_PRIV_KEY).unwrap();
-		let uid = key.to_pub().get_uid().unwrap();
+		let uid = key.to_pub().get_uid();
 
 		let expected_uid = "lks7QL5OVMKo4pZ79cEOI5r5oEA=";
 		assert_eq!(expected_uid, &uid);
@@ -576,7 +572,7 @@ mod tests {
 			"MCkDAgbAAgEgAiBhPImh+bO1xMGOrcplwN3G74bhE9XATm+DxVo3aNtBqg==",
 		)
 		.unwrap();
-		let uid = key.to_pub().get_uid().unwrap();
+		let uid = key.to_pub().get_uid();
 		let expected_uid = "test/9PZ9vww/Bpf5vJxtJhpz80=";
 		assert_eq!(expected_uid, &uid);
 	}
