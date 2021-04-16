@@ -1057,7 +1057,7 @@ impl Connection {
 			if let Some(own_channel) = book.channels.get(&own_client.channel) {
 				if let Some(needed_talk_power) = own_channel.needed_talk_power {
 					return own_client.talk_power_granted
-						|| own_client.talk_power > needed_talk_power;
+						|| own_client.talk_power >= needed_talk_power;
 				}
 			}
 			true
