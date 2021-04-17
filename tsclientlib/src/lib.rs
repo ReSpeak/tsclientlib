@@ -1536,8 +1536,8 @@ impl ConnectedConnection {
 
 							reset!(ClientInputMuted, input_muted);
 							reset!(ClientOutputMuted, output_muted);
-							reset!(ClientInputHardwareEnabled, input_muted);
-							reset!(ClientOutputHardwareEnabled, output_muted);
+							reset!(ClientInputHardwareEnabled, input_hardware_enabled);
+							reset!(ClientOutputHardwareEnabled, output_hardware_enabled);
 							reset!(ClientOutputOnlyMuted, output_only_muted);
 
 							if *id == events::PropertyId::ClientAwayMessage(own_id) {
