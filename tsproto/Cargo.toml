@@ -20,13 +20,12 @@ include = [
 travis-ci = { repository = "ReSpeak/tsclientlib" }
 
 [dependencies]
-aes = "0.6"
+aes = "0.7"
 base64 = "0.13"
 bitflags = "1"
 omnom = "3"
 curve25519-dalek = "3"
-#eax = "0.2.0-pre"
-eax = { git = "https://github.com/RustCrypto/AEADs", rev = "9a6dc685ae4f4f23c628cedab46480baf5ed475d" }
+eax = "0.4.0"
 futures = "0.3"
 generic-array = "0.14"
 git-testament = "0.1"
