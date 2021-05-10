@@ -1,6 +1,6 @@
 [package]
 name = "tsclientlib"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
 description = "A library to create TeamSpeak clients and bots."
 repository = "https://github.com/ReSpeak/tsclientlib"
@@ -30,7 +30,7 @@ static-link = ["sdl2/static-link"]
 audiopus = { version = "0.2", optional = true }
 base64 = "0.13"
 futures = "0.3"
-git-testament = "0.1"
+git-testament = "0.2"
 itertools = "0.10"
 num-traits = "0.2"
 pin-utils = "0.1"
@@ -46,10 +46,10 @@ tokio = { version = "1", features = ["time"] }
 tokio-stream = "0.1"
 trust-dns-proto = "0.20"
 trust-dns-resolver = "0.20"
-ts-bookkeeping = { path = "../utils/ts-bookkeeping" }
-tsproto = { path = "../tsproto", version = "=0.1.0" }
-tsproto-packets = { path = "../utils/tsproto-packets" }
-tsproto-types = { path = "../utils/tsproto-types" }
+ts-bookkeeping = { path = "../utils/ts-bookkeeping", version = "0.1" }
+tsproto = { path = "../tsproto", version = "0.2" }
+tsproto-packets = { path = "../utils/tsproto-packets", version = "0.1" }
+tsproto-types = { path = "../utils/tsproto-types", version = "0.1" }
 url = "2"
 
 [dev-dependencies]

@@ -21,10 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 1.0 for `async`/`await` support
 - 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks
 - 🚀 Many performance improvements
-	- New command parser, 2×–2.5× faster than the old one
+	- New command parser, 2–2.5× faster than the old one
 	- New command serializer, 2× faster than the old one
 - Switched error handling library from `failure` to `thiserror`
-- Now licensed under MIT/Apache 2.0 (before under OSL 2.0)
+- Now licensed under MIT/Apache 2.0 (previously under OSL 2.0)
 - Commands are now sent with `command.send(&mut connection)?`
 - A new connection should now be created with `ConnectOptions::connect` instead of `Connection::new`
 - Multiple renamings in the book
@@ -41,7 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix channel order handling
 - Use `git-testament` instead of `built`, this removes building libgit
 - Fix encoding newlines in commands
-- The last `Ack` packet is sent reliably now, previously it was sometimes lost
+- The last `Ack` packet is sent reliably now, previously it was lost sometimes
 - Fix connecting to servers behind certain protections by restart sending init packets
 - Try to reconnect infinitely after a timeout
 - Keep channel and muted state when reconnecting

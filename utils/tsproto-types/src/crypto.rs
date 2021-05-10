@@ -250,7 +250,7 @@ impl EccKeyPubP256 {
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let sig =
-			p256::ecdsa::Signature::from_asn1(signature).map_err(|_| Error::WrongSignature {
+			p256::ecdsa::Signature::from_der(signature).map_err(|_| Error::WrongSignature {
 				key: self.clone(),
 				data: data.to_vec(),
 				signature: signature.to_vec(),
@@ -269,7 +269,7 @@ impl EccKeyPubP256 {
 
 impl EccKeyPrivP256 {
 	/// Create a new key key pair.
-	pub fn create() -> Self { Self(p256::SecretKey::random(rand::rngs::OsRng)) }
+	pub fn create() -> Self { Self(p256::SecretKey::random(rand::thread_rng())) }
 
 	/// Try to import the key from any of the known formats.
 	pub fn import(data: &[u8]) -> Result<Self> {
@@ -450,7 +450,7 @@ impl EccKeyPrivP256 {
 
 	pub fn sign(self, data: &[u8]) -> Vec<u8> {
 		let key = p256::ecdsa::SigningKey::from(self.0);
-		key.sign(data).to_asn1().as_bytes().to_vec()
+		key.sign(data).to_der().as_bytes().to_vec()
 	}
 
 	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }
@@ -479,7 +479,7 @@ impl EccKeyPubEd25519 {
 
 impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
-	pub fn create() -> Self { EccKeyPrivEd25519(Scalar::random(&mut rand::thread_rng())) }
+	pub fn create() -> Self { EccKeyPrivEd25519(Scalar::random(&mut rand07::thread_rng())) }
 
 	pub fn from_base64(data: &str) -> Result<Self> {
 		let decoded = base64::decode(data)?;

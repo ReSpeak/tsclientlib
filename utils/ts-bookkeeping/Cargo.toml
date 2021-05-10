@@ -17,14 +17,14 @@ serde = { version = "1", features = ["derive"] }
 slog = "2"
 thiserror = "1"
 time = { version = "0.2.23", features = ["serde"] }
-tsproto-packets = { path = "../tsproto-packets" }
-tsproto-types = { path = "../tsproto-types" }
+tsproto-packets = { path = "../tsproto-packets", version = "0.1" }
+tsproto-types = { path = "../tsproto-types", version = "0.1" }
 
 [build-dependencies]
 heck = "0.3"
 itertools = "0.10"
 t4rust-derive = "0.3"
-tsproto-structs = { path = "../tsproto-structs", version = "=0.1.0" }
+tsproto-structs = { path = "../tsproto-structs", version = "0.2" }
 
 [dev-dependencies]
 criterion = "0.3"

@@ -1,6 +1,6 @@
 [package]
 name = "tsproto-structs"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Flakebi <flakebi@t-online.de>", "Splamy <splamyn@gmail.com>"]
 description = "Resource files for several TeamSpeak related data."
 license = "MIT OR Apache-2.0"
