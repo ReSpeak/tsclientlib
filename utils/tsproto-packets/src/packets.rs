@@ -1,3 +1,4 @@
+#![allow(clippy::new_ret_no_self)]
 use std::convert::TryInto;
 use std::io::prelude::*;
 use std::{fmt, io, str};

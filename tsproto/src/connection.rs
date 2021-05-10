@@ -255,7 +255,7 @@ impl Connection {
 			match self.udp_socket.poll_recv_from(cx, &mut &mut read_buf) {
 				Poll::Ready(Ok(addr)) => {
 					let size = read_buf.filled().len();
-					let mut udp_buffer = mem::replace(&mut self.udp_buffer, Vec::new());
+					let mut udp_buffer = mem::take(&mut self.udp_buffer);
 					udp_buffer.truncate(size);
 					match self.handle_udp_packet(cx, udp_buffer, addr) {
 						Ok(()) => {

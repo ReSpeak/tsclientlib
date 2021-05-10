@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::str::FromStr;
 
 use once_cell::sync::Lazy;
@@ -84,7 +85,7 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 					RuleKind::Map { from, .. } => Some(from),
 					_ => None,
 				})
-				.collect::<Vec<_>>();
+				.collect::<HashSet<_>>();
 
 			let mut used_props = vec![];
 			for rule in &ev.rules {
@@ -96,7 +97,7 @@ pub static DATA: Lazy<MessagesToBookDeclarations<'static>> = Lazy::new(|| {
 			}
 
 			for fld in &msg_fields {
-				if used_flds.contains(&fld) {
+				if used_flds.contains(fld) {
 					continue;
 				}
 				if let Some(prop) = book

@@ -120,7 +120,7 @@ pub enum Error {
 	#[error("Currently not connected")]
 	NotConnected,
 	#[error("Failed to resolve address: {0}")]
-	ResolveAddress(#[source] resolver::Error),
+	ResolveAddress(#[source] Box<resolver::Error>),
 	#[error("Failed to send clientinit: {0}")]
 	SendClientinit(#[source] tsproto::client::Error),
 	#[error("Failed to send packet: {0}")]
@@ -456,7 +456,7 @@ impl Connection {
 
 		let mut errors = Vec::new();
 		while let Some(addr) = resolved.next().await {
-			let addr = addr.map_err(Error::ResolveAddress)?;
+			let addr = addr.map_err(|e| Error::ResolveAddress(Box::new(e)))?;
 			match Self::connect_to(&logger, &options, addr).await {
 				Ok(res) => return Ok(res),
 				Err(e @ Error::IdentityLevel(_)) | Err(e @ Error::ConnectTs(_)) => {

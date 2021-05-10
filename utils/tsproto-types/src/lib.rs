@@ -50,7 +50,7 @@ impl<'a> From<&'a Uid> for Cow<'a, Uid> {
 }
 
 impl Uid {
-	pub fn from_bytes<'a>(data: &'a [u8]) -> &Self { Uid::ref_cast(data) }
+	pub fn from_bytes(data: &'_ [u8]) -> &Self { Uid::ref_cast(data) }
 
 	/// TeamSpeak uses a different encoding of the uid for fetching avatars.
 	///
@@ -104,7 +104,7 @@ impl Permission {
 	/// Never fails
 	pub fn from_u32(i: u32) -> Option<Self> { Some(Permission(i)) }
 	/// Never fails
-	pub fn to_u32(&self) -> Option<u32> { Some(self.0) }
+	pub fn to_u32(self) -> Option<u32> { Some(self.0) }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]

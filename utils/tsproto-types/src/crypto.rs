@@ -264,6 +264,7 @@ impl EccKeyPubP256 {
 	}
 
 	// For the bookkeeping
+	#[allow(clippy::should_implement_trait)]
 	pub fn as_ref(&self) -> &Self { self }
 }
 

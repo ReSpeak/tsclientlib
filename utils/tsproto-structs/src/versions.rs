@@ -47,11 +47,10 @@ impl Version {
 		res.push_str(&self.platform.replace(' ', "_"));
 		let ver = self.version.split(' ').next().unwrap().replace('-', "_");
 		for num in ver.split('.') {
+			res.push('_');
 			if num != "?" {
-				res.push('_');
 				res.push_str(&num.to_string());
 			} else {
-				res.push('_');
 				res.push('X');
 			}
 		}

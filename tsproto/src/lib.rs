@@ -176,13 +176,13 @@ impl Identity {
 	pub fn new_from_ts_str(key: &str) -> Result<Self> {
 		let counter_separator = key
 			.find('V')
-			.ok_or_else(|| Error::IdentityCrypto(tsproto_types::crypto::Error::NoCounterBlock))?;
+			.ok_or(Error::IdentityCrypto(tsproto_types::crypto::Error::NoCounterBlock))?;
 		let counter = key[..counter_separator]
 			.parse::<u64>()
 			.map_err(|_| Error::IdentityCrypto(tsproto_types::crypto::Error::NoCounterBlock))?;
 		let ecc_key = EccKeyPrivP256::import_str(&key[(counter_separator + 1)..])
 			.map_err(Error::IdentityCrypto)?;
-		return Ok(Self::new(ecc_key, counter));
+		Ok(Self::new(ecc_key, counter))
 	}
 
 	#[inline]

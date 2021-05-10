@@ -58,7 +58,7 @@ impl MessageDeclarations {
 	}
 }
 
-#[derive(Deserialize, Debug, Clone, Eq, PartialEq)]
+#[derive(Deserialize, Debug, Clone, Eq, Hash, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Field {
 	/// Internal name of this declarations file to map fields to messages.
