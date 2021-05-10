@@ -1,4 +1,4 @@
-# tsproto-structs [![docs.rs](https://docs.rs/tsproto-structs/badge.svg)](https://docs.rs/tsproto-structs)
+# ts-bookkeeping [![docs.rs](https://docs.rs/ts-bookkeeping/badge.svg)](https://docs.rs/ts-bookkeeping)
 {{readme}}
 
 ## License

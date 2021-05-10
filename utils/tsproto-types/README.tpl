@@ -1,4 +1,4 @@
-# tsproto-structs [![docs.rs](https://docs.rs/tsproto-structs/badge.svg)](https://docs.rs/tsproto-structs)
+# tsproto-types [![docs.rs](https://docs.rs/tsproto-types/badge.svg)](https://docs.rs/tsproto-types)
 {{readme}}
 
 ## License

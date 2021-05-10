@@ -1,3 +1,5 @@
+//! `tsproto-packets` parses and serializes TeamSpeak packets and commands.
+
 #[macro_use]
 extern crate rental;
 

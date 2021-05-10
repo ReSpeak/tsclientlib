@@ -1,8 +1,7 @@
-//! `tsproto-structs` contains machine readable data for several TeamSpeak
-//! related topics.
+//! `tsproto-structs` contains machine readable data for several TeamSpeak related topics.
 //!
-//! The underlying data files can be found in the [tsdeclarations](https://github.com/ReSpeak/tsdeclarations)
-//! repository.
+//! The underlying data files can be found in the
+//! [tsdeclarations](https://github.com/ReSpeak/tsdeclarations) repository.
 
 use std::fmt;
 use std::str::FromStr;

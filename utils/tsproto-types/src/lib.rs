@@ -1,3 +1,5 @@
+//! `tsproto-types` contains basic types and enums that are used within the TeamSpeak protocol.
+
 use std::borrow::{Borrow, Cow};
 use std::fmt;
 use std::u64;
