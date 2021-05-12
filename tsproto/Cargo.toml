@@ -16,9 +16,6 @@ include = [
 	"**/*.rs",
 ]
 
-[badges]
-travis-ci = { repository = "ReSpeak/tsclientlib" }
-
 [dependencies]
 aes = "0.7"
 base64 = "0.13"
@@ -44,8 +41,8 @@ stable_deref_trait = "1"
 thiserror = "1"
 time = "0.2.23"
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
-tsproto-packets = { path = "../utils/tsproto-packets" }
-tsproto-types = { path = "../utils/tsproto-types" }
+tsproto-packets = { path = "../utils/tsproto-packets", version = "0.1" }
+tsproto-types = { path = "../utils/tsproto-types", version = "0.1" }
 quicklz = "0.3"
 
 [dev-dependencies]

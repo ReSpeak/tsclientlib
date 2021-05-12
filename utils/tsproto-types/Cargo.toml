@@ -2,12 +2,19 @@
 name = "tsproto-types"
 version = "0.1.0"
 authors = ["Flakebi <flakebi@t-online.de>"]
-description = "Basic types for TeamSpeak"
+description = "Basic types and enums that are used within the TeamSpeak protocol."
+repository = "https://github.com/ReSpeak/tsclientlib/tree/master/utils/tsproto-types"
+readme = "README.md"
+keywords = ["teamspeak3", "ts3"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/ReSpeak/tsclientlib"
-keywords = ["TeamSpeak3", "TS3"]
 build = "build/build.rs"
 edition = "2018"
+include = [
+	"/Cargo.toml",
+	"/README.md",
+	"**/*.rs",
+	"**/*.tt",
+]
 
 [dependencies]
 base64 = "0.13"

@@ -3,17 +3,18 @@ name = "tsproto-structs"
 version = "0.2.0"
 authors = ["Flakebi <flakebi@t-online.de>", "Splamy <splamyn@gmail.com>"]
 description = "Resource files for several TeamSpeak related data."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/ReSpeak/tsclientlib"
+repository = "https://github.com/ReSpeak/tsclientlib/tree/master/utils/tsproto-structs"
 readme = "README.md"
-keywords = ["TeamSpeak3", "TS3"]
+keywords = ["teamspeak3", "ts3"]
+license = "MIT OR Apache-2.0"
 edition = "2018"
 include = [
 	"/Cargo.toml",
 	"/README.md",
 	"/src/*.rs",
-	"/declarations/BookDeclarations.toml",
+	"/declarations/Book.toml",
 	"/declarations/BookToMessages.toml",
+	"/declarations/Enums.toml",
 	"/declarations/Errors.csv",
 	"/declarations/Messages.toml",
 	"/declarations/MessagesToBook.toml",

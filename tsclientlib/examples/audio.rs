@@ -1,3 +1,10 @@
+//! This example connects to a teamspeak instance and joins a channel.
+//! The connected bot-identity will listen on your microphone and send everything to the current
+//! channel. In parallel, the program will play back all other clients in the channel via its own
+//! audio output.
+//! Microphone -> Channel
+//! Channel -> PC Speakers
+
 use anyhow::{bail, Result};
 use futures::prelude::*;
 use slog::{debug, info, o, Drain, Logger};
@@ -32,11 +39,6 @@ struct Args {
 	verbose: u8,
 }
 
-/// This example connects to a teamspeak instance and join a channel.
-/// The connected bot-identity will listen on your microphone and play everything into the channel.
-/// In parallel the program itself will playback all other clients in the channel via its own audio output.
-/// Microphone -> Channel
-/// Channel -> PC Speakers
 #[tokio::main]
 async fn main() -> Result<()> { real_main().await }
 

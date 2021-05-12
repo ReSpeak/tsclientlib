@@ -1,4 +1,4 @@
-# TsClientlib &emsp; [![docs.rs](https://docs.rs/tsclientlib/badge.svg)](https://docs.rs/tsclientlib)
+# TsClientlib [![docs.rs](https://docs.rs/tsclientlib/badge.svg)](https://docs.rs/tsclientlib)
 tsclientlib is a library which makes it simple to create TeamSpeak clients
 and bots.
 
