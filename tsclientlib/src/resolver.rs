@@ -106,7 +106,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	}
 
 	// Resolve as nickname
-	let res = if !address.contains('.') && address != "localhost" {
+	let res = if !address.contains('.') && addr != "localhost" {
 		debug!(logger, "Resolving nickname"; "address" => &address);
 		// Could be a server nickname
 		resolve_nickname(address.clone())

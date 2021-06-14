@@ -1,8 +1,5 @@
 //! `tsproto-packets` parses and serializes TeamSpeak packets and commands.
 
-#[macro_use]
-extern crate rental;
-
 use std::fmt;
 
 use thiserror::Error;
@@ -10,7 +7,7 @@ use thiserror::Error;
 pub mod commands;
 pub mod packets;
 
-type Result<T> = std::result::Result<T, Error>;
+type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub const S2C_HEADER_LEN: usize = 11;
 pub const C2S_HEADER_LEN: usize = 13;

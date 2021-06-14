@@ -20,6 +20,6 @@ bitflags = "1"
 num-derive = "0.3"
 num-traits = "0.2"
 omnom = "3"
-rental = "0.5"
+self_cell = "0.9"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"

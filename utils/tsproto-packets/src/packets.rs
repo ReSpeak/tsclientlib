@@ -73,36 +73,37 @@ pub enum CodecType {
 
 macro_rules! create_buf {
 	($($name:ident, $borrow_name:ident, $convert:ident);*) => {
-		rental! {
-			pub mod rentals {
-				$(
-				#[rental(covariant, debug)]
+		mod rentals {
+			use super::*;
+
+			$(self_cell::self_cell!(
 				pub struct $name {
-					data: Vec<u8>,
-					content: super::$borrow_name<'data>,
+					owner: Vec<u8>,
+					#[covariant]
+					dependent: $borrow_name,
 				}
-				)*
-			}
+
+				impl {Debug}
+			);)*
 		}
 
 		$(
 		#[derive(Debug)]
-		pub struct $name(pub rentals::$name);
+		pub struct $name(rentals::$name);
+
 		impl $name {
 			/// `InPacket::try_new` is not checked and must succeed. Otherwise, it
 			/// panics.
 			#[inline]
 			pub fn try_new(direction: Direction, data: Vec<u8>) -> Result<Self> {
-				Ok(Self(rentals::$name::try_new(data, |d| {
-					InPacket::new(direction, d).$convert()
-				}).map_err(|e| e.0)?))
+				Ok(Self(rentals::$name::try_new(data, |data| InPacket::new(direction, data).$convert())?))
 			}
 			#[inline]
-			pub fn raw_data(&self) -> &[u8] { self.0.head() }
+			pub fn raw_data(&self) -> &[u8] { self.0.borrow_owner().as_slice() }
 			#[inline]
-			pub fn data(&self) -> &$borrow_name { self.0.suffix() }
+			pub fn data(&self) -> &$borrow_name { self.0.borrow_dependent() }
 			#[inline]
-			pub fn into_buffer(self) -> Vec<u8> { self.0.into_head() }
+			pub fn into_buffer(self) -> Vec<u8> { self.0.into_owner() }
 		}
 		)*
 	}
