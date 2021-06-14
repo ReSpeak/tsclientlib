@@ -378,7 +378,7 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 
 			while !entries.is_empty() {
 				let weight: u32 = entries.iter().map(|e| e.weight() as u32).sum();
-				let mut w = rand::thread_rng().gen_range(0, weight + 1);
+				let mut w = rand::thread_rng().gen_range(0..=weight);
 				if w == 0 {
 					// Pick the first entry with weight 0
 					if let Some(i) = entries.iter().position(|e| e.weight() == 0) {

@@ -176,8 +176,7 @@ impl EccKeyPubP256 {
 				{
 					let x_bytes = x.to_bytes_be().1;
 					let y_bytes = y.to_bytes_be().1;
-					let field_size =
-						<p256::NistP256 as elliptic_curve::Curve>::FieldSize::to_usize();
+					let field_size = elliptic_curve::FieldSize::<p256::NistP256>::to_usize();
 					if x_bytes.len() != field_size {
 						return Err(Error::WrongPublicKeyLength {
 							expected: field_size,
@@ -446,7 +445,7 @@ impl EccKeyPrivP256 {
 	pub fn create_shared_secret(
 		self, other: EccKeyPubP256,
 	) -> elliptic_curve::ecdh::SharedSecret<p256::NistP256> {
-		elliptic_curve::ecdh::diffie_hellman(self.0.secret_scalar(), other.0.as_affine())
+		elliptic_curve::ecdh::diffie_hellman(self.0.to_secret_scalar(), other.0.as_affine())
 	}
 
 	pub fn sign(self, data: &[u8]) -> Vec<u8> {

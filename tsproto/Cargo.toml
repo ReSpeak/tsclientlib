@@ -30,7 +30,7 @@ num-bigint = "0.4"
 num-derive = "0.3"
 num-traits = "0.2"
 pin-project-lite = "0.2"
-rand = "0.7"
+rand = "0.8"
 rug = { version = "1", optional = true, default-features = false, features = ["integer"] }
 serde = { version = "1", features = ["derive"] }
 sha-1 = "0.9"

@@ -20,12 +20,12 @@ include = [
 base64 = "0.13"
 bitflags = "1"
 curve25519-dalek = "3"
-elliptic-curve = { version = "0.9", features = ["ecdh"] }
+elliptic-curve = { version = "0.10", features = ["ecdh"] }
 generic-array = "0.14"
 num-bigint = "0.4"
 num-derive = "0.3"
 num-traits = "0.2"
-p256 = { version = "0.8", features = ["ecdh", "ecdsa"] }
+p256 = { version = "0.9", features = ["ecdh", "ecdsa"] }
 rand = "0.8"
 rand07 = { package = "rand", version = "0.7" }
 ref-cast = "1"
