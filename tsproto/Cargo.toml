@@ -39,7 +39,7 @@ slog = "2"
 slog-perf = "0.2"
 stable_deref_trait = "1"
 thiserror = "1"
-time = "0.2.23"
+time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
 tsproto-packets = { path = "../utils/tsproto-packets", version = "0.1" }
 tsproto-types = { path = "../utils/tsproto-types", version = "0.1" }

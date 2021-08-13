@@ -186,7 +186,12 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 					arg: \"{}\",
 					value: val.to_string(),
 					source: e,
-				}})?)",
+				}})?).map_err(|e| ParseError::ParseDate {{
+					arg: \"{}\",
+					value: val.to_string(),
+					source: e,
+				}})?",
+			field.pretty,
 			field.pretty
 		),
 		_ => panic!("Unknown type '{}' when trying to deserialize {:?}", rust_type, field),

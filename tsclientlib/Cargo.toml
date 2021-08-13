@@ -41,7 +41,7 @@ slog-async = "2"
 slog-perf = "0.2"
 slog-term = "2"
 thiserror = "1"
-time = "0.2.15"
+time = "0.3"
 tokio = { version = "1", features = ["time"] }
 tokio-stream = "0.1"
 trust-dns-proto = "0.20"

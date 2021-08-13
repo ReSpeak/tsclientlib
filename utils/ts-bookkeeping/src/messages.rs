@@ -46,6 +46,8 @@ pub enum ParseError {
 	ParseBool { arg: &'static str, value: String },
 	#[error("Cannot parse \"{value}\" as SocketAddr for parameter {arg} ({source})")]
 	ParseUid { arg: &'static str, value: String, source: base64::DecodeError },
+	#[error("Cannot parse \"{value}\" as DateTimeOffset for parameter {arg} ({source})")]
+	ParseDate { arg: &'static str, value: String, source: time::error::ComponentRange },
 	#[error("Invalid value \"{value}\" for parameter {arg}")]
 	InvalidValue { arg: &'static str, value: String },
 }

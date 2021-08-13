@@ -11,6 +11,7 @@ use omnom::{ReadExt, WriteExt};
 use sha2::{Digest, Sha512};
 use thiserror::Error;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 use tsproto_types::LicenseType;
 
@@ -35,6 +36,8 @@ pub enum Error {
 	Deserialize(#[source] std::io::Error),
 	#[error("Failed to deserialize license: {0}")]
 	DeserializeString(#[source] std::str::Utf8Error),
+	#[error("Failed to deserialize date: {0}")]
+	DeserializeDate(#[source] time::error::ComponentRange),
 	#[error("License is only valid between {start} and {end}")]
 	Expired { start: OffsetDateTime, end: OffsetDateTime },
 	#[error("Cannot uncompress license public key")]
@@ -331,10 +334,10 @@ impl License {
 				key: LicenseKey::Public(EccKeyPubEd25519::from_bytes(key_data)),
 				not_valid_before: OffsetDateTime::from_unix_timestamp(
 					i64::from(before_ts) + TIMESTAMP_OFFSET,
-				),
+				).map_err(Error::DeserializeDate)?,
 				not_valid_after: OffsetDateTime::from_unix_timestamp(
 					i64::from(after_ts) + TIMESTAMP_OFFSET,
-				),
+				).map_err(Error::DeserializeDate)?,
 				hash,
 				inner,
 			},
@@ -421,8 +424,8 @@ impl fmt::Debug for License {
 			LicenseKey::Public(k) => write!(f, "{:?}", k)?,
 			LicenseKey::Private(k) => write!(f, "{:?}", k)?,
 		}
-		let from = self.not_valid_before.format("%F %T");
-		let to = self.not_valid_after.format("%F %T");
+		let from = self.not_valid_before.format(&Rfc3339).unwrap_or("Invalid".to_string());
+		let to = self.not_valid_after.format(&Rfc3339).unwrap_or("Invalid".to_string());
 		write!(f, ", valid_between: {} - {}, ", from, to)?;
 		write!(f, "inner: {:?} }}", self.inner)?;
 		Ok(())
