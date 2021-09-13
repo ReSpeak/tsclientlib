@@ -1,9 +1,10 @@
 use anyhow::{Error, Result};
-use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
+use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use once_cell::sync::Lazy;
 use tracing::{info, warn};
 use tsproto::client::Client;
 use tsproto::connection::StreamItem;
+use tsproto_packets::commands::CommandParser;
 
 mod utils;
 use crate::utils::*;
@@ -22,11 +23,8 @@ async fn wait_channellistfinished(con: &mut Client) -> Result<()> {
 				None
 			}
 			StreamItem::Command(packet) => {
-				if packet.data().data().name == "channellistfinished" {
-					Some(())
-				} else {
-					None
-				}
+				let (name, _) = CommandParser::new(packet.data().packet().content());
+				if name == b"channellistfinished" { Some(()) } else { None }
 			}
 			StreamItem::Error(error) => {
 				warn!(%error, "Got connection error");
@@ -43,12 +41,12 @@ async fn wait_channellistfinished(con: &mut Client) -> Result<()> {
 }
 
 fn one_connect(b: &mut Bencher) {
-	//Lazy::force(&TRACING);
+	Lazy::force(&TRACING);
 
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
-	let mut rt = tokio::runtime::Runtime::new().unwrap();
+	let rt = tokio::runtime::Runtime::new().unwrap();
 
 	b.iter(|| {
 		rt.block_on(async move {
@@ -69,9 +67,11 @@ fn one_connect(b: &mut Bencher) {
 	});
 }
 
-fn bench_connect(c: &mut Criterion) {
-	c.bench("connect", Benchmark::new("connect", one_connect).sample_size(20));
-}
+fn bench_connect(c: &mut Criterion) { c.bench_function("connect", one_connect); }
 
-criterion_group!(benches, bench_connect);
+criterion_group! {
+	name = benches;
+	config = Criterion::default().sample_size(20);
+	targets = bench_connect
+}
 criterion_main!(benches);

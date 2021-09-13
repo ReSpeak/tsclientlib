@@ -56,10 +56,6 @@ name = "modpow"
 harness = false
 
 [[bench]]
-name = "command"
-harness = false
-
-[[bench]]
 name = "connect"
 harness = false
 

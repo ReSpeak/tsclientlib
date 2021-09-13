@@ -1,11 +1,13 @@
-use criterion::{criterion_group, criterion_main, Bencher, Criterion, Fun};
+use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use tsproto::license::Licenses;
+use tsproto_types::crypto::EccKeyPubEd25519;
 
 fn license(b: &mut Bencher, license: &[u8]) {
 	let licenses = Licenses::parse_ignore_expired(license).unwrap();
 
 	b.iter(|| {
-		let derived_key = licenses.derive_public_key().unwrap();
+		let derived_key =
+			licenses.derive_public_key(EccKeyPubEd25519::from_bytes(tsproto::ROOT_KEY)).unwrap();
 		derived_key.compress().0
 	});
 }
@@ -26,9 +28,8 @@ fn aal_license(b: &mut Bencher) {
 }
 
 fn bench_license(c: &mut Criterion) {
-	let standard = Fun::new("standard license", |b, ()| standard_license(b));
-	let aal = Fun::new("aal license", |b, ()| aal_license(b));
-	c.bench_functions("License", vec![standard, aal], ());
+	c.bench_function("standard license", standard_license);
+	c.bench_function("aal license", aal_license);
 }
 
 criterion_group!(benches, bench_license);

@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Bencher, Criterion, Fun};
+use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use num_bigint::BigUint;
 use num_traits::One;
 #[cfg(feature = "rug")]
@@ -30,14 +30,12 @@ fn gmp_modpow(b: &mut Bencher) {
 }
 
 fn bench_modpow(c: &mut Criterion) {
-	let mut benches = Vec::new();
-	benches.push(Fun::new("num bigint", |b, ()| num_modpow(b)));
+	c.bench_function("num bigint", num_modpow);
 
 	#[cfg(feature = "rug")]
 	{
-		benches.push(Fun::new("gmp", |b, ()| gmp_modpow(b)));
+		c.bench_function("gmp", gmp_modpow);
 	}
-	c.bench_functions("ModPow", benches, ());
 }
 
 criterion_group!(benches, bench_modpow);

@@ -1,5 +1,6 @@
 use anyhow::Error;
-use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
+use criterion::{criterion_group, criterion_main, Bencher, Criterion};
+use tracing::info;
 use tsproto_packets::packets::*;
 
 mod utils;
@@ -11,10 +12,10 @@ fn send_messages(b: &mut Bencher) {
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
 
-	let mut rt = tokio::runtime::Runtime::new().unwrap();
+	let rt = tokio::runtime::Runtime::new().unwrap();
 	let mut con = rt
 		.block_on(async move {
-			let mut con = create_client(local_address, address, logger.clone(), 0).await?;
+			let mut con = create_client(local_address, address, 0).await?;
 
 			info!("Connecting");
 			connect(&mut con).await?;
@@ -27,18 +28,15 @@ fn send_messages(b: &mut Bencher) {
 	let mut last_id = None;
 	b.iter(|| {
 		let text = format!("Hello {}", i);
-		let packet = OutCommand::new::<_, _, String, String, _, _, std::iter::Empty<_>>(
-			Direction::C2S,
-			PacketType::Command,
-			"sendtextmessage",
-			vec![("targetmode", "3"), ("msg", &text)].into_iter(),
-			std::iter::empty(),
-		);
+		let mut packet =
+			OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "sendtextmessage");
+		packet.write_arg("targetmode", &"3");
+		packet.write_arg("msg", &text);
 		i += 1;
 
 		rt.block_on(async {
 			con.wait_until_can_send().await.unwrap();
-			last_id = Some(con.send_packet(packet).unwrap());
+			last_id = Some(con.send_packet(packet.into_packet()).unwrap());
 		});
 	});
 
@@ -48,7 +46,7 @@ fn send_messages(b: &mut Bencher) {
 			con.wait_for_ack(id).await?;
 		}
 		tokio::select! {
-			_ = tokio::time::delay_for(tokio::time::Duration::from_millis(50)) => {
+			_ = tokio::time::sleep(tokio::time::Duration::from_millis(50)) => {
 			}
 			_ = con.wait_disconnect() => {
 				anyhow::bail!("Disconnected");
@@ -61,9 +59,11 @@ fn send_messages(b: &mut Bencher) {
 	.unwrap();
 }
 
-fn bench_message(c: &mut Criterion) {
-	c.bench("message", Benchmark::new("message", send_messages).sample_size(200));
-}
+fn bench_message(c: &mut Criterion) { c.bench_function("message", send_messages); }
 
-criterion_group!(benches, bench_message);
+criterion_group! {
+	name = benches;
+	config = Criterion::default().sample_size(200);
+	targets = bench_message
+}
 criterion_main!(benches);
