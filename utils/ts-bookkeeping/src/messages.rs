@@ -1,6 +1,5 @@
 use std::net::IpAddr;
 
-use slog::Logger;
 use thiserror::Error;
 use time::{Duration, OffsetDateTime};
 use tsproto_packets::commands::CommandParser;
@@ -53,7 +52,7 @@ pub enum ParseError {
 }
 
 pub trait InMessageTrait {
-	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self>
+	fn new(header: &InHeader, args: CommandParser) -> Result<Self>
 	where Self: Sized;
 }
 

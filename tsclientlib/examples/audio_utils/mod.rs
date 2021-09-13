@@ -1,7 +1,6 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use slog::Logger;
 use tokio::task::LocalSet;
 
 use audio_to_ts::AudioToTs;
@@ -25,7 +24,7 @@ pub struct AudioData {
 	pub ts2a: Arc<Mutex<TsToAudio>>,
 }
 
-pub(crate) fn start(logger: Logger, local_set: &LocalSet) -> Result<AudioData> {
+pub(crate) fn start(local_set: &LocalSet) -> Result<AudioData> {
 	let sdl_context = sdl2::init().unwrap();
 
 	let audio_subsystem = sdl_context.audio().unwrap();
@@ -34,8 +33,8 @@ pub(crate) fn start(logger: Logger, local_set: &LocalSet) -> Result<AudioData> {
 		video_subsystem.enable_screen_saver();
 	}
 
-	let ts2a = TsToAudio::new(logger.clone(), audio_subsystem.clone(), local_set)?;
-	let a2ts = AudioToTs::new(logger.clone(), audio_subsystem, local_set)?;
+	let ts2a = TsToAudio::new(audio_subsystem.clone(), local_set)?;
+	let a2ts = AudioToTs::new(audio_subsystem, local_set)?;
 
 	Ok(AudioData { a2ts, ts2a })
 }

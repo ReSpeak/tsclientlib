@@ -191,8 +191,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 					value: val.to_string(),
 					source: e,
 				}})?",
-			field.pretty,
-			field.pretty
+			field.pretty, field.pretty
 		),
 		_ => panic!("Unknown type '{}' when trying to deserialize {:?}", rust_type, field),
 	};

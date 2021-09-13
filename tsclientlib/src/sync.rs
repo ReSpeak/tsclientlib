@@ -8,8 +8,8 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures::prelude::*;
-use slog::{error, info};
 use tokio::sync::{mpsc, oneshot};
+use tracing::{error, info};
 use ts_bookkeeping::ChannelId;
 #[cfg(feature = "audio")]
 use tsproto_packets::packets::InAudioBuf;
@@ -134,6 +134,7 @@ impl DerefMut for SyncConnection {
 impl Stream for SyncConnection {
 	type Item = Result<SyncStreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, ctx: &mut Context) -> Poll<Option<Self::Item>> {
+		let _span = self.con.span.clone().entered();
 		loop {
 			if let Poll::Ready(msg) = self.recv.poll_recv(ctx) {
 				if let Some(msg) = msg {
@@ -216,7 +217,7 @@ impl Stream for SyncConnection {
 					}
 					continue;
 				} else {
-					error!(self.con.logger, "Message stream ended unexpectedly");
+					error!("Message stream ended unexpectedly");
 				}
 			}
 			break;
@@ -248,7 +249,7 @@ impl Stream for SyncConnection {
 							if let Some(send) = self.commands.remove(&handle) {
 								let _ = send.send(res.map_err(|e| e.into()));
 							} else {
-								info!(self.con.logger, "Got untracked message result");
+								info!("Got untracked message result");
 							}
 							continue;
 						}
@@ -256,7 +257,7 @@ impl Stream for SyncConnection {
 							if let Some(send) = self.downloads.remove(&handle) {
 								let _ = send.send(Ok(res));
 							} else {
-								info!(self.con.logger, "Got untracked download");
+								info!("Got untracked download");
 							}
 							continue;
 						}
@@ -264,7 +265,7 @@ impl Stream for SyncConnection {
 							if let Some(send) = self.uploads.remove(&handle) {
 								let _ = send.send(Ok(res));
 							} else {
-								info!(self.con.logger, "Got untracked upload");
+								info!("Got untracked upload");
 							}
 							continue;
 						}
@@ -274,7 +275,7 @@ impl Stream for SyncConnection {
 							} else if let Some(send) = self.uploads.remove(&handle) {
 								let _ = send.send(Err(res));
 							} else {
-								info!(self.con.logger, "Got untracked file transfer");
+								info!("Got untracked file transfer");
 							}
 							continue;
 						}

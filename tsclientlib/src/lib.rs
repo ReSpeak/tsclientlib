@@ -25,11 +25,11 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use futures::prelude::*;
-use slog::{debug, info, o, warn, Drain, Logger};
 use thiserror::Error;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
+use tracing::{debug, info, info_span, warn, Instrument, Span};
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::OutMessageTrait;
 use tsproto::client;
@@ -261,7 +261,7 @@ pub enum StreamItem {
 /// server.
 pub struct Connection {
 	state: ConnectionState,
-	logger: Logger,
+	span: Span,
 	options: ConnectOptions,
 	stream_items: VecDeque<Result<StreamItem>>,
 }
@@ -386,7 +386,6 @@ impl Connection {
 			input_hardware_enabled: true,
 			output_hardware_enabled: true,
 			away: None,
-			logger: None,
 			log_commands: false,
 			log_packets: false,
 			log_udp_packets: false,
@@ -441,7 +440,7 @@ impl Connection {
 	/// If `is_reconnect` is `true`, wait 10 seconds before sending the first packet. This is to not
 	/// spam unnecessary packets if the internet or server is down.
 	async fn connect(
-		logger: Logger, options: ConnectOptions, is_reconnect: bool,
+		options: ConnectOptions, is_reconnect: bool,
 	) -> Result<(client::Client, data::Connection)> {
 		if is_reconnect {
 			tokio::time::sleep(Duration::from_secs(10)).await;
@@ -449,7 +448,7 @@ impl Connection {
 
 		let resolved = match &options.address {
 			ServerAddress::SocketAddr(a) => stream::once(future::ok(*a)).left_stream(),
-			ServerAddress::Other(s) => resolver::resolve(logger.clone(), s.into()).right_stream(),
+			ServerAddress::Other(s) => resolver::resolve(s.into()).right_stream(),
 		};
 		pin_utils::pin_mut!(resolved);
 		let mut resolved: Pin<_> = resolved;
@@ -457,16 +456,15 @@ impl Connection {
 		let mut errors = Vec::new();
 		while let Some(addr) = resolved.next().await {
 			let addr = addr.map_err(|e| Error::ResolveAddress(Box::new(e)))?;
-			match Self::connect_to(&logger, &options, addr).await {
+			match Self::connect_to(&options, addr).await {
 				Ok(res) => return Ok(res),
 				Err(e @ Error::IdentityLevel(_)) | Err(e @ Error::ConnectTs(_)) => {
 					// Either increase identity level or the server refused us
 					return Err(e);
 				}
-				Err(e) => {
-					info!(logger, "Connecting failed, trying next address";
-						"error" => %e);
-					errors.push(e);
+				Err(error) => {
+					info!(%error, "Connecting failed, trying next address");
+					errors.push(error);
 				}
 			}
 		}
@@ -474,7 +472,7 @@ impl Connection {
 	}
 
 	async fn connect_to(
-		logger: &Logger, options: &ConnectOptions, addr: SocketAddr,
+		options: &ConnectOptions, addr: SocketAddr,
 	) -> Result<(client::Client, data::Connection)> {
 		let counter = options.identity.as_ref().unwrap().counter();
 		let socket = Box::new(
@@ -488,16 +486,11 @@ impl Connection {
 			.await
 			.map_err(Error::Io)?,
 		);
-		let mut client = client::Client::new(
-			logger.clone(),
-			addr,
-			socket,
-			options.identity.as_ref().unwrap().key().clone(),
-		);
+		let mut client =
+			client::Client::new(addr, socket, options.identity.as_ref().unwrap().key().clone());
 
 		// Logging
 		tsproto::log::add_logger(
-			client.logger.clone(),
 			options.log_commands,
 			options.log_packets,
 			options.log_udp_packets,
@@ -505,7 +498,7 @@ impl Connection {
 		);
 
 		// Create a connection
-		debug!(logger, "Connecting"; "address" => %addr);
+		debug!(address = %addr, "Connecting");
 		client.connect().await.map_err(Error::Connect)?;
 
 		if let Some(server_uid) = &options.server {
@@ -567,7 +560,7 @@ impl Connection {
 
 		match tokio::time::timeout(
 			Duration::from_secs(INITSERVER_TIMEOUT),
-			Self::wait_initserver(logger, client),
+			Self::wait_initserver(client),
 		)
 		.await
 		{
@@ -577,7 +570,7 @@ impl Connection {
 	}
 
 	async fn wait_initserver(
-		logger: &Logger, mut client: client::Client,
+		mut client: client::Client,
 	) -> Result<(client::Client, data::Connection)> {
 		// Wait until we received the initserver packet.
 		loop {
@@ -585,9 +578,8 @@ impl Connection {
 				.filter_commands(|_, cmd| Ok(Some(cmd)))
 				.await
 				.map_err(Error::InitserverWait)?;
-			let msg =
-				InMessage::new(logger, cmd.data().packet().header(), cmd.data().packet().content())
-					.map_err(Error::InitserverParse);
+			let msg = InMessage::new(cmd.data().packet().header(), cmd.data().packet().content())
+				.map_err(Error::InitserverParse);
 
 			match msg {
 				Ok(InMessage::CommandError(e)) => {
@@ -619,10 +611,10 @@ impl Connection {
 				}
 				Ok(msg) => {
 					// TODO Save instead of drop
-					warn!(logger, "Expected initserver, dropping command"; "message" => ?msg);
+					warn!(message = ?msg, "Expected initserver, dropping command");
 				}
-				Err(e) => {
-					warn!(logger, "Expected initserver, failed to parse command"; "error" => %e);
+				Err(error) => {
+					warn!(%error, "Expected initserver, failed to parse command");
 				}
 			}
 		}
@@ -745,9 +737,9 @@ impl Connection {
 								if has_is_away && self.options.away.is_some() {
 									match arg.value().get_str() {
 										Ok(r) => self.options.away = Some(r.to_string().into()),
-										Err(e) => {
-											warn!(self.logger, "Failed to parse sent away message";
-												"error" => %e, "message" => ?arg.value());
+										Err(error) => {
+											warn!(%error, message = ?arg.value(),
+												"Failed to parse sent away message");
 										}
 									}
 									has_away_message = true;
@@ -949,7 +941,7 @@ impl Connection {
 		);
 		if let ConnectionState::Connected { con, book } = &mut self.state {
 			if !Self::intern_can_send_audio(book, &self.options) {
-				warn!(self.logger, "Sending audio while muted");
+				warn!(parent: &self.span, "Sending audio while muted");
 			}
 			con.client.send_packet(packet).map_err(Error::SendPacket)?;
 			Ok(())
@@ -1117,6 +1109,7 @@ impl Connection {
 	}
 
 	fn poll_next(&mut self, cx: &mut Context) -> Poll<Option<Result<StreamItem>>> {
+		let _span = self.span.clone().entered();
 		if let Some(item) = self.stream_items.pop_front() {
 			return Poll::Ready(Some(item));
 		}
@@ -1137,13 +1130,8 @@ impl Connection {
 									tsproto::Error::Timeout(reason),
 								)) = e
 								{
-									debug!(self.logger, "Connect failed, reconnecting";
-										"timout" => reason);
-									let fut = Self::connect(
-										self.logger.clone(),
-										self.options.clone(),
-										true,
-									);
+									debug!(timeout = reason, "Connect failed, reconnecting");
+									let fut = Self::connect(self.options.clone(), true).in_current_span();
 									self.state = ConnectionState::Connecting(Box::pin(fut), true);
 									return self.poll_next(cx);
 								}
@@ -1186,8 +1174,8 @@ impl Connection {
 				}
 				Poll::Ready(Ok(identity)) => {
 					self.options.identity = Some(identity);
-					let fut = Self::connect(self.logger.clone(), self.options.clone(), false);
-					self.state = ConnectionState::Connecting(Box::pin(fut), false);
+					let fut = Self::connect(self.options.clone(), false);
+					self.state = ConnectionState::Connecting(Box::pin(fut.in_current_span()), false);
 					Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreased)))
 				}
 			},
@@ -1206,11 +1194,9 @@ impl Connection {
 
 						if let client::Error::TsProto(tsproto::Error::Timeout(reason)) = e {
 							// Reconnect on timeout
-							warn!(self.logger, "Connection failed, reconnecting";
-								"timout" => reason);
-							let fut =
-								Self::connect(self.logger.clone(), self.options.clone(), true);
-							self.state = ConnectionState::Connecting(Box::pin(fut), true);
+							warn!(timeout = reason, "Connection failed, reconnecting");
+							let fut = Self::connect(self.options.clone(), true);
+							self.state = ConnectionState::Connecting(Box::pin(fut.in_current_span()), true);
 							return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily(
 								TemporaryDisconnectReason::Timeout(reason),
 							))));
@@ -1219,16 +1205,13 @@ impl Connection {
 						}
 					}
 					Poll::Ready(Some(Ok(item))) => match item {
-						ProtoStreamItem::Error(e) => {
-							warn!(self.logger, "Connection got a non-fatal error"; "error" => %e);
+						ProtoStreamItem::Error(error) => {
+							warn!(%error, "Connection got a non-fatal error");
 						}
 						#[cfg(feature = "audio")]
 						ProtoStreamItem::Audio(audio) => {
 							if !Self::intern_can_receive_audio(book, &self.options) {
-								info!(
-									self.logger,
-									"Received audio packet while output is muted, ignoring"
-								);
+								info!("Received audio packet while output is muted, ignoring");
 							} else {
 								let encrypted = !audio
 									.data()
@@ -1244,7 +1227,6 @@ impl Connection {
 									return Poll::Ready(Some(Ok(StreamItem::Audio(audio))));
 								} else {
 									info!(
-										self.logger,
 										"Received unencrypted audio packet but only encrypted \
 										 packets are allowed, ignoring"
 									);
@@ -1256,16 +1238,14 @@ impl Connection {
 							let prev_can_receive =
 								Self::intern_can_receive_audio(book, &self.options);
 							if let Some(reason) = con.handle_command(
-								&self.logger,
 								book,
 								&mut self.stream_items,
 								&mut self.options,
 								cmd,
 							) {
-								warn!(self.logger, "Server shut down, reconnecting");
-								let fut =
-									Self::connect(self.logger.clone(), self.options.clone(), true);
-								self.state = ConnectionState::Connecting(Box::pin(fut), true);
+								warn!("Server shut down, reconnecting");
+								let fut = Self::connect(self.options.clone(), true);
+								self.state = ConnectionState::Connecting(Box::pin(fut.in_current_span()), true);
 								if prev_can_send {
 									self.stream_items.push_back(Ok(StreamItem::AudioChange(
 										AudioEvent::CanSendAudio(false),
@@ -1347,21 +1327,17 @@ impl<'a> Stream for EventStream<'a> {
 
 impl ConnectedConnection {
 	fn handle_command(
-		&mut self, logger: &Logger, book: &mut data::Connection,
-		stream_items: &mut VecDeque<Result<StreamItem>>, options: &mut ConnectOptions,
-		cmd: InCommandBuf,
+		&mut self, book: &mut data::Connection, stream_items: &mut VecDeque<Result<StreamItem>>,
+		options: &mut ConnectOptions, cmd: InCommandBuf,
 	) -> Option<TemporaryDisconnectReason> {
-		let msg = match InMessage::new(
-			logger,
-			&cmd.data().packet().header(),
-			&cmd.data().packet().content(),
-		) {
-			Ok(r) => r,
-			Err(e) => {
-				warn!(logger, "Failed to parse message"; "error" => %e);
-				return None;
-			}
-		};
+		let msg =
+			match InMessage::new(&cmd.data().packet().header(), &cmd.data().packet().content()) {
+				Ok(r) => r,
+				Err(error) => {
+					warn!(%error, "Failed to parse message");
+					return None;
+				}
+			};
 
 		let mut handled = true;
 		if let InMessage::CommandError(msg) = &msg {
@@ -1510,8 +1486,8 @@ impl ConnectedConnection {
 		} else {
 			let (mut events, book_handled) = match book.handle_command(&msg) {
 				Ok(r) => r,
-				Err(e) => {
-					warn!(logger, "Failed to handle message"; "error" => %e);
+				Err(error) => {
+					warn!(%error, "Failed to handle message");
 					(Vec::new(), false)
 				}
 			};
@@ -1571,8 +1547,8 @@ impl ConnectedConnection {
 						.iter()
 						.map(|msg| c2s::OutChannelSubscribePart { channel_id: msg.channel_id }),
 				);
-				if let Err(e) = self.client.send_packet(packet.into_packet()) {
-					warn!(logger, "Failed to send channel subscribe packet"; "error" => %e);
+				if let Err(error) = self.client.send_packet(packet.into_packet()) {
+					warn!(%error, "Failed to send channel subscribe packet");
 				}
 			}
 		} else if let InMessage::ClientLeftView(msg) = &msg {
@@ -1698,7 +1674,6 @@ pub struct ConnectOptions {
 	input_hardware_enabled: bool,
 	output_hardware_enabled: bool,
 	away: Option<Cow<'static, str>>,
-	logger: Option<Logger>,
 	log_commands: bool,
 	log_packets: bool,
 	log_udp_packets: bool,
@@ -1742,26 +1717,19 @@ impl ConnectOptions {
 	/// # }
 	/// ```
 	pub fn connect(mut self) -> Result<Connection> {
-		let logger = self.logger.take().unwrap_or_else(|| {
-			let decorator = slog_term::TermDecorator::new().build();
-			let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-			let drain = slog_async::Async::new(drain).build().fuse();
-
-			slog::Logger::root(drain, o!())
-		});
+		let span = info_span!("connection", addr = %self.address).entered();
 
 		#[cfg(debug_assertions)]
 		let profile = "Debug";
 		#[cfg(not(debug_assertions))]
 		let profile = "Release";
 
-		info!(logger, "tsclientlib";
-			"version" => git_testament::render_testament!(TESTAMENT),
-			"profile" => profile,
-			"tsproto-version" => git_testament::render_testament!(tsproto::get_testament()),
+		info!(
+			version = git_testament::render_testament!(TESTAMENT).as_str(),
+			profile,
+			tsproto_version = git_testament::render_testament!(tsproto::get_testament()).as_str(),
+			"tsclientlib"
 		);
-
-		let logger = logger.new(o!("addr" => self.address.to_string()));
 
 		let mut stream_items = VecDeque::new();
 		self.identity = Some(self.identity.take().unwrap_or_else(|| {
@@ -1773,11 +1741,11 @@ impl ConnectOptions {
 		}));
 
 		// Try all addresses
-		let fut = Connection::connect(logger.clone(), self.clone(), false);
+		let fut = Connection::connect(self.clone(), false);
 
 		Ok(Connection {
-			state: ConnectionState::Connecting(Box::pin(fut), false),
-			logger,
+			state: ConnectionState::Connecting(Box::pin(fut.in_current_span()), false),
+			span: span.exit(),
 			options: self,
 			stream_items,
 		})
@@ -2005,16 +1973,6 @@ impl ConnectOptions {
 		self
 	}
 
-	/// Set a custom logger for the connection.
-	///
-	/// # Default
-	/// A new logger is created.
-	#[inline]
-	pub fn logger(mut self, logger: Logger) -> Self {
-		self.logger = Some(logger);
-		self
-	}
-
 	#[inline]
 	pub fn get_address(&self) -> &ServerAddress { &self.address }
 	#[inline]
@@ -2047,8 +2005,6 @@ impl ConnectOptions {
 	pub fn get_output_hardware_enabled(&self) -> bool { self.output_hardware_enabled }
 	#[inline]
 	pub fn get_away(&self) -> Option<&str> { self.away.as_ref().map(AsRef::as_ref) }
-	#[inline]
-	pub fn get_logger(&self) -> Option<&Logger> { self.logger.as_ref() }
 	#[inline]
 	pub fn get_log_commands(&self) -> bool { self.log_commands }
 	#[inline]

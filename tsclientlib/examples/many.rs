@@ -1,8 +1,8 @@
 use anyhow::Result;
 use futures::prelude::*;
-use slog::{error, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
+use tracing::error;
 
 use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
 
@@ -29,19 +29,12 @@ struct Args {
 async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
+	tracing_subscriber::fmt::init();
+
 	// Parse command line options
 	let args = Args::from_args();
 
-	let logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
-
-		Logger::root(drain, o!())
-	};
-
 	let con_config = Connection::build(args.address.as_str())
-		.logger(logger.clone())
 		.log_commands(args.verbose >= 1)
 		.log_packets(args.verbose >= 2)
 		.log_udp_packets(args.verbose >= 3);
@@ -56,7 +49,6 @@ async fn real_main() -> Result<()> {
 	stream::iter(0..args.count)
 		.for_each_concurrent(None, |_| {
 			let con_config = con_config.clone();
-			let logger = logger.clone();
 			tokio::spawn(async move {
 				// Connect
 				let mut con = con_config.connect().unwrap();
@@ -66,8 +58,8 @@ async fn real_main() -> Result<()> {
 					.try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
 					.next()
 					.await;
-				if let Some(Err(e)) = r {
-					error!(logger, "Connection failed"; "error" => %e);
+				if let Some(Err(error)) = r {
+					error!(%error, "Connection failed");
 					return;
 				}
 
@@ -76,7 +68,7 @@ async fn real_main() -> Result<()> {
 				tokio::select! {
 					_ = time::sleep(Duration::from_secs(15)) => {}
 					_ = events.next() => {
-						error!(logger, "Disconnected unexpectedly");
+						error!("Disconnected unexpectedly");
 						return;
 					}
 				};

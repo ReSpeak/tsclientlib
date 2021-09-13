@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::str;
 
 use num_traits::{FromPrimitive, ToPrimitive};
-use slog::{warn, Logger};
+use tracing::{instrument, warn};
 use tsproto_packets::commands::{CommandItem, CommandParser};
 use tsproto_packets::packets::*;
 
@@ -22,10 +22,7 @@ pub enum InMessage {
 
 impl InMessage {
 	/// Parse a message into a struct.
-	///
-	/// The `logger` is used to log warnings, e.g. parameters in commands which
-	/// are not known and ignored.
-	pub fn new(logger: &Logger, header: &InHeader, cmd: &[u8]) -> Result<Self> {
+	pub fn new(header: &InHeader, cmd: &[u8]) -> Result<Self> {
 		let (name, args) = CommandParser::new(cmd);
 		match name {
 		<#
@@ -39,11 +36,11 @@ impl InMessage {
 				let (msg, group) = group.split_last().unwrap();
 				#>
 			b"<#= notify #>" => <# for msg in group {
-			#>if let Ok(r) = In<#= msg.name #>::new(logger, header, args.clone()) {
+			#>if let Ok(r) = In<#= msg.name #>::new(header, args.clone()) {
 				Ok(InMessage::<#= msg.name #>(r))
 			} else <#
 			} #>{
-				Ok(InMessage::<#= msg.name #>(In<#= msg.name #>::new(logger, header, args)?))
+				Ok(InMessage::<#= msg.name #>(In<#= msg.name #>::new(header, args)?))
 			}
 			<# } #>
 			s => Err(ParseError::UnknownCommand(str::from_utf8(s)?.to_string())),
@@ -84,7 +81,8 @@ pub struct In<#= msg.name #>Part {
 }
 
 impl InMessageTrait for In<#= msg.name #> {
-	fn new(logger: &Logger, header: &InHeader, args: CommandParser) -> Result<Self> {
+	#[instrument(name = "parse_message", skip(header, args))]
+	fn new(header: &InHeader, args: CommandParser) -> Result<Self> {
 		// TODO newprotocol
 		//if <#= if msg_group.default.np { "!" } else { "" } #>header.flags().contains(Flags::NEWPROTOCOL) { return Err(ParseError::WrongNewprotocol(<#= if msg_group.default.np { "false" } else { "true" } #>)); }
 		if header.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> { return Err(ParseError::WrongPacketType(header.packet_type())); }
@@ -138,16 +136,13 @@ impl InMessageTrait for In<#= msg.name #> {
 					<# if msg_group.default.response { #>
 						b"return_code" => {
 							if return_code.is_some() {
-								warn!(logger, "Got multiple return codes";
-									"command" => "<#= msg.name #>");
+								warn!(command = "<#= msg.name #>", "Got multiple return codes");
 							}
 							return_code = Some(arg.value().get_str()?.into_owned());
 						}
 					<# } #>
-						s => warn!(logger, "Unknown argument";
-							"command" => "<#= msg.name #>",
-							"argument" => ?str::from_utf8(s),
-						),
+						s => warn!(command = "<#= msg.name #>", argument = ?str::from_utf8(s),
+							"Unknown argument"),
 					}
 				}
 			}

@@ -2,9 +2,9 @@ use std::net::SocketAddr;
 
 use anyhow::Result;
 use futures::prelude::*;
-use slog::info;
 use structopt::StructOpt;
 use tokio::time::{self, Duration};
+use tracing::info;
 
 mod utils;
 use crate::utils::*;
@@ -37,21 +37,18 @@ async fn main() -> Result<()> { real_main().await }
 async fn real_main() -> Result<()> {
 	// Parse command line options
 	let args = Args::from_args();
-	let logger = create_logger();
+	create_logger();
 
 	stream::iter(0..args.count)
 		.for_each_concurrent(None, |_| {
 			let args = args.clone();
-			let logger = logger.clone();
 			tokio::spawn(async move {
 				let mut con =
-					create_client(args.local_address, args.address, logger.clone(), args.verbose)
-						.await
-						.unwrap();
+					create_client(args.local_address, args.address, args.verbose).await.unwrap();
 
 				// Connect
 				connect(&mut con).await.unwrap();
-				info!(logger, "Connected");
+				info!("Connected");
 
 				// Wait some time
 				tokio::select! {
@@ -60,11 +57,11 @@ async fn real_main() -> Result<()> {
 						panic!("Disconnected");
 					}
 				};
-				info!(logger, "Waited");
+				info!("Waited");
 
 				// Disconnect
 				let _ = disconnect(&mut con).await;
-				info!(logger, "Disconnected");
+				info!("Disconnected");
 			})
 			.map(|_| ())
 		})

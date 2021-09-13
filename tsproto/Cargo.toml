@@ -35,12 +35,10 @@ rug = { version = "1", optional = true, default-features = false, features = ["i
 serde = { version = "1", features = ["derive"] }
 sha-1 = "0.9"
 sha2 = "0.9"
-slog = "2"
-slog-perf = "0.2"
-stable_deref_trait = "1"
 thiserror = "1"
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }
+tracing = "0.1"
 tsproto-packets = { path = "../utils/tsproto-packets", version = "0.1" }
 tsproto-types = { path = "../utils/tsproto-types", version = "0.1" }
 quicklz = "0.3"
@@ -48,10 +46,10 @@ quicklz = "0.3"
 [dev-dependencies]
 anyhow = "1"
 criterion = "0.3"
-slog-async = "2"
-slog-term = "2"
+once_cell = "1"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
+tracing-subscriber = "0.2"
 
 [[bench]]
 name = "modpow"

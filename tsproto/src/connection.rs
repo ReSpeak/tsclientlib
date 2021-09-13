@@ -10,9 +10,9 @@ use futures::prelude::*;
 use generic_array::typenum::consts::U16;
 use generic_array::GenericArray;
 use num_traits::ToPrimitive;
-use slog::{o, Logger};
 use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
+use tracing::{info_span, Span};
 use tsproto_packets::packets::*;
 use tsproto_types::crypto::EccKeyPubP256;
 
@@ -87,7 +87,7 @@ type EventListener = Box<dyn for<'a> Fn(&'a Event<'a>) + Send>;
 /// Represents a currently alive connection.
 pub struct Connection {
 	pub is_client: bool,
-	pub logger: Logger,
+	pub span: Span,
 	/// The parameters of this connection, if it is already established.
 	pub params: Option<ConnectedParams>,
 	/// The adress of the other side, where packets are coming from and going
@@ -150,15 +150,13 @@ impl ConnectedParams {
 }
 
 impl Connection {
-	pub fn new(
-		is_client: bool, logger: Logger, address: SocketAddr, udp_socket: Box<dyn Socket + Send>,
-	) -> Self {
-		let logger = logger.new(o!("local_addr" => udp_socket.local_addr().unwrap().to_string(),
-				"remote_addr" => address.to_string()));
+	pub fn new(is_client: bool, address: SocketAddr, udp_socket: Box<dyn Socket + Send>) -> Self {
+		let span = info_span!("connection", local_addr = %udp_socket.local_addr().unwrap(),
+			remote_addr = %address);
 
 		let mut res = Self {
 			is_client,
-			logger,
+			span,
 			params: None,
 			address,
 			resender: Default::default(),
@@ -278,6 +276,7 @@ impl Connection {
 	fn handle_udp_packet(
 		&mut self, cx: &mut Context, udp_buffer: Vec<u8>, addr: SocketAddr,
 	) -> Result<()> {
+		let _span = self.span.clone().entered();
 		if addr != self.address {
 			self.stream_items.push_back(StreamItem::Error(Error::WrongAddress));
 			return Ok(());
@@ -349,6 +348,7 @@ impl Connection {
 
 	/// Add an udp packet to the send queue.
 	pub fn send_udp_packet(&mut self, packet: OutUdpPacket) {
+		let _span = self.span.clone().entered();
 		match packet.packet_type() {
 			PacketType::Init | PacketType::Command | PacketType::CommandLow => {
 				Resender::send_packet(self, packet);
@@ -410,6 +410,7 @@ impl Connection {
 impl Stream for Connection {
 	type Item = Result<StreamItem>;
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+		let _span = self.span.clone().entered();
 		if let Err(e) = self.poll_send_acks(cx) {
 			return Poll::Ready(Some(Err(e)));
 		}

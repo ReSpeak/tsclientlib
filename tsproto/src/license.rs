@@ -10,8 +10,8 @@ use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use sha2::{Digest, Sha512};
 use thiserror::Error;
-use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 use tsproto_types::crypto::{EccKeyPrivEd25519, EccKeyPubEd25519};
 use tsproto_types::LicenseType;
 
@@ -334,10 +334,12 @@ impl License {
 				key: LicenseKey::Public(EccKeyPubEd25519::from_bytes(key_data)),
 				not_valid_before: OffsetDateTime::from_unix_timestamp(
 					i64::from(before_ts) + TIMESTAMP_OFFSET,
-				).map_err(Error::DeserializeDate)?,
+				)
+				.map_err(Error::DeserializeDate)?,
 				not_valid_after: OffsetDateTime::from_unix_timestamp(
 					i64::from(after_ts) + TIMESTAMP_OFFSET,
-				).map_err(Error::DeserializeDate)?,
+				)
+				.map_err(Error::DeserializeDate)?,
 				hash,
 				inner,
 			},

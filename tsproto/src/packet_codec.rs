@@ -3,7 +3,7 @@ use std::task::Context;
 
 use num_traits::ToPrimitive;
 use omnom::WriteExt;
-use slog::warn;
+use tracing::warn;
 use tsproto_packets::packets::*;
 
 use crate::algorithms as algs;
@@ -340,8 +340,7 @@ impl PacketCodec {
 			Ok(packets)
 		} else {
 			// Out of order
-			warn!(con.logger, "Out of order command packet"; "got" => id,
-				"expected" => cur_next);
+			warn!(got = id, expected = cur_next, "Out of order command packet");
 			let (limit, next_gen) = cur_next.overflowing_add(MAX_QUEUE_LEN);
 			if (!next_gen && id >= cur_next && id < limit)
 				|| (next_gen && (id >= cur_next || id < limit))

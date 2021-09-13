@@ -7,10 +7,10 @@
 
 use anyhow::{bail, Result};
 use futures::prelude::*;
-use slog::{debug, info, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
+use tracing::{debug, info};
 
 use tsclientlib::{ClientId, Connection, DisconnectOptions, Identity, StreamItem};
 use tsproto_packets::packets::AudioData;
@@ -43,20 +43,14 @@ struct Args {
 async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
+	tracing_subscriber::fmt::init();
+
 	// Parse command line options
 	let args = Args::from_args();
 
-	let logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
-
-		Logger::root(drain, o!())
-	};
-
 	let con_id = ConnectionId(0);
 	let local_set = LocalSet::new();
-	let audiodata = audio_utils::start(logger.clone(), &local_set)?;
+	let audiodata = audio_utils::start(&local_set)?;
 
 	let con_config = Connection::build(args.address)
 		.log_commands(args.verbose >= 1)
@@ -100,8 +94,8 @@ async fn real_main() -> Result<()> {
 					_ => panic!("Can only handle S2C packets but got a C2S packet"),
 				});
 				let mut t2a = t2a.lock().unwrap();
-				if let Err(e) = t2a.play_packet((con_id, from), packet) {
-					debug!(logger, "Failed to play packet"; "error" => %e);
+				if let Err(error) = t2a.play_packet((con_id, from), packet) {
+					debug!(%error, "Failed to play packet");
 				}
 			}
 			Ok(())
@@ -113,7 +107,7 @@ async fn real_main() -> Result<()> {
 				if let Some(packet) = send_audio {
 					con.send_audio(packet)?;
 				} else {
-					info!(logger, "Audio sending stream was canceled");
+					info!("Audio sending stream was canceled");
 					break;
 				}
 			}

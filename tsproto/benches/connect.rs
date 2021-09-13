@@ -1,11 +1,14 @@
 use anyhow::{Error, Result};
 use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
-use slog::{info, o, warn, Logger};
+use once_cell::sync::Lazy;
+use tracing::{info, warn};
 use tsproto::client::Client;
 use tsproto::connection::StreamItem;
 
 mod utils;
 use crate::utils::*;
+
+static TRACING: Lazy<()> = Lazy::new(|| tracing_subscriber::fmt().with_test_writer().init());
 
 async fn wait_channellistfinished(con: &mut Client) -> Result<()> {
 	con.filter_items(|con, i| {
@@ -25,12 +28,12 @@ async fn wait_channellistfinished(con: &mut Client) -> Result<()> {
 					None
 				}
 			}
-			StreamItem::Error(e) => {
-				warn!(con.logger, "Got connection error"; "error" => %e);
+			StreamItem::Error(error) => {
+				warn!(%error, "Got connection error");
 				None
 			}
 			i => {
-				warn!(con.logger, "Unexpected packet, waiting for channellistfinished"; "got" => ?i);
+				warn!(got = ?i, "Unexpected packet, waiting for channellistfinished");
 				None
 			}
 		})
@@ -40,26 +43,25 @@ async fn wait_channellistfinished(con: &mut Client) -> Result<()> {
 }
 
 fn one_connect(b: &mut Bencher) {
+	//Lazy::force(&TRACING);
+
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
-
-	let logger = Logger::root(slog::Discard, o!());
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
 
 	b.iter(|| {
-		let logger = logger.clone();
 		rt.block_on(async move {
 			// The TS server does not accept the 3rd reconnect from the same port
 			// so we create a new client for every connection.
-			let mut con = create_client(local_address, address, logger.clone(), 0).await?;
+			let mut con = create_client(local_address, address, 0).await?;
 
 			connect(&mut con).await?;
-			info!(logger, "Connected");
+			info!("Connected");
 			// Wait until channellistfinished
 			wait_channellistfinished(&mut con).await?;
 
-			info!(logger, "Disconnecting");
+			info!("Disconnecting");
 			disconnect(&mut con).await?;
 			Ok::<_, Error>(())
 		})

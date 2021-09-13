@@ -25,6 +25,8 @@ struct Args {
 async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
+	tracing_subscriber::fmt::init();
+
 	// Parse command line options
 	let args = Args::from_args();
 

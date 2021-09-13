@@ -1,8 +1,8 @@
 use anyhow::Result;
-use slog::{debug, info, o, Drain, Logger};
 use structopt::StructOpt;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
+use tracing::{debug, info};
 
 use tsclientlib::ClientId;
 use tsproto_packets::packets::{Direction, InAudioBuf};
@@ -35,21 +35,14 @@ struct Args {
 async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
+	tracing_subscriber::fmt::init();
+
 	// Parse command line options
 	let args = Args::from_args();
 
-	let logger = {
-		let decorator = slog_term::TermDecorator::new().build();
-		let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-		let drain = slog_envlogger::new(drain).fuse();
-		let drain = slog_async::Async::new(drain).build().fuse();
-
-		Logger::root(drain, o!())
-	};
-
 	let con_id = ConnectionId(0);
 	let local_set = LocalSet::new();
-	let audiodata = audio_utils::start(logger.clone(), &local_set)?;
+	let audiodata = audio_utils::start(&local_set)?;
 
 	let (send, mut recv) = mpsc::channel(1);
 	{
@@ -68,11 +61,11 @@ async fn real_main() -> Result<()> {
 					let from = ClientId(0);
 					let mut t2a = t2a.lock().unwrap();
 					let in_audio = InAudioBuf::try_new(Direction::C2S, packet.into_vec()).unwrap();
-					if let Err(e) = t2a.play_packet((con_id, from), in_audio) {
-						debug!(logger, "Failed to play packet"; "error" => %e);
+					if let Err(error) = t2a.play_packet((con_id, from), in_audio) {
+						debug!(%error, "Failed to play packet");
 					}
 				} else {
-					info!(logger, "Audio sending stream was canceled");
+					info!("Audio sending stream was canceled");
 					break;
 				}
 			}

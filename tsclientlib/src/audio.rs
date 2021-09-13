@@ -13,8 +13,8 @@ use std::hash::Hash;
 
 use audiopus::coder::Decoder;
 use audiopus::{packet, Channels, SampleRate};
-use slog::{debug, o, trace, warn, Logger};
 use thiserror::Error;
+use tracing::{debug, info_span, trace, warn, Span};
 use tsproto_packets::packets::{AudioData, CodecType, InAudioBuf};
 
 use crate::ClientId;
@@ -94,7 +94,7 @@ struct QueuePacket {
 
 /// A queue for audio packets for one audio stream.
 pub struct AudioQueue {
-	logger: Logger,
+	span: Span,
 	decoder: Decoder,
 	pub volume: f32,
 	/// The id of the next packet that should be decoded.
@@ -128,7 +128,6 @@ pub struct AudioQueue {
 
 /// Handles incoming audio, has one [`AudioQueue`] per sending client.
 pub struct AudioHandler<Id: Clone + Debug + Eq + Hash + PartialEq = ClientId> {
-	logger: Logger,
 	queues: HashMap<Id, AudioQueue>,
 	/// Buffer this amount of samples for new queues before starting to play.
 	///
@@ -160,7 +159,7 @@ impl<T: Copy + Default + Ord> SlidingWindowMinimum<T> {
 }
 
 impl AudioQueue {
-	fn new(logger: Logger, packet: InAudioBuf) -> Result<Self> {
+	fn new(packet: InAudioBuf) -> Result<Self> {
 		let data = packet.data().data();
 		let last_packet_samples =
 			packet::nb_samples(data.data(), SAMPLE_RATE).map_err(Error::GetPacketSample)?;
@@ -170,7 +169,7 @@ impl AudioQueue {
 
 		let last_packet_samples = last_packet_samples * CHANNEL_NUM;
 		let mut res = Self {
-			logger,
+			span: Span::current(),
 			decoder: Decoder::new(SAMPLE_RATE, CHANNELS).map_err(Error::CreateDecoder)?,
 			volume: 1.0,
 			next_id: data.id(),
@@ -200,7 +199,7 @@ impl AudioQueue {
 			self.last_buffer_size_min.push(size);
 			self.last_buffer_size_max.push(Reverse(size));
 		} else {
-			warn!(self.logger, "Failed to put amount of packets into an u8"; "size" => size);
+			warn!(parent: &self.span, size, "Failed to put amount of packets into an u8");
 		}
 	}
 
@@ -212,6 +211,7 @@ impl AudioQueue {
 	}
 
 	fn add_packet(&mut self, packet: InAudioBuf) -> Result<()> {
+		let _span = self.span.enter();
 		if self.packet_buffer.len() >= MAX_BUFFER_PACKETS {
 			return Err(Error::QueueFull);
 		}
@@ -249,7 +249,7 @@ impl AudioQueue {
 			}
 		}
 
-		trace!(self.logger, "Insert packet {} at {}", id, i);
+		trace!("Insert packet {} at {}", id, i);
 		let last_id = self.packet_buffer.back().map(|p| p.id.wrapping_add(1)).unwrap_or(id);
 		if last_id <= id {
 			self.buffering_samples = self.buffering_samples.saturating_sub(samples);
@@ -266,7 +266,8 @@ impl AudioQueue {
 	}
 
 	fn decode_packet(&mut self, packet: Option<&QueuePacket>, fec: bool) -> Result<()> {
-		trace!(self.logger, "Decoding packet"; "has_packet" => packet.is_some(), "fec" => fec);
+		let _span = self.span.clone().entered();
+		trace!(has_packet = packet.is_some(), fec, "Decoding packet");
 		let packet_data;
 		let len;
 		if let Some(p) = packet {
@@ -300,10 +301,13 @@ impl AudioQueue {
 		let mut count = self.packet_buffer_samples;
 		if let Some(last) = self.packet_buffer.back() {
 			// Lost packets
-			trace!(self.logger, "Ids"; "last_id" => last.id,
-				"next_id" => self.next_id,
-				"first_id" => self.packet_buffer.front().unwrap().id,
-				"buffer_len" => self.packet_buffer.len());
+			trace!(
+				last.id,
+				next_id = self.next_id,
+				first_id = self.packet_buffer.front().unwrap().id,
+				buffer_len = self.packet_buffer.len(),
+				"Ids"
+			);
 			count += (usize::from(last.id.wrapping_sub(self.next_id)) + 1
 				- self.packet_buffer.len())
 				* self.last_packet_samples;
@@ -318,18 +322,23 @@ impl AudioQueue {
 	/// Returns `true` in the second return value when the stream ended,
 	/// `false` when it continues normally.
 	pub fn get_next_data(&mut self, len: usize) -> Result<(&[f32], bool)> {
+		let _span = self.span.clone().entered();
 		if self.buffering_samples > 0 {
 			if self.buffered_for_samples >= MAX_BUFFER_TIME {
 				self.buffering_samples = 0;
 				self.buffered_for_samples = 0;
-				trace!(self.logger, "Buffered for too long";
-					"buffered_for_samples" => self.buffered_for_samples,
-					"buffering_samples" => self.buffering_samples);
+				trace!(
+					buffered_for_samples = self.buffered_for_samples,
+					buffering_samples = self.buffering_samples,
+					"Buffered for too long"
+				);
 			} else {
 				self.buffered_for_samples += len;
-				trace!(self.logger, "Buffering";
-					"buffered_for_samples" => self.buffered_for_samples,
-					"buffering_samples" => self.buffering_samples);
+				trace!(
+					buffered_for_samples = self.buffered_for_samples,
+					buffering_samples = self.buffering_samples,
+					"Buffering"
+				);
 				return Ok((&[], false));
 			}
 		}
@@ -345,10 +354,11 @@ impl AudioQueue {
 		}
 
 		while self.decoded_buffer.len() < len {
-			trace!(self.logger, "get_next_data";
-				"decoded_buffer" => self.decoded_buffer.len(),
-				"decoded_pos" => self.decoded_pos,
-				"len" => len,
+			trace!(
+				decoded_buffer = self.decoded_buffer.len(),
+				decoded_pos = self.decoded_pos,
+				len,
+				"get_next_data"
 			);
 
 			// Decode a packet
@@ -369,7 +379,7 @@ impl AudioQueue {
 						cur_id
 					);
 					// Packet loss
-					debug!(self.logger, "Audio packet loss"; "need" => cur_id, "have" => packet.id);
+					debug!(need = cur_id, have = packet.id, "Audio packet loss");
 					if packet.id == self.next_id {
 						// Can use forward-error-correction
 						self.decode_packet(Some(&packet), true)?;
@@ -382,7 +392,7 @@ impl AudioQueue {
 					self.decode_packet(Some(&packet), false)?;
 				}
 			} else {
-				debug!(self.logger, "No packets in queue");
+				debug!("No packets in queue");
 				// Packet loss or end of stream
 				self.decode_packet(None, false)?;
 			}
@@ -395,7 +405,7 @@ impl AudioQueue {
 			let min = self.last_buffer_size_min.get_min();
 			let dev = self.get_deviation();
 			if min > (MAX_BUFFER_SIZE / USUAL_FRAME_SIZE) as u8 {
-				debug!(self.logger, "Truncating buffer"; "min" => min);
+				debug!(min, "Truncating buffer");
 				// Throw out all but min samples
 				let mut keep_samples = 0;
 				let keep = self
@@ -415,10 +425,13 @@ impl AudioQueue {
 				}
 			} else if min > dev {
 				// Speed-up
-				debug!(self.logger, "Speed-up buffer"; "min" => min,
-					"cur_packet_count" => self.packet_buffer.len(),
-					"last_packet_samples" => self.last_packet_samples,
-					"dev" => dev);
+				debug!(
+					min,
+					cur_packet_count = self.packet_buffer.len(),
+					last_packet_samples = self.last_packet_samples,
+					dev,
+					"Speed-up buffer"
+				);
 				let start = self.decoded_buffer.len() - self.last_packet_samples * CHANNEL_NUM;
 				for i in 0..(self.last_packet_samples / SPEED_CHANGE_STEPS) {
 					let i = start + i * (SPEED_CHANGE_STEPS - 1) * CHANNEL_NUM;
@@ -433,9 +446,7 @@ impl AudioQueue {
 }
 
 impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
-	pub fn new(logger: Logger) -> Self {
-		Self { logger, queues: Default::default(), avg_buffer_samples: 0 }
-	}
+	pub fn new() -> Self { Self { queues: Default::default(), avg_buffer_samples: 0 } }
 
 	/// Delete all queues
 	pub fn reset(&mut self) { self.queues.clear(); }
@@ -459,19 +470,19 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 	pub fn fill_buffer_with_proc<F: FnMut(&Id, &[f32])>(
 		&mut self, buf: &mut [f32], mut handle: F,
 	) -> Vec<Id> {
-		trace!(self.logger, "Filling audio buffer"; "len" => buf.len());
+		trace!(len = buf.len(), "Filling audio buffer");
 		let mut to_remove = Vec::new();
 		for (id, queue) in self.queues.iter_mut() {
 			if queue.packet_loss_num >= MAX_PACKET_LOSSES {
-				debug!(self.logger, "Removing talker"; "packet_loss_num" => queue.packet_loss_num);
+				debug!(packet_loss_num = queue.packet_loss_num, "Removing talker");
 				to_remove.push(id.clone());
 				continue;
 			}
 
 			let vol = queue.volume;
 			match queue.get_next_data(buf.len()) {
-				Err(e) => {
-					warn!(self.logger, "Failed to decode audio packet"; "error" => %e);
+				Err(error) => {
+					warn!(%error, "Failed to decode audio packet");
 				}
 				Ok((r, is_end)) => {
 					handle(id, &r);
@@ -509,9 +520,9 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 				return Ok(None);
 			}
 
-			trace!(self.logger, "Adding talker");
-			let mut queue =
-				AudioQueue::new(self.logger.new(o!("client" => format!("{:?}", id))), packet)?;
+			let _span = info_span!("audio queue", client = ?id);
+			trace!("Adding talker");
+			let mut queue = AudioQueue::new(packet)?;
 			if !self.queues.is_empty() {
 				// Update avg_buffer_samples
 				self.avg_buffer_samples = USUAL_FRAME_SIZE
@@ -530,14 +541,12 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 
 #[cfg(test)]
 mod test {
-	use std::sync::Mutex;
-
 	use anyhow::{bail, Result};
 	use audiopus::coder::Encoder;
-	use slog::{o, Drain};
 	use tsproto_packets::packets::{Direction, OutAudio};
 
 	use super::*;
+	use crate::tests::create_logger;
 
 	enum SimulateAction {
 		CreateEncoder,
@@ -552,16 +561,9 @@ mod test {
 		Check(Box<dyn FnOnce(&AudioHandler<ClientId>)>),
 	}
 
-	fn create_logger() -> Logger {
-		let decorator = slog_term::PlainDecorator::new(slog_term::TestStdoutWriter);
-		let drain = Mutex::new(slog_term::FullFormat::new(decorator).build()).fuse();
-
-		slog::Logger::root(drain, o!())
-	}
-
 	fn check_packet(data: &[u8]) -> Result<()> {
-		let logger = create_logger();
-		let mut handler = AudioHandler::<ClientId>::new(logger);
+		create_logger();
+		let mut handler = AudioHandler::<ClientId>::new();
 		let id = ClientId(0);
 		let mut buf = vec![0.0; 48_000 / 100 * 2];
 
@@ -580,8 +582,8 @@ mod test {
 		let mut encoder = None;
 		let mut opus_output = [0; 1275]; // Max size for an opus packet
 		let id = ClientId(0);
-		let logger = create_logger();
-		let mut handler = AudioHandler::<ClientId>::new(logger);
+		create_logger();
+		let mut handler = AudioHandler::<ClientId>::new();
 
 		for a in actions {
 			println!("\nCurrent state");
@@ -698,8 +700,8 @@ mod test {
 
 	#[test]
 	fn packets_wrapping() {
-		let logger = create_logger();
-		let mut handler = AudioHandler::<ClientId>::new(logger);
+		create_logger();
+		let mut handler = AudioHandler::<ClientId>::new();
 		let id = ClientId(0);
 		let mut buf = vec![0.0; 48_000 / 100 * 2];
 
@@ -721,8 +723,8 @@ mod test {
 
 	#[quickcheck_macros::quickcheck]
 	fn short_packet_quickcheck(data: Vec<Vec<u8>>) {
-		let logger = create_logger();
-		let mut handler = AudioHandler::<ClientId>::new(logger);
+		create_logger();
+		let mut handler = AudioHandler::<ClientId>::new();
 		let id = ClientId(0);
 		let mut buf = vec![0.0; 48_000 / 100 * 2];
 

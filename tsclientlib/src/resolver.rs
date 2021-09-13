@@ -8,11 +8,11 @@ use std::str::{self, FromStr};
 use futures::prelude::*;
 use itertools::Itertools;
 use rand::Rng;
-use slog::{debug, o, warn, Logger};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
 use tokio::time::Duration;
+use tracing::{debug, instrument, warn};
 use trust_dns_resolver::config::ResolverConfig;
 use trust_dns_resolver::{Name, TokioAsyncResolver};
 
@@ -86,9 +86,9 @@ enum ParseIpResult<'a> {
 /// If a port is given with `:port`, it overwrites the automatically determined
 /// port. IPv6 addresses are put in square brackets when a port is present:
 /// `[::1]:9987`
-pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<SocketAddr>> {
-	let logger = logger.new(o!("module" => "resolver"));
-	debug!(logger, "Starting resolve"; "address" => &address);
+#[instrument]
+pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
+	debug!("Starting resolve");
 	let addr;
 	let port;
 	match parse_ip(&address) {
@@ -99,7 +99,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 			addr = a.to_string();
 			port = p;
 			if let Some(port) = port {
-				debug!(logger, "Found port"; "port" => port);
+				debug!(port, "Found port");
 			}
 		}
 		Err(res) => return stream::once(future::err(res)).left_stream(),
@@ -107,7 +107,7 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 
 	// Resolve as nickname
 	let res = if !address.contains('.') && addr != "localhost" {
-		debug!(logger, "Resolving nickname"; "address" => &address);
+		debug!("Resolving nickname");
 		// Could be a server nickname
 		resolve_nickname(address.clone())
 			.map_ok(move |mut addr| {
@@ -124,10 +124,10 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 	// The system config does not yet work on android:
 	// https://github.com/bluejekyll/trust-dns/issues/652
 	let addr2 = addr.clone();
-	let logger2 = logger.clone();
+	// TODO Move current span into stream
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver(&logger2)?;
+			let resolver = create_resolver()?;
 
 			// Try to get the address by an SRV record
 			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Canot parse udp domain prefix");
@@ -142,10 +142,10 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 
 	// Try to get the address of a tsdns server by an SRV record
 	let addr2 = addr.clone();
-	let logger2 = logger.clone();
+	// TODO Move current span into stream
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver(&logger2)?;
+			let resolver = create_resolver()?;
 			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Canot parse udp domain prefix");
 			let mut name =
 				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
@@ -182,14 +182,15 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 		.try_flatten(),
 	);
 
+	// TODO Move current span into stream
 	tokio_stream::StreamExt::timeout(res, Duration::from_secs(TIMEOUT_SECONDS))
 		.filter_map(move |r: std::result::Result<Result<SocketAddr>, _>| {
 			future::ready(match r {
 				// Timeout
 				Err(_) => None,
 				// Error
-				Ok(Err(e)) => {
-					debug!(logger, "Resolver failed in one step"; "error" => %e);
+				Ok(Err(error)) => {
+					debug!(%error, "Resolver failed in one step");
 					None
 				}
 				// Success
@@ -199,14 +200,14 @@ pub fn resolve(logger: Logger, address: String) -> impl Stream<Item = Result<Soc
 		.right_stream()
 }
 
-fn create_resolver(logger: &Logger) -> Result<TokioAsyncResolver> {
+fn create_resolver() -> Result<TokioAsyncResolver> {
 	match TokioAsyncResolver::tokio_from_system_conf() {
 		Ok(r) => Ok(r),
-		Err(e) => {
-			warn!(logger, "Failed to use system dns resolver config"; "error" => %e);
+		Err(error) => {
+			warn!(%error, "Failed to use system dns resolver config");
 			// Fallback
 			Ok(TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), Default::default())
-				.map_err(|e2| Error::CreateResolver { system: e, fallback: e2 })?)
+				.map_err(|e2| Error::CreateResolver { system: error, fallback: e2 })?)
 		}
 	}
 }
@@ -418,7 +419,7 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 #[cfg(test)]
 mod test {
 	use super::*;
-	use crate::tests::get_logger;
+	use crate::tests::create_logger;
 
 	#[test]
 	fn parse_ip_without_port() {
@@ -476,30 +477,30 @@ mod test {
 
 	#[tokio::test]
 	async fn resolve_localhost() {
-		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "127.0.0.1".into()).map(|r| r.unwrap()).collect().await;
+		create_logger();
+		let res: Vec<_> = resolve("127.0.0.1".into()).map(|r| r.unwrap()).collect().await;
 		let addr = format!("127.0.0.1:{}", DEFAULT_PORT).parse::<SocketAddr>().unwrap();
 		assert_eq!(res.as_slice(), &[addr]);
 	}
 
 	#[tokio::test]
 	async fn resolve_localhost2() {
-		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "localhost".into()).map(|r| r.unwrap()).collect().await;
+		create_logger();
+		let res: Vec<_> = resolve("localhost".into()).map(|r| r.unwrap()).collect().await;
 		assert!(res.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 
 	#[tokio::test]
 	async fn resolve_example() {
-		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "example.com".into()).map(|r| r.unwrap()).collect().await;
+		create_logger();
+		let res: Vec<_> = resolve("example.com".into()).map(|r| r.unwrap()).collect().await;
 		assert!(res.contains(&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 
 	#[tokio::test]
 	async fn resolve_loc() {
-		let logger = get_logger();
-		let res: Vec<_> = resolve(logger, "loc".into()).map(|r| r.unwrap()).collect().await;
+		create_logger();
+		let res: Vec<_> = resolve("loc".into()).map(|r| r.unwrap()).collect().await;
 		assert!(res.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 }

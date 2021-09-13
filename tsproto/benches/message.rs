@@ -1,23 +1,22 @@
 use anyhow::Error;
 use criterion::{criterion_group, criterion_main, Bencher, Benchmark, Criterion};
-use slog::info;
 use tsproto_packets::packets::*;
 
 mod utils;
 use crate::utils::*;
 
 fn send_messages(b: &mut Bencher) {
+	create_logger(false);
+
 	let local_address = "127.0.0.1:0".parse().unwrap();
 	let address = "127.0.0.1:9987".parse().unwrap();
-
-	let logger = create_logger(false);
 
 	let mut rt = tokio::runtime::Runtime::new().unwrap();
 	let mut con = rt
 		.block_on(async move {
 			let mut con = create_client(local_address, address, logger.clone(), 0).await?;
 
-			info!(logger, "Connecting");
+			info!("Connecting");
 			connect(&mut con).await?;
 			Ok::<_, Error>(con)
 		})
@@ -45,7 +44,7 @@ fn send_messages(b: &mut Bencher) {
 
 	rt.block_on(async move {
 		if let Some(id) = last_id {
-			info!(con.logger, "Waiting for {:?}", id);
+			info!("Waiting for {:?}", id);
 			con.wait_for_ack(id).await?;
 		}
 		tokio::select! {
@@ -56,7 +55,7 @@ fn send_messages(b: &mut Bencher) {
 			}
 		};
 
-		info!(con.logger, "Disconnecting");
+		info!("Disconnecting");
 		disconnect(&mut con).await
 	})
 	.unwrap();

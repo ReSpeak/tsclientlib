@@ -5,17 +5,16 @@ use audiopus::coder::Encoder;
 use futures::prelude::*;
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpec, AudioSpecDesired, AudioStatus};
 use sdl2::AudioSubsystem;
-use slog::{debug, error, o, Logger};
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
+use tracing::{debug, error, instrument};
 use tsproto_packets::packets::{AudioData, CodecType, OutAudio, OutPacket};
 
 use super::*;
 
 pub struct AudioToTs {
-	logger: Logger,
 	audio_subsystem: AudioSubsystem,
 	listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
 	device: AudioDevice<SdlCallback>,
@@ -25,7 +24,6 @@ pub struct AudioToTs {
 }
 
 struct SdlCallback {
-	logger: Logger,
 	spec: AudioSpec,
 	encoder: Encoder,
 	listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
@@ -35,18 +33,13 @@ struct SdlCallback {
 }
 
 impl AudioToTs {
-	pub fn new(
-		logger: Logger, audio_subsystem: AudioSubsystem, local_set: &LocalSet,
-	) -> Result<Arc<Mutex<Self>>> {
-		let logger = logger.new(o!("pipeline" => "audio-to-ts"));
+	pub fn new(audio_subsystem: AudioSubsystem, local_set: &LocalSet) -> Result<Arc<Mutex<Self>>> {
 		let listener = Arc::new(Mutex::new(Default::default()));
 		let volume = Arc::new(Mutex::new(1.0));
 
-		let device =
-			Self::open_capture(logger.clone(), &audio_subsystem, listener.clone(), volume.clone())?;
+		let device = Self::open_capture(&audio_subsystem, listener.clone(), volume.clone())?;
 
 		let res = Arc::new(Mutex::new(Self {
-			logger,
 			audio_subsystem,
 			listener,
 			device,
@@ -60,9 +53,10 @@ impl AudioToTs {
 		Ok(res)
 	}
 
+	#[instrument(skip(audio_subsystem, listener, volume))]
 	fn open_capture(
-		logger: Logger, audio_subsystem: &AudioSubsystem,
-		listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>, volume: Arc<Mutex<f32>>,
+		audio_subsystem: &AudioSubsystem, listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
+		volume: Arc<Mutex<f32>>,
 	) -> Result<AudioDevice<SdlCallback>> {
 		let desired_spec = AudioSpecDesired {
 			freq: Some(48000),
@@ -71,30 +65,34 @@ impl AudioToTs {
 			samples: Some(48000 / 50),
 		};
 
-		audio_subsystem.open_capture(None, &desired_spec, |spec| {
-			// This spec will always be the desired spec, the sdl wrapper passes
-			// zero as `allowed_changes`.
-			debug!(logger, "Got capture spec"; "spec" => ?spec, "driver" => audio_subsystem.current_audio_driver());
-			let opus_channels = if spec.channels == 1 {
-				audiopus::Channels::Mono
-			} else {
-				audiopus::Channels::Stereo
-			};
+		audio_subsystem
+			.open_capture(None, &desired_spec, |spec| {
+				// This spec will always be the desired spec, the sdl wrapper passes
+				// zero as `allowed_changes`.
+				debug!(?spec, driver = audio_subsystem.current_audio_driver(), "Got capture spec");
+				let opus_channels = if spec.channels == 1 {
+					audiopus::Channels::Mono
+				} else {
+					audiopus::Channels::Stereo
+				};
 
-			let encoder = Encoder::new(audiopus::SampleRate::Hz48000,
-				opus_channels, audiopus::Application::Voip)
+				let encoder = Encoder::new(
+					audiopus::SampleRate::Hz48000,
+					opus_channels,
+					audiopus::Application::Voip,
+				)
 				.expect("Could not create encoder");
 
-			SdlCallback {
-				logger,
-				spec,
-				encoder,
-				listener,
-				volume,
+				SdlCallback {
+					spec,
+					encoder,
+					listener,
+					volume,
 
-				opus_output: [0; MAX_OPUS_FRAME_SIZE],
-			}
-		}).map_err(|e| format_err!("SDL error: {}", e))
+					opus_output: [0; MAX_OPUS_FRAME_SIZE],
+				}
+			})
+			.map_err(|e| format_err!("SDL error: {}", e))
 	}
 
 	pub fn set_listener(&self, sender: mpsc::Sender<OutPacket>) {
@@ -113,6 +111,7 @@ impl AudioToTs {
 		self.is_playing = playing;
 	}
 
+	#[instrument(skip(a2t, local_set))]
 	fn start(a2t: Arc<Mutex<Self>>, local_set: &LocalSet) {
 		local_set.spawn_local(
 			IntervalStream::new(time::interval(Duration::from_secs(1))).for_each(move |_| {
@@ -120,20 +119,19 @@ impl AudioToTs {
 				if a2t.device.status() == AudioStatus::Stopped {
 					// Try to reconnect to audio
 					match Self::open_capture(
-						a2t.logger.clone(),
 						&a2t.audio_subsystem,
 						a2t.listener.clone(),
 						a2t.volume.clone(),
 					) {
 						Ok(d) => {
 							a2t.device = d;
-							debug!(a2t.logger, "Reconnected to capture device");
+							debug!("Reconnected to capture device");
 							if a2t.is_playing {
 								a2t.device.resume();
 							}
 						}
-						Err(e) => {
-							error!(a2t.logger, "Failed to open capture device"; "error" => %e);
+						Err(error) => {
+							error!(%error, "Failed to open capture device");
 						}
 					};
 				}
@@ -145,6 +143,8 @@ impl AudioToTs {
 
 impl AudioCallback for SdlCallback {
 	type Channel = f32;
+
+	#[instrument(skip(self, buffer))]
 	fn callback(&mut self, buffer: &mut [Self::Channel]) {
 		// Handle volume
 		let volume = *self.volume.lock().unwrap();
@@ -155,8 +155,8 @@ impl AudioCallback for SdlCallback {
 		}
 
 		match self.encoder.encode_float(buffer, &mut self.opus_output[..]) {
-			Err(e) => {
-				error!(self.logger, "Failed to encode opus"; "error" => %e);
+			Err(error) => {
+				error!(%error, "Failed to encode opus");
 			}
 			Ok(len) => {
 				// Create packet

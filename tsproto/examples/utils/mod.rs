@@ -1,23 +1,17 @@
 use std::net::SocketAddr;
 
 use anyhow::Result;
-use slog::{info, o, Drain, Level, Logger};
 use tokio::net::UdpSocket;
+use tracing::{info, info_span};
 use tsproto::algorithms as algs;
 use tsproto::client::Client;
 use tsproto_packets::packets::*;
 use tsproto_types::crypto::EccKeyPrivP256;
 
-pub fn create_logger() -> Logger {
-	let decorator = slog_term::TermDecorator::new().build();
-	let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-	let drain = slog_async::Async::new(drain).build().fuse();
-
-	slog::Logger::root(drain, o!())
-}
+pub fn create_logger() { tracing_subscriber::fmt::init(); }
 
 pub async fn create_client(
-	local_address: SocketAddr, remote_address: SocketAddr, logger: Logger, verbose: u8,
+	local_address: SocketAddr, remote_address: SocketAddr, verbose: u8,
 ) -> Result<Client> {
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::import_str(
@@ -26,10 +20,10 @@ pub async fn create_client(
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	let udp_socket = UdpSocket::bind(local_address).await?;
-	let mut con = Client::new(logger, remote_address, Box::new(udp_socket), private_key);
+	let mut con = Client::new(remote_address, Box::new(udp_socket), private_key);
 
 	if verbose >= 1 {
-		tsproto::log::add_logger_with_verbosity(con.logger.clone(), verbose, &mut con)
+		tsproto::log::add_logger_with_verbosity(verbose, &mut con)
 	}
 
 	Ok(con)
@@ -46,19 +40,17 @@ pub async fn connect(con: &mut Client) -> Result<InCommandBuf> {
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	// Compute hash cash
-	let mut time_reporter = slog_perf::TimeReporter::new_with_level(
-		"Compute public key hash cash level",
-		con.logger.clone(),
-		Level::Info,
-	);
-	time_reporter.start("Compute public key hash cash level");
-	let private_key_as_pub = private_key.to_pub();
-	let offset = algs::hash_cash(&private_key_as_pub, 8);
-	let omega = private_key_as_pub.to_ts();
-	time_reporter.finish();
-	info!(con.logger, "Computed hash cash level";
-		"level" => algs::get_hash_cash_level(&omega, offset),
-		"offset" => offset);
+	let offset;
+	{
+		let _span = info_span!("Compute public key hash cash level").entered();
+		let private_key_as_pub = private_key.to_pub();
+		offset = algs::hash_cash(&private_key_as_pub, 8);
+		let omega = private_key_as_pub.to_ts();
+		info!(
+			level = algs::get_hash_cash_level(&omega, offset),
+			offset, "Computed hash cash level"
+		);
+	}
 
 	// Create clientinit packet
 	let offset = offset.to_string();

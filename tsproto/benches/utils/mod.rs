@@ -2,7 +2,6 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 
 use anyhow::Result;
-use slog::{o, Drain, Logger};
 use tokio::net::UdpSocket;
 use tsproto::algorithms as algs;
 use tsproto::client::Client;
@@ -10,31 +9,16 @@ use tsproto::crypto::EccKeyPrivP256;
 use tsproto_packets::packets::*;
 
 #[allow(dead_code)]
-pub fn create_logger(to_file: bool) -> Logger {
-	let decorator = slog_term::TermDecorator::new().build();
-	let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-
+pub fn create_logger(to_file: bool) {
 	if to_file {
-		let file = std::fs::OpenOptions::new()
-			.create(true)
-			.write(true)
-			.truncate(true)
-			.open("bench.log")
-			.unwrap();
-		let decorator = slog_term::PlainDecorator::new(file);
-		let file_drain = slog_term::CompactFormat::new(decorator).build().fuse();
-
-		let drain = slog::Duplicate(drain, file_drain);
-		let drain = Mutex::new(drain).fuse();
-		slog::Logger::root(drain, o!())
+		tracing_subscriber::fmt().with_writer(std::fs::File::create("bench.log").unwrap())::init();
 	} else {
-		let drain = slog_async::Async::new(drain).build().fuse();
-		slog::Logger::root(drain, o!())
+		tracing_subscriber::fmt::init();
 	}
 }
 
 pub async fn create_client(
-	local_address: SocketAddr, remote_address: SocketAddr, logger: Logger, verbose: u8,
+	local_address: SocketAddr, remote_address: SocketAddr, verbose: u8,
 ) -> Result<Client> {
 	// Get P-256 ECDH key
 	let private_key = EccKeyPrivP256::import_str(
@@ -43,10 +27,10 @@ pub async fn create_client(
 		DBnmDM/gZ//4AAAAAAAAAAAAAAAAAAAAZRzOI").unwrap();
 
 	let udp_socket = UdpSocket::bind(local_address).await?;
-	let mut con = Client::new(logger, remote_address, Box::new(udp_socket), private_key);
+	let mut con = Client::new(remote_address, Box::new(udp_socket), private_key);
 
 	if verbose >= 1 {
-		tsproto::log::add_logger(con.logger.clone(), verbose - 1, &mut con)
+		tsproto::log::add_logger(verbose - 1, &mut con)
 	}
 
 	Ok(con)
