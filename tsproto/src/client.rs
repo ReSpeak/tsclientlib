@@ -866,12 +866,12 @@ mod tests {
 			) => {
 				r??;
 				assert!(err.is_err(), "Connect should timeout");
-				return Ok(());
 			}
 			_ = state.server.wait_disconnect() => {
 				bail!("Server should just run in the background");
 			}
 		);
+		Ok(())
 	}
 
 	#[tokio::test]
@@ -909,12 +909,12 @@ mod tests {
 			) => {
 				r??;
 				assert!(err.is_err(), "Disconnect should timeout");
-				return Ok(());
 			}
 			_ = state.server.wait_disconnect() => {
 				bail!("Server should just run in the background");
 			}
 		);
+		Ok(())
 	}
 
 	#[tokio::test]
@@ -966,7 +966,7 @@ mod tests {
 			_ = state.client.wait_disconnect() => {}
 			_ = state.server.wait_disconnect() => {}
 		);
-		bail!("Unexpected disconnect");
+		bail!("Unexpected disconnect")
 	}
 
 	/// Check that the packet id wraps around.
@@ -1026,6 +1026,6 @@ mod tests {
 			_ = state.client.wait_disconnect() => {}
 			_ = state.server.wait_disconnect() => {}
 		);
-		bail!("Unexpected disconnect");
+		bail!("Unexpected disconnect")
 	}
 }
