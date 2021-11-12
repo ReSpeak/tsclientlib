@@ -130,7 +130,7 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 			let resolver = create_resolver()?;
 
 			// Try to get the address by an SRV record
-			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Canot parse udp domain prefix");
+			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Cannot parse udp domain prefix");
 			let mut name =
 				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
 			name.set_fqdn(true);
@@ -146,7 +146,7 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 	let res = res.chain(
 		stream::once(async move {
 			let resolver = create_resolver()?;
-			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Canot parse udp domain prefix");
+			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Cannot parse udp domain prefix");
 			let mut name =
 				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
 			name.set_fqdn(true);

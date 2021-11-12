@@ -552,7 +552,7 @@ mod test {
 		CreateEncoder,
 		/// Create packet with id.
 		///
-		/// The `bool` is `false` if packet handling shoud fail.
+		/// The `bool` is `false` if packet handling should fail.
 		ReceivePacket(u16, bool),
 		ReceiveRaw(u16, Vec<u8>),
 		/// Fetch audio of this sample count and expect a certain packet id.

@@ -90,7 +90,7 @@ pub struct Connection {
 	pub span: Span,
 	/// The parameters of this connection, if it is already established.
 	pub params: Option<ConnectedParams>,
-	/// The adress of the other side, where packets are coming from and going
+	/// The address of the other side, where packets are coming from and going
 	/// to.
 	pub address: SocketAddr,
 

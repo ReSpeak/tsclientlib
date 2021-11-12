@@ -230,7 +230,7 @@ pub struct Resender {
 	// Congestion control
 	/// The maximum send window before the last reduction.
 	w_max: u16,
-	/// The time when the last packet loss occured.
+	/// The time when the last packet loss occurred.
 	///
 	/// This is not necessarily the accurate time, but the duration until
 	/// now/no_congestion_since is accurate.

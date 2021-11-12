@@ -1,4 +1,4 @@
-//! Access properties of a connection with the propertie structs from events.
+//! Access properties of a connection with the property structs from events.
 use std::default::Default;
 
 use heck::*;

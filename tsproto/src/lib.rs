@@ -112,7 +112,7 @@ pub enum Error {
 pub struct Identity {
 	#[serde(serialize_with = "serialize_id_key", deserialize_with = "deserialize_id_key")]
 	key: EccKeyPrivP256,
-	/// The `client_key_offest`/counter for hash cash.
+	/// The `client_key_offset`/counter for hash cash.
 	counter: u64,
 	/// The maximum counter that was tried, this is greater or equal to
 	/// `counter` but may yield a lower level.

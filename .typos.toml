@@ -1,0 +1,14 @@
+[files]
+extend-exclude = ["Errors.csv", "Versions.csv"]
+
+[default.extend-identifiers]
+Ot = "Ot"
+ot = "ot"
+UE = "UE"
+struc = "struc"
+acn = "acn"
+ser = "ser"
+
+[default.extend-words]
+splitted = "splitted"
+datas = "datas"

@@ -281,7 +281,7 @@ for (msg_name, group) in groups {
 				}
 
 				// Check if all required data are available
-				// Pairs of (property, string to get the propery)
+				// Pairs of (property, string to get the property)
 				let mut opt_props = Vec::new();
 				let mut props = Vec::new();
 				let v = Vec::new();
