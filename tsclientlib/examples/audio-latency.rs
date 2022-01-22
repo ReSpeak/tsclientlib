@@ -15,20 +15,9 @@ struct ConnectionId(u64);
 #[derive(StructOpt, Debug)]
 #[structopt(author, about)]
 struct Args {
-	/// The address of the server to connect to
-	#[structopt(short = "a", long, default_value = "localhost")]
-	address: String,
 	/// The volume for the capturing
 	#[structopt(default_value = "1.0")]
 	volume: f32,
-	/// Print the content of all packets
-	///
-	/// 0. Print nothing
-	/// 1. Print command string
-	/// 2. Print packets
-	/// 3. Print udp packets
-	#[structopt(short = "v", long, parse(from_occurrences))]
-	verbose: u8,
 }
 
 #[tokio::main]

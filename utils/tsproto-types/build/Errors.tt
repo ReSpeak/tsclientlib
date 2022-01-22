@@ -8,6 +8,6 @@ pub enum Error {
 	<# if !e.doc.is_empty() { #>
 <#= indent(&doc_comment(&e.doc), 1) #>
 	<# } #>
-	<#= e.name.to_camel_case() #> = <#= e.num #>,
+	<#= e.name.to_pascal_case() #> = <#= e.num #>,
 <# } #>
 }

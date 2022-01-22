@@ -59,30 +59,34 @@ impl InMessage {
 }
 
 <# for msg_group in &self.0.msg_group {
-	for msg in &msg_group.msg { #>
+	for msg in &msg_group.msg {
+		let has_attributes = !msg.attributes.is_empty(); #>
 #[derive(Clone, Debug)]
 pub struct In<#= msg.name #> {
-<# if msg_group.default.response { #>
+	<# if msg_group.default.response { #>
 	pub return_code: Option<String>,
-<# } #>
+	<# }
+	if has_attributes { #>
 	list: Vec<In<#= msg.name #>Part>,
+	<# } #>
 }
+<# if has_attributes { #>
 
 #[derive(Clone, Debug)]
 pub struct In<#= msg.name #>Part {
-<# for a in &msg.attributes {
-	let field = self.0.get_field(a);
-	if field.get_rust_name() != field.ts { #>
+	<# for a in &msg.attributes {
+		let field = self.0.get_field(a);
+		if field.get_rust_name() != field.ts { #>
 	/// `<#= field.ts #>` in TeamSpeak
-	<# } #>
+		<# } #>
 	pub <#= field.get_rust_name() #>: <#= field.get_type(a)? #>,
-<# }
-#>
+	<# } #>
 }
+<# } #>
 
 impl InMessageTrait for In<#= msg.name #> {
-	#[instrument(name = "parse_message", skip(header, args))]
-	fn new(header: &InHeader, args: CommandParser) -> Result<Self> {
+	#[instrument(name = "parse_message", skip(header, <# if !has_attributes { #>_<# } #>args))]
+	fn new(header: &InHeader, <# if !has_attributes { #>_<# } #>args: CommandParser) -> Result<Self> {
 		// TODO newprotocol
 		//if <#= if msg_group.default.np { "!" } else { "" } #>header.flags().contains(Flags::NEWPROTOCOL) { return Err(ParseError::WrongNewprotocol(<#= if msg_group.default.np { "false" } else { "true" } #>)); }
 		if header.packet_type() != PacketType::Command<#= if msg_group.default.low { "Low" } else { "" } #> { return Err(ParseError::WrongPacketType(header.packet_type())); }
@@ -100,6 +104,9 @@ impl InMessageTrait for In<#= msg.name #> {
 		let mut <#= self.0.get_field(a).get_rust_name() #> = None;
 	<# } #>
 
+	<# if !has_attributes { #>
+		Ok(In<#= msg.name #> {<# if msg_group.default.response { #> return_code <# } #>})
+	<# } else { #>
 		let mut list = Vec::<In<#= msg.name #>Part>::new();
 		for item in args.chain(std::iter::once(CommandItem::NextCommand)) {
 			match item {
@@ -149,10 +156,11 @@ impl InMessageTrait for In<#= msg.name #> {
 		}
 
 		Ok(In<#= msg.name #> {<# if msg_group.default.response { #> return_code,<# } #> list })
+	<# } #>
 	}
 }
 
-<# if msg_group.default.response || !msg.attributes.is_empty() { #>
+<# if has_attributes { #>
 impl In<#= msg.name #> {
 	#[inline]
 	pub fn iter(&self) -> InMessageIterator<In<#= msg.name #>Part> { self.into_iter() }

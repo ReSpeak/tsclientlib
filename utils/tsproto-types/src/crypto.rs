@@ -194,10 +194,12 @@ impl EccKeyPubP256 {
 						GenericArray::from_slice(y_bytes.as_slice()),
 						false,
 					);
-					Ok(Self(
-						p256::PublicKey::from_encoded_point(&enc_point)
-							.ok_or(Error::ParsePublicKeyFailed)?,
-					))
+					let enc_point = p256::PublicKey::from_encoded_point(&enc_point);
+					if enc_point.is_some().into() {
+						Ok(Self(enc_point.unwrap()))
+					} else {
+						Err(Error::ParsePublicKeyFailed)
+					}
 				} else {
 					Err(Error::PublicKeyNotFound)
 				}
@@ -313,14 +315,14 @@ impl EccKeyPrivP256 {
 		if data.len() != 32 {
 			Err(Error::NoShortKey)
 		} else {
-			Ok(Self(p256::SecretKey::from_bytes(data).map_err(|_| Error::NoShortKey)?))
+			Ok(Self(p256::SecretKey::from_be_bytes(data).map_err(|_| Error::NoShortKey)?))
 		}
 	}
 
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn to_short(&self) -> elliptic_curve::FieldBytes<p256::NistP256> { self.0.to_bytes() }
+	pub fn to_short(&self) -> elliptic_curve::FieldBytes<p256::NistP256> { self.0.to_be_bytes() }
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
@@ -428,7 +430,7 @@ impl EccKeyPrivP256 {
 		// which is the only time this returns `None`.
 		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, enc_point.x().unwrap());
 		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, enc_point.y().unwrap());
-		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.to_bytes());
+		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.to_be_bytes());
 
 		// Only returns an error when encoding wrong objects, so fine to unwrap.
 		simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
@@ -445,7 +447,7 @@ impl EccKeyPrivP256 {
 	pub fn create_shared_secret(
 		self, other: EccKeyPubP256,
 	) -> elliptic_curve::ecdh::SharedSecret<p256::NistP256> {
-		elliptic_curve::ecdh::diffie_hellman(self.0.to_secret_scalar(), other.0.as_affine())
+		elliptic_curve::ecdh::diffie_hellman(self.0.to_nonzero_scalar(), other.0.as_affine())
 	}
 
 	pub fn sign(self, data: &[u8]) -> Vec<u8> {

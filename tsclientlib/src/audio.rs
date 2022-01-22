@@ -561,6 +561,8 @@ mod test {
 		Check(Box<dyn FnOnce(&AudioHandler<ClientId>)>),
 	}
 
+	/// Helper function to check an audio packet.
+	#[allow(dead_code)]
 	fn check_packet(data: &[u8]) -> Result<()> {
 		create_logger();
 		let mut handler = AudioHandler::<ClientId>::new();
