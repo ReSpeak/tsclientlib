@@ -33,8 +33,8 @@ pin-project-lite = "0.2"
 rand = "0.8"
 rug = { version = "1", optional = true, default-features = false, features = ["integer"] }
 serde = { version = "1", features = ["derive"] }
-sha-1 = "0.9"
-sha2 = "0.9"
+sha-1 = "0.10"
+sha2 = "0.10"
 thiserror = "1"
 time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1", features = ["macros", "net", "sync", "time"] }

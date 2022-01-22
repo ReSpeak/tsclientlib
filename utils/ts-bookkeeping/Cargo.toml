@@ -29,7 +29,7 @@ tsproto-packets = { path = "../tsproto-packets", version = "0.1" }
 tsproto-types = { path = "../tsproto-types", version = "0.1" }
 
 [build-dependencies]
-heck = "0.3"
+heck = "0.4"
 itertools = "0.10"
 t4rust-derive = "0.3"
 tsproto-structs = { path = "../tsproto-structs", version = "0.2" }

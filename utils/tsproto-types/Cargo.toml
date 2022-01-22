@@ -30,7 +30,7 @@ rand = "0.8"
 rand07 = { package = "rand", version = "0.7" }
 ref-cast = "1"
 serde = { version = "1", features = ["derive"] }
-sha-1 = "0.9"
+sha-1 = "0.10"
 simple_asn1 = "0.6"
 thiserror = "1"
 time = { version = "0.3", features = ["serde"] }

@@ -348,7 +348,7 @@ impl RustType {
 
 	/// Returns an identifier from this type in camelCase.
 	pub fn to_name(&self) -> String {
-		self.to_string().replace('<', "_").replace('>', "").to_camel_case()
+		self.to_string().replace('<', "_").replace('>', "").to_upper_camel_case()
 	}
 
 	/// Get code snippet for `as_ref`.
