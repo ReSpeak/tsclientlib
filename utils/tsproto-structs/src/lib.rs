@@ -375,7 +375,7 @@ pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
 	let mut result = String::with_capacity(sref.len() + line_count * count * 4);
 	for l in sref.lines() {
 		if !l.is_empty() {
-			result.push_str(std::iter::repeat("\t").take(count).collect::<String>().as_str());
+			result.push_str(&"\t".repeat(count));
 		}
 		result.push_str(l);
 		result.push('\n');
@@ -384,8 +384,8 @@ pub fn indent<S: AsRef<str>>(s: S, count: usize) -> String {
 }
 
 /// Unindent a string by a given count of tabs.
-pub fn unindent(mut s: &mut String) {
-	std::mem::swap(&mut s.replace("\n\t", "\n"), &mut s);
+pub fn unindent(s: &mut String) {
+	std::mem::swap(&mut s.replace("\n\t", "\n"), s);
 	if s.get(0..1) == Some("\t") {
 		s.remove(0);
 	}

@@ -1131,7 +1131,8 @@ impl Connection {
 								)) = e
 								{
 									debug!(timeout = reason, "Connect failed, reconnecting");
-									let fut = Self::connect(self.options.clone(), true).in_current_span();
+									let fut =
+										Self::connect(self.options.clone(), true).in_current_span();
 									self.state = ConnectionState::Connecting(Box::pin(fut), true);
 									return self.poll_next(cx);
 								}
@@ -1175,7 +1176,8 @@ impl Connection {
 				Poll::Ready(Ok(identity)) => {
 					self.options.identity = Some(identity);
 					let fut = Self::connect(self.options.clone(), false);
-					self.state = ConnectionState::Connecting(Box::pin(fut.in_current_span()), false);
+					self.state =
+						ConnectionState::Connecting(Box::pin(fut.in_current_span()), false);
 					Poll::Ready(Some(Ok(StreamItem::IdentityLevelIncreased)))
 				}
 			},
@@ -1196,7 +1198,8 @@ impl Connection {
 							// Reconnect on timeout
 							warn!(timeout = reason, "Connection failed, reconnecting");
 							let fut = Self::connect(self.options.clone(), true);
-							self.state = ConnectionState::Connecting(Box::pin(fut.in_current_span()), true);
+							self.state =
+								ConnectionState::Connecting(Box::pin(fut.in_current_span()), true);
 							return Poll::Ready(Some(Ok(StreamItem::DisconnectedTemporarily(
 								TemporaryDisconnectReason::Timeout(reason),
 							))));
@@ -1245,7 +1248,10 @@ impl Connection {
 							) {
 								warn!("Server shut down, reconnecting");
 								let fut = Self::connect(self.options.clone(), true);
-								self.state = ConnectionState::Connecting(Box::pin(fut.in_current_span()), true);
+								self.state = ConnectionState::Connecting(
+									Box::pin(fut.in_current_span()),
+									true,
+								);
 								if prev_can_send {
 									self.stream_items.push_back(Ok(StreamItem::AudioChange(
 										AudioEvent::CanSendAudio(false),
@@ -1330,14 +1336,14 @@ impl ConnectedConnection {
 		&mut self, book: &mut data::Connection, stream_items: &mut VecDeque<Result<StreamItem>>,
 		options: &mut ConnectOptions, cmd: InCommandBuf,
 	) -> Option<TemporaryDisconnectReason> {
-		let msg =
-			match InMessage::new(&cmd.data().packet().header(), &cmd.data().packet().content()) {
-				Ok(r) => r,
-				Err(error) => {
-					warn!(%error, "Failed to parse message");
-					return None;
-				}
-			};
+		let msg = match InMessage::new(cmd.data().packet().header(), cmd.data().packet().content())
+		{
+			Ok(r) => r,
+			Err(error) => {
+				warn!(%error, "Failed to parse message");
+				return None;
+			}
+		};
 
 		let mut handled = true;
 		if let InMessage::CommandError(msg) = &msg {

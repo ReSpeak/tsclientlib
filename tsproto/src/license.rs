@@ -426,8 +426,8 @@ impl fmt::Debug for License {
 			LicenseKey::Public(k) => write!(f, "{:?}", k)?,
 			LicenseKey::Private(k) => write!(f, "{:?}", k)?,
 		}
-		let from = self.not_valid_before.format(&Rfc3339).unwrap_or("Invalid".to_string());
-		let to = self.not_valid_after.format(&Rfc3339).unwrap_or("Invalid".to_string());
+		let from = self.not_valid_before.format(&Rfc3339).unwrap_or_else(|_| "Invalid".to_string());
+		let to = self.not_valid_after.format(&Rfc3339).unwrap_or_else(|_| "Invalid".to_string());
 		write!(f, ", valid_between: {} - {}, ", from, to)?;
 		write!(f, "inner: {:?} }}", self.inner)?;
 		Ok(())

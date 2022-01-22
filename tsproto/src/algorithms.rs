@@ -56,7 +56,7 @@ pub fn compress_and_split(is_client: bool, packet: OutPacket) -> Vec<OutPacket> 
 	let compressed;
 	let datas = if data.len() > max_size {
 		// Compress with QuickLZ
-		let cdata = ::quicklz::compress(&data, CompressionLevel::Lvl1);
+		let cdata = ::quicklz::compress(data, CompressionLevel::Lvl1);
 		// Use only if it is efficient
 		let mut data = if cdata.len() > data.len() {
 			compressed = false;
@@ -187,7 +187,7 @@ pub fn decrypt_key_nonce(
 	let mut content = packet.content().to_vec();
 	let cipher = Eax::<aes::Aes128, U8>::new(key);
 	cipher
-		.decrypt_in_place_detached(nonce, &meta, &mut content, header.mac().into())
+		.decrypt_in_place_detached(nonce, meta, &mut content, header.mac().into())
 		.map(|()| content)
 		.map_err(|_| Error::WrongMac {
 			p_type: header.packet_type(),

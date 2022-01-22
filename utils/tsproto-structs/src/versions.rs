@@ -49,7 +49,7 @@ impl Version {
 		for num in ver.split('.') {
 			res.push('_');
 			if num != "?" {
-				res.push_str(&num.to_string());
+				res.push_str(num);
 			} else {
 				res.push('X');
 			}

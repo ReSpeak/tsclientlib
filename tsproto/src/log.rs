@@ -9,11 +9,11 @@ use crate::connection::{Connection, Event};
 
 fn prepare_span(is_client: bool, incoming: bool) -> Span {
 	let dir = if incoming {
-	    if !cfg!(windows) { "\x1b[1;32mIN\x1b[0m" } else { "IN" }
+		if !cfg!(windows) { "\x1b[1;32mIN\x1b[0m" } else { "IN" }
 	} else if !cfg!(windows) {
-	    "\x1b[1;31mOUT\x1b[0m"
+		"\x1b[1;31mOUT\x1b[0m"
 	} else {
-	    "OUT"
+		"OUT"
 	};
 	let to = if is_client { "S" } else { "C" };
 	debug_span!("packet", to, %dir)

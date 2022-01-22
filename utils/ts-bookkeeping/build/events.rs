@@ -13,7 +13,7 @@ pub struct EventDeclarations<'a>(&'a BookDeclarations, &'a MessagesToBookDeclara
 
 impl<'a> Deref for EventDeclarations<'a> {
 	type Target = BookDeclarations;
-	fn deref(&self) -> &Self::Target { &self.0 }
+	fn deref(&self) -> &Self::Target { self.0 }
 }
 
 impl Default for EventDeclarations<'static> {

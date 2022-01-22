@@ -272,11 +272,11 @@ impl<'a> RuleKind<'a> {
 	pub fn from_name(&'a self) -> &'a str {
 		match self {
 			RuleKind::Map { from, .. } => &from.name,
-			RuleKind::ArgumentMap { from, .. } => &from,
+			RuleKind::ArgumentMap { from, .. } => from,
 			RuleKind::Function { from, name, .. } => {
 				&from.unwrap_or_else(|| panic!("From not set for function {}", name)).name
 			}
-			RuleKind::ArgumentFunction { from, .. } => &from,
+			RuleKind::ArgumentFunction { from, .. } => from,
 		}
 	}
 

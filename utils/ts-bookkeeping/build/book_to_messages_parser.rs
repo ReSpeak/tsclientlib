@@ -14,7 +14,7 @@ pub struct BookToMessagesDeclarations<'a>(&'a book_to_messages::BookToMessagesDe
 
 impl<'a> Deref for BookToMessagesDeclarations<'a> {
 	type Target = book_to_messages::BookToMessagesDeclarations<'a>;
-	fn deref(&self) -> &Self::Target { &self.0 }
+	fn deref(&self) -> &Self::Target { self.0 }
 }
 
 impl Default for BookToMessagesDeclarations<'static> {

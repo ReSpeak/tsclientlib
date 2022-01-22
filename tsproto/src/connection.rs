@@ -250,7 +250,7 @@ impl Connection {
 			}
 
 			let mut read_buf = ReadBuf::new(&mut self.udp_buffer);
-			match self.udp_socket.poll_recv_from(cx, &mut &mut read_buf) {
+			match self.udp_socket.poll_recv_from(cx, &mut read_buf) {
 				Poll::Ready(Ok(addr)) => {
 					let size = read_buf.filled().len();
 					let mut udp_buffer = mem::take(&mut self.udp_buffer);
@@ -378,7 +378,7 @@ impl Connection {
 		match udp_socket.poll_send_to(cx, data, address).map_err(Error::Network)? {
 			Poll::Pending => Poll::Pending,
 			Poll::Ready(size) => {
-				let event = Event::SendUdpPacket(&packet);
+				let event = Event::SendUdpPacket(packet);
 				for l in event_listeners {
 					l(&event)
 				}

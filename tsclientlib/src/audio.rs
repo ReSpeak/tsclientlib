@@ -445,8 +445,12 @@ impl AudioQueue {
 	}
 }
 
+impl<Id: Clone + Debug + Eq + Hash + PartialEq> Default for AudioHandler<Id> {
+	fn default() -> Self { Self { queues: Default::default(), avg_buffer_samples: 0 } }
+}
+
 impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
-	pub fn new() -> Self { Self { queues: Default::default(), avg_buffer_samples: 0 } }
+	pub fn new() -> Self { Default::default() }
 
 	/// Delete all queues
 	pub fn reset(&mut self) { self.queues.clear(); }
@@ -485,7 +489,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 					warn!(%error, "Failed to decode audio packet");
 				}
 				Ok((r, is_end)) => {
-					handle(id, &r);
+					handle(id, r);
 					for i in 0..r.len() {
 						buf[i] += r[i] * vol;
 					}
@@ -497,7 +501,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 		}
 
 		for id in &to_remove {
-			self.queues.remove(&id);
+			self.queues.remove(id);
 		}
 		to_remove
 	}
