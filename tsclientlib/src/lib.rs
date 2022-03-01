@@ -940,8 +940,9 @@ impl Connection {
 			"Can only send audio packets with send_audio"
 		);
 		if let ConnectionState::Connected { con, book } = &mut self.state {
-			if !Self::intern_can_send_audio(book, &self.options) {
-				warn!(parent: &self.span, "Sending audio while muted");
+			if !Self::intern_can_send_audio(&book, &self.options) {
+				let span = self.span.clone();
+				warn!(parent: span, "Sending audio while muted");
 			}
 			con.client.send_packet(packet).map_err(Error::SendPacket)?;
 			Ok(())
