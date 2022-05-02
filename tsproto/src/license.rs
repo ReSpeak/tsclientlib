@@ -284,9 +284,6 @@ impl License {
 		let (inner, extra_len) = match data[33] {
 			0 => {
 				let license_data: u32 = (&data[42..]).read_be().map_err(Error::Deserialize)?;
-				if license_data > 0x7f {
-					return Err(Error::IntermediateInvalidData(license_data));
-				}
 
 				let len = if let Some(len) = data[46..].iter().position(|&b| b == 0) {
 					len
@@ -317,6 +314,33 @@ impl License {
 					.map_err(Error::DeserializeString)?
 					.to_string();
 				(InnerLicense::Server { issuer, license_type, data: license_data }, 6 + len)
+			}
+			8 => {
+				// TeamSpeak 5 exclusive license block. Similar to server but with extra data
+				if data.len() < 47 {
+					return Err(Error::TooShort);
+				}
+				let license_type =
+					LicenseType::from_u8(data[42]).ok_or(Error::UnknownLicenseType(data[42]))?;
+				let license_data: u32 = (&data[43..]).read_be().map_err(Error::Deserialize)?;
+				let len = if let Some(len) = data[47..].iter().position(|&b| b == 0) {
+					len
+				} else {
+					return Err(Error::NonterminatedString);
+				};
+				if data.len() < 47 + len + 1 {
+					return Err(Error::TooShort);
+				}
+				let issuer = str::from_utf8(&data[47..47 + len])
+					.map_err(Error::DeserializeString)?
+					.to_string();
+
+				// There is an extra field with additional data
+				let len2 = data[47 + len + 1] as usize;
+				if data.len() < 48 + len + len2 {
+					return Err(Error::TooShort);
+				}
+				(InnerLicense::Server { issuer, license_type, data: license_data }, 7 + len + len2)
 			}
 			32 => (InnerLicense::Ephemeral, 0),
 			i => {
@@ -461,6 +485,16 @@ mod tests {
 			dGVtcyBHbWJIAACvTQIgpv6zmLZq3znh7ygmOSokGFkFjz4bTigrOnetrgIJdIIACdS\
 			/gAYAAAAAU29zc2VuU3lzdGVtcy5iaWQAADY7+uV1CQ1niOvYSdGzsu83kPTNWijovr\
 			3B78eHGeePIAm98vQJvpu0").unwrap()).unwrap();
+	}
+
+	#[test]
+	fn parse_ts5_server_license() {
+		Licenses::parse_ignore_expired(&base64::decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
+			Fe9oZ/2uxP29j1EXQAQSfiAazbsgAAAASVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAAALB6Qfbe\
+			JyN+9foJhe+/KPFwyU+i++4MAA0q1/WCnizwARRuEPN1aeBQAAASBUZWFtU3BlYWsgc3lzdGV\
+			tcyBHbWJIAADrhbI5gUR3thsS7FqKV5P5h7djnwMSJfF2vi58lm1VcwgRUFMAE0P7gAUCGQIA\
+			VGVhbVNwZWFrIFN5c3RlbXMgR21iSAAGAwEAAAAFAAf2KhQ7WLjOvwwY0Bi7LxAcWmQeT+LQt\
+			uaOzjhYoA+YIBGNq1kRjlQZ").unwrap()).unwrap();
 	}
 
 	#[test]
