@@ -1,5 +1,5 @@
-use curve25519_dalek::edwards::CompressedEdwardsY;
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::edwards::CompressedEdwardsY;
+use curve25519_dalek_ng::scalar::Scalar;
 use structopt::StructOpt;
 
 #[derive(StructOpt, Debug)]

@@ -3,9 +3,9 @@ use std::fmt;
 use std::io::prelude::*;
 use std::str;
 
-use curve25519_dalek::constants;
-use curve25519_dalek::edwards::EdwardsPoint;
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::constants;
+use curve25519_dalek_ng::edwards::EdwardsPoint;
+use curve25519_dalek_ng::scalar::Scalar;
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use sha2::{Digest, Sha512};

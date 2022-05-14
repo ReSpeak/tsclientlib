@@ -2,9 +2,9 @@
 use std::convert::TryInto;
 use std::{cmp, fmt, str};
 
-use curve25519_dalek::constants;
-use curve25519_dalek::edwards::{CompressedEdwardsY, EdwardsPoint};
-use curve25519_dalek::scalar::Scalar;
+use curve25519_dalek_ng::constants;
+use curve25519_dalek_ng::edwards::{CompressedEdwardsY, EdwardsPoint};
+use curve25519_dalek_ng::scalar::Scalar;
 use elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
 use generic_array::typenum::Unsigned;
 use generic_array::GenericArray;
@@ -481,7 +481,7 @@ impl EccKeyPubEd25519 {
 
 impl EccKeyPrivEd25519 {
 	/// This is not used to create TeamSpeak keys, as they are not canonical.
-	pub fn create() -> Self { EccKeyPrivEd25519(Scalar::random(&mut rand07::thread_rng())) }
+	pub fn create() -> Self { EccKeyPrivEd25519(Scalar::random(&mut rand::thread_rng())) }
 
 	pub fn from_base64(data: &str) -> Result<Self> {
 		let decoded = base64::decode(data)?;
@@ -532,7 +532,7 @@ mod tests {
 
 		let res1 = priv_key1.create_shared_secret(pub_key2);
 		let res2 = priv_key2.create_shared_secret(pub_key1);
-		assert_eq!(res1.as_bytes(), res2.as_bytes());
+		assert_eq!(res1.raw_secret_bytes(), res2.raw_secret_bytes());
 	}
 
 	#[test]

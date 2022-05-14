@@ -34,6 +34,8 @@ pub enum Error {
 		system: trust_dns_resolver::error::ResolveError,
 		fallback: trust_dns_resolver::error::ResolveError,
 	},
+	#[error("Failed to composed domain from {0:?} and {1:?}: {2}")]
+	InvalidComposedDomain(String, String, #[source] trust_dns_proto::error::ProtoError),
 	#[error("Failed to parse domain {0:?}: {1}")]
 	InvalidDomain(String, #[source] trust_dns_proto::error::ProtoError),
 	#[error("Invalid IPv4 address")]
@@ -135,7 +137,12 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
 			name.set_fqdn(true);
 
-			Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)))
+			Result::<_>::Ok(resolve_srv(
+				resolver,
+				prefix.append_name(&name).map_err(|e| {
+					Error::InvalidComposedDomain(DNS_PREFIX_UDP.to_string(), addr2.clone(), e)
+				})?,
+			))
 		})
 		.try_flatten(),
 	);
@@ -153,18 +160,26 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 
 			let name = name.trim_to(2);
 			// Pick the first srv record of the first server that answers
-			Result::<_>::Ok(resolve_srv(resolver, prefix.append_name(&name)).and_then(move |srv| {
-				let address = address.clone();
-				async move {
-					// Got tsdns server
-					let mut addr = resolve_tsdns(srv, &address).await?;
-					if let Some(port) = port {
-						// Overwrite port if it was specified
-						addr.set_port(port);
+			Result::<_>::Ok(
+				resolve_srv(
+					resolver,
+					prefix.append_name(&name).map_err(|e| {
+						Error::InvalidComposedDomain(DNS_PREFIX_UDP.to_string(), addr2.clone(), e)
+					})?,
+				)
+				.and_then(move |srv| {
+					let address = address.clone();
+					async move {
+						// Got tsdns server
+						let mut addr = resolve_tsdns(srv, &address).await?;
+						if let Some(port) = port {
+							// Overwrite port if it was specified
+							addr.set_port(port);
+						}
+						Ok(addr)
 					}
-					Ok(addr)
-				}
-			}))
+				}),
+			)
 		})
 		.try_flatten(),
 	);
