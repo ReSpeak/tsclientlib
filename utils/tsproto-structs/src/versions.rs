@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::result::Result;
 
 use crate::*;
@@ -67,7 +68,7 @@ impl Version {
 			if !res.is_empty() {
 				res.push_str(", ");
 			}
-			res.push_str(&format!("{:#x}", b));
+			let _ = write!(res, "{:#x}", b);
 		}
 		res
 	}

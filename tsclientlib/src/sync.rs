@@ -320,7 +320,7 @@ impl SyncConnectionHandle {
 			})))
 			.await
 			.map_err(|_| Error::ConnectionGone)?;
-		Ok(recv.await.map_err(|_| Error::ConnectionGone)?)
+		recv.await.map_err(|_| Error::ConnectionGone)
 	}
 
 	/// Adds a `return_code` to the command and returns if the corresponding

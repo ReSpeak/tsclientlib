@@ -236,7 +236,7 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 			// Port is appended
 			addr = &address[..pos];
 			port = Some(&address[pos + 1..]);
-			if addr.chars().all(|c| c.is_digit(10) || c == '.') {
+			if addr.chars().all(|c| c.is_ascii_digit() || c == '.') {
 				// IPv4 address
 				return Ok(ParseIpResult::Addr(
 					std::net::ToSocketAddrs::to_socket_addrs(address)
@@ -277,7 +277,7 @@ fn parse_ip(address: &str) -> Result<ParseIpResult> {
 					.ok_or(Error::InvalidIp6Address)?,
 			));
 		}
-	} else if address.chars().all(|c| c.is_digit(10) || c == '.') {
+	} else if address.chars().all(|c| c.is_ascii_digit() || c == '.') {
 		// IPv4 address
 		return Ok(ParseIpResult::Addr(
 			std::net::ToSocketAddrs::to_socket_addrs(&(address, DEFAULT_PORT))

@@ -1,5 +1,6 @@
 //! Access properties of a connection with the property structs from events.
 use std::default::Default;
+use std::fmt::Write;
 
 use heck::*;
 use t4rust_derive::Template;
@@ -22,7 +23,7 @@ fn get_ids(struc: &Struct) -> String {
 		if !res.is_empty() {
 			res.push_str(", ");
 		}
-		res.push_str(&format!("s{}", i));
+		let _ = write!(res, "s{}", i);
 	}
 	res
 }
@@ -37,7 +38,7 @@ fn get_ids2(structs: &[Struct], struc: &Struct) -> String {
 		if p.type_s != "str" {
 			res.push('*');
 		}
-		res.push_str(&format!("s{}", i));
+		let _ = write!(res, "s{}", i);
 	}
 	res
 }

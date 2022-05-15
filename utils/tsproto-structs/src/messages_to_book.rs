@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::fmt::Write;
 use std::str::FromStr;
 
 use once_cell::sync::Lazy;
@@ -195,7 +196,7 @@ impl Event<'_> {
 			if !f.get_type("").unwrap().is_primitive() {
 				res.push('&');
 			}
-			res.push_str(&format!("{}.{}", msg, f.get_rust_name()));
+			let _ = write!(res, "{}.{}", msg, f.get_rust_name());
 		}
 		res
 	}
@@ -210,7 +211,7 @@ impl Event<'_> {
 				ids.push_str(", ");
 			}
 			if m == "map" || m == "array" || m == "set" {
-				ids.push_str(&format!("{}.{}", msg, from.get_rust_name()));
+				let _ = write!(ids, "{}.{}", msg, from.get_rust_name());
 			} else {
 				panic!("Unknown modifier {}", m);
 			}
