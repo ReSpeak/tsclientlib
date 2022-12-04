@@ -26,12 +26,14 @@ use std::time::Duration;
 
 use futures::prelude::*;
 use thiserror::Error;
+use time::OffsetDateTime;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::oneshot;
 use tracing::{debug, info, info_span, warn, Instrument, Span};
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::OutMessageTrait;
+use ts_bookkeeping::messages::s2c::InClientConnectionInfo;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
 use tsproto::resend::ResenderState;
@@ -277,6 +279,7 @@ struct ConnectedConnection {
 	///
 	/// Afterwards we can directly return a `TcpStream` in the event stream.
 	filetransfers: Vec<future::BoxFuture<'static, StreamItem>>,
+	connection_time: time::OffsetDateTime,
 }
 
 enum ConnectionState {
@@ -1149,6 +1152,7 @@ impl Connection {
 						cur_filetransfer_id: 0,
 						subscribed: false,
 						filetransfers: Default::default(),
+						connection_time: OffsetDateTime::now_utc(),
 					};
 					if Self::intern_can_send_audio(&book, &self.options) {
 						self.stream_items
@@ -1498,6 +1502,19 @@ impl ConnectedConnection {
 					(Vec::new(), false)
 				}
 			};
+
+			if let InMessage::ClientConnectionInfo(msg) = &msg {
+				for msg in msg.iter() {
+					if msg.client_id == book.own_client && msg.connected_time.is_none() {
+						if let Some(own_client) = book.clients.get_mut(&book.own_client){
+							if let Some(connection_data) = &mut own_client.connection_data {
+								connection_data.connected_time = Some(OffsetDateTime::now_utc() - self.connection_time);
+							}
+						}
+					}
+				}
+			}
+
 			handled = book_handled;
 			self.client.hand_back_buffer(cmd.into_buffer());
 			if !events.is_empty() {
