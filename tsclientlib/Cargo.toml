@@ -41,8 +41,8 @@ time = "0.3"
 tokio = { version = "1", features = ["time"] }
 tokio-stream = "0.1"
 tracing = "0.1"
-trust-dns-proto = "0.21"
-trust-dns-resolver = "0.21"
+trust-dns-proto = "0.22"
+trust-dns-resolver = "0.22"
 ts-bookkeeping = { path = "../utils/ts-bookkeeping", version = "0.1" }
 tsproto = { path = "../tsproto", version = "0.2" }
 tsproto-packets = { path = "../utils/tsproto-packets", version = "0.1" }

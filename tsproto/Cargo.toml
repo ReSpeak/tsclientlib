@@ -17,12 +17,12 @@ include = [
 ]
 
 [dependencies]
-aes = "0.7"
+aes = "0.8"
 base64 = "0.13"
 bitflags = "1"
 omnom = "3"
 curve25519-dalek-ng = "4"
-eax = "0.4.0"
+eax = "0.5"
 futures = "0.3"
 generic-array = "0.14"
 git-testament = "0.2"
@@ -45,7 +45,7 @@ quicklz = "0.3"
 
 [dev-dependencies]
 anyhow = "1"
-criterion = "0.3"
+criterion = "0.4"
 once_cell = "1"
 structopt = { version = "0.3", default-features = false }
 tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
