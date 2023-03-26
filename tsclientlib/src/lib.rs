@@ -56,6 +56,7 @@ mod tests;
 
 // Reexports
 pub use ts_bookkeeping::messages::s2c::InMessage;
+// TODO This is bad because it re-exports ConnectOptions
 pub use ts_bookkeeping::*;
 pub use tsproto::resend::{ConnectionStats, PacketStat};
 pub use tsproto::Identity;

@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::convert::TryFrom;
 use std::fmt;
 use std::io::prelude::*;
 use std::str;
@@ -52,6 +53,8 @@ pub enum Error {
 	NoPrivateKey,
 	#[error("Failed to serialize license: {0}")]
 	Serialize(#[source] std::io::Error),
+	#[error("Failed to serialize license, number too large: {0}")]
+	SerializeTooLarge(#[source] std::num::TryFromIntError),
 	#[error("Too many license blocks: {0}")]
 	TooManyBlocks(usize),
 	#[error("License too short")]
@@ -85,26 +88,34 @@ pub struct License {
 
 #[derive(Debug, Clone)]
 pub enum InnerLicense {
+	/// 0
 	Intermediate {
 		issuer: String,
 		/// Unknown data
 		data: u8,
-	}, // 0
-	Website {
-		issuer: String,
-	}, // 1
+	},
+	/// 1
+	Website { issuer: String },
+	/// 2, Ts3_Server
 	Server {
 		issuer: String,
 		license_type: LicenseType,
-		/// Unknown data
-		data: u32,
-	}, // 2
-	Code {
-		issuer: String,
-	}, // 3
-	// 4: Token, 5: LicenseSign, 6: MyTsIdSign (not existing in the license
-	// parameter)
-	Ephemeral, // 32
+		/// Max clients of the server
+		max_clients: u32,
+	},
+	/// 3
+	Code { issuer: String },
+	// Not existing in the license parameter:
+	// 4: Token, 5: License_Sign, 6: MyTsId_Sign, 7: Updater
+	/// 8, Ts_Server_License
+	Ts5Server {
+		license_type: LicenseType,
+		/// Properties from the license, data stored here contains the raw property data except the
+		/// length field
+		properties: Vec<Vec<u8>>,
+	},
+	/// 32, Ephemeral_Key
+	Ephemeral,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -135,6 +146,7 @@ impl InnerLicense {
 			InnerLicense::Website { .. } => 1,
 			InnerLicense::Server { .. } => 2,
 			InnerLicense::Code { .. } => 3,
+			InnerLicense::Ts5Server { .. } => 8,
 			InnerLicense::Ephemeral { .. } => 32,
 		}
 	}
@@ -313,34 +325,33 @@ impl License {
 				let issuer = str::from_utf8(&data[47..47 + len])
 					.map_err(Error::DeserializeString)?
 					.to_string();
-				(InnerLicense::Server { issuer, license_type, data: license_data }, 6 + len)
+
+				(InnerLicense::Server { issuer, license_type, max_clients: license_data }, 6 + len)
 			}
 			8 => {
-				// TeamSpeak 5 exclusive license block. Similar to server but with extra data
-				if data.len() < 47 {
+				if data.len() < 44 {
 					return Err(Error::TooShort);
 				}
 				let license_type =
 					LicenseType::from_u8(data[42]).ok_or(Error::UnknownLicenseType(data[42]))?;
-				let license_data: u32 = (&data[43..]).read_be().map_err(Error::Deserialize)?;
-				let len = if let Some(len) = data[47..].iter().position(|&b| b == 0) {
-					len
-				} else {
-					return Err(Error::NonterminatedString);
-				};
-				if data.len() < 47 + len + 1 {
-					return Err(Error::TooShort);
-				}
-				let issuer = str::from_utf8(&data[47..47 + len])
-					.map_err(Error::DeserializeString)?
-					.to_string();
+				let property_count = data[43] as usize;
+				let mut pos = 44;
+				let mut properties = Vec::with_capacity(property_count);
 
-				// There is an extra field with additional data
-				let len2 = data[47 + len + 1] as usize;
-				if data.len() < 48 + len + len2 {
-					return Err(Error::TooShort);
+				for _ in 0..property_count {
+					if pos >= data.len() {
+						return Err(Error::TooShort);
+					}
+					let len = usize::from(data[pos]);
+					pos += 1;
+					if pos + len >= data.len() {
+						return Err(Error::TooShort);
+					}
+					properties.push(data[pos..pos + len].to_vec());
+					pos += len;
 				}
-				(InnerLicense::Server { issuer, license_type, data: license_data }, 7 + len + len2)
+
+				(InnerLicense::Ts5Server { license_type, properties }, pos - MIN_LEN)
 			}
 			32 => (InnerLicense::Ephemeral, 0),
 			i => {
@@ -393,15 +404,25 @@ impl License {
 				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
 				w.write_be(0u8).map_err(Error::Serialize)?;
 			}
-			InnerLicense::Server { ref issuer, license_type, data } => {
+			InnerLicense::Server { ref issuer, license_type, max_clients } => {
 				w.write_be(license_type.to_u8().unwrap()).map_err(Error::Serialize)?;
-				w.write_be(data).map_err(Error::Serialize)?;
+				w.write_be(max_clients).map_err(Error::Serialize)?;
 				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
 				w.write_be(0u8).map_err(Error::Serialize)?;
 			}
 			InnerLicense::Code { ref issuer } => {
 				w.write_all(issuer.as_bytes()).map_err(Error::Serialize)?;
 				w.write_be(0u8).map_err(Error::Serialize)?;
+			}
+			InnerLicense::Ts5Server { license_type, ref properties } => {
+				w.write_be(license_type.to_u8().unwrap()).map_err(Error::Serialize)?;
+				w.write_be(u8::try_from(properties.len()).map_err(Error::SerializeTooLarge)?)
+					.map_err(Error::Serialize)?;
+				for p in properties {
+					w.write_be(u8::try_from(p.len()).map_err(Error::SerializeTooLarge)?)
+						.map_err(Error::Serialize)?;
+					w.write_all(p).map_err(Error::Serialize)?;
+				}
 			}
 			InnerLicense::Ephemeral => {}
 		}
@@ -488,13 +509,46 @@ mod tests {
 	}
 
 	#[test]
-	fn parse_ts5_server_license() {
+	fn parse_ts5_server_license_long() {
+		// Slightly older format having a block with a Ts5 license block in it
 		Licenses::parse_ignore_expired(&base64::decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
 			Fe9oZ/2uxP29j1EXQAQSfiAazbsgAAAASVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAAALB6Qfbe\
 			JyN+9foJhe+/KPFwyU+i++4MAA0q1/WCnizwARRuEPN1aeBQAAASBUZWFtU3BlYWsgc3lzdGV\
 			tcyBHbWJIAADrhbI5gUR3thsS7FqKV5P5h7djnwMSJfF2vi58lm1VcwgRUFMAE0P7gAUCGQIA\
 			VGVhbVNwZWFrIFN5c3RlbXMgR21iSAAGAwEAAAAFAAf2KhQ7WLjOvwwY0Bi7LxAcWmQeT+LQt\
 			uaOzjhYoA+YIBGNq1kRjlQZ").unwrap()).unwrap();
+	}
+
+	#[test]
+	fn parse_ts5_server_license_long2() {
+		// Also slightly older, has 3 properties
+		Licenses::parse_ignore_expired(&base64::decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
+			Fe9oZ/2uxP29j1EXQAQSfiAazbsgAAAASVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAAAtXG5p2n\
+			iXlDfpVAGuD88w8hetKYL4vqHRkB5xB8ASRwAR2t/MN+ttjAAAASBUZWFtU3BlYWsgc3lzdGV\
+			tcyBHbWJIAAAdZYGtwkeZFhzqnoV1uk+Tcphe8GgcqiPVtELF9y4wOAgR4qmAF4jnAAkDGQIA\
+			VGVhbVNwZWFrIFN5c3RlbXMgR21iSAAGAwEAAAAFBgEBAAGGoADzyFvD+9G6uhIxmh0jK+Uo8\
+			z8fYGJVH81vWFULDS0l8yATKe4cEyqW3A==").unwrap()).unwrap();
+	}
+
+	#[test]
+	fn parse_ts5_server_license_single_block_with_issuer() {
+		Licenses::parse_ignore_expired(
+			&base64::decode(
+				"AQBgjAAqtcBUrw5futTtkl3+EM3OW4Lal6OTPlwuv4xV/\
+				 gIRFlEAG0NlAAcAAAAgQW5vbnltb3VzAACKNY+/\
+				 9qCbonCSxG18vBb7y7zPIgDdjTmcZoAHHclnJSATPa69Ez5XfQ==",
+			)
+			.unwrap(),
+		)
+		.unwrap();
+	}
+
+	#[test]
+	fn parse_ts5_server_license_single_block() {
+		// Only a single server block and the ephemeral block
+		Licenses::parse_ignore_expired(&base64::decode("AQAuio9ZxThXKE+hmzQyzBRedysp9\
+			79JBTv2xP3s2oCkiAgQI70AE+YkAAcBBgMBAAAABQBoazM313063zaipPTH06zrXc91ch3huB\
+			YrUET9sEbz1CATKgK8EyqrfA==").unwrap()).unwrap();
 	}
 
 	#[test]

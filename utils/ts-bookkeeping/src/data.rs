@@ -52,6 +52,7 @@ impl Connection {
 		Self {
 			own_client: packet.client_id,
 			server: copy_attrs!(packet, Server;
+				administrative_domain,
 				ask_for_privilegekey,
 				codec_encryption_mode,
 				created,
