@@ -1,5 +1,5 @@
 use anyhow::Result;
-use structopt::StructOpt;
+use clap::Parser;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tracing::{debug, info};
@@ -12,11 +12,11 @@ mod audio_utils;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ConnectionId(u64);
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// The volume for the capturing
-	#[structopt(default_value = "1.0")]
+	#[arg(default_value_t = 1.0)]
 	volume: f32,
 }
 
@@ -27,7 +27,7 @@ async fn real_main() -> Result<()> {
 	tracing_subscriber::fmt::init();
 
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	let con_id = ConnectionId(0);
 	let local_set = LocalSet::new();

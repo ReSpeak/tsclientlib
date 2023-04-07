@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use anyhow::{bail, Result};
-use structopt::StructOpt;
+use clap::Parser;
 use tokio::time::{self, Duration};
 use tracing::info;
 use tsproto_packets::packets::*;
@@ -9,14 +9,14 @@ use tsproto_packets::packets::*;
 mod utils;
 use crate::utils::*;
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// The address of the server to connect to
-	#[structopt(short = "a", long, default_value = "127.0.0.1:9987")]
+	#[arg(short, long, default_value = "127.0.0.1:9987")]
 	address: SocketAddr,
 	/// The listening address of the client
-	#[structopt(long, default_value = "0.0.0.0:0")]
+	#[arg(long, default_value = "0.0.0.0:0")]
 	local_address: SocketAddr,
 	/// Print the content of all packets
 	///
@@ -24,7 +24,7 @@ struct Args {
 	/// 1. Print command string
 	/// 2. Print packets
 	/// 3. Print udp packets
-	#[structopt(short = "v", long, parse(from_occurrences))]
+	#[arg(short, long, action = clap::ArgAction::Count)]
 	verbose: u8,
 }
 
@@ -33,7 +33,7 @@ async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 	create_logger();
 
 	let mut con = create_client(args.local_address, args.address, args.verbose).await?;

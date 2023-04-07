@@ -6,8 +6,8 @@
 //! Channel -> PC Speakers
 
 use anyhow::{bail, Result};
+use clap::Parser;
 use futures::prelude::*;
-use structopt::StructOpt;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tracing::{debug, info};
@@ -20,14 +20,14 @@ mod audio_utils;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct ConnectionId(u64);
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// The address of the server to connect to
-	#[structopt(short = "a", long, default_value = "localhost")]
+	#[arg(short, long, default_value = "localhost")]
 	address: String,
 	/// The volume for the capturing
-	#[structopt(default_value = "1.0")]
+	#[arg(default_value_t = 1.0)]
 	volume: f32,
 	/// Print the content of all packets
 	///
@@ -35,7 +35,7 @@ struct Args {
 	/// 1. Print command string
 	/// 2. Print packets
 	/// 3. Print udp packets
-	#[structopt(short = "v", long, parse(from_occurrences))]
+	#[arg(short, long, action = clap::ArgAction::Count)]
 	verbose: u8,
 }
 
@@ -46,7 +46,7 @@ async fn real_main() -> Result<()> {
 	tracing_subscriber::fmt::init();
 
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	let con_id = ConnectionId(0);
 	let local_set = LocalSet::new();

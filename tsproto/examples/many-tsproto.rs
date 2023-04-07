@@ -1,22 +1,22 @@
 use std::net::SocketAddr;
 
 use anyhow::Result;
+use clap::Parser;
 use futures::prelude::*;
-use structopt::StructOpt;
 use tokio::time::{self, Duration};
 use tracing::info;
 
 mod utils;
 use crate::utils::*;
 
-#[derive(StructOpt, Clone, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Clone, Debug)]
+#[command(author, about)]
 struct Args {
 	/// The address of the server to connect to
-	#[structopt(short = "a", long, default_value = "127.0.0.1:9987")]
+	#[arg(short, long, default_value = "127.0.0.1:9987")]
 	address: SocketAddr,
 	/// The listening address of the client
-	#[structopt(long, default_value = "0.0.0.0:0")]
+	#[arg(long, default_value = "0.0.0.0:0")]
 	local_address: SocketAddr,
 	/// Print the content of all packets
 	///
@@ -24,10 +24,10 @@ struct Args {
 	/// 1. Print command string
 	/// 2. Print packets
 	/// 3. Print udp packets
-	#[structopt(short = "v", long, parse(from_occurrences))]
+	#[arg(short, long, action = clap::ArgAction::Count)]
 	verbose: u8,
 	/// How many connections
-	#[structopt()]
+	#[arg()]
 	count: usize,
 }
 
@@ -36,7 +36,7 @@ async fn main() -> Result<()> { real_main().await }
 
 async fn real_main() -> Result<()> {
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 	create_logger();
 
 	stream::iter(0..args.count)

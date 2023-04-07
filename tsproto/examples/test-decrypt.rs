@@ -1,27 +1,27 @@
 use std::io::Write;
 
-use structopt::StructOpt;
+use clap::Parser;
 use tsproto::algorithms as algs;
 use tsproto::utils;
 use tsproto_packets::packets::*;
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// Print backtrace
-	#[structopt(short, long = "debug")]
+	#[arg(short, long = "debug")]
 	debug: bool,
 	/// Server to client
-	#[structopt(short, long = "client")]
+	#[arg(short, long = "client")]
 	c2s: bool,
 	/// Data (hex)
-	#[structopt()]
+	#[arg()]
 	data: String,
 }
 
 fn main() {
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	let dir = if args.c2s { Direction::C2S } else { Direction::S2C };
 

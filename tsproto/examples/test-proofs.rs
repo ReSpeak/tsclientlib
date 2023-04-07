@@ -1,23 +1,23 @@
-use structopt::StructOpt;
+use clap::Parser;
 use tsproto_types::crypto::EccKeyPubP256;
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// Public key
-	#[structopt(short = "k", long)]
+	#[arg(short, long)]
 	key: String,
 	/// Data (base64)
-	#[structopt(short = "d", long)]
+	#[arg(short, long)]
 	data: String,
 	/// Signature (base64)
-	#[structopt(short = "s", long)]
+	#[arg(short, long)]
 	signature: String,
 }
 
 fn main() {
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	// l → proof
 	// ek || beta → proof

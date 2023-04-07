@@ -1,16 +1,16 @@
 use anyhow::Result;
+use clap::Parser;
 use futures::prelude::*;
-use structopt::StructOpt;
 use tokio::time::{self, Duration};
 use tracing::error;
 
 use tsclientlib::{Connection, DisconnectOptions, Identity, StreamItem};
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// The address of the server to connect to
-	#[structopt(short = "a", long, default_value = "localhost")]
+	#[arg(short, long, default_value = "localhost")]
 	address: String,
 	/// Print the content of all packets
 	///
@@ -18,10 +18,10 @@ struct Args {
 	/// 1. Print command string
 	/// 2. Print packets
 	/// 3. Print udp packets
-	#[structopt(short = "v", long, parse(from_occurrences))]
+	#[arg(short, long, action = clap::ArgAction::Count)]
 	verbose: u8,
 	/// How many connections
-	#[structopt()]
+	#[arg()]
 	count: usize,
 }
 
@@ -32,7 +32,7 @@ async fn real_main() -> Result<()> {
 	tracing_subscriber::fmt::init();
 
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	let con_config = Connection::build(args.address.as_str())
 		.log_commands(args.verbose >= 1)

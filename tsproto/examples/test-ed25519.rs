@@ -1,21 +1,21 @@
+use clap::Parser;
 use curve25519_dalek_ng::edwards::CompressedEdwardsY;
 use curve25519_dalek_ng::scalar::Scalar;
-use structopt::StructOpt;
 
-#[derive(StructOpt, Debug)]
-#[structopt(author, about)]
+#[derive(Parser, Debug)]
+#[command(author, about)]
 struct Args {
 	/// Public key
-	#[structopt(short, long = "pub")]
+	#[arg(short, long = "pub")]
 	pub_key: String,
 	/// Private key
-	#[structopt(short, long = "priv")]
+	#[arg(short, long = "priv")]
 	priv_key: String,
 }
 
 fn main() {
 	// Parse command line options
-	let args = Args::from_args();
+	let args = Args::parse();
 
 	let pub_key = base64::decode(&args.pub_key).unwrap();
 	let priv_key = base64::decode(&args.priv_key).unwrap();

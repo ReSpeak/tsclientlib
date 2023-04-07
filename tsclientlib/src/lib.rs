@@ -33,7 +33,6 @@ use tokio::sync::oneshot;
 use tracing::{debug, info, info_span, warn, Instrument, Span};
 use ts_bookkeeping::messages::c2s;
 use ts_bookkeeping::messages::OutMessageTrait;
-use ts_bookkeeping::messages::s2c::InClientConnectionInfo;
 use tsproto::client;
 use tsproto::connection::StreamItem as ProtoStreamItem;
 use tsproto::resend::ResenderState;
@@ -1507,9 +1506,10 @@ impl ConnectedConnection {
 			if let InMessage::ClientConnectionInfo(msg) = &msg {
 				for msg in msg.iter() {
 					if msg.client_id == book.own_client && msg.connected_time.is_none() {
-						if let Some(own_client) = book.clients.get_mut(&book.own_client){
+						if let Some(own_client) = book.clients.get_mut(&book.own_client) {
 							if let Some(connection_data) = &mut own_client.connection_data {
-								connection_data.connected_time = Some(OffsetDateTime::now_utc() - self.connection_time);
+								connection_data.connected_time =
+									Some(OffsetDateTime::now_utc() - self.connection_time);
 							}
 						}
 					}
