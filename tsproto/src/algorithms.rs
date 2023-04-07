@@ -312,7 +312,7 @@ mod tests {
 
 	#[test]
 	fn shared_iv31() {
-		let licenses = Licenses::parse_ignore_expired(&base64::decode("AQA1hUFJiiSs\
+		let licenses = Licenses::parse_ignore_expired(base64::decode("AQA1hUFJiiSs\
 			0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
 			4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==")
 			.unwrap()).unwrap();

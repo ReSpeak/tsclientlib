@@ -440,7 +440,7 @@ impl Client {
 			beta.copy_from_slice(&beta_vec);
 
 			// Parse license argument
-			let licenses = Licenses::parse(&l).map_err(Error::ParseLicense)?;
+			let licenses = Licenses::parse(l).map_err(Error::ParseLicense)?;
 			// Ephemeral key of server
 			let server_ek = licenses.derive_public_key(root).map_err(Error::ParseLicense)?;
 
