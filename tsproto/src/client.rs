@@ -716,7 +716,6 @@ mod tests {
 	use tokio::io::ReadBuf;
 	use tokio::sync::oneshot;
 	use tokio::time::{self, Duration};
-	use tracing::debug;
 
 	use super::*;
 	use crate::connection::Event;
@@ -737,6 +736,24 @@ mod tests {
 		/// Index into the wakers list.
 		i: usize,
 		addr: SocketAddr,
+	}
+
+	#[derive(Clone, Debug)]
+	struct SimulatedMixSocketState {
+		/// The order in which packets are sent to the inner socket.
+		///
+		/// The default (if the list is empty) is `0, 1, 2, 3, 4, ...`.
+		/// To send the third packet first use `2, 0, 1, 3, 4, ...`.
+		order: Vec<usize>,
+		/// Queued packets that are waiting to be sent to the inner socket
+		send_buffer: Vec<Vec<u8>>,
+	}
+
+	/// Simulate a connection but mix the packet order
+	#[derive(Debug)]
+	struct SimulatedMixSocket {
+		inner: SimulatedSocket,
+		state: Mutex<SimulatedMixSocketState>,
 	}
 
 	impl SimulatedSocketState {
@@ -765,7 +782,7 @@ mod tests {
 			if let Some(packet) = state.buffer[self.i].pop_front() {
 				let len = std::cmp::min(buf.remaining(), packet.len());
 				buf.put_slice(&packet[..len]);
-				debug!("{} receives packet", self.i);
+				info!(packet = ?&packet[..len], "{} receives packet", self.i);
 				Poll::Ready(Ok(self.addr))
 			} else {
 				state.wakers[self.i] = Some(cx.waker().clone());
@@ -777,7 +794,7 @@ mod tests {
 			&self, _: &mut Context, buf: &[u8], _: SocketAddr,
 		) -> Poll<io::Result<usize>> {
 			let mut state = self.state.lock().unwrap();
-			debug!("{} sends packet", self.i);
+			info!(packet = ?buf, "{} sends packet", self.i);
 			state.buffer[1 - self.i].push_back(buf.to_vec());
 			if let Some(waker) = state.wakers[1 - self.i].take() {
 				waker.wake();
@@ -788,6 +805,82 @@ mod tests {
 		fn local_addr(&self) -> io::Result<SocketAddr> { Ok(self.addr) }
 	}
 
+	impl SimulatedMixSocket {
+		fn new(inner: SimulatedSocket, order: Vec<usize>) -> Self {
+			let mut check_order = order.clone();
+			check_order.sort();
+			assert!(check_order.is_empty() || check_order.windows(2).all(|win| win[0] != win[1]));
+			Self {
+				inner,
+				state: Mutex::new(SimulatedMixSocketState {
+					order,
+					send_buffer: Default::default(),
+				}),
+			}
+		}
+
+		fn pair(
+			addr0: SocketAddr, addr1: SocketAddr, order0: Vec<usize>, order1: Vec<usize>,
+		) -> (SimulatedMixSocket, SimulatedMixSocket) {
+			let (inner0, inner1) = SimulatedSocket::pair(addr0, addr1);
+			(Self::new(inner0, order0), Self::new(inner1, order1))
+		}
+	}
+
+	impl Socket for SimulatedMixSocket {
+		fn poll_recv_from(
+			&self, cx: &mut Context, buf: &mut ReadBuf,
+		) -> Poll<io::Result<SocketAddr>> {
+			self.inner.poll_recv_from(cx, buf)
+		}
+
+		fn poll_send_to(
+			&self, cx: &mut Context, buf: &[u8], target: SocketAddr,
+		) -> Poll<io::Result<usize>> {
+			let mut state = self.state.lock().unwrap();
+			state.send_buffer.push(buf.to_vec());
+
+			// Send packets from send_buffer which are ready
+			while !state.order.is_empty() {
+				let next = state.order[0];
+				if state.send_buffer.len() <= next {
+					break;
+				}
+				state.order.remove(0);
+				info!("Sending packet {}", next);
+				let packet = state.send_buffer.remove(next);
+				let send_res = self.inner.poll_send_to(cx, &packet, target);
+				let Poll::Ready(Ok(len)) = send_res else { panic!("Unexpected send result {:?}", send_res) };
+				assert_eq!(len, packet.len());
+
+				// Shift all following packet ids
+				// After sending packet 2
+				// 2, 0, 1, 3, 4
+				// becomes
+				// 0, 1, 2, 3
+				for order in &mut state.order {
+					if *order > next {
+						*order -= 1;
+					}
+				}
+			}
+
+			if state.order.is_empty() {
+				for packet in std::mem::take(&mut state.send_buffer) {
+					// Send all packets in order
+					info!("Sending packet in order");
+					let send_res = self.inner.poll_send_to(cx, &packet, target);
+					let Poll::Ready(Ok(len)) = send_res else { panic!("Unexpected send result {:?}", send_res) };
+					assert_eq!(len, packet.len());
+				}
+			}
+
+			Poll::Ready(Ok(buf.len()))
+		}
+
+		fn local_addr(&self) -> io::Result<SocketAddr> { self.inner.local_addr() }
+	}
+
 	pub struct TestConnection {
 		pub client: Client,
 		pub server: Client,
@@ -795,15 +888,22 @@ mod tests {
 
 	impl TestConnection {
 		pub fn new() -> Result<Self> {
+			let addr = "127.0.0.1:0".parse()?;
+			let (socket0, socket1) = SimulatedSocket::pair(addr, addr);
+			Self::new_with_sockets(Box::new(socket0), Box::new(socket1))
+		}
+
+		pub fn new_with_sockets(
+			socket0: Box<dyn Socket + Send>, socket1: Box<dyn Socket + Send>,
+		) -> Result<Self> {
 			Lazy::force(&TRACING);
 
 			let addr = "127.0.0.1:0".parse()?;
 			let client_key = EccKeyPrivP256::create();
 			let server_key = EccKeyPrivP256::create();
 
-			let (socket0, socket1) = SimulatedSocket::pair(addr, addr);
-			let mut client = Client::new(addr, Box::new(socket0), client_key);
-			let mut server = Client::new(addr, Box::new(socket1), server_key);
+			let mut client = Client::new(addr, socket0, client_key);
+			let mut server = Client::new(addr, socket1, server_key);
 			server.is_client = false;
 
 			// TODO Span is = "client"
@@ -980,7 +1080,7 @@ mod tests {
 		let count = 100;
 
 		// Set current id
-		for c in &mut [&mut state.client, &mut state.server] {
+		for c in [&mut state.client, &mut state.server] {
 			c.codec.outgoing_p_ids[PacketType::Command.to_usize().unwrap()] =
 				PartialPacketId { generation_id: 0, packet_id: 65_500 };
 			c.codec.incoming_p_ids[PacketType::Command.to_usize().unwrap()] =
@@ -1027,5 +1127,75 @@ mod tests {
 			_ = state.server.wait_disconnect() => {}
 		);
 		bail!("Unexpected disconnect")
+	}
+
+	/// Check that out of order packets are decoded in the correct order.
+	async fn out_of_order_test(order: Vec<usize>) -> Result<()> {
+		let addr = "127.0.0.1:0".parse()?;
+		let (socket0, socket1) = SimulatedMixSocket::pair(addr, addr, vec![], order);
+		let mut state = TestConnection::new_with_sockets(Box::new(socket0), Box::new(socket1))?;
+		state.set_connected();
+
+		let count = 10;
+
+		let (send, recv) = oneshot::channel();
+		let send = Cell::new(Some(send));
+		let counter = Cell::new(0u8);
+		let listener = move |event: &Event| {
+			if let Event::ReceivePacket(packet) = event {
+				if packet.header().packet_type() == PacketType::Command {
+					let Some(content) = packet.content().strip_prefix(b"notifytextmessage msg=message\\s")
+					else { panic!("Expected text message but got '{:?}'", packet.content()) };
+					let i: u8 = std::str::from_utf8(content).unwrap().parse().unwrap();
+					let cnt = counter.get();
+					assert_eq!(cnt, i, "Messages are not in the correct order");
+					counter.set(cnt + 1);
+					if counter.get() == count {
+						send.replace(None).unwrap().send(()).unwrap();
+					}
+				}
+			}
+		};
+
+		state.client.event_listeners.push(Box::new(listener));
+
+		for i in 0..count {
+			let mut cmd = OutCommand::new(
+				Direction::S2C,
+				Flags::empty(),
+				PacketType::Command,
+				"notifytextmessage",
+			);
+			cmd.write_arg("msg", &format!("message {}", i));
+			state.server.send_packet(cmd.into_packet())?;
+		}
+
+		tokio::select!(
+			r = recv => {
+				r?;
+				return Ok(());
+			}
+			_ = state.client.wait_disconnect() => {}
+			_ = state.server.wait_disconnect() => {}
+		);
+		bail!("Unexpected disconnect")
+	}
+
+	// Check that out of order packets are decoded in the correct order.
+
+	#[tokio::test]
+	async fn in_order() -> Result<()> { out_of_order_test(vec![]).await }
+
+	#[tokio::test]
+	async fn single_out_of_order() -> Result<()> { out_of_order_test(vec![2]).await }
+
+	#[tokio::test]
+	async fn reversed_order() -> Result<()> {
+		out_of_order_test(vec![9, 8, 7, 6, 5, 4, 3, 2, 1, 0]).await
+	}
+
+	#[tokio::test]
+	async fn some_out_of_order() -> Result<()> {
+		out_of_order_test(vec![5, 3, 7, 8, 2, 0, 6, 1]).await
 	}
 }

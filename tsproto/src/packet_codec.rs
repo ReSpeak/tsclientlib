@@ -335,8 +335,6 @@ impl PacketCodec {
 				}
 			}
 
-			// The first packets should be returned first
-			packets.reverse();
 			Ok(packets)
 		} else {
 			// Out of order
