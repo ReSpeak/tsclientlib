@@ -168,12 +168,13 @@ impl AudioQueue {
 		}
 
 		let last_packet_samples = last_packet_samples * CHANNEL_NUM;
+		let whispering = matches!(packet.data().data(), AudioData::S2CWhisper { .. });
 		let mut res = Self {
 			span: Span::current(),
 			decoder: Decoder::new(SAMPLE_RATE, CHANNELS).map_err(Error::CreateDecoder)?,
 			volume: 1.0,
 			next_id: data.id(),
-			whispering: false,
+			whispering,
 			packet_buffer: Default::default(),
 			packet_buffer_samples: 0,
 			decoded_buffer: Default::default(),
