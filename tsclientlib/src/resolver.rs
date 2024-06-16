@@ -214,6 +214,9 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 		.right_stream()
 }
 
+// Windows for some reason automatically adds a link-local address to the dns
+// resolver. These addresses are usually not reachable and should be filtered out.
+// See: https://superuser.com/questions/638566/strange-value-in-dns-shown-in-ipconfig
 const FILTERED_IPS: &[IpAddr] = &[
 	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
 	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),
