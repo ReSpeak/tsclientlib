@@ -31,7 +31,7 @@ pub enum Error {
 	#[error("Failed to create resolver ({system})")]
 	CreateResolver {
 		#[source]
-		system: trust_dns_resolver::error::ResolveError
+		system: trust_dns_resolver::error::ResolveError,
 	},
 	#[error("Failed to composed domain from {0:?} and {1:?}: {2}")]
 	InvalidComposedDomain(String, String, #[source] trust_dns_proto::error::ProtoError),
@@ -226,7 +226,7 @@ fn create_resolver() -> Result<TokioAsyncResolver> {
 		.map_err(|error| Error::CreateResolver { system: error })
 }
 
-fn create_resolver_config() -> (ResolverConfig, ResolverOpts){
+fn create_resolver_config() -> (ResolverConfig, ResolverOpts) {
 	match trust_dns_resolver::system_conf::read_system_conf() {
 		Ok(r) => {
 			let mut rc = ResolverConfig::from_parts(
@@ -234,16 +234,13 @@ fn create_resolver_config() -> (ResolverConfig, ResolverOpts){
 				vec![],
 				trust_dns_resolver::config::NameServerConfigGroup::new(),
 			);
-			for ns in r.0.name_servers().iter()
-				.filter(|ns| !FILTERED_IPS.contains(&ns.socket_addr.ip())) {
+			for ns in
+				r.0.name_servers().iter().filter(|ns| !FILTERED_IPS.contains(&ns.socket_addr.ip()))
+			{
 				rc.add_name_server(ns.clone());
 			}
-			// for ns in r.0.name_servers().iter()
-			// 	.filter(|ns| ns.socket_addr.is_ipv6()) {
-			// 	rc.add_name_server(ns.clone());
-			// }
 			(rc, r.1)
-		},
+		}
 		Err(error) => {
 			warn!(%error, "Failed to use system dns resolver config");
 			// Fallback
@@ -541,17 +538,12 @@ mod test {
 	async fn resolve_splamy_de() {
 		create_logger();
 
-		let conf = create_resolver_config();
-
-		println!("ResolverConfig: {:#?}", conf.0);
-		println!("  ResolverOpts: {:#?}", conf.1);
-		println!();
-
-		println!("ResolverConfig: {:#?}", ResolverConfig::cloudflare());
-		println!("  ResolverOpts: {:#?}", ResolverOpts::default());
-		println!();
-
-		let res: Vec<_> = resolve("splamy.de".into()).map(|r| r.unwrap()).collect().await;
+		let res: Vec<_> = tokio::time::timeout(
+			Duration::from_secs(5),
+			resolve("splamy.de".into()).map(|r| r.unwrap()).collect(),
+		)
+		.await
+		.expect("Resolve takes unacceptable long");
 		assert!(res.contains(&format!("37.120.179.68:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 
