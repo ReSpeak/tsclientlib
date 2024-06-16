@@ -2,7 +2,7 @@
 // Changes with TeamSpeak client 3.1:
 // https://support.teamspeakusa.com/index.php?/Knowledgebase/Article/View/332
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::str::{self, FromStr};
 
 use futures::prelude::*;
@@ -13,8 +13,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
 use tokio::time::Duration;
 use tracing::{debug, instrument, warn};
-use trust_dns_resolver::config::ResolverConfig;
-use trust_dns_resolver::{Name, TokioAsyncResolver};
+use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
+use trust_dns_resolver::{Name, TokioAsyncResolver, TokioHandle};
 
 const DEFAULT_PORT: u16 = 9987;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
@@ -28,11 +28,10 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
-	#[error("Failed to create system resolver ({system}) and fallback resolver ({fallback})")]
+	#[error("Failed to create resolver ({system})")]
 	CreateResolver {
 		#[source]
 		system: trust_dns_resolver::error::ResolveError,
-		fallback: trust_dns_resolver::error::ResolveError,
 	},
 	#[error("Failed to composed domain from {0:?} and {1:?}: {2}")]
 	InvalidComposedDomain(String, String, #[source] trust_dns_proto::error::ProtoError),
@@ -215,14 +214,37 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 		.right_stream()
 }
 
+const FILTERED_IPS: &[IpAddr] = &[
+	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 1)),
+	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 2)),
+	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
+];
+
 fn create_resolver() -> Result<TokioAsyncResolver> {
-	match TokioAsyncResolver::tokio_from_system_conf() {
-		Ok(r) => Ok(r),
+	let (config, options) = create_resolver_config();
+	TokioAsyncResolver::new(config, options, TokioHandle)
+		.map_err(|error| Error::CreateResolver { system: error })
+}
+
+fn create_resolver_config() -> (ResolverConfig, ResolverOpts) {
+	match trust_dns_resolver::system_conf::read_system_conf() {
+		Ok(r) => {
+			let mut rc = ResolverConfig::from_parts(
+				None,
+				vec![],
+				trust_dns_resolver::config::NameServerConfigGroup::new(),
+			);
+			for ns in
+				r.0.name_servers().iter().filter(|ns| !FILTERED_IPS.contains(&ns.socket_addr.ip()))
+			{
+				rc.add_name_server(ns.clone());
+			}
+			(rc, r.1)
+		}
 		Err(error) => {
 			warn!(%error, "Failed to use system dns resolver config");
 			// Fallback
-			Ok(TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), Default::default())
-				.map_err(|e2| Error::CreateResolver { system: error, fallback: e2 })?)
+			(ResolverConfig::cloudflare(), ResolverOpts::default())
 		}
 	}
 }
@@ -510,6 +532,19 @@ mod test {
 		create_logger();
 		let res: Vec<_> = resolve("example.com".into()).map(|r| r.unwrap()).collect().await;
 		assert!(res.contains(&format!("93.184.216.34:{}", DEFAULT_PORT).parse().unwrap()));
+	}
+
+	#[tokio::test]
+	async fn resolve_splamy_de() {
+		create_logger();
+
+		let res: Vec<_> = tokio::time::timeout(
+			Duration::from_secs(5),
+			resolve("splamy.de".into()).map(|r| r.unwrap()).collect(),
+		)
+		.await
+		.expect("Resolve takes unacceptable long");
+		assert!(res.contains(&format!("37.120.179.68:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 
 	#[tokio::test]
