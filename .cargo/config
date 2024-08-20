@@ -1,5 +1,0 @@
-[target.i686-linux-android]
-linker = "i686-linux-android-ld"
-
-[target.armv7-linux-androideabi]
-linker = "arm-linux-androideabi-ld"
