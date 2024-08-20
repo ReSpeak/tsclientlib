@@ -17,15 +17,15 @@ include = [
 ]
 
 [dependencies]
-base64 = "0.13"
-bitflags = "1"
+base64 = "0.22"
+bitflags = { version = "2", features = ["serde"] }
 curve25519-dalek-ng = "4"
-elliptic-curve = { version = "0.12", features = ["ecdh"] }
+elliptic-curve = { version = "0.13", features = ["ecdh"] }
 generic-array = "0.14"
 num-bigint = "0.4"
-num-derive = "0.3"
+num-derive = "0.4"
 num-traits = "0.2"
-p256 = { version = "0.11", features = ["ecdh", "ecdsa"] }
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
 rand = "0.8"
 ref-cast = "1"
 serde = { version = "1", features = ["derive"] }
@@ -35,6 +35,6 @@ thiserror = "1"
 time = { version = "0.3", features = ["serde"] }
 
 [build-dependencies]
-heck = "0.4"
+heck = "0.5"
 t4rust-derive = "0.3"
 tsproto-structs = { path = "../tsproto-structs", version = "0.2" }

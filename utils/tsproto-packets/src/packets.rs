@@ -36,6 +36,7 @@ pub enum Direction {
 }
 
 bitflags! {
+	#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 	pub struct Flags: u8 {
 		const UNENCRYPTED = 0x80;
 		const COMPRESSED  = 0x40;

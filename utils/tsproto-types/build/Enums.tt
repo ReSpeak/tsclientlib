@@ -19,7 +19,7 @@ bitflags! {
 	<# if let Some(doc) = &e.doc { #>
 <#= indent(&doc_comment(doc), 1) #>
 	<# } #>
-	#[derive(Deserialize, Serialize)]
+	#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 	pub struct <#= e.name #>: <#= e.use_type.clone().unwrap_or_else(|| format!("u{}", e.bitwidth())) #> {
 	<# for v in &e.variants { #>
 <#= indent(&doc_comment(&v.doc), 2) #>

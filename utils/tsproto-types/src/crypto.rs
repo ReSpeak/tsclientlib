@@ -176,7 +176,7 @@ impl EccKeyPubP256 {
 				{
 					let x_bytes = x.to_bytes_be().1;
 					let y_bytes = y.to_bytes_be().1;
-					let field_size = elliptic_curve::FieldSize::<p256::NistP256>::to_usize();
+					let field_size = elliptic_curve::FieldBytesSize::<p256::NistP256>::to_usize();
 					if x_bytes.len() != field_size {
 						return Err(Error::WrongPublicKeyLength {
 							expected: field_size,
@@ -271,7 +271,7 @@ impl EccKeyPubP256 {
 
 impl EccKeyPrivP256 {
 	/// Create a new key key pair.
-	pub fn create() -> Self { Self(p256::SecretKey::random(rand::thread_rng())) }
+	pub fn create() -> Self { Self(p256::SecretKey::random(&mut rand::thread_rng())) }
 
 	/// Try to import the key from any of the known formats.
 	pub fn import(data: &[u8]) -> Result<Self> {
@@ -315,14 +315,17 @@ impl EccKeyPrivP256 {
 		if data.len() != 32 {
 			Err(Error::NoShortKey)
 		} else {
-			Ok(Self(p256::SecretKey::from_be_bytes(data).map_err(|_| Error::NoShortKey)?))
+			Ok(Self(
+				p256::SecretKey::from_bytes(p256::FieldBytes::from_slice(data))
+					.map_err(|_| Error::NoShortKey)?,
+			))
 		}
 	}
 
 	/// The shortest format of a private key.
 	///
 	/// This is just the `BigNum` of the private key.
-	pub fn to_short(&self) -> elliptic_curve::FieldBytes<p256::NistP256> { self.0.to_be_bytes() }
+	pub fn to_short(&self) -> elliptic_curve::FieldBytes<p256::NistP256> { self.0.to_bytes() }
 
 	/// From base64 encoded tomcrypt key.
 	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
@@ -430,7 +433,7 @@ impl EccKeyPrivP256 {
 		// which is the only time this returns `None`.
 		let pubkey_x = BigInt::from_bytes_be(Sign::Plus, enc_point.x().unwrap());
 		let pubkey_y = BigInt::from_bytes_be(Sign::Plus, enc_point.y().unwrap());
-		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.to_be_bytes());
+		let privkey = BigInt::from_bytes_be(Sign::Plus, &self.0.to_bytes());
 
 		// Only returns an error when encoding wrong objects, so fine to unwrap.
 		simple_asn1::to_der(&ASN1Block::Sequence(0, vec![
@@ -452,7 +455,8 @@ impl EccKeyPrivP256 {
 
 	pub fn sign(self, data: &[u8]) -> Vec<u8> {
 		let key = p256::ecdsa::SigningKey::from(self.0);
-		key.sign(data).to_der().as_bytes().to_vec()
+		let sig: p256::ecdsa::DerSignature = key.sign(data);
+		sig.as_bytes().to_vec()
 	}
 
 	pub fn to_pub(&self) -> EccKeyPubP256 { self.into() }

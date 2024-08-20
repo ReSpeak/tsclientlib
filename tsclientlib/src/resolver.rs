@@ -6,6 +6,8 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::str::{self, FromStr};
 
 use futures::prelude::*;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::{Name, TokioAsyncResolver};
 use itertools::Itertools;
 use rand::Rng;
 use thiserror::Error;
@@ -13,8 +15,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
 use tokio::time::Duration;
 use tracing::{debug, instrument, warn};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::{Name, TokioAsyncResolver, TokioHandle};
 
 const DEFAULT_PORT: u16 = 9987;
 const DNS_PREFIX_TCP: &str = "_tsdns._tcp.";
@@ -31,12 +31,12 @@ pub enum Error {
 	#[error("Failed to create resolver ({system})")]
 	CreateResolver {
 		#[source]
-		system: trust_dns_resolver::error::ResolveError,
+		system: hickory_resolver::error::ResolveError,
 	},
 	#[error("Failed to composed domain from {0:?} and {1:?}: {2}")]
-	InvalidComposedDomain(String, String, #[source] trust_dns_proto::error::ProtoError),
+	InvalidComposedDomain(String, String, #[source] hickory_proto::error::ProtoError),
 	#[error("Failed to parse domain {0:?}: {1}")]
-	InvalidDomain(String, #[source] trust_dns_proto::error::ProtoError),
+	InvalidDomain(String, #[source] hickory_proto::error::ProtoError),
 	#[error("Invalid IPv4 address")]
 	InvalidIp4Address,
 	#[error("Invalid IPv6 address")]
@@ -58,7 +58,7 @@ pub enum Error {
 	#[error("Failed to resolve hostname: {0}")]
 	ResolveHost(#[source] tokio::io::Error),
 	#[error("Failed to get SRV record")]
-	SrvLookup(#[source] trust_dns_resolver::error::ResolveError),
+	SrvLookup(#[source] hickory_resolver::error::ResolveError),
 	#[error("tsdns did not return an ip address but {0:?}")]
 	TsdnsAddressInvalidResponse(String),
 	#[error("tsdns server does not know the address")]
@@ -128,7 +128,7 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 	// TODO Move current span into stream
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver()?;
+			let resolver = create_resolver();
 
 			// Try to get the address by an SRV record
 			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Cannot parse udp domain prefix");
@@ -151,7 +151,7 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 	// TODO Move current span into stream
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver()?;
+			let resolver = create_resolver();
 			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Cannot parse udp domain prefix");
 			let mut name =
 				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
@@ -223,19 +223,18 @@ const FILTERED_IPS: &[IpAddr] = &[
 	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
 ];
 
-fn create_resolver() -> Result<TokioAsyncResolver> {
+fn create_resolver() -> TokioAsyncResolver {
 	let (config, options) = create_resolver_config();
-	TokioAsyncResolver::new(config, options, TokioHandle)
-		.map_err(|error| Error::CreateResolver { system: error })
+	TokioAsyncResolver::tokio(config, options)
 }
 
 fn create_resolver_config() -> (ResolverConfig, ResolverOpts) {
-	match trust_dns_resolver::system_conf::read_system_conf() {
+	match hickory_resolver::system_conf::read_system_conf() {
 		Ok(r) => {
 			let mut rc = ResolverConfig::from_parts(
 				None,
 				vec![],
-				trust_dns_resolver::config::NameServerConfigGroup::new(),
+				hickory_resolver::config::NameServerConfigGroup::new(),
 			);
 			for ns in
 				r.0.name_servers().iter().filter(|ns| !FILTERED_IPS.contains(&ns.socket_addr.ip()))

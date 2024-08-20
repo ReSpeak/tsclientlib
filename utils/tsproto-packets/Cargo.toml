@@ -15,11 +15,11 @@ include = [
 ]
 
 [dependencies]
-base64 = "0.13"
-bitflags = "1"
-num-derive = "0.3"
+base64 = "0.22"
+bitflags = "2"
+num-derive = "0.4"
 num-traits = "0.2"
 omnom = "3"
-self_cell = "0.10"
+self_cell = "1"
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
