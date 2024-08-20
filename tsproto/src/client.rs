@@ -850,7 +850,9 @@ mod tests {
 				info!("Sending packet {}", next);
 				let packet = state.send_buffer.remove(next);
 				let send_res = self.inner.poll_send_to(cx, &packet, target);
-				let Poll::Ready(Ok(len)) = send_res else { panic!("Unexpected send result {:?}", send_res) };
+				let Poll::Ready(Ok(len)) = send_res else {
+					panic!("Unexpected send result {:?}", send_res)
+				};
 				assert_eq!(len, packet.len());
 
 				// Shift all following packet ids
@@ -870,7 +872,9 @@ mod tests {
 					// Send all packets in order
 					info!("Sending packet in order");
 					let send_res = self.inner.poll_send_to(cx, &packet, target);
-					let Poll::Ready(Ok(len)) = send_res else { panic!("Unexpected send result {:?}", send_res) };
+					let Poll::Ready(Ok(len)) = send_res else {
+						panic!("Unexpected send result {:?}", send_res)
+					};
 					assert_eq!(len, packet.len());
 				}
 			}
@@ -1144,8 +1148,11 @@ mod tests {
 		let listener = move |event: &Event| {
 			if let Event::ReceivePacket(packet) = event {
 				if packet.header().packet_type() == PacketType::Command {
-					let Some(content) = packet.content().strip_prefix(b"notifytextmessage msg=message\\s")
-					else { panic!("Expected text message but got '{:?}'", packet.content()) };
+					let Some(content) =
+						packet.content().strip_prefix(b"notifytextmessage msg=message\\s")
+					else {
+						panic!("Expected text message but got '{:?}'", packet.content())
+					};
 					let i: u8 = std::str::from_utf8(content).unwrap().parse().unwrap();
 					let cnt = counter.get();
 					assert_eq!(cnt, i, "Messages are not in the correct order");

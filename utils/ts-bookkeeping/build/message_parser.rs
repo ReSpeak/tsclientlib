@@ -159,7 +159,8 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 				)
 			} else if field.type_s == "DurationMilliseconds" {
 				format!(
-					"Duration::milliseconds(val.parse::<i64>().map_err(|e| ParseError::ParseInt {{
+					"Duration::milliseconds(val.parse::<i64>().map_err(|e| ParseError::ParseInt \
+					 {{
 					arg: \"{}\",
 					value: val.to_string(),
 					source: e,

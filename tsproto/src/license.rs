@@ -796,15 +796,16 @@ impl LicenseBlockBuilder<'_, '_> {
 			self.ts5_add_property(3, 1, 4)
 		} else {
 			self.offset
-				+ BLOCK_MIN_LEN + match self.typ {
-				LicenseBlockType::Intermediate => 0,
-				LicenseBlockType::Server => 1,
-				_ => panic!(
-					"Setting max clients is only allowed for Intermediate, Server and Ts5Server \
-					 license types, but this is a {:?}",
-					self.typ
-				),
-			}
+				+ BLOCK_MIN_LEN
+				+ match self.typ {
+					LicenseBlockType::Intermediate => 0,
+					LicenseBlockType::Server => 1,
+					_ => panic!(
+						"Setting max clients is only allowed for Intermediate, Server and \
+						 Ts5Server license types, but this is a {:?}",
+						self.typ
+					),
+				}
 		};
 		Cursor::new(&mut self.builder.licenses.data[o..o + 4]).write_be(max_clients).unwrap();
 		self

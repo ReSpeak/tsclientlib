@@ -102,9 +102,7 @@ pub enum Error {
 	IdentityCreate(#[source] tsproto::Error),
 	#[error("The server needs an identity of level {0}, please increase your identity level")]
 	IdentityLevel(u8),
-	#[error(
-		"The server requested an identity of level {needed}, but we already have level {have}"
-	)]
+	#[error("The server requested an identity of level {needed}, but we already have level {have}")]
 	IdentityLevelCorrupted { needed: u8, have: u8 },
 	#[error("Failed to increase identity level: Thread died")]
 	IdentityLevelIncreaseFailedThread,
@@ -1457,12 +1455,14 @@ impl ConnectedConnection {
 					server_to_client_packetloss_control: stats.get_packetloss_s2c_control(),
 					server_to_client_packetloss_total: stats.get_packetloss_s2c_total(),
 					bandwidth_sent_last_second_speech: last_second_bytes
-						[PacketStat::OutSpeech as usize] as u64,
+						[PacketStat::OutSpeech as usize]
+						as u64,
 					bandwidth_sent_last_second_keepalive: last_second_bytes
 						[PacketStat::OutKeepalive as usize]
 						as u64,
 					bandwidth_sent_last_second_control: last_second_bytes
-						[PacketStat::OutControl as usize] as u64,
+						[PacketStat::OutControl as usize]
+						as u64,
 					bandwidth_sent_last_minute_speech: last_minute_bytes
 						[PacketStat::OutSpeech as usize]
 						/ 60,
@@ -1473,12 +1473,14 @@ impl ConnectedConnection {
 						[PacketStat::OutControl as usize]
 						/ 60,
 					bandwidth_received_last_second_speech: last_second_bytes
-						[PacketStat::InSpeech as usize] as u64,
+						[PacketStat::InSpeech as usize]
+						as u64,
 					bandwidth_received_last_second_keepalive: last_second_bytes
 						[PacketStat::InKeepalive as usize]
 						as u64,
 					bandwidth_received_last_second_control: last_second_bytes
-						[PacketStat::InControl as usize] as u64,
+						[PacketStat::InControl as usize]
+						as u64,
 					bandwidth_received_last_minute_speech: last_minute_bytes
 						[PacketStat::InSpeech as usize]
 						/ 60,
