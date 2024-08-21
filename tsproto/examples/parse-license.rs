@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use clap::Parser;
 use tsproto::license::*;
 
@@ -13,6 +14,6 @@ fn main() {
 	// Parse command line options
 	let args = Args::parse();
 
-	let l = Licenses::parse(base64::decode(&args.license).unwrap()).unwrap();
+	let l = Licenses::parse(BASE64_STANDARD.decode(&args.license).unwrap()).unwrap();
 	println!("{:#?}", l);
 }

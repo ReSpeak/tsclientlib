@@ -4,6 +4,7 @@ use std::borrow::{Borrow, Cow};
 use std::fmt;
 use std::u64;
 
+use base64::prelude::*;
 use bitflags::bitflags;
 use num_derive::{FromPrimitive, ToPrimitive};
 use ref_cast::RefCast;
@@ -156,7 +157,7 @@ impl fmt::Display for ClientId {
 }
 impl fmt::Display for Uid {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "{}", base64::encode(&self.0))
+		write!(f, "{}", BASE64_STANDARD.encode(&self.0))
 	}
 }
 impl fmt::Display for ClientDbId {

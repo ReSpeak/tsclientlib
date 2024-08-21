@@ -6,15 +6,14 @@ use heck::*;
 use t4rust_derive::Template;
 use tsproto_structs::book::*;
 use tsproto_structs::embrace;
-use tsproto_structs::messages_to_book::{self, MessagesToBookDeclarations};
 
 #[derive(Template)]
 #[TemplatePath = "build/Properties.tt"]
 #[derive(Debug)]
-pub struct Properties<'a>(&'a BookDeclarations, &'a MessagesToBookDeclarations<'a>);
+pub struct Properties<'a>(&'a BookDeclarations);
 
 impl Default for Properties<'static> {
-	fn default() -> Self { Properties(&DATA, &messages_to_book::DATA) }
+	fn default() -> Self { Properties(&DATA) }
 }
 
 fn get_ids(struc: &Struct) -> String {

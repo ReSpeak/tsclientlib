@@ -62,7 +62,7 @@ pub fn single_value_deserializer(field: &Field, rust_type: &str) -> String {
 			}}), }}",
 			field.pretty
 		),
-		"UidBuf" => "UidBuf(if let Ok(uid) = base64::decode(val) { uid } else { \
+		"UidBuf" => "UidBuf(if let Ok(uid) = BASE64_STANDARD.decode(val) { uid } else { \
 		             val.as_bytes().to_vec() })"
 			.into(),
 		"&str" => "val".into(),
@@ -238,7 +238,7 @@ pub fn single_value_serializer(field: &Field, rust_type: &str, name: &str, is_re
 		"&str" => name.to_string(),
 		"UidBuf" | "&Uid" => format!(
 			"&if {0}.is_server_admin() {{ Cow::Borrowed(\"ServerAdmin\") }}
-			else {{ Cow::<str>::Owned(base64::encode(&{0}.0)) }}",
+			else {{ Cow::<str>::Owned(BASE64_STANDARD.encode(&{0}.0)) }}",
 			name,
 		),
 		"ClientId" | "ClientDbId" | "ChannelId" | "ServerGroupId" | "ChannelGroupId" | "IconId" => {

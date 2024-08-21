@@ -2,6 +2,7 @@
 use std::convert::TryInto;
 use std::{cmp, fmt, str};
 
+use base64::prelude::*;
 use curve25519_dalek_ng::constants;
 use curve25519_dalek_ng::edwards::{CompressedEdwardsY, EdwardsPoint};
 use curve25519_dalek_ng::scalar::Scalar;
@@ -102,7 +103,7 @@ pub struct EccKeyPrivEd25519(pub Scalar);
 
 /// Passwords are encoded as base64(sha1(password)).
 pub fn encode_password(password: &[u8]) -> String {
-	base64::encode(Sha1::digest(password).as_slice())
+	BASE64_STANDARD.encode(Sha1::digest(password).as_slice())
 }
 
 fn deserialize_ecc_key_pub_p256<'de, D: Deserializer<'de>>(
@@ -126,7 +127,7 @@ impl fmt::Debug for EccKeyPubP256 {
 
 impl fmt::Debug for EccKeyPrivP256 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "EccKeyPrivP256({})", base64::encode(&self.to_short()))
+		write!(f, "EccKeyPrivP256({})", BASE64_STANDARD.encode(&self.to_short()))
 	}
 }
 
@@ -152,7 +153,9 @@ impl EccKeyPubP256 {
 	}
 
 	/// From base64 encoded tomcrypt key.
-	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
+	pub fn from_ts(data: &str) -> Result<Self> {
+		Self::from_tomcrypt(&BASE64_STANDARD.decode(data)?)
+	}
 
 	/// Decodes the public key from an ASN.1 DER object how tomcrypt stores it.
 	///
@@ -212,7 +215,7 @@ impl EccKeyPubP256 {
 	}
 
 	/// Convert to base64 encoded public tomcrypt key.
-	pub fn to_ts(&self) -> String { base64::encode(&self.to_tomcrypt()) }
+	pub fn to_ts(&self) -> String { BASE64_STANDARD.encode(&self.to_tomcrypt()) }
 
 	pub fn to_tomcrypt(&self) -> Vec<u8> {
 		let enc_point = self.0.as_affine().to_encoded_point(false);
@@ -247,7 +250,7 @@ impl EccKeyPubP256 {
 	/// Compute the uid of this key.
 	///
 	/// Uid = base64(sha1(ts encoded key))
-	pub fn get_uid(&self) -> String { base64::encode(&self.get_uid_no_base64()) }
+	pub fn get_uid(&self) -> String { BASE64_STANDARD.encode(&self.get_uid_no_base64()) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let sig =
@@ -295,7 +298,7 @@ impl EccKeyPrivP256 {
 
 	/// Try to import the key from any of the known formats.
 	pub fn import_str(s: &str) -> Result<Self> {
-		if let Ok(r) = base64::decode(s) {
+		if let Ok(r) = BASE64_STANDARD.decode(s) {
 			if let Ok(r) = Self::import(&r) {
 				return Ok(r);
 			}
@@ -328,7 +331,9 @@ impl EccKeyPrivP256 {
 	pub fn to_short(&self) -> elliptic_curve::FieldBytes<p256::NistP256> { self.0.to_bytes() }
 
 	/// From base64 encoded tomcrypt key.
-	pub fn from_ts(data: &str) -> Result<Self> { Self::from_tomcrypt(&base64::decode(data)?) }
+	pub fn from_ts(data: &str) -> Result<Self> {
+		Self::from_tomcrypt(&BASE64_STANDARD.decode(data)?)
+	}
 
 	/// From the key representation which is used to store identities in the
 	/// TeamSpeak configuration file.
@@ -341,7 +346,7 @@ impl EccKeyPrivP256 {
 	/// [his deobfuscation code](https://github.com/landave/TSIdentityTool)
 	/// under the MIT license.
 	pub fn from_ts_obfuscated(data: &str) -> Result<Self> {
-		let mut data = base64::decode(data)?;
+		let mut data = BASE64_STANDARD.decode(data)?;
 		if data.len() < 20 {
 			return Err(Error::NoObfuscatedKey);
 		}
@@ -404,7 +409,7 @@ impl EccKeyPrivP256 {
 	}
 
 	/// Convert to base64 encoded private tomcrypt key.
-	pub fn to_ts(&self) -> String { base64::encode(&self.to_tomcrypt()) }
+	pub fn to_ts(&self) -> String { BASE64_STANDARD.encode(&self.to_tomcrypt()) }
 
 	/// Store as obfuscated TeamSpeak identity.
 	pub fn to_ts_obfuscated(&self) -> String {
@@ -424,7 +429,7 @@ impl EccKeyPrivP256 {
 		for i in 0..20 {
 			data[i] ^= hash[i];
 		}
-		base64::encode(&data)
+		BASE64_STANDARD.encode(&data)
 	}
 
 	pub fn to_tomcrypt(&self) -> Vec<u8> {
@@ -470,7 +475,7 @@ impl EccKeyPubEd25519 {
 	pub fn from_bytes(data: [u8; 32]) -> Self { EccKeyPubEd25519(CompressedEdwardsY(data)) }
 
 	pub fn from_base64(data: &str) -> Result<Self> {
-		let decoded = base64::decode(data)?;
+		let decoded = BASE64_STANDARD.decode(data)?;
 		if decoded.len() != 32 {
 			return Err(Error::WrongKeyLength);
 		}
@@ -479,7 +484,7 @@ impl EccKeyPubEd25519 {
 
 	pub fn to_base64(&self) -> String {
 		let EccKeyPubEd25519(CompressedEdwardsY(ref data)) = *self;
-		base64::encode(data)
+		BASE64_STANDARD.encode(data)
 	}
 }
 
@@ -488,7 +493,7 @@ impl EccKeyPrivEd25519 {
 	pub fn create() -> Self { EccKeyPrivEd25519(Scalar::random(&mut rand::thread_rng())) }
 
 	pub fn from_base64(data: &str) -> Result<Self> {
-		let decoded = base64::decode(data)?;
+		let decoded = BASE64_STANDARD.decode(data)?;
 		if decoded.len() != 32 {
 			return Err(Error::WrongKeyLength);
 		}
@@ -499,7 +504,7 @@ impl EccKeyPrivEd25519 {
 		EccKeyPrivEd25519(Scalar::from_bytes_mod_order(data))
 	}
 
-	pub fn to_base64(&self) -> String { base64::encode(self.0.as_bytes()) }
+	pub fn to_base64(&self) -> String { BASE64_STANDARD.encode(self.0.as_bytes()) }
 
 	/// This has to be the private key, the other one has to be the public key.
 	pub fn create_shared_secret(&self, pub_key: &EdwardsPoint) -> [u8; 32] {
@@ -549,8 +554,8 @@ mod tests {
 		                  KPo+ms3BEzN/HBR71BJ/Z1Fv8918mdDKLetbOGKWt";
 		let signature = "MEUCIQC+ececxC0NCcuCtrXHAO5h7qbh1s/TGP/\
 		                 AaHa6+wV38wIgV9wwSppEdGjwuH3ETAME9tDj3aNkNvL25i0ikF9vs8M=";
-		let license = base64::decode(license).unwrap();
-		let signature = base64::decode(signature).unwrap();
+		let license = BASE64_STANDARD.decode(license).unwrap();
+		let signature = BASE64_STANDARD.decode(signature).unwrap();
 		let server_key = EccKeyPubP256::from_ts(server_key).unwrap();
 		server_key.verify(&license, &signature).unwrap();
 	}

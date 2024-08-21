@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::str;
 
+use base64::prelude::*;
 use num_traits::{FromPrimitive, ToPrimitive};
 use tracing::{instrument, warn};
 use tsproto_packets::commands::{CommandItem, CommandParser};

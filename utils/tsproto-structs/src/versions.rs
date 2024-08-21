@@ -4,6 +4,7 @@ use std::result::Result;
 
 use crate::*;
 
+use base64::prelude::*;
 use once_cell::sync::Lazy;
 
 pub const DATA_STR: &str =
@@ -64,7 +65,7 @@ impl Version {
 
 	pub fn get_sign_array(&self) -> String {
 		let mut res = String::new();
-		for b in ::base64::decode(&self.hash).unwrap() {
+		for b in BASE64_STANDARD.decode(&self.hash).unwrap() {
 			if !res.is_empty() {
 				res.push_str(", ");
 			}

@@ -846,25 +846,25 @@ impl LicenseBlockBuilder<'_, '_> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use base64;
+	use base64::prelude::*;
 
 	#[test]
 	fn parse_standard_license() {
-		Licenses::parse_ignore_expired(base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
+		Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
 			Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAACiIBip9hQaK6P3QhwOJs/BkPn0i\
 			oyIDPaNgzJ6M8x0kiAJf4hxCYAxMQ==").unwrap()).unwrap();
 	}
 
 	#[test]
 	fn parse_standard_license_expired() {
-		assert!(Licenses::parse(base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
+		assert!(Licenses::parse(BASE64_STANDARD.decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0\
 			Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAACiIBip9hQaK6P3QhwOJs/BkPn0i\
 			oyIDPaNgzJ6M8x0kiAJf4hxCYAxMQ==").unwrap()).is_err());
 	}
 
 	#[test]
 	fn parse_aal_license() {
-		Licenses::parse_ignore_expired(base64::decode("AQCvbHFTQDY/terPeilrp/ECU9xCH5U3xC92lY\
+		Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQCvbHFTQDY/terPeilrp/ECU9xCH5U3xC92lY\
 			TNaY/0KQAJFueAazbsgAAAACVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAABhl9gwla/UJ\
 			p2Eszst9TRVXO/PeE6a6d+CTI6Pg7OEVgAJc5CrL4Nh8gAAACRUZWFtU3BlYWsgc3lz\
 			dGVtcyBHbWJIAACvTQIgpv6zmLZq3znh7ygmOSokGFkFjz4bTigrOnetrgIJdIIACdS\
@@ -875,7 +875,7 @@ mod tests {
 	#[test]
 	fn parse_ts5_server_license_long() {
 		// Slightly older format having a block with a Ts5 license block in it
-		Licenses::parse_ignore_expired(base64::decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
+		Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
 			Fe9oZ/2uxP29j1EXQAQSfiAazbsgAAAASVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAAALB6Qfbe\
 			JyN+9foJhe+/KPFwyU+i++4MAA0q1/WCnizwARRuEPN1aeBQAAASBUZWFtU3BlYWsgc3lzdGV\
 			tcyBHbWJIAADrhbI5gUR3thsS7FqKV5P5h7djnwMSJfF2vi58lm1VcwgRUFMAE0P7gAUCGQIA\
@@ -886,7 +886,7 @@ mod tests {
 	#[test]
 	fn parse_ts5_server_license_long2() {
 		// Also slightly older, has 3 properties
-		Licenses::parse_ignore_expired(base64::decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
+		Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQDVsMGbcrMmGif1vSXPWWXNW2CB5\
 			Fe9oZ/2uxP29j1EXQAQSfiAazbsgAAAASVUZWFtU3BlYWsgU3lzdGVtcyBHbWJIAAAtXG5p2n\
 			iXlDfpVAGuD88w8hetKYL4vqHRkB5xB8ASRwAR2t/MN+ttjAAAASBUZWFtU3BlYWsgc3lzdGV\
 			tcyBHbWJIAAAdZYGtwkeZFhzqnoV1uk+Tcphe8GgcqiPVtELF9y4wOAgR4qmAF4jnAAkDGQIA\
@@ -897,12 +897,13 @@ mod tests {
 	#[test]
 	fn parse_ts5_server_license_single_block_with_issuer() {
 		Licenses::parse_ignore_expired(
-			base64::decode(
-				"AQBgjAAqtcBUrw5futTtkl3+EM3OW4Lal6OTPlwuv4xV/\
-				 gIRFlEAG0NlAAcAAAAgQW5vbnltb3VzAACKNY+/\
-				 9qCbonCSxG18vBb7y7zPIgDdjTmcZoAHHclnJSATPa69Ez5XfQ==",
-			)
-			.unwrap(),
+			BASE64_STANDARD
+				.decode(
+					"AQBgjAAqtcBUrw5futTtkl3+EM3OW4Lal6OTPlwuv4xV/\
+					 gIRFlEAG0NlAAcAAAAgQW5vbnltb3VzAACKNY+/\
+					 9qCbonCSxG18vBb7y7zPIgDdjTmcZoAHHclnJSATPa69Ez5XfQ==",
+				)
+				.unwrap(),
 		)
 		.unwrap();
 	}
@@ -910,14 +911,14 @@ mod tests {
 	#[test]
 	fn parse_ts5_server_license_single_block() {
 		// Only a single server block and the ephemeral block
-		Licenses::parse_ignore_expired(base64::decode("AQAuio9ZxThXKE+hmzQyzBRedysp9\
+		Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQAuio9ZxThXKE+hmzQyzBRedysp9\
 			79JBTv2xP3s2oCkiAgQI70AE+YkAAcBBgMBAAAABQBoazM313063zaipPTH06zrXc91ch3huB\
 			YrUET9sEbz1CATKgK8EyqrfA==").unwrap()).unwrap();
 	}
 
 	#[test]
 	fn derive_public_key() {
-		let licenses = Licenses::parse_ignore_expired(base64::decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==").unwrap()).unwrap();
+		let licenses = Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQA1hUFJiiSs0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==").unwrap()).unwrap();
 		let derived_key =
 			licenses.derive_public_key(EccKeyPubEd25519::from_bytes(crate::ROOT_KEY)).unwrap();
 

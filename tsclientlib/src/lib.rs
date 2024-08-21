@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use base64::prelude::*;
 use futures::prelude::*;
 use thiserror::Error;
 use time::OffsetDateTime;
@@ -517,7 +518,7 @@ impl Connection {
 		// Create clientinit packet
 		let client_version = options.version.get_version_string();
 		let client_platform = options.version.get_platform();
-		let client_version_sign = base64::encode(options.version.get_signature());
+		let client_version_sign = BASE64_STANDARD.encode(options.version.get_signature());
 
 		let default_channel_password = options
 			.channel_password
@@ -1304,7 +1305,7 @@ impl Connection {
 						Poll::Ready(r) => Some((i, r)),
 					});
 					if let Some((i, res)) = ft {
-						con.filetransfers.remove(i);
+						let _ = con.filetransfers.remove(i);
 						Poll::Ready(Some(Ok(res)))
 					} else {
 						Poll::Pending

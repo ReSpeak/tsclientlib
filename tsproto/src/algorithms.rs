@@ -280,7 +280,7 @@ pub fn array_to_biguint(i: &[u8; 64]) -> BigUint { BigUint::from_bytes_be(i) }
 
 #[cfg(test)]
 mod tests {
-	use base64;
+	use base64::prelude::*;
 
 	use super::*;
 	use crate::license::Licenses;
@@ -312,7 +312,7 @@ mod tests {
 
 	#[test]
 	fn shared_iv31() {
-		let licenses = Licenses::parse_ignore_expired(base64::decode("AQA1hUFJiiSs\
+		let licenses = Licenses::parse_ignore_expired(BASE64_STANDARD.decode("AQA1hUFJiiSs\
 			0wFXkYuPUJVcDa6XCrZTcsvkB0Ffzz4CmwIITRXgCqeTYAcAAAAgQW5vbnltb3VzAAC\
 			4R+5mos+UQ/KCbkpQLMI5WRp4wkQu8e5PZY4zU+/FlyAJwaE8CcJJ/A==")
 			.unwrap()).unwrap();
@@ -327,13 +327,12 @@ mod tests {
 
 		let priv_key = EccKeyPrivEd25519::from_bytes(client_ek);
 
-		let alpha_b64 = base64::decode("Jkxq1wIvvhzaCA==").unwrap();
+		let alpha_b64 = BASE64_STANDARD.decode("Jkxq1wIvvhzaCA==").unwrap();
 		let mut alpha = [0; 10];
 		alpha.copy_from_slice(&alpha_b64);
-		let beta_b64 = base64::decode(
-			"wU5T/MM6toW6Wge9th7VlTlzVZ9JDWypw2P9migfc25pjGP2Tj7Hm6rJpmKeHRr08Ch7BEAR",
-		)
-		.unwrap();
+		let beta_b64 = BASE64_STANDARD
+			.decode("wU5T/MM6toW6Wge9th7VlTlzVZ9JDWypw2P9migfc25pjGP2Tj7Hm6rJpmKeHRr08Ch7BEAR")
+			.unwrap();
 		let mut beta = [0; 54];
 		beta.copy_from_slice(&beta_b64);
 
@@ -411,10 +410,9 @@ mod tests {
 		);
 
 		let alpha = [0; 10];
-		let beta = base64::decode(
-			"I4onb0zMyAD6bd24QANDls40eOES7qmjonBFtt5wRWzAfIIQWTSxjEas6TGTZIJ8QSJNX+Pl",
-		)
-		.unwrap();
+		let beta = BASE64_STANDARD
+			.decode("I4onb0zMyAD6bd24QANDls40eOES7qmjonBFtt5wRWzAfIIQWTSxjEas6TGTZIJ8QSJNX+Pl")
+			.unwrap();
 
 		for i in 0..10 {
 			shared_iv[i] ^= alpha[i];

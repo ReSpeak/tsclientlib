@@ -14,6 +14,7 @@
 use std::fmt;
 use std::num::ParseIntError;
 
+use base64::prelude::*;
 use serde::de::{Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -136,7 +137,7 @@ impl<'de> Visitor<'de> for IdKeyVisitor {
 fn serialize_id_key<S: Serializer>(
 	key: &EccKeyPrivP256, s: S,
 ) -> std::result::Result<S::Ok, S::Error> {
-	s.serialize_str(&base64::encode(&key.to_short()))
+	s.serialize_str(&BASE64_STANDARD.encode(&key.to_short()))
 }
 
 fn deserialize_id_key<'de, D: Deserializer<'de>>(

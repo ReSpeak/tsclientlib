@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::str;
 use std::task::{Context, Poll};
 
+use base64::prelude::*;
 use futures::prelude::*;
 #[cfg(not(feature = "rug"))]
 use num_bigint::BigUint;
@@ -377,13 +378,15 @@ impl Client {
 					CommandItem::Argument(arg) => match arg.name() {
 						b"l" => {
 							l = Some(
-								base64::decode(&arg.value().get())
+								BASE64_STANDARD
+									.decode(&arg.value().get())
 									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
 							)
 						}
 						b"beta" => {
 							beta_vec = Some(
-								base64::decode(&arg.value().get())
+								BASE64_STANDARD
+									.decode(&arg.value().get())
 									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
 							)
 						}
@@ -397,13 +400,15 @@ impl Client {
 						}
 						b"proof" => {
 							proof = Some(
-								base64::decode(&arg.value().get())
+								BASE64_STANDARD
+									.decode(&arg.value().get())
 									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
 							)
 						}
 						b"ot" => ot = arg.value().get_raw() == b"1",
 						b"root" => {
-							let data = base64::decode(&arg.value().get())
+							let data = BASE64_STANDARD
+								.decode(&arg.value().get())
 								.map_err(|e| Error::InvalidBase64Arg("root", e))?;
 							let mut data2 = [0; 32];
 							if data.len() != 32 {
@@ -452,14 +457,14 @@ impl Client {
 
 			// Send clientek
 			let ek_pub = ek.to_pub();
-			let ek_s = base64::encode(ek_pub.0.as_bytes());
+			let ek_s = BASE64_STANDARD.encode(ek_pub.0.as_bytes());
 
 			// Proof: ECDSA signature of ek || beta
 			let mut all = Vec::with_capacity(32 + 54);
 			all.extend_from_slice(ek_pub.0.as_bytes());
 			all.extend_from_slice(&beta);
 			let proof = self.private_key.clone().sign(&all);
-			let proof_s = base64::encode(&proof);
+			let proof_s = BASE64_STANDARD.encode(&proof);
 
 			// Send clientek
 			let mut cmd =

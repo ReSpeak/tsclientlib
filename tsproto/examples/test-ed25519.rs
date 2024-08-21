@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use clap::Parser;
 use curve25519_dalek_ng::edwards::CompressedEdwardsY;
 use curve25519_dalek_ng::scalar::Scalar;
@@ -17,8 +18,8 @@ fn main() {
 	// Parse command line options
 	let args = Args::parse();
 
-	let pub_key = base64::decode(&args.pub_key).unwrap();
-	let priv_key = base64::decode(&args.priv_key).unwrap();
+	let pub_key = BASE64_STANDARD.decode(&args.pub_key).unwrap();
+	let priv_key = BASE64_STANDARD.decode(&args.priv_key).unwrap();
 	let mut pubk = [0; 32];
 	pubk.copy_from_slice(&pub_key);
 	let mut privk = [0; 32];
@@ -34,5 +35,5 @@ fn main() {
 	//let pub_point = curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 
 	let res = (pub_point * priv_scal).compress();
-	println!("Result: {}", base64::encode(&res.0));
+	println!("Result: {}", BASE64_STANDARD.encode(&res.0));
 }

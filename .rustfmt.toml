@@ -9,7 +9,7 @@ use_try_shorthand = true
 # Unstable
 
 where_single_line = true
-fn_args_layout = "Compressed"
+fn_params_layout = "Compressed"
 fn_single_line = true
 format_strings = true
 overflow_delimited_expr = true

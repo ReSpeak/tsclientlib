@@ -3,6 +3,7 @@ use std::convert::TryInto;
 use std::io::prelude::*;
 use std::{fmt, io, str};
 
+use base64::prelude::*;
 use bitflags::bitflags;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive as _, ToPrimitive as _};
@@ -1080,8 +1081,8 @@ impl OutC2SInit4 {
 			.write_all(
 				format!(
 					"clientinitiv alpha={} omega={} ot=1 ip{}",
-					base64::encode(alpha),
-					base64::encode(omega),
+					BASE64_STANDARD.encode(alpha),
+					BASE64_STANDARD.encode(omega),
 					ip
 				)
 				.as_bytes(),

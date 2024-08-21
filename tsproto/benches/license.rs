@@ -1,3 +1,4 @@
+use base64::prelude::*;
 use criterion::{criterion_group, criterion_main, Bencher, Criterion};
 use tsproto::license::Licenses;
 use tsproto_types::crypto::EccKeyPubEd25519;
@@ -30,17 +31,19 @@ const AAL_LICENSE: &str = "AQCvbHFTQDY/terPeilrp/ECU9xCH5U3xC92lY\
 		3B78eHGeePIAm98vQJvpu0";
 
 fn standard_license_parse(b: &mut Bencher) {
-	license_parse(b, base64::decode(STANDARD_LICENSE).unwrap());
+	license_parse(b, BASE64_STANDARD.decode(STANDARD_LICENSE).unwrap());
 }
 
-fn aal_license_parse(b: &mut Bencher) { license_parse(b, base64::decode(AAL_LICENSE).unwrap()); }
+fn aal_license_parse(b: &mut Bencher) {
+	license_parse(b, BASE64_STANDARD.decode(AAL_LICENSE).unwrap());
+}
 
 fn standard_license_derive_key(b: &mut Bencher) {
-	license_derive_key(b, base64::decode(STANDARD_LICENSE).unwrap());
+	license_derive_key(b, BASE64_STANDARD.decode(STANDARD_LICENSE).unwrap());
 }
 
 fn aal_license_derive_key(b: &mut Bencher) {
-	license_derive_key(b, base64::decode(AAL_LICENSE).unwrap());
+	license_derive_key(b, BASE64_STANDARD.decode(AAL_LICENSE).unwrap());
 }
 
 fn bench_license(c: &mut Criterion) {
