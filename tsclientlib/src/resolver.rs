@@ -552,8 +552,7 @@ mod test {
 	#[tokio::test]
 	async fn resolve_loc() {
 		create_logger();
-		let _res: Vec<_> = resolve("loc".into()).map(|r| r.unwrap()).collect().await;
-		// The nickname is not reserved anymore
-		// assert!(res.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
+		let res: Vec<_> = resolve("loc".into()).map(|r| r.unwrap()).collect().await;
+		assert!(res.contains(&format!("127.0.0.1:{}", DEFAULT_PORT).parse().unwrap()));
 	}
 }

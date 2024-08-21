@@ -19,12 +19,15 @@ include = [
 features = ["unstable"]
 
 [features]
-default = ["audio"]
+default = ["audio", "default-tls"]
 # Enable the unstable api
 unstable = []
 audio = ["audiopus"]
 bundled = ["sdl2/bundled"]
 static-link = ["sdl2/static-link"]
+# Enable default reqwest features.
+# Use default-features=false on tsclientlib to configure reqwest differently.
+default-tls = ["reqwest/charset", "reqwest/default-tls", "reqwest/http2"]
 
 [dependencies]
 audiopus = { version = "0.3.0-rc.0", optional = true }
