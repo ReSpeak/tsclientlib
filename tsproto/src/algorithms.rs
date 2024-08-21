@@ -1,6 +1,4 @@
 //! Handle packet splitting and cryptography
-use std::u64;
-
 use curve25519_dalek_ng::edwards::EdwardsPoint;
 use eax::aead::consts::{U16, U8};
 use eax::{AeadInPlace, Eax, KeyInit};
@@ -227,7 +225,7 @@ pub fn compute_iv_mac(
 ) -> ([u8; 64], [u8; 8]) {
 	let shared_secret = our_key.create_shared_secret(other_key);
 	let mut shared_iv = [0; 64];
-	shared_iv.copy_from_slice(Sha512::digest(&shared_secret).as_slice());
+	shared_iv.copy_from_slice(Sha512::digest(shared_secret).as_slice());
 	for i in 0..10 {
 		shared_iv[i] ^= alpha[i];
 	}
@@ -235,7 +233,7 @@ pub fn compute_iv_mac(
 		shared_iv[i + 10] ^= beta[i];
 	}
 	let mut shared_mac = [0; 8];
-	shared_mac.copy_from_slice(&Sha1::digest(&shared_iv).as_slice()[..8]);
+	shared_mac.copy_from_slice(&Sha1::digest(shared_iv).as_slice()[..8]);
 	(shared_iv, shared_mac)
 }
 

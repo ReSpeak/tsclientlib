@@ -237,7 +237,7 @@ impl FromStr for InnerRustType {
 				eprintln!("HashMap without key: {:?}", s);
 				fmt::Error
 			})?;
-			Ok(Self::Map(Box::new((&rest[..i]).parse()?), Box::new(rest[i..].trim().parse()?)))
+			Ok(Self::Map(Box::new(rest[..i].parse()?), Box::new(rest[i..].trim().parse()?)))
 		} else if s.starts_with("HashSet<") {
 			let rest = &s[8..s.len() - 1];
 			Ok(Self::Set(Box::new(rest.parse()?)))
@@ -335,12 +335,15 @@ impl RustType {
 
 	pub fn is_opt(&self) -> bool { matches!(self.inner, InnerRustType::Option(_)) }
 
-	pub fn is_primitive(&self) -> bool { matches!(self.inner, InnerRustType::Primitive(_)) }
+	pub fn is_primitive(&self) -> bool {
+		let inner = if let InnerRustType::Option(t) = &self.inner { t } else { &self.inner };
+		matches!(inner, InnerRustType::Primitive(_))
+	}
 
 	pub fn is_vec(&self) -> bool { matches!(self.inner, InnerRustType::Vec(_)) }
 
 	pub fn is_cow(&self) -> bool {
-		let inner = if let InnerRustType::Option(i) = &self.inner { &*i } else { &self.inner };
+		let inner = if let InnerRustType::Option(i) = &self.inner { i } else { &self.inner };
 		matches!(inner, InnerRustType::Cow(_))
 	}
 

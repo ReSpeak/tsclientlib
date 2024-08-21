@@ -318,7 +318,7 @@ impl<'a> InPacket<'a> {
 			if self.header.direction == Direction::S2C {
 				Ok(Some(
 					self.content
-						.get(0)
+						.first()
 						.ok_or_else(|| Error::PacketContentTooShort(self.content().len()))
 						.and_then(|i| match u16::from(*i) {
 							1 => Ok(0),

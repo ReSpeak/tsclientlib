@@ -66,7 +66,7 @@ impl PropertyValue {
 	pub fn as_ref(&self) -> PropertyValueRef {
 		match self {
 <# for struc in &self.structs { #>
-			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(<#= struc.get_type()?.code_as_ref("s") #>),
+			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(<#= struc.get_type()?.code_as_ref("s").trim_start_matches('&') #>),
 <# } #>
 
 <#
@@ -80,7 +80,7 @@ for struc in self.structs.iter().filter(|s| !s.opt) {
 		let name = inner_type.to_name();
 		let has_ref = inner_type.lifetime(true).to_ref(true).uses_lifetime();
 		#>
-			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(<#= inner_type.wrap_ref().code_as_ref("s") #>),
+			PropertyValue::<#= name #>(s) => PropertyValueRef::<#= name #>(<#= inner_type.wrap_ref().code_as_ref("s").trim_start_matches('&') #>),
 <# }
 } #>
 		}

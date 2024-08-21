@@ -2,7 +2,6 @@
 
 use std::borrow::{Borrow, Cow};
 use std::fmt;
-use std::u64;
 
 use base64::prelude::*;
 use bitflags::bitflags;

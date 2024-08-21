@@ -127,7 +127,7 @@ impl fmt::Debug for EccKeyPubP256 {
 
 impl fmt::Debug for EccKeyPrivP256 {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		write!(f, "EccKeyPrivP256({})", BASE64_STANDARD.encode(&self.to_short()))
+		write!(f, "EccKeyPrivP256({})", BASE64_STANDARD.encode(self.to_short()))
 	}
 }
 
@@ -170,7 +170,7 @@ impl EccKeyPubP256 {
 			return Err(Error::TooManyAsn1Blocks);
 		}
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
-			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
+			if let Some(ASN1Block::BitString(_, len, content)) = blocks.first() {
 				if *len != 1 || content[0] & 0x80 != 0 {
 					return Err(Error::UnexpectedPrivateKey);
 				}
@@ -215,7 +215,7 @@ impl EccKeyPubP256 {
 	}
 
 	/// Convert to base64 encoded public tomcrypt key.
-	pub fn to_ts(&self) -> String { BASE64_STANDARD.encode(&self.to_tomcrypt()) }
+	pub fn to_ts(&self) -> String { BASE64_STANDARD.encode(self.to_tomcrypt()) }
 
 	pub fn to_tomcrypt(&self) -> Vec<u8> {
 		let enc_point = self.0.as_affine().to_encoded_point(false);
@@ -250,7 +250,7 @@ impl EccKeyPubP256 {
 	/// Compute the uid of this key.
 	///
 	/// Uid = base64(sha1(ts encoded key))
-	pub fn get_uid(&self) -> String { BASE64_STANDARD.encode(&self.get_uid_no_base64()) }
+	pub fn get_uid(&self) -> String { BASE64_STANDARD.encode(self.get_uid_no_base64()) }
 
 	pub fn verify(&self, data: &[u8], signature: &[u8]) -> Result<()> {
 		let sig =
@@ -385,7 +385,7 @@ impl EccKeyPrivP256 {
 			return Err(Error::TooManyAsn1Blocks);
 		}
 		if let ASN1Block::Sequence(_, blocks) = &blocks[0] {
-			if let Some(ASN1Block::BitString(_, len, content)) = blocks.get(0) {
+			if let Some(ASN1Block::BitString(_, len, content)) = blocks.first() {
 				if (*len != 1 && *len != 2) || content[0] & 0x80 == 0 {
 					return Err(Error::NoPrivateKey);
 				}
@@ -409,7 +409,7 @@ impl EccKeyPrivP256 {
 	}
 
 	/// Convert to base64 encoded private tomcrypt key.
-	pub fn to_ts(&self) -> String { BASE64_STANDARD.encode(&self.to_tomcrypt()) }
+	pub fn to_ts(&self) -> String { BASE64_STANDARD.encode(self.to_tomcrypt()) }
 
 	/// Store as obfuscated TeamSpeak identity.
 	pub fn to_ts_obfuscated(&self) -> String {
@@ -429,7 +429,7 @@ impl EccKeyPrivP256 {
 		for i in 0..20 {
 			data[i] ^= hash[i];
 		}
-		BASE64_STANDARD.encode(&data)
+		BASE64_STANDARD.encode(data)
 	}
 
 	pub fn to_tomcrypt(&self) -> Vec<u8> {

@@ -22,31 +22,31 @@ fn main() {
 
 	// Book declarations
 	let path = Path::new(&out_dir);
-	let mut structs = File::create(&path.join("structs.rs")).unwrap();
+	let mut structs = File::create(path.join("structs.rs")).unwrap();
 	write!(&mut structs, "{}", BookDeclarations::default()).unwrap();
 
 	// Messages to book
-	let mut structs = File::create(&path.join("m2bdecls.rs")).unwrap();
+	let mut structs = File::create(path.join("m2bdecls.rs")).unwrap();
 	write!(&mut structs, "{}", MessagesToBookDeclarations::default()).unwrap();
 
 	// Write messages
 	let decls = MessageDeclarations::s2c();
-	let mut structs = File::create(&path.join("s2c_messages.rs")).unwrap();
+	let mut structs = File::create(path.join("s2c_messages.rs")).unwrap();
 	write!(&mut structs, "{}", MessageDeclarations(&decls)).unwrap();
 
 	let decls = MessageDeclarations::c2s();
-	let mut structs = File::create(&path.join("c2s_messages.rs")).unwrap();
+	let mut structs = File::create(path.join("c2s_messages.rs")).unwrap();
 	write!(&mut structs, "{}", MessageDeclarations(&decls)).unwrap();
 
 	// Book to messages
-	let mut structs = File::create(&path.join("b2mdecls.rs")).unwrap();
+	let mut structs = File::create(path.join("b2mdecls.rs")).unwrap();
 	write!(&mut structs, "{}", BookToMessagesDeclarations::default()).unwrap();
 
 	// Events
-	let mut structs = File::create(&path.join("events.rs")).unwrap();
+	let mut structs = File::create(path.join("events.rs")).unwrap();
 	write!(&mut structs, "{}", EventDeclarations::default()).unwrap();
 
 	// Properties
-	let mut structs = File::create(&path.join("properties.rs")).unwrap();
+	let mut structs = File::create(path.join("properties.rs")).unwrap();
 	write!(&mut structs, "{}", Properties::default()).unwrap();
 }

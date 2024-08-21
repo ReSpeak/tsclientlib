@@ -262,7 +262,7 @@ impl FromStr for RuleOp {
 
 // the in rust callable name (in PascalCase) from the field
 fn find_field<'a>(name: &str, msg_fields: &[&'a Field]) -> &'a Field {
-	*msg_fields
+	msg_fields
 		.iter()
 		.find(|f| f.pretty == name)
 		.unwrap_or_else(|| panic!("Cannot find field '{}'", name))

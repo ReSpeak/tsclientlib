@@ -379,14 +379,14 @@ impl Client {
 						b"l" => {
 							l = Some(
 								BASE64_STANDARD
-									.decode(&arg.value().get())
+									.decode(arg.value().get())
 									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
 							)
 						}
 						b"beta" => {
 							beta_vec = Some(
 								BASE64_STANDARD
-									.decode(&arg.value().get())
+									.decode(arg.value().get())
 									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
 							)
 						}
@@ -401,14 +401,14 @@ impl Client {
 						b"proof" => {
 							proof = Some(
 								BASE64_STANDARD
-									.decode(&arg.value().get())
+									.decode(arg.value().get())
 									.map_err(|e| Error::InvalidBase64Arg("proof", e))?,
 							)
 						}
 						b"ot" => ot = arg.value().get_raw() == b"1",
 						b"root" => {
 							let data = BASE64_STANDARD
-								.decode(&arg.value().get())
+								.decode(arg.value().get())
 								.map_err(|e| Error::InvalidBase64Arg("root", e))?;
 							let mut data2 = [0; 32];
 							if data.len() != 32 {

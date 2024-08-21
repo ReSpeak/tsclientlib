@@ -139,7 +139,7 @@ impl Stream for SyncConnection {
 			if let Poll::Ready(msg) = self.recv.poll_recv(ctx) {
 				if let Some(msg) = msg {
 					match msg {
-						SyncConMessage::RunFn(f) => f(&mut *self),
+						SyncConMessage::RunFn(f) => f(&mut self),
 						#[cfg(feature = "unstable")]
 						SyncConMessage::SendCommand(arg, send) => {
 							let handle = match self.con.send_command_with_result(arg) {

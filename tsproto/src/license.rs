@@ -394,7 +394,6 @@ impl License {
 				let mut pos = 2;
 
 				let properties = (0..property_count)
-					.into_iter()
 					.map(|_| {
 						let p = pos - 2;
 						if pos >= data.len() {

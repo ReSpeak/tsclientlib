@@ -186,7 +186,7 @@ for (msg_name, group) in groups {
 									let from_opt = from.is_opt(&event.msg);
 									// to/book is optional, but from/message not
 									if to.opt && !from_opt { #>
-				let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(m.<#= from.get_rust_name() #>.clone()));
+				let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(m.<#= from.get_rust_name() #><# if !to.get_type()?.is_primitive() { #>.clone()<# } #>));
 				events.push(Event::PropertyChanged {
 					id: <#= event.get_property_id(to, from, "m") #>,
 					old: <#= get_property(to, "old") #>,
@@ -194,16 +194,20 @@ for (msg_name, group) in groups {
 					extra: ExtraInfo { reason },
 				});
 									<# } else if from_opt {
+										let mut prefix = "";
 										let transform_func = if to.is_set() {
 											".iter().cloned().collect()"
-										} else {
+										} else if !to.get_type()?.is_primitive() {
 											".clone()"
+										} else {
+											prefix = "*";
+											""
 										}; #>
 				if let Some(val) = &m.<#= from.get_rust_name() #> {
 									<# if to.opt { #>
-					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(val<#= transform_func #>));
+					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, Some(<#= prefix #>val<#= transform_func #>));
 									<# } else { #>
-					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, val<#= transform_func #>);
+					let old = mem::replace(&mut r.<#= to.name.to_snake_case() #>, <#= prefix #>val<#= transform_func #>);
 									<# } #>
 				<# if from.modifier.as_ref().map(|s| s == "array" || s == "set").unwrap_or(false) {
 					diff(_fmt, &format!("r.{}", to.name.to_snake_case()), event, to, from)?;
@@ -378,7 +382,7 @@ for (msg_name, group) in groups {
 				<#
 				// Add ids
 				for (id, fld) in event.book_struct.id.iter().zip(event.id.iter()) { #>
-					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: m.<#= fld.get_rust_name() #>.clone(),
+					<#= PropId::from(id).get_attr_name(&event.book_struct) #>: m.<#= fld.get_rust_name() #><# if !id.find_property(&self.book.structs).get_type()?.is_primitive() { #>.clone()<# } #>,
 				<# }
 
 				let v = vec![];

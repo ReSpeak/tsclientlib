@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
-use std::{iter, mem, u16};
+use std::{iter, mem};
 
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
@@ -82,7 +82,7 @@ impl Connection {
 
 				id: packet.virtual_server_id,
 				public_key: public_key,
-				ips: packet.ips.clone().unwrap_or_else(Vec::new),
+				ips: packet.ips.clone().unwrap_or_default(),
 				// TODO Get from license struct
 				license: LicenseType::NoLicense,
 
@@ -214,7 +214,7 @@ impl Connection {
 		Ok(mem::replace(&mut self.server.connection_data, Some(r)))
 	}
 
-	fn get_connection(&self) -> Result<&Connection> { Ok(&self) }
+	fn get_connection(&self) -> Result<&Connection> { Ok(self) }
 
 	fn get_client(&self, client: ClientId) -> Result<&Client> {
 		self.clients.get(&client).ok_or_else(|| Error::NotFound("Client", client.to_string()))
@@ -420,7 +420,7 @@ impl Connection {
 	) -> Result<()> {
 		let channel = self.get_mut_channel(channel_id)?;
 
-		if !msg.is_permanent.is_some() && !msg.is_semi_permanent.is_some() {
+		if msg.is_permanent.is_none() && msg.is_semi_permanent.is_none() {
 			return Ok(());
 		}
 
@@ -469,7 +469,7 @@ impl Connection {
 				return Ok(ClientType::Query { admin: true });
 			}
 		}
-		Ok(msg.client_type.clone())
+		Ok(msg.client_type)
 	}
 
 	fn away_cu_fun(
@@ -479,11 +479,8 @@ impl Connection {
 
 		if let Some(is_away) = msg.is_away {
 			if is_away != client.away_message.is_some() {
-				let away = if is_away {
-					Some(msg.away_message.clone().unwrap_or_else(String::new))
-				} else {
-					None
-				};
+				let away =
+					if is_away { Some(msg.away_message.clone().unwrap_or_default()) } else { None };
 				events.push(Event::PropertyChanged {
 					id: PropertyId::ClientAwayMessage(client_id),
 					old: PropertyValue::OptionString(client.away_message.take()),
@@ -530,7 +527,7 @@ impl Connection {
 			let talk_request = if talk_request.unix_timestamp() > 0 {
 				Some(TalkPowerRequest {
 					time: talk_request,
-					message: msg.talk_power_request_message.clone().unwrap_or_else(String::new),
+					message: msg.talk_power_request_message.clone().unwrap_or_default(),
 				})
 			} else {
 				None
@@ -719,15 +716,15 @@ impl Connection {
 	}
 
 	// Book to messages
-	fn away_fun_b2m<'a>(msg: Option<&'a str>) -> (bool, &'a str) {
+	fn away_fun_b2m(msg: Option<&str>) -> (bool, &str) {
 		if let Some(msg) = msg { (true, msg) } else { (false, "") }
 	}
 }
 
 impl Client {
 	// Book to messages
-	fn password_b2m<'a>(password: &'a str) -> String {
-		tsproto_types::crypto::encode_password(password.as_bytes()).into()
+	fn password_b2m(password: &str) -> String {
+		tsproto_types::crypto::encode_password(password.as_bytes())
 	}
 	fn channel_id_b2m(&self, channel: ChannelId) -> ChannelId { channel }
 
@@ -749,15 +746,15 @@ impl Client {
 
 impl Channel {
 	// Book to messages
-	fn password_b2m<'a>(&self, password: &'a str) -> String {
-		tsproto_types::crypto::encode_password(password.as_bytes()).into()
+	fn password_b2m(&self, password: &str) -> String {
+		tsproto_types::crypto::encode_password(password.as_bytes())
 	}
 
-	fn password_b2m2<'a>(password: &'a str) -> String {
-		tsproto_types::crypto::encode_password(password.as_bytes()).into()
+	fn password_b2m2(password: &str) -> String {
+		tsproto_types::crypto::encode_password(password.as_bytes())
 	}
 
-	fn password_flagged_b2m<'a>(password: Option<&'a str>) -> (bool, Cow<'static, str>) {
+	fn password_flagged_b2m(password: Option<&str>) -> (bool, Cow<'static, str>) {
 		if let Some(password) = password {
 			(true, tsproto_types::crypto::encode_password(password.as_bytes()).into())
 		} else {
@@ -1006,7 +1003,7 @@ impl Server {
 	fn empty_string(&self) -> &'static str { "" }
 
 	// Book to messages
-	fn password_b2m<'a>(password: Option<&'a str>) -> Cow<'static, str> {
+	fn password_b2m(password: Option<&str>) -> Cow<'static, str> {
 		if let Some(password) = password {
 			tsproto_types::crypto::encode_password(password.as_bytes()).into()
 		} else {

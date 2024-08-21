@@ -16,15 +16,15 @@ fn main() {
 
 	// Enums
 	let path = Path::new(&out_dir);
-	let mut structs = File::create(&path.join("enums.rs")).unwrap();
-	write!(&mut structs, "{}", Enums::default()).unwrap();
+	let mut structs = File::create(path.join("enums.rs")).unwrap();
+	write!(&mut structs, "{}", Enums).unwrap();
 
 	// Errors
 	let path = Path::new(&out_dir);
-	let mut structs = File::create(&path.join("errors.rs")).unwrap();
-	write!(&mut structs, "{}", Errors::default()).unwrap();
+	let mut structs = File::create(path.join("errors.rs")).unwrap();
+	write!(&mut structs, "{}", Errors).unwrap();
 
 	// Versions
-	let mut structs = File::create(&path.join("versions.rs")).unwrap();
-	write!(&mut structs, "{}", Versions::default()).unwrap();
+	let mut structs = File::create(path.join("versions.rs")).unwrap();
+	write!(&mut structs, "{}", Versions).unwrap();
 }

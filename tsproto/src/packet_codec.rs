@@ -123,7 +123,7 @@ impl PacketCodec {
 				};
 
 				let start = packet.header().data().len();
-				(&mut packet_data[start..]).copy_from_slice(&new_content);
+				packet_data[start..].copy_from_slice(&new_content);
 			} else if algs::must_encrypt(p_type) {
 				// Check if it is ok for the packet to be unencrypted
 				con.stream_items.push_back(StreamItem::Error(Error::UnallowedUnencryptedPacket));

@@ -137,7 +137,7 @@ impl<'de> Visitor<'de> for IdKeyVisitor {
 fn serialize_id_key<S: Serializer>(
 	key: &EccKeyPrivP256, s: S,
 ) -> std::result::Result<S::Ok, S::Error> {
-	s.serialize_str(&BASE64_STANDARD.encode(&key.to_short()))
+	s.serialize_str(&BASE64_STANDARD.encode(key.to_short()))
 }
 
 fn deserialize_id_key<'de, D: Deserializer<'de>>(
@@ -218,7 +218,7 @@ impl Identity {
 	pub fn upgrade_level(&mut self, target: u8) {
 		let omega = self.key.to_pub().to_ts();
 		let mut offset = self.max_counter;
-		while offset < u64::max_value() && algs::get_hash_cash_level(&omega, offset) < target {
+		while offset < u64::MAX && algs::get_hash_cash_level(&omega, offset) < target {
 			offset += 1;
 		}
 		self.counter = offset;

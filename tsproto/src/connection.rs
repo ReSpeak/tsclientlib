@@ -4,7 +4,6 @@ use std::mem;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
-use std::u16;
 
 use futures::prelude::*;
 use generic_array::typenum::consts::U16;
@@ -131,7 +130,7 @@ impl Socket for UdpSocket {
 
 impl Default for CachedKey {
 	fn default() -> Self {
-		CachedKey { generation_id: u32::max_value(), key: [0; 16].into(), nonce: [0; 16].into() }
+		CachedKey { generation_id: u32::MAX, key: [0; 16].into(), nonce: [0; 16].into() }
 	}
 }
 
@@ -423,13 +422,13 @@ impl Stream for Connection {
 		}
 
 		// Use the resender to resend packes
-		match Resender::poll_resend(&mut *self, cx) {
+		match Resender::poll_resend(&mut self, cx) {
 			Ok(()) => {}
 			Err(e) => return Poll::Ready(Some(Err(e))),
 		}
 
 		// Use the resender to send pings
-		match Resender::poll_ping(&mut *self, cx) {
+		match Resender::poll_ping(&mut self, cx) {
 			Ok(()) => {}
 			Err(e) => return Poll::Ready(Some(Err(e))),
 		}

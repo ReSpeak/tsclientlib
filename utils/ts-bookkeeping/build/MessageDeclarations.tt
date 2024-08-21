@@ -115,15 +115,20 @@ impl InMessageTrait for In<#= msg.name #> {
 					// Build command
 					let new = In<#= msg.name #>Part {
 					<# for a in &msg.attributes {
-						let field = self.0.get_field(a); #>
+						let field = self.0.get_field(a);
+						let transform_func = if !field.get_type(a)?.is_primitive() {
+							".clone()"
+						} else {
+							""
+						}; #>
 						<#= field.get_rust_name() #>: <#= field.get_rust_name() #>
 						<# if !a.ends_with('?') { /* is not optional */ #>
 							.take()
-							.or_else(|| list.first().map(|p| p.<#= field.get_rust_name() #>.clone()))
+							.or_else(|| list.first().map(|p| p.<#= field.get_rust_name() #><#= transform_func #>))
 							.ok_or(ParseError::ParameterNotFound { arg: "<#= field.pretty #>", name: "<#= msg.name #>", })?,
 						<# } else { #>
 							.take()
-							.or_else(|| list.first().and_then(|p| p.<#= field.get_rust_name() #>.clone())),
+							.or_else(|| list.first().and_then(|p| p.<#= field.get_rust_name() #><#= transform_func #>)),
 						<# } #>
 					<# } #>
 					};
@@ -295,6 +300,7 @@ impl<<# if uses_lifetime { #>'a, <# } #>> OutMessage<# if msg_group.default.resp
 <# } #>
 pub struct Out<#= msg.name #>Message;
 impl Out<#= msg.name #>Message {
+	#[allow(clippy::let_and_return, clippy::new_ret_no_self)]
 	pub fn new(<# if has_attributes { #>parts: &mut dyn Iterator<Item=Out<#= msg.name #>Part><#
 			if msg_group.default.response { #>, return_code: Option<&str><# } } #>) -> OutCommand {
 		let<# if has_attributes { #> mut<# } #> packet = OutCommand::new(

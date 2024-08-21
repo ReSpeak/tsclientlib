@@ -339,7 +339,7 @@ pub fn resolve_nickname(nickname: String) -> impl Stream<Item = Result<SocketAdd
 			.collect::<Vec<_>>();
 
 		Result::<_>::Ok(
-			stream::iter(addrs.into_iter())
+			stream::iter(addrs)
 				.and_then(|addr| async move {
 					match parse_ip(&addr)? {
 						ParseIpResult::Addr(a) => Ok(stream::once(future::ok(a)).left_stream()),

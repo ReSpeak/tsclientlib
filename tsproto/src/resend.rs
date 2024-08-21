@@ -622,7 +622,7 @@ impl Resender {
 		let res = C
 			* (time.as_secs_f32() - (self.w_max as f32 * BETA / C).powf(1.0 / 3.0)).powf(3.0)
 			+ self.w_max as f32;
-		let max = u16::max_value() / 2;
+		let max = u16::MAX / 2;
 		if res > max as f32 {
 			max
 		} else if res < 1.0 {
