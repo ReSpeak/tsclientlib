@@ -69,10 +69,12 @@ impl OutMessageTrait for OutCommand {
 }
 
 pub mod s2c {
+	#![allow(mismatched_lifetime_syntaxes)]
 	use super::*;
 	include!(concat!(env!("OUT_DIR"), "/s2c_messages.rs"));
 }
 pub mod c2s {
+	#![allow(mismatched_lifetime_syntaxes)]
 	use super::*;
 	include!(concat!(env!("OUT_DIR"), "/c2s_messages.rs"));
 }

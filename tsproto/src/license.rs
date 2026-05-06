@@ -10,13 +10,13 @@ use num_traits::{FromPrimitive as _, ToPrimitive as _};
 use omnom::{ReadExt, WriteExt};
 use sha2::{Digest, Sha512};
 use thiserror::Error;
-use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use tracing::trace;
 use tsproto_packets::HexSlice;
 use tsproto_types::{
-	crypto::{EccKeyPrivEd25519, EccKeyPubEd25519},
 	LicenseType,
+	crypto::{EccKeyPrivEd25519, EccKeyPubEd25519},
 };
 
 pub const TIMESTAMP_OFFSET: i64 = 0x50e2_2700;
@@ -76,8 +76,8 @@ pub enum Error {
 	#[error("Wrong property type for id {id}: Expected type {expected} but got type {actual}")]
 	WrongPropertyType { id: u8, expected: u8, actual: u8 },
 	#[error(
-		"Propery with id {id} and type {typ} has wrong length: Expected length {expected} but got \
-		 length {actual}"
+		"Property with id {id} and type {typ} has wrong length: Expected length {expected} but \
+		 got length {actual}"
 	)]
 	WrongPropertyLength { id: u8, typ: u8, expected: u8, actual: u8 },
 }
@@ -777,7 +777,7 @@ impl LicenseBlockBuilder<'_, '_> {
 	/// Add a property in a TS5 license block.
 	///
 	/// `len` is the length of the content, excluding id, type and length field.
-	/// Return the byte offset to where the contents of the propery starts.
+	/// Return the byte offset to where the contents of the property starts.
 	fn ts5_add_property(&mut self, id: u8, typ: u8, len: usize) -> usize {
 		let o = self.builder.licenses.data.len();
 		self.builder.licenses.data.resize(o + len + 3, 0);

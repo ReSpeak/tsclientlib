@@ -16,7 +16,7 @@ use audiopus::coder::Decoder;
 use audiopus::coder::GenericCtl;
 use audiopus::{Channels, SampleRate, packet};
 use thiserror::Error;
-use tracing::{debug, info_span, trace, warn, Span};
+use tracing::{Span, debug, info_span, trace, warn};
 use tsproto_packets::packets::{AudioData, CodecType, InAudioBuf};
 
 use crate::ClientId;
@@ -172,13 +172,17 @@ impl AudioQueue {
 
 		let last_packet_samples = last_packet_samples * CHANNEL_NUM;
 		let whispering = matches!(data, AudioData::S2CWhisper { .. });
-		let mut decoder = Decoder::new(SAMPLE_RATE, CHANNELS).map_err(Error::CreateDecoder)?;
+		let decoder = Decoder::new(SAMPLE_RATE, CHANNELS).map_err(Error::CreateDecoder)?;
 
 		// Enable DRED and NoLACE, ignore errors e.g. if unsupported
 		#[cfg(feature = "audiopus-unstable")]
-		if let Err(error) = decoder.set_complexity(7) {
-			debug!(%error, "Failed setting opus decoder complexity, ignoring");
-		}
+		let decoder = {
+			let mut decoder = decoder;
+			if let Err(error) = decoder.set_complexity(7) {
+				debug!(%error, "Failed setting opus decoder complexity, ignoring");
+			}
+			decoder
+		};
 
 		let mut res = Self {
 			span: Span::current(),
@@ -566,7 +570,7 @@ impl<Id: Clone + Debug + Eq + Hash + PartialEq> AudioHandler<Id> {
 
 #[cfg(test)]
 mod test {
-	use anyhow::{bail, Result};
+	use anyhow::{Result, bail};
 	use audiopus::coder::Encoder;
 	use tsproto_packets::packets::{Direction, OutAudio};
 

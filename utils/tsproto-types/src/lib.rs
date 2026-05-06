@@ -146,7 +146,7 @@ pub struct InvokerRef<'a> {
 }
 
 impl Invoker {
-	pub fn as_ref(&self) -> InvokerRef {
+	pub fn as_ref(&self) -> InvokerRef<'_> {
 		InvokerRef { name: &self.name, id: self.id, uid: self.uid.as_ref().map(|u| u.as_ref()) }
 	}
 }

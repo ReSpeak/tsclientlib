@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### ℹ Changed
 - Switched from `slog` to `tracing` for logging
+- Update dependencies (updates some exposed types)
 
 ## [0.2.0] - 2021-05-12
 ### ✨ Added
@@ -23,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### ℹ Changed
 - ➠ Upgrade from `futures` 0.1 to 0.3 and `tokio` 0.1 to 1.0 for `async`/`await` support
-- 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-clonable object. This removes all locks
+- 🔒 Rewrite `tsproto` and `tsclientlib` to be a single, non-cloneable object. This removes all locks
 - 🚀 Many performance improvements
 	- New command parser, 2–2.5× faster than the old one
 	- New command serializer, 2× faster than the old one

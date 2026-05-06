@@ -6,18 +6,18 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use futures::prelude::*;
-use generic_array::typenum::consts::U16;
 use generic_array::GenericArray;
+use generic_array::typenum::consts::U16;
 use num_traits::ToPrimitive;
 use tokio::io::ReadBuf;
 use tokio::net::UdpSocket;
-use tracing::{info_span, Span};
+use tracing::{Span, info_span};
 use tsproto_packets::packets::*;
 use tsproto_types::crypto::EccKeyPubP256;
 
 use crate::packet_codec::PacketCodec;
 use crate::resend::{PacketId, PartialPacketId, Resender, ResenderState};
-use crate::{Error, Result, MAX_UDP_PACKET_LENGTH, UDP_SINK_CAPACITY};
+use crate::{Error, MAX_UDP_PACKET_LENGTH, Result, UDP_SINK_CAPACITY};
 
 /// The needed functions, this can be used to abstract from the underlying
 /// transport and allows simulation.
@@ -421,7 +421,7 @@ impl Stream for Connection {
 			}
 		}
 
-		// Use the resender to resend packes
+		// Use the resender to resend packets
 		match Resender::poll_resend(&mut self, cx) {
 			Ok(()) => {}
 			Err(e) => return Poll::Ready(Some(Err(e))),

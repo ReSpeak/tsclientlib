@@ -12,3 +12,4 @@ ser = "ser"
 [default.extend-words]
 splitted = "splitted"
 datas = "datas"
+rto = "rto"

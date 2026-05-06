@@ -10,11 +10,11 @@ use futures::prelude::*;
 use num_bigint::BigUint;
 #[cfg(not(feature = "rug"))]
 use num_traits::One;
-use rand::Rng;
-#[cfg(feature = "rug")]
-use rug::integer::Order;
+use rand::RngExt;
 #[cfg(feature = "rug")]
 use rug::Integer;
+#[cfg(feature = "rug")]
+use rug::integer::Order;
 use thiserror::Error;
 use time::OffsetDateTime;
 use tracing::{info, warn};
@@ -246,7 +246,7 @@ impl Client {
 		let version = timestamp - 1356998400;
 
 		// Random bytes
-		let random0 = rand::thread_rng().gen::<[u8; 4]>();
+		let random0 = rand::rng().random::<[u8; 4]>();
 
 		let alpha;
 		loop {
@@ -291,7 +291,7 @@ impl Client {
 						}
 
 						// Create clientinitiv
-						alpha = rand::thread_rng().gen::<[u8; 10]>();
+						alpha = rand::rng().random::<[u8; 10]>();
 						// omega is an ASN.1-DER encoded public key from
 						// the ECDH parameters.
 
@@ -715,7 +715,7 @@ mod tests {
 	use std::sync::{Arc, Mutex};
 	use std::task::Waker;
 
-	use anyhow::{bail, Result};
+	use anyhow::{Result, bail};
 	use num_traits::ToPrimitive;
 	use once_cell::sync::Lazy;
 	use tokio::io::ReadBuf;

@@ -22,4 +22,4 @@ num-traits = "0.2"
 omnom = "3"
 self_cell = "1"
 serde = { version = "1", features = ["derive"] }
-thiserror = "1"
+thiserror = "2"

@@ -103,7 +103,7 @@ macro_rules! create_buf {
 			#[inline]
 			pub fn raw_data(&self) -> &[u8] { self.0.borrow_owner().as_slice() }
 			#[inline]
-			pub fn data(&self) -> &$borrow_name { self.0.borrow_dependent() }
+			pub fn data(&self) -> &$borrow_name<'_> { self.0.borrow_dependent() }
 			#[inline]
 			pub fn into_buffer(self) -> Vec<u8> { self.0.into_owner() }
 		}
@@ -791,21 +791,21 @@ impl<'a> InS2CInit<'a> {
 	#[inline]
 	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
 	#[inline]
-	pub fn data(&self) -> &S2CInitData { &self.data }
+	pub fn data(&self) -> &S2CInitData<'a> { &self.data }
 }
 
 impl<'a> InC2SInit<'a> {
 	#[inline]
 	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
 	#[inline]
-	pub fn data(&self) -> &C2SInitData { &self.data }
+	pub fn data(&self) -> &C2SInitData<'a> { &self.data }
 }
 
 impl<'a> InAudio<'a> {
 	#[inline]
 	pub fn packet(&self) -> &InPacket<'a> { &self.packet }
 	#[inline]
-	pub fn data(&self) -> &AudioData { &self.data }
+	pub fn data(&self) -> &AudioData<'a> { &self.data }
 }
 
 impl fmt::Debug for InAudio<'_> {
@@ -903,11 +903,13 @@ impl OutPacket {
 	#[inline]
 	pub fn direction(&self) -> Direction { self.dir }
 	#[inline]
-	pub fn header(&self) -> InHeader { InHeader { direction: self.dir, data: self.header_bytes() } }
+	pub fn header(&self) -> InHeader<'_> {
+		InHeader { direction: self.dir, data: self.header_bytes() }
+	}
 	#[inline]
 	pub fn header_bytes(&self) -> &[u8] { &self.data[..self.content_offset()] }
 	#[inline]
-	pub fn packet(&self) -> InPacket { InPacket::new(self.dir, &self.data) }
+	pub fn packet(&self) -> InPacket<'_> { InPacket::new(self.dir, &self.data) }
 
 	#[inline]
 	pub fn mac(&mut self) -> &mut [u8; 8] { (&mut self.data[0..8]).try_into().unwrap() }

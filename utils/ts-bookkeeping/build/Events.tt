@@ -63,7 +63,7 @@ for struc in self.structs.iter().filter(|s| !s.opt) {
 }
 
 impl PropertyValue {
-	pub fn as_ref(&self) -> PropertyValueRef {
+	pub fn as_ref(&self) -> PropertyValueRef<'_> {
 		match self {
 <# for struc in &self.structs { #>
 			PropertyValue::<#= struc.name #>(s) => PropertyValueRef::<#= struc.name #>(<#= struc.get_type()?.code_as_ref("s").trim_start_matches('&') #>),

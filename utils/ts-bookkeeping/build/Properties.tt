@@ -1,7 +1,7 @@
 <#@ template cleanws="true" #>
 impl Connection {
 	/// Get a property by its id.
-	pub fn get_property(&self, id: &PropertyId) -> Result<PropertyValueRef> {
+	pub fn get_property(&self, id: &PropertyId) -> Result<PropertyValueRef<'_>> {
 		Ok(match id {
 <# for struc in &self.0.structs {
 	let mut ids = embrace(&get_ids(struc));

@@ -3,13 +3,15 @@
 // https://support.teamspeakusa.com/index.php?/Knowledgebase/Article/View/332
 
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::str::{self, FromStr};
+use std::str;
 
 use futures::prelude::*;
-use hickory_resolver::config::{ResolverConfig, ResolverOpts};
-use hickory_resolver::{Name, TokioAsyncResolver};
+use hickory_net::proto::rr::RData;
+use hickory_resolver::TokioResolver;
+use hickory_resolver::config::{CLOUDFLARE, ResolverConfig, ResolverOpts};
+use hickory_resolver::net::runtime::TokioRuntimeProvider;
 use itertools::Itertools;
-use rand::Rng;
+use rand::RngExt;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{self, TcpStream};
@@ -28,15 +30,8 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
-	#[error("Failed to create resolver ({system})")]
-	CreateResolver {
-		#[source]
-		system: hickory_resolver::error::ResolveError,
-	},
-	#[error("Failed to composed domain from {0:?} and {1:?}: {2}")]
-	InvalidComposedDomain(String, String, #[source] hickory_proto::error::ProtoError),
-	#[error("Failed to parse domain {0:?}: {1}")]
-	InvalidDomain(String, #[source] hickory_proto::error::ProtoError),
+	#[error("Failed to create resolver: {0}")]
+	CreateResolver(#[source] hickory_net::NetError),
 	#[error("Invalid IPv4 address")]
 	InvalidIp4Address,
 	#[error("Invalid IPv6 address")]
@@ -53,12 +48,10 @@ pub enum Error {
 	NicknameParseUrl(#[source] url::ParseError),
 	#[error("Failed to resolve nickname: {0}")]
 	NicknameResolve(#[source] reqwest::Error),
-	#[error("Found no SRV entry")]
-	NoSrvEntry,
 	#[error("Failed to resolve hostname: {0}")]
 	ResolveHost(#[source] tokio::io::Error),
 	#[error("Failed to get SRV record")]
-	SrvLookup(#[source] hickory_resolver::error::ResolveError),
+	SrvLookup(#[source] hickory_net::NetError),
 	#[error("tsdns did not return an ip address but {0:?}")]
 	TsdnsAddressInvalidResponse(String),
 	#[error("tsdns server does not know the address")]
@@ -128,20 +121,10 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 	// TODO Move current span into stream
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver();
+			let resolver = create_resolver()?;
 
 			// Try to get the address by an SRV record
-			let prefix = Name::from_str(DNS_PREFIX_UDP).expect("Cannot parse udp domain prefix");
-			let mut name =
-				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
-			name.set_fqdn(true);
-
-			Result::<_>::Ok(resolve_srv(
-				resolver,
-				prefix.append_name(&name).map_err(|e| {
-					Error::InvalidComposedDomain(DNS_PREFIX_UDP.to_string(), addr2.clone(), e)
-				})?,
-			))
+			Result::<_>::Ok(resolve_srv(resolver, format!("{DNS_PREFIX_UDP}{addr2}.")))
 		})
 		.try_flatten(),
 	);
@@ -151,22 +134,16 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 	// TODO Move current span into stream
 	let res = res.chain(
 		stream::once(async move {
-			let resolver = create_resolver();
-			let prefix = Name::from_str(DNS_PREFIX_TCP).expect("Cannot parse udp domain prefix");
-			let mut name =
-				Name::from_str(&addr2).map_err(|e| Error::InvalidDomain(addr2.clone(), e))?;
-			name.set_fqdn(true);
-
-			let name = name.trim_to(2);
+			let resolver = create_resolver()?;
+			// Trim address to two components
+			let name = if let Some(i) = addr2.rfind('.').and_then(|i| addr2[..i].rfind('.')) {
+				&addr2[i + 1..]
+			} else {
+				&addr2
+			};
 			// Pick the first srv record of the first server that answers
-			Result::<_>::Ok(
-				resolve_srv(
-					resolver,
-					prefix.append_name(&name).map_err(|e| {
-						Error::InvalidComposedDomain(DNS_PREFIX_UDP.to_string(), addr2.clone(), e)
-					})?,
-				)
-				.and_then(move |srv| {
+			Result::<_>::Ok(resolve_srv(resolver, format!("{DNS_PREFIX_TCP}{name}.")).and_then(
+				move |srv| {
 					let address = address.clone();
 					async move {
 						// Got tsdns server
@@ -177,8 +154,8 @@ pub fn resolve(address: String) -> impl Stream<Item = Result<SocketAddr>> {
 						}
 						Ok(addr)
 					}
-				}),
-			)
+				},
+			))
 		})
 		.try_flatten(),
 	);
@@ -223,35 +200,24 @@ const FILTERED_IPS: &[IpAddr] = &[
 	IpAddr::V6(Ipv6Addr::new(0xfec0, 0, 0, 0xffff, 0, 0, 0, 3)),
 ];
 
-fn create_resolver() -> TokioAsyncResolver {
-	let (config, options) = create_resolver_config();
-	TokioAsyncResolver::tokio(config, options)
-}
-
-fn create_resolver_config() -> (ResolverConfig, ResolverOpts) {
-	match hickory_resolver::system_conf::read_system_conf() {
-		Ok(r) => {
-			let mut rc = ResolverConfig::from_parts(
-				None,
-				vec![],
-				hickory_resolver::config::NameServerConfigGroup::new(),
-			);
-			for ns in
-				r.0.name_servers().iter().filter(|ns| !FILTERED_IPS.contains(&ns.socket_addr.ip()))
-			{
-				rc.add_name_server(ns.clone());
-			}
-			(rc, r.1)
+fn create_resolver() -> Result<TokioResolver> {
+	let (config, options) = match hickory_resolver::system_conf::read_system_conf() {
+		Ok((mut config, options)) => {
+			config.name_servers.retain(|ns| !FILTERED_IPS.contains(&ns.ip));
+			(config, options)
 		}
 		Err(error) => {
 			warn!(%error, "Failed to use system dns resolver config");
 			// Fallback
-			(ResolverConfig::cloudflare(), ResolverOpts::default())
+			(ResolverConfig::udp_and_tcp(&CLOUDFLARE), ResolverOpts::default())
 		}
-	}
+	};
+	let mut builder = TokioResolver::builder_with_config(config, TokioRuntimeProvider::default());
+	*builder.options_mut() = options;
+	builder.build().map_err(Error::CreateResolver)
 }
 
-fn parse_ip(address: &str) -> Result<ParseIpResult> {
+fn parse_ip(address: &str) -> Result<ParseIpResult<'_>> {
 	let mut addr = address;
 	let mut port = None;
 	if let Some(pos) = address.rfind(':') {
@@ -374,29 +340,19 @@ pub async fn resolve_tsdns<A: net::ToSocketAddrs>(server: A, addr: &str) -> Resu
 	}
 }
 
-fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = Result<SocketAddr>> {
+fn resolve_srv(resolver: TokioResolver, addr: String) -> impl Stream<Item = Result<SocketAddr>> {
 	stream::once(async {
 		let lookup = resolver.srv_lookup(addr).await.map_err(Error::SrvLookup)?;
-		let mut entries = Vec::new();
-		let mut max_prio = if let Some(e) = lookup.iter().next() {
-			e.priority()
-		} else {
-			return Err(Error::NoSrvEntry);
-		};
+		let srvs = lookup
+			.answers()
+			.iter()
+			.map(|r| {
+				let RData::SRV(srv) = &r.data else { panic!("Unexpected answer") };
+				srv.clone()
+			})
+			.collect::<Vec<_>>();
 
-		// Move all SRV records into entries and only retain the ones with
-		// the lowest priority.
-		for srv in lookup.iter() {
-			if srv.priority() < max_prio {
-				max_prio = srv.priority();
-				entries.clear();
-				entries.push(srv);
-			} else if srv.priority() == max_prio {
-				entries.push(srv);
-			}
-		}
-
-		let prios = lookup.iter().chunk_by(|e| e.priority());
+		let prios = srvs.iter().chunk_by(|srv| srv.priority);
 		let entries = prios.into_iter().sorted_by_key(|(p, _)| *p);
 
 		// Select by weight
@@ -407,7 +363,7 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 			// All non-zero entries
 			let mut entries = es
 				.filter_map(|e| {
-					if e.weight() == 0 {
+					if e.weight == 0 {
 						zero_entries.push(e);
 						None
 					} else {
@@ -417,16 +373,16 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 				.collect::<Vec<_>>();
 
 			while !entries.is_empty() {
-				let weight: u32 = entries.iter().map(|e| e.weight() as u32).sum();
-				let mut w = rand::thread_rng().gen_range(0..=weight);
+				let weight: u32 = entries.iter().map(|e| e.weight as u32).sum();
+				let mut w = rand::rng().random_range(0..=weight);
 				if w == 0 {
 					// Pick the first entry with weight 0
-					if let Some(i) = entries.iter().position(|e| e.weight() == 0) {
+					if let Some(i) = entries.iter().position(|e| e.weight == 0) {
 						sorted_entries.push(entries.remove(i));
 					}
 				}
 				for i in 0..entries.len() {
-					let weight = entries[i].weight() as u32;
+					let weight = entries[i].weight as u32;
 					if w <= weight {
 						sorted_entries.push(entries.remove(i));
 						break;
@@ -438,7 +394,7 @@ fn resolve_srv(resolver: TokioAsyncResolver, addr: Name) -> impl Stream<Item = R
 
 		let res = sorted_entries
 			.into_iter()
-			.map(|e| Ok((e.target().to_ascii(), e.port())))
+			.map(|e| Ok((e.target.to_ascii(), e.port)))
 			.collect::<Vec<Result<(String, u16)>>>();
 		drop(resolver);
 		Ok(stream::iter(res)
