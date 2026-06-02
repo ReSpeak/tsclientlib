@@ -180,18 +180,16 @@ impl EccKeyPubP256 {
 					let x_bytes = x.to_bytes_be().1;
 					let y_bytes = y.to_bytes_be().1;
 					let field_size = elliptic_curve::FieldBytesSize::<p256::NistP256>::to_usize();
-					if x_bytes.len() != field_size {
-						return Err(Error::WrongPublicKeyLength {
-							expected: field_size,
-							got: x_bytes.len(),
-						});
-					}
-					if y_bytes.len() != field_size {
-						return Err(Error::WrongPublicKeyLength {
-							expected: field_size,
-							got: y_bytes.len(),
-						});
-					}
+					let x_bytes = {
+						let mut buf = vec![0u8; field_size.saturating_sub(x_bytes.len())];
+						buf.extend_from_slice(&x_bytes);
+						buf
+					};
+					let y_bytes = {
+						let mut buf = vec![0u8; field_size.saturating_sub(y_bytes.len())];
+						buf.extend_from_slice(&y_bytes);
+						buf
+					};
 					let enc_point = p256::EncodedPoint::from_affine_coordinates(
 						GenericArray::from_slice(x_bytes.as_slice()),
 						GenericArray::from_slice(y_bytes.as_slice()),
