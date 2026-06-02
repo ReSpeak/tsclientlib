@@ -177,24 +177,27 @@ impl EccKeyPubP256 {
 				if let (Some(ASN1Block::Integer(_, x)), Some(ASN1Block::Integer(_, y))) =
 					(blocks.get(2), blocks.get(3))
 				{
-					let x_bytes = x.to_bytes_be().1;
-					let y_bytes = y.to_bytes_be().1;
 					let field_size = elliptic_curve::FieldBytesSize::<p256::NistP256>::to_usize();
-					if x_bytes.len() != field_size {
-						return Err(Error::WrongPublicKeyLength {
-							expected: field_size,
-							got: x_bytes.len(),
-						});
-					}
-					if y_bytes.len() != field_size {
-						return Err(Error::WrongPublicKeyLength {
-							expected: field_size,
-							got: y_bytes.len(),
-						});
-					}
+					let pad = |src: &BigInt| -> Result<elliptic_curve::FieldBytes<p256::NistP256>> {
+						let (sign, bytes) = src.to_bytes_be();
+						if sign == num_bigint::Sign::Minus {
+							return Err(Error::ParsePublicKeyFailed);
+						}
+						if bytes.len() > field_size {
+							return Err(Error::WrongPublicKeyLength {
+								expected: field_size,
+								got: bytes.len(),
+							});
+						}
+						let mut buf = elliptic_curve::FieldBytes::<p256::NistP256>::default();
+						buf[field_size - bytes.len()..].copy_from_slice(&bytes);
+						Ok(buf)
+					};
+					let x_padded = pad(x)?;
+					let y_padded = pad(y)?;
 					let enc_point = p256::EncodedPoint::from_affine_coordinates(
-						GenericArray::from_slice(x_bytes.as_slice()),
-						GenericArray::from_slice(y_bytes.as_slice()),
+						&x_padded,
+						&y_padded,
 						false,
 					);
 					let enc_point = p256::PublicKey::from_encoded_point(&enc_point);
