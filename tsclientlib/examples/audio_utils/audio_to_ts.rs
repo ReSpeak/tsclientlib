@@ -1,48 +1,49 @@
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{format_err, Result};
+use anyhow::{Result, format_err};
 use audiopus::coder::Encoder;
+use cpal::traits::{DeviceTrait, StreamTrait};
+use cpal::{Device, Stream, StreamConfig};
 use futures::prelude::*;
-use sdl2::audio::{AudioCallback, AudioDevice, AudioSpec, AudioSpecDesired, AudioStatus};
-use sdl2::AudioSubsystem;
 use tokio::sync::mpsc;
 use tokio::task::LocalSet;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
-use tracing::{debug, error, instrument};
+use tracing::{debug, error, instrument, warn};
 use tsproto_packets::packets::{AudioData, CodecType, OutAudio, OutPacket};
 
 use super::*;
 
 pub struct AudioToTs {
-	audio_subsystem: AudioSubsystem,
+	device: Device,
 	listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
-	device: AudioDevice<SdlCallback>,
+	stream: Option<Stream>,
 
 	is_playing: bool,
-	volume: Arc<Mutex<f32>>,
+	/// Storing an f32
+	volume: Arc<AtomicU32>,
 }
 
-struct SdlCallback {
-	spec: AudioSpec,
-	encoder: Encoder,
+struct Callback {
 	listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
-	volume: Arc<Mutex<f32>>,
+	encoder: Encoder,
+	/// Storing an f32
+	volume: Arc<AtomicU32>,
 
+	tmp_buffer: [f32; USUAL_FRAME_SIZE * 2],
 	opus_output: [u8; MAX_OPUS_FRAME_SIZE],
 }
 
 impl AudioToTs {
-	pub fn new(audio_subsystem: AudioSubsystem, local_set: &LocalSet) -> Result<Arc<Mutex<Self>>> {
+	pub fn new(device: Device, local_set: &LocalSet) -> Result<Arc<Mutex<Self>>> {
 		let listener = Arc::new(Mutex::new(Default::default()));
-		let volume = Arc::new(Mutex::new(1.0));
-
-		let device = Self::open_capture(&audio_subsystem, listener.clone(), volume.clone())?;
+		let volume = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
 
 		let res = Arc::new(Mutex::new(Self {
-			audio_subsystem,
-			listener,
 			device,
+			listener,
+			stream: None,
 
 			is_playing: false,
 			volume,
@@ -53,46 +54,37 @@ impl AudioToTs {
 		Ok(res)
 	}
 
-	#[instrument(skip(audio_subsystem, listener, volume))]
-	fn open_capture(
-		audio_subsystem: &AudioSubsystem, listener: Arc<Mutex<Option<mpsc::Sender<OutPacket>>>>,
-		volume: Arc<Mutex<f32>>,
-	) -> Result<AudioDevice<SdlCallback>> {
-		let desired_spec = AudioSpecDesired {
-			freq: Some(48000),
-			channels: Some(1),
-			// Default sample size, 20 ms per packet
-			samples: Some(48000 / 50),
+	#[instrument(skip(self))]
+	fn open_capture(&self) -> Result<Stream> {
+		let config = StreamConfig {
+			channels: 1,
+			sample_rate: 48000,
+			buffer_size: cpal::BufferSize::Fixed(USUAL_FRAME_SIZE as u32),
 		};
 
-		audio_subsystem
-			.open_capture(None, &desired_spec, |spec| {
-				// This spec will always be the desired spec, the sdl wrapper passes
-				// zero as `allowed_changes`.
-				debug!(?spec, driver = audio_subsystem.current_audio_driver(), "Got capture spec");
-				let opus_channels = if spec.channels == 1 {
-					audiopus::Channels::Mono
-				} else {
-					audiopus::Channels::Stereo
-				};
+		let encoder = Encoder::new(
+			audiopus::SampleRate::Hz48000,
+			audiopus::Channels::Mono,
+			audiopus::Application::Voip,
+		)
+		.expect("Could not create encoder");
+		let mut callback = Callback {
+			listener: self.listener.clone(),
+			encoder,
+			volume: self.volume.clone(),
 
-				let encoder = Encoder::new(
-					audiopus::SampleRate::Hz48000,
-					opus_channels,
-					audiopus::Application::Voip,
-				)
-				.expect("Could not create encoder");
+			tmp_buffer: [0.0; _],
+			opus_output: [0; _],
+		};
 
-				SdlCallback {
-					spec,
-					encoder,
-					listener,
-					volume,
-
-					opus_output: [0; MAX_OPUS_FRAME_SIZE],
-				}
-			})
-			.map_err(|e| format_err!("SDL error: {}", e))
+		self.device
+			.build_input_stream(
+				config,
+				move |audio_data, _| callback.callback(audio_data),
+				|error| error!(%error, "Error during audio capture"),
+				Some(Duration::from_secs(5)),
+			)
+			.map_err(|e| format_err!("cpal error: {}", e))
 	}
 
 	pub fn set_listener(&self, sender: mpsc::Sender<OutPacket>) {
@@ -100,15 +92,27 @@ impl AudioToTs {
 		*listener = Some(sender);
 	}
 
-	pub fn set_volume(&mut self, volume: f32) { *self.volume.lock().unwrap() = volume; }
+	pub fn set_volume(&mut self, volume: f32) {
+		self.volume.store(volume.to_bits(), Ordering::Relaxed);
+	}
 
 	pub fn set_playing(&mut self, playing: bool) {
-		if playing {
-			self.device.resume();
-		} else {
-			self.device.pause();
+		if let Some(stream) = &self.stream {
+			if playing {
+				if let Err(error) = stream.play() {
+					error!(%error, "Failed to start stream");
+					self.stream = None;
+				} else {
+					self.is_playing = true;
+				}
+			} else {
+				if let Err(error) = stream.pause() {
+					error!(%error, "Failed to pause stream");
+					self.stream = None;
+				}
+				self.is_playing = false;
+			}
 		}
-		self.is_playing = playing;
 	}
 
 	#[instrument(skip(a2t, local_set))]
@@ -116,18 +120,15 @@ impl AudioToTs {
 		local_set.spawn_local(
 			IntervalStream::new(time::interval(Duration::from_secs(1))).for_each(move |_| {
 				let mut a2t = a2t.lock().unwrap();
-				if a2t.device.status() == AudioStatus::Stopped {
+
+				if a2t.stream.is_none() {
 					// Try to reconnect to audio
-					match Self::open_capture(
-						&a2t.audio_subsystem,
-						a2t.listener.clone(),
-						a2t.volume.clone(),
-					) {
-						Ok(d) => {
-							a2t.device = d;
+					match a2t.open_capture() {
+						Ok(s) => {
+							a2t.stream = Some(s);
 							debug!("Reconnected to capture device");
 							if a2t.is_playing {
-								a2t.device.resume();
+								a2t.set_playing(true);
 							}
 						}
 						Err(error) => {
@@ -135,23 +136,26 @@ impl AudioToTs {
 						}
 					};
 				}
+
 				future::ready(())
 			}),
 		);
 	}
 }
 
-impl AudioCallback for SdlCallback {
-	type Channel = f32;
-
+impl Callback {
 	#[instrument(skip(self, buffer))]
-	fn callback(&mut self, buffer: &mut [Self::Channel]) {
+	fn callback<'a>(&'a mut self, mut buffer: &'a [f32]) {
 		// Handle volume
-		let volume = *self.volume.lock().unwrap();
+		let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
 		if volume != 1.0 {
-			for d in &mut *buffer {
-				*d *= volume;
+			if self.tmp_buffer.len() < buffer.len() {
+				warn!("tmp buffer len smaller than received capture buffer, dropping data");
 			}
+			for (dst, src) in self.tmp_buffer.iter_mut().zip(buffer.iter()) {
+				*dst = *src * volume;
+			}
+			buffer = &self.tmp_buffer[..buffer.len()];
 		}
 
 		match self.encoder.encode_float(buffer, &mut self.opus_output[..]) {
@@ -160,13 +164,11 @@ impl AudioCallback for SdlCallback {
 			}
 			Ok(len) => {
 				// Create packet
-				let codec = if self.spec.channels == 1 {
-					CodecType::OpusVoice
-				} else {
-					CodecType::OpusMusic
-				};
-				let packet =
-					OutAudio::new(&AudioData::C2S { id: 0, codec, data: &self.opus_output[..len] });
+				let packet = OutAudio::new(&AudioData::C2S {
+					id: 0,
+					codec: CodecType::OpusVoice,
+					data: &self.opus_output[..len],
+				});
 
 				// Write into packet sink
 				let mut listener = self.listener.lock().unwrap();

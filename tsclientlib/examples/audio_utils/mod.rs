@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use cpal::traits::HostTrait;
 use tokio::task::LocalSet;
 
 use audio_to_ts::AudioToTs;
@@ -25,16 +26,12 @@ pub struct AudioData {
 }
 
 pub(crate) fn start(local_set: &LocalSet) -> Result<AudioData> {
-	let sdl_context = sdl2::init().unwrap();
+	let host = cpal::default_host();
+	let output_device = host.default_output_device().unwrap();
+	let input_device = host.default_input_device().unwrap();
 
-	let audio_subsystem = sdl_context.audio().unwrap();
-	// SDL automatically disables the screensaver, enable it again
-	if let Ok(video_subsystem) = sdl_context.video() {
-		video_subsystem.enable_screen_saver();
-	}
-
-	let ts2a = TsToAudio::new(audio_subsystem.clone(), local_set)?;
-	let a2ts = AudioToTs::new(audio_subsystem, local_set)?;
+	let ts2a = TsToAudio::new(output_device, local_set)?;
+	let a2ts = AudioToTs::new(input_device, local_set)?;
 
 	Ok(AudioData { a2ts, ts2a })
 }
