@@ -110,7 +110,7 @@ pub struct AudioQueue {
 	packet_buffer_samples: usize,
 	/// Temporary buffer that contains the samples of one decoded packet.
 	decoded_buffer: Vec<f32>,
-	/// The current position in the `decoded_buffer`.
+	/// The number of samples in `decoded_buffer` that have been returned.
 	decoded_pos: usize,
 	/// The number of samples in the last packet.
 	last_packet_samples: usize,
@@ -299,12 +299,13 @@ impl AudioQueue {
 		}
 		self.packet_loss_num += 1;
 
-		self.decoded_buffer.resize(self.decoded_pos + len * CHANNEL_NUM, 0.0);
+		let orig_buffer_len = self.decoded_buffer.len();
+		self.decoded_buffer.resize(orig_buffer_len + len * CHANNEL_NUM, 0.0);
 		let len = self
 			.decoder
 			.decode_float(
 				packet_data,
-				(&mut self.decoded_buffer[self.decoded_pos..])
+				(&mut self.decoded_buffer[orig_buffer_len..])
 					.try_into()
 					.map_err(Error::GetPacketSample)?,
 				fec,
@@ -314,8 +315,7 @@ impl AudioQueue {
 				packet: packet.map(|p| p.packet.raw_data().to_vec()),
 			})?;
 		self.last_packet_samples = len;
-		self.decoded_buffer.truncate(self.decoded_pos + len * CHANNEL_NUM);
-		self.decoded_pos += len * CHANNEL_NUM;
+		self.decoded_buffer.truncate(orig_buffer_len + len * CHANNEL_NUM);
 
 		// Update packet_loss_num
 		if packet.is_some() && !fec {
@@ -368,23 +368,10 @@ impl AudioQueue {
 			}
 		}
 		// Need to refill buffer
-		if self.decoded_pos < self.decoded_buffer.len() {
-			if self.decoded_pos > 0 {
-				self.decoded_buffer.drain(..self.decoded_pos);
-				self.decoded_pos = 0;
-			}
-		} else {
-			self.decoded_buffer.clear();
-			self.decoded_pos = 0;
-		}
+		self.decoded_buffer.drain(..self.decoded_pos);
 
 		while self.decoded_buffer.len() < len {
-			trace!(
-				decoded_buffer = self.decoded_buffer.len(),
-				decoded_pos = self.decoded_pos,
-				len,
-				"get_next_data"
-			);
+			trace!(decoded_buffer = self.decoded_buffer.len(), len, "get_next_data");
 
 			// Decode a packet
 			if let Some(packet) = self.packet_buffer.pop_front() {
